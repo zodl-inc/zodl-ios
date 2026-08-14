@@ -311,7 +311,6 @@ enum Voting {
     @discardableResult
     static func delegateSharesWithFallback(
         _ payloads: [SharePayload],
-        roundId: String,
         proposalId: UInt32,
         votingAPI: VotingAPIClient,
         serverURLs: [String],
@@ -324,7 +323,7 @@ enum Voting {
         var lastExhaustionError: ShareDelegationError?
         for attempt in 1...3 {
             do {
-                return try await votingAPI.delegateShares(payloads, roundId, proposalId, serverURLs)
+                return try await votingAPI.delegateShares(payloads, proposalId, serverURLs)
             } catch let error as ShareDelegationError where error == .noReachableVoteServers {
                 lastExhaustionError = error
                 LoggerProxy.warn("delegateShares attempt \(attempt)/3 exhausted vote servers")

@@ -1194,7 +1194,7 @@ import Testing
 
         var votingAPI = VotingAPIClient()
         votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
-        votingAPI.delegateShares = { _, _, _, serverURLs in
+        votingAPI.delegateShares = { _, _, serverURLs in
             ShareDelegationResult(
                 delegatedShares: [
                     DelegatedShareInfo(shareIndex: 0, proposalId: 1, acceptedByServers: serverURLs),
@@ -1247,7 +1247,7 @@ import Testing
 
         var votingAPI = VotingAPIClient()
         votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
-        votingAPI.delegateShares = { _, _, _, serverURLs in
+        votingAPI.delegateShares = { _, _, serverURLs in
             ShareDelegationResult(
                 delegatedShares: [
                     DelegatedShareInfo(shareIndex: 0, proposalId: 1, acceptedByServers: serverURLs),

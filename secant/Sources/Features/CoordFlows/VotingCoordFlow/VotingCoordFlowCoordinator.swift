@@ -1984,7 +1984,6 @@ extension VotingCoordFlow {
                         }
                         let batchDelegationResult = try await Voting.delegateSharesWithFallback(
                             payloads,
-                            roundId: roundId,
                             proposalId: proposalId,
                             votingAPI: votingAPI,
                             serverURLs: shareServerURLs
@@ -2230,7 +2229,6 @@ extension VotingCoordFlow {
                         let payload = SharePayload(wireJson: wireJson, shareIndex: share.shareIndex)
                         let acceptedServers = try await votingAPI.resubmitShare(
                             payload,
-                            roundId,
                             share.sentToURLs
                         )
                         let newServers = acceptedServers.filter {
@@ -3595,7 +3593,6 @@ extension VotingCoordFlow {
 
         let recoveryResult = try await Voting.delegateSharesWithFallback(
             payloads,
-            roundId: roundId,
             proposalId: proposalId,
             votingAPI: votingAPI,
             serverURLs: shareServerURLs

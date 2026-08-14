@@ -378,8 +378,9 @@ typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount
 /// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
 /// above — which silently drops any pair that fails to parse, the exact lenient-decoder
 /// pattern behind campaign finding #3 — any deviation here fails the whole decode instead
-/// of yielding a truncated or garbage result. Internal (not private) because
-/// `RoundAuthenticator.signingPayloadV2` decodes round ids with the same strictness.
+/// of yielding a truncated or garbage result. Internal (not private) for its sole
+/// remaining caller, `RoundAuthenticator.signingPayloadV2`, which decodes round ids
+/// with this strictness for auth v2 signing.
 func strictHexData(_ hex: String) -> Data? {
     guard hex.count % 2 == 0 else { return nil }
     var data = Data()
@@ -397,28 +398,19 @@ func strictHexData(_ hex: String) -> Data? {
     return data
 }
 
-/// rc.5's `VoteShareWire` (the crate's wire DTO for one share) does not carry a
-/// `vote_round_id` field at all — only its siblings `DelegationSubmissionWire` and
-/// `VoteCommitmentWire` do. The `/shielded-vote/v1/shares` server nonetheless requires the
-/// field (HTTP 400 `vote_round_id: expected 32 bytes, got 0` otherwise), so this injects it
-/// app-side from `roundIdHex`. Measured server contract: the shares endpoint hex-decodes
-/// `vote_round_id` (unlike the delegate-vote and cast-vote endpoints, which accept base64
-/// for the same field name — asymmetry confirmed live 2026-08-12), so this sends the
-/// validated 64-char hex string verbatim, not base64. Candidate for removal once the
-/// crate's `VoteShareWire` carries the field itself.
-func sharePostBody(
-    for payload: SharePayload,
-    roundIdHex: String
-) -> [String: Any] {
+/// The share POST body is the crate's wire JSON verbatim. Since zcash_voting
+/// 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id` itself (a canonical 64-char
+/// lowercase-hex value populated from the persisted recovery bundle), which retired
+/// the rc.5-era app-side injection that used to add the field here. Measured server
+/// contract: the `/shielded-vote/v1/shares` endpoint hex-decodes `vote_round_id`
+/// (unlike the delegate-vote and cast-vote endpoints, which accept base64 for the
+/// same field name — asymmetry confirmed live 2026-08-12), and the crate emits
+/// exactly that hex form, so nothing is added or rewritten app-side.
+func sharePostBody(for payload: SharePayload) -> [String: Any] {
     let data = Data(payload.wireJson.utf8)
-    guard var body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+    guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
         return [:]
     }
-    guard let roundIdData = strictHexData(roundIdHex), roundIdData.count == 32 else {
-        LoggerProxy.error("sharePostBody: invalid roundIdHex (expected 64 hex chars, got \(roundIdHex.count))")
-        return body
-    }
-    body["vote_round_id"] = roundIdHex
     return body
 }
 
@@ -459,7 +451,6 @@ private func applyShareAttemptOutcome(
 
 func delegateSharePayloads(
     _ payloads: [SharePayload],
-    roundIdHex: String,
     proposalId: UInt32,
     initialServerURLs: [String],
     postShare: @escaping SharePost,
@@ -491,7 +482,7 @@ func delegateSharePayloads(
                         do {
                             // Build body inside the task: [String: Any] isn't Sendable, but SharePayload is —
                             // recompute per task so the sending closure only captures Sendable values.
-                            let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
+                            let body = sharePostBody(for: payload)
                             try await postShare(server, body)
                             return (server, .success(()))
                         } catch {
@@ -548,7 +539,6 @@ func delegateSharePayloads(
 
 func resubmitSharePayload(
     _ payload: SharePayload,
-    roundIdHex: String,
     configuredServerURLs: [String],
     sentToURLs: [String],
     postShare: @escaping SharePost,
@@ -557,7 +547,7 @@ func resubmitSharePayload(
     let sentSet = Set(sentToURLs)
     let untried = orderServers(configuredServerURLs.filter { !sentSet.contains($0) })
     let alreadySent = orderServers(configuredServerURLs.filter { sentSet.contains($0) })
-    let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
+    let body = sharePostBody(for: payload)
 
     for server in untried + alreadySent {
         do {
@@ -1030,7 +1020,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 }
             },
-            delegateShares: { payloads, roundIdHex, proposalId, serverURLs in
+            delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
                     // Active foreground delivery uses the submission-local server set.
@@ -1041,7 +1031,6 @@ extension VotingAPIClient: DependencyKey {
                     let tracker = ServerHealthTracker.shared
                     return try await delegateSharePayloads(
                         payloads,
-                        roundIdHex: roundIdHex,
                         proposalId: proposalId,
                         initialServerURLs: serverURLs,
                         postShare: { server, body in
@@ -1086,12 +1075,11 @@ extension VotingAPIClient: DependencyKey {
                     return .pending
                 }
             },
-            resubmitShare: { payload, roundIdHex, excludeURLs in
+            resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
                 return await resubmitSharePayload(
                     payload,
-                    roundIdHex: roundIdHex,
                     configuredServerURLs: configuredServerURLs,
                     sentToURLs: excludeURLs,
                     postShare: { server, body in

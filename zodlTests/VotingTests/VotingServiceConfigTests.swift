@@ -794,13 +794,44 @@ import Testing
     }
 }
 
+// MOB-1678: since zcash_voting 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id`
+// itself (canonical lowercase hex), which retired the app-side injection that used
+// to add the field to the share POST body. These two tests pin the surviving wire
+// contract from its new source: the field still reaches the server, still as
+// lowercase hex, but verbatim from the crate JSON — the app adds nothing.
+@Suite struct SharePostBodyWireContractTests {
+    @Test func shareBodyCarriesCrateProvidedVoteRoundIdVerbatim() {
+        let roundIdHex = String(repeating: "01", count: 32)
+        let payload = SharePayload(
+            wireJson: "{\"vote_round_id\":\"\(roundIdHex)\",\"share_index\":3,\"submit_at\":99}",
+            shareIndex: 3
+        )
+
+        let body = sharePostBody(for: payload)
+
+        #expect(body["vote_round_id"] as? String == roundIdHex)
+        #expect(body["share_index"] as? Int == 3)
+        #expect(body["submit_at"] as? Int == 99)
+    }
+
+    @Test func shareBodyIsTheWireJsonVerbatimWithNothingInjected() {
+        let payload = makeRecoverySharePayload()
+
+        let body = sharePostBody(for: payload)
+
+        // The fixture wire JSON has no vote_round_id, and none may appear in the
+        // body: the crate is the only source of the field now.
+        #expect(body["vote_round_id"] == nil)
+        #expect(Set(body.keys) == Set(["share_index", "submit_at"]))
+    }
+}
+
 @Suite struct ShareResubmissionFallbackTests {
     @Test func resubmissionTriesUntriedHelpersFirst() async {
         let recorder = SharePostRecorder()
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -822,7 +853,6 @@ import Testing
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -850,7 +880,6 @@ import Testing
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -879,7 +908,6 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
             proposalId: 1,
             initialServerURLs: [
                 "https://online-one.example.com",
@@ -918,7 +946,6 @@ import Testing
 
         let result = try await delegateSharePayloads(
             payloads,
-            roundIdHex: "aabb",
             proposalId: 1,
             initialServerURLs: [
                 "https://offline.example.com",
@@ -952,7 +979,6 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
             proposalId: 1,
             initialServerURLs: [
                 "https://offline-one.example.com",
@@ -983,7 +1009,6 @@ import Testing
         await #expect(throws: ShareDelegationError.noReachableVoteServers) {
             _ = try await delegateSharePayloads(
                 [makeRecoverySharePayload()],
-                roundIdHex: "aabb",
                 proposalId: 1,
                 initialServerURLs: [
                     "https://offline-one.example.com",
@@ -1008,7 +1033,6 @@ import Testing
         let error = await #expect(throws: SvAPIError.self) {
             _ = try await delegateSharePayloads(
                 [payload],
-                roundIdHex: "aabb",
                 proposalId: 1,
                 initialServerURLs: [
                     "https://rejecting.example.com",
@@ -1043,7 +1067,6 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
             proposalId: 1,
             initialServerURLs: [
                 "https://degraded.example.com",
@@ -1070,7 +1093,6 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
             proposalId: 1,
             initialServerURLs: [
                 "https://timing-out.example.com",
@@ -1097,7 +1119,7 @@ import Testing
     @Test func delegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _, serverURLs in
+        votingAPI.delegateShares = { _, _, serverURLs in
             let attempt = await attempts.increment()
             if attempt < 3 {
                 throw ShareDelegationError.noReachableVoteServers
@@ -1107,7 +1129,6 @@ import Testing
 
         let result = try await Voting.delegateSharesWithFallback(
             [],
-            roundId: "aabb",
             proposalId: 1,
             votingAPI: votingAPI,
             serverURLs: ["https://vote.example.com"],
@@ -1122,7 +1143,7 @@ import Testing
     @Test func delegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _, _ in
+        votingAPI.delegateShares = { _, _, _ in
             _ = await attempts.increment()
             throw SharePostFailure()
         }
@@ -1130,7 +1151,6 @@ import Testing
         await #expect(throws: SharePostFailure.self) {
             _ = try await Voting.delegateSharesWithFallback(
                 [],
-                roundId: "aabb",
                 proposalId: 1,
                 votingAPI: votingAPI,
                 serverURLs: ["https://vote.example.com"],
@@ -1148,7 +1168,7 @@ import Testing
     @Test func delegateSharesWithFallbackRethrowsHttpRejectionWithoutRetry() async {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _, _ in
+        votingAPI.delegateShares = { _, _, _ in
             _ = await attempts.increment()
             throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
         }
@@ -1156,7 +1176,6 @@ import Testing
         let error = await #expect(throws: SvAPIError.self) {
             _ = try await Voting.delegateSharesWithFallback(
                 [],
-                roundId: "aabb",
                 proposalId: 1,
                 votingAPI: votingAPI,
                 serverURLs: ["https://vote.example.com"],
