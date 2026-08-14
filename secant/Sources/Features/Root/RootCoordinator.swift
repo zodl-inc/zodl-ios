@@ -638,12 +638,21 @@ extension Root {
             // MOB-1581: this exit previously refreshed nothing — see the send-terminal arms above.
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
+                #if os(macOS)
                 shieldingProcessor.reset()
-                // Same stale-gate poke — this close also lands back on Activity post-shield.
+                // Same stale-gate poke — this close also lands back on Activity post-shield. macOS-only:
+                // works around macOS's always-visible split view never re-firing onAppear (the
+                // split-view stale-gate class); iOS's Home does re-fire onAppear on its own, and
+                // production main's byte-faithful behavior here (see
+                // RootSendCompletionRefreshTests.detailCloseInKeystoneSignFlowRefetchesTransactions)
+                // is exactly the plain fetch below.
                 return .merge(
                     .send(.fetchTransactionsForTheSelectedAccount),
                     .send(.home(.smartBanner(.closeAndCleanupBanner)))
                 )
+                #else
+                return .send(.fetchTransactionsForTheSelectedAccount)
+                #endif
 
                 // MARK: - Tor Setup
                 

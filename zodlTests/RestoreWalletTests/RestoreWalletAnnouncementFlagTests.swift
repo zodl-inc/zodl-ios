@@ -67,6 +67,12 @@ import ComposableArchitecture
             $0.walletStorage.importIronwoodAnnouncementFlag = { value in
                 flagCalls.withValue { $0.append(value) }
             }
+            // [#1024] seed/DB integrity guard (RestoreSeedGuardTests): `.resolveRestore` checks
+            // `databaseFiles.areDbFilesPresentFor` before importing. Not part of what this suite
+            // covers (the Ironwood flag), so stub the no-DB-on-disk case -- same value as
+            // `DatabaseFilesClient`'s own default -- to reach `.commitRestore` without an
+            // unimplemented-dependency issue.
+            $0.databaseFiles = .noOp
         }
     }
 }
