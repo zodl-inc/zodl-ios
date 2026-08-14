@@ -945,6 +945,10 @@ struct SmartBanner {
                 if priority == .priority4 {
                     return .none
                 }
+                // macOS parks migration UI for now
+                if priority == .priorityMigration {
+                    return .none
+                }
                 #endif
                 // MOB-1466 data-gathering: which candidate claims the single banner slot, and when.
                 // Traced through `MigrationTrace` rather than `LoggerProxy` so it carries the
