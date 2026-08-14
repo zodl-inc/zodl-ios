@@ -95,7 +95,8 @@ import Testing
             $0.autolockHandler = .noOp
             $0.shieldingProcessor = ShieldingProcessorClient(
                 observe: { Empty().eraseToAnyPublisher() },
-                shieldFunds: { }
+                shieldFunds: { },
+                reset: { }
             )
 
             $0.mnemonic = .noOp
@@ -107,7 +108,7 @@ import Testing
 
             $0.walletStorage = .noOp
             $0.walletStorage.areKeysPresent = { true }
-            $0.walletStorage.exportWallet = { .placeholder }
+            $0.walletStorage.exportWallet = { _ in .placeholder }
 
             $0.userDefaults.objectForKey = { key in
                 key == Root.Constants.udIsRestoringWallet ? true : nil

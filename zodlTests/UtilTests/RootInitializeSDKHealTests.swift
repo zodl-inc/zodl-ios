@@ -102,7 +102,8 @@ extension Root.State: @retroactive Equatable {
             $0.autolockHandler = .noOp
             $0.shieldingProcessor = ShieldingProcessorClient(
                 observe: { Empty().eraseToAnyPublisher() },
-                shieldFunds: { }
+                shieldFunds: { },
+                reset: { }
             )
 
             $0.mnemonic = .noOp
@@ -116,7 +117,7 @@ extension Root.State: @retroactive Equatable {
 
             let seededWallet = RootInitializeSDKHealTests.seededWallet
             $0.walletStorage = .noOp
-            $0.walletStorage.exportWallet = { seededWallet }
+            $0.walletStorage.exportWallet = { _ in seededWallet }
 
             $0.flexaHandler = .noOp
             $0.flexaHandler.signOut = { calls.withValue { $0.append("flexaSignOut") } }

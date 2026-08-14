@@ -102,7 +102,8 @@ import Testing
             $0.autolockHandler = .noOp
             $0.shieldingProcessor = ShieldingProcessorClient(
                 observe: { Empty().eraseToAnyPublisher() },
-                shieldFunds: { }
+                shieldFunds: { },
+                reset: { }
             )
 
             $0.mnemonic = .noOp
@@ -111,7 +112,7 @@ import Testing
 
             let seededWallet = RootMigrationGateRefusalTests.seededWallet
             $0.walletStorage = .noOp
-            $0.walletStorage.exportWallet = { seededWallet }
+            $0.walletStorage.exportWallet = { _ in seededWallet }
 
             $0.flexaHandler = .noOp
             $0.flexaHandler.signOut = { }

@@ -114,7 +114,8 @@ import Testing
             $0.autolockHandler = .noOp
             $0.shieldingProcessor = ShieldingProcessorClient(
                 observe: { Empty().eraseToAnyPublisher() },
-                shieldFunds: { }
+                shieldFunds: { },
+                reset: { }
             )
 
             $0.mnemonic = .noOp
