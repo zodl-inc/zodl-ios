@@ -8,6 +8,7 @@
 import ComposableArchitecture
 import Combine
 import SwiftUI
+import Foundation
 @preconcurrency import ZcashLightClientKit
 #if canImport(MessageUI)
 import MessageUI

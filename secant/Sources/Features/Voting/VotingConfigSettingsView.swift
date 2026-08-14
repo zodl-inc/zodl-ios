@@ -2,6 +2,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 private enum VotingChainDisplayURL {
     /// Display uses the canonical HTTPS URL (checksum query stripped). `full` is the stored string (pin preserved).

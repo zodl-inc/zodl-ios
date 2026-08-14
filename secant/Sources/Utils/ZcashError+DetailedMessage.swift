@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 // NOTE: `ConsensusBranchID` is the SDK's typealias for `Int32`, so this extends `Int32` — kept

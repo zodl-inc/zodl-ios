@@ -95,6 +95,7 @@ import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 import os
+import UserNotifications
 
 extension MigrationTransferProposal {
     /// OLD -> NEW SDK: `MigrationTransferProposal.id` is a `UInt32` engine ordinal in the new SDK

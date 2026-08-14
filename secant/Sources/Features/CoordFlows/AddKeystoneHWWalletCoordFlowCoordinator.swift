@@ -6,7 +6,9 @@
 //
 
 import ComposableArchitecture
+#if canImport(MessageUI)
 @preconcurrency import MessageUI
+#endif
 
 extension AddKeystoneHWWalletCoordFlow {
     func coordinatorReduce() -> Reduce<AddKeystoneHWWalletCoordFlow.State, AddKeystoneHWWalletCoordFlow.Action> {
@@ -58,8 +60,8 @@ extension AddKeystoneHWWalletCoordFlow {
                     }
                 }
                 state.errMsg = errMsg
-                // TCA Store is @MainActor; reducer body always runs on main.
-                state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                // Cross-platform: MessageUI's composer is iOS-only (see `MailSupport`).
+                state.canSendMail = MailSupport.canSendMail()
                 state.isFailureSheetPresented = true
                 return .none
 

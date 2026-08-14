@@ -7,6 +7,7 @@
 
 import ComposableArchitecture
 import Combine
+import Foundation
 
 @Reducer
 struct WhatsNew {

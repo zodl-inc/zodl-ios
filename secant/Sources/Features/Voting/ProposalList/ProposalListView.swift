@@ -7,6 +7,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 /// Proposal list for a single voting round.

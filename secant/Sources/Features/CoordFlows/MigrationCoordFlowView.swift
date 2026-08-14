@@ -14,7 +14,7 @@ import SwiftUI
 import ComposableArchitecture
 
 struct MigrationCoordFlowView: View {
-    @Perception.Bindable var store: StoreOf<MigrationCoordFlow>
+    @PlatformBindable var store: StoreOf<MigrationCoordFlow>
 
     init(store: StoreOf<MigrationCoordFlow>) {
         self.store = store

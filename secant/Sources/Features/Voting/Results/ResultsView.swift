@@ -7,6 +7,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 /// Final results view for a finalized round.
 ///

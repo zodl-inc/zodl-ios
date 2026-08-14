@@ -41,6 +41,7 @@
 
 import Foundation
 @preconcurrency import ZcashLightClientKit
+import os
 
 /// What one `advance` call actually did — the session verdict of I2, and the driver's return value.
 ///
@@ -909,7 +910,7 @@ extension MigrationManagerImpl {
         }
 
         do {
-            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+            let usk = try await MigrationSpendingKeyDerivation.deriveUSK(
                 zip32AccountIndex: zip32AccountIndex,
                 walletStorage: walletStorage,
                 mnemonic: mnemonic,

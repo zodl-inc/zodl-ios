@@ -18,7 +18,7 @@ import SwiftUI
 
 struct MigrationRecoveryView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationRecovery>
+    @PlatformBindable var store: StoreOf<MigrationRecovery>
 
     init(store: StoreOf<MigrationRecovery>) {
         self.store = store

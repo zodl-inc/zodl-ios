@@ -532,10 +532,19 @@ struct MacSplitView: View {
             case .vote:
                 // Beta: Coinholder Voting as a peer-root (its own NavigationStack), rendered in the
                 // detail like Send/Pay. iOS still presents it as a popover from Settings.
+                #if VOTING_ENABLED
                 VotingCoordFlowView(
                     store: store.scope(state: \.votingCoordFlowState, action: \.votingCoordFlow)
                 )
                 .macSidebarToolbarSpacer()
+                #else
+                // VOTING_ENABLED is not defined for this target (matches every iOS flavor today —
+                // see WHERE Voting's own source files are gated). The sidebar section still exists
+                // and is selectable (see `MacSection`/`.macVoteSectionSelected` below), so this is a
+                // graceful placeholder rather than a compile error, not a product decision to hide
+                // or show the row.
+                EmptyView()
+                #endif
             case .more:
                 SettingsView(
                     store: store.scope(state: \.settingsState, action: \.settings)

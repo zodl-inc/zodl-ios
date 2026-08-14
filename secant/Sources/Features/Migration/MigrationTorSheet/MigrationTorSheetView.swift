@@ -28,7 +28,7 @@ import SwiftUI
 
 struct MigrationTorSheetView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationTorSheet>
+    @PlatformBindable var store: StoreOf<MigrationTorSheet>
 
     init(store: StoreOf<MigrationTorSheet>) {
         self.store = store

@@ -20,7 +20,7 @@ import SwiftUI
 
 struct MigrationEntryView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationEntry>
+    @PlatformBindable var store: StoreOf<MigrationEntry>
 
     init(store: StoreOf<MigrationEntry>) {
         self.store = store

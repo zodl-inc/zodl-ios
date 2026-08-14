@@ -11,7 +11,7 @@ import SwiftUI
 import ComposableArchitecture
 
 struct KeystoneFirmwareUpdateView: View {
-    @Perception.Bindable var store: StoreOf<SendConfirmation>
+    @PlatformBindable var store: StoreOf<SendConfirmation>
 
     init(store: StoreOf<SendConfirmation>) {
         self.store = store

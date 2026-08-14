@@ -7,6 +7,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 /// Proposal detail with vote-choice selection. Tapping an option writes
 /// through to `roundCache[roundId].draftVotes[proposalId]` and persists

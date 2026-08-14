@@ -154,6 +154,14 @@ struct AnimatedQRCode: View {
         self.size = size
     }
 
+    /// MOB-1513: mirrors the iOS `init(frames:size:)` — the migration Keystone batch-signing
+    /// bridge hands over already-built animated QR frame strings (no `UREncoder` to cycle here),
+    /// rendered with the same CoreImage generator as the `UREncoder` path.
+    init(frames: [String], size: CGFloat) {
+        self._viewModel = StateObject(wrappedValue: ViewModel(frames: frames))
+        self.size = size
+    }
+
     var body: some View {
         Group {
             if let frame = viewModel.frame {
@@ -172,17 +180,32 @@ struct AnimatedQRCode: View {
 extension AnimatedQRCode {
     final class ViewModel: ObservableObject {
         @Published var frame: CGImage?
-        private let encoder: UREncoder
+        private var encoder: UREncoder?
+        // MOB-1513: the migration batch-signing bridge's pre-built frame strings, cycled by index
+        // instead of `UREncoder.nextPart()` — see the `AnimatedQRCode.init(frames:size:)` doc.
+        private var frames: [String] = []
+        private var frameIndex = 0
         private let context = CIContext()
 
         init(urEncoder: UREncoder) {
             self.encoder = urEncoder
-            self.frame = makeFrame(from: encoder.nextPart())
+            self.frame = makeFrame(from: urEncoder.nextPart())
+        }
+
+        init(frames: [String]) {
+            self.frames = frames
+            self.frame = makeFrame(from: frames.first ?? "")
         }
 
         func nextQRCode() {
-            guard !encoder.isSinglePart else { return }
-            frame = makeFrame(from: encoder.nextPart())
+            if let encoder {
+                guard !encoder.isSinglePart else { return }
+                frame = makeFrame(from: encoder.nextPart())
+                return
+            }
+            guard frames.count > 1 else { return }
+            frameIndex = (frameIndex + 1) % frames.count
+            frame = makeFrame(from: frames[frameIndex])
         }
 
         private func makeFrame(from string: String) -> CGImage? {

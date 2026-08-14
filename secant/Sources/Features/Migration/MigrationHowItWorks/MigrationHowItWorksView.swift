@@ -11,7 +11,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationHowItWorksView: View {
-    @Perception.Bindable var store: StoreOf<MigrationHowItWorks>
+    @PlatformBindable var store: StoreOf<MigrationHowItWorks>
 
     init(store: StoreOf<MigrationHowItWorks>) {
         self.store = store

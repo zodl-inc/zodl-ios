@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 struct ServerSetupView: View {

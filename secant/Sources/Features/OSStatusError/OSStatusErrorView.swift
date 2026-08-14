@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 struct OSStatusErrorView: View {
     @Environment(\.colorScheme) private var colorScheme

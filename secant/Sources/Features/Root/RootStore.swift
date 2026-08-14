@@ -198,7 +198,9 @@ struct Root {
 #if os(macOS)
         // macOS: the "Beta: Vote" sidebar section renders this as a peer-root (iOS presents voting from
         // Settings instead, so this Root-level state exists only on macOS).
+        #if VOTING_ENABLED
         var votingCoordFlowState = VotingCoordFlow.State()
+        #endif
         // macOS: true while the "Beta: Vote" peer-section is selected. iOS treats voting as sensitive via
         // `path == .settings`; macOS voting has no `path`, so this flag carries the same signal into
         // `isSensitiveFlowActive` so an automatic server switch is deferred during a vote (iOS parity).
@@ -378,7 +380,9 @@ struct Root {
         case sendCoordFlow(SendCoordFlow.Action)
 #if os(macOS)
         // macOS-only: Root-level "Beta: Vote" peer-section actions (iOS reaches voting via Settings).
+        #if VOTING_ENABLED
         case votingCoordFlow(VotingCoordFlow.Action)
+        #endif
         case macVoteSectionSelected
         case macResetSectionPaths
         case macRedirectToActivityHandled
@@ -540,9 +544,11 @@ struct Root {
         }
 
 #if os(macOS)
+        #if VOTING_ENABLED
         Scope(state: \.votingCoordFlowState, action: \.votingCoordFlow) {
             VotingCoordFlow()
         }
+        #endif
 
         // macOS: the "Beta: Vote" sidebar section configures the Root-level voting flow from the
         // selected account (mirrors SettingsCoordinator.coinholderPollingTapped); VotingCoordFlowView's
@@ -552,6 +558,7 @@ struct Root {
             switch action {
             case .macVoteSectionSelected:
                 state.isMacVotingSectionActive = true
+                #if VOTING_ENABLED
                 guard let account = state.selectedWalletAccount else { return .none }
                 let walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
                 if state.votingCoordFlowState.walletId != walletId {
@@ -560,6 +567,7 @@ struct Root {
                     votingState.walletId = walletId
                     state.votingCoordFlowState = votingState
                 }
+                #endif
                 return .none
             case .macResetSectionPaths:
                 // macOS: clear the vote-section flag on every switch; `.macVoteSectionSelected` (sent
@@ -573,7 +581,9 @@ struct Root {
                 state.receiveState.path.removeAll()
                 state.sendCoordFlowState.path.removeAll()
                 state.swapAndPayCoordFlowState.path.removeAll()
+                #if VOTING_ENABLED
                 state.votingCoordFlowState.path.removeAll()
+                #endif
                 state.settingsState.path.removeAll()
                 return .none
             case .macRedirectToActivityHandled:

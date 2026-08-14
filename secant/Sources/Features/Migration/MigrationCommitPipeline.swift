@@ -151,7 +151,7 @@ enum MigrationCommitPipeline {
         MigrationTrace.event("COMMIT begin — software sign+store, \(schedule.transfers.count) transfers")
         var stage = "deriveUSK"
         do {
-            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+            let usk = try await MigrationSpendingKeyDerivation.deriveUSK(
                 zip32AccountIndex: zip32AccountIndex,
                 walletStorage: walletStorage,
                 mnemonic: mnemonic,

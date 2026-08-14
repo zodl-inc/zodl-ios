@@ -24,7 +24,7 @@ import ComposableArchitecture
 struct MigrationKeystoneSignView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<MigrationKeystoneSign>
+    @PlatformBindable var store: StoreOf<MigrationKeystoneSign>
 
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
 
@@ -99,7 +99,7 @@ struct MigrationKeystoneSignView: View {
         }
         .applyScreenBackground()
         .navigationBarBackButtonHidden(true)
-        .navigationBarTitleDisplayMode(.inline)
+        .zashiNavBarTitleDisplayMode(.inline)
         .screenTitle(String(localizable: .keystoneSignWithSignTransaction))
     }
 

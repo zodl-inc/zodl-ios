@@ -10,6 +10,7 @@ import Combine
 import ComposableArchitecture
 
 struct AddKeystoneHWWalletCoordFlowView: View {
+    @Environment(\.colorScheme) var colorScheme
     @PlatformBindable var store: StoreOf<AddKeystoneHWWalletCoordFlow>
     let tokenName: String
 

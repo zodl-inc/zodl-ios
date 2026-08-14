@@ -16,7 +16,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationTorFailureSheetView: View {
-    @Perception.Bindable var store: StoreOf<MigrationTorFailureSheet>
+    @PlatformBindable var store: StoreOf<MigrationTorFailureSheet>
 
     init(store: StoreOf<MigrationTorFailureSheet>) {
         self.store = store

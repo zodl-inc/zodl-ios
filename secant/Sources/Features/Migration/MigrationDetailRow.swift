@@ -23,7 +23,7 @@ struct MigrationDetailRow: View {
         case middle
         case top
 
-        var corners: UIRectCorner {
+        var corners: RectCorner {
             switch self {
             case .bottom:
                 return [.bottomLeft, .bottomRight]

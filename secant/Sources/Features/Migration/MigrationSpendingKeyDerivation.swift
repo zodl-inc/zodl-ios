@@ -25,8 +25,8 @@ enum MigrationSpendingKeyDerivation {
         mnemonic: MnemonicClient,
         derivationTool: DerivationToolClient,
         networkType: NetworkType
-    ) throws -> UnifiedSpendingKey {
-        let storedWallet = try walletStorage.exportWallet()
+    ) async throws -> UnifiedSpendingKey {
+        let storedWallet = try await walletStorage.exportWallet(nil)
         let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
         return try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, networkType)
     }

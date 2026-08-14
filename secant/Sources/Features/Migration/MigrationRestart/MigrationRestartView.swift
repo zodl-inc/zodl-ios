@@ -21,7 +21,7 @@ import SwiftUI
 struct MigrationRestartView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @Perception.Bindable var store: StoreOf<MigrationRestart>
+    @PlatformBindable var store: StoreOf<MigrationRestart>
 
     init(store: StoreOf<MigrationRestart>) {
         self.store = store
@@ -69,7 +69,7 @@ struct MigrationRestartView: View {
                 .padding(.bottom, 24)
             }
             .applyScreenBackground()
-            .navigationBarTitleDisplayMode(.inline)
+            .zashiNavBarTitleDisplayMode(.inline)
             .zashiBack(store.isRestarting)
             .onAppear { store.send(.onAppear) }
             .zashiSheet(

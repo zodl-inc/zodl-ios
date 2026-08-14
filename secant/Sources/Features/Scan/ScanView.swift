@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 struct ScanView: View {
     @Environment(\.colorScheme) var colorScheme

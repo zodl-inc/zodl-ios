@@ -9,7 +9,9 @@ import SwiftUI
 import Combine
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
+#if canImport(MessageUI)
 @preconcurrency import MessageUI
+#endif
 
 @Reducer
 struct AddKeystoneHWWalletCoordFlow {

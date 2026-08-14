@@ -49,7 +49,7 @@ import SwiftUI
 
 struct MigrationCompleteView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationComplete>
+    @PlatformBindable var store: StoreOf<MigrationComplete>
 
     init(store: StoreOf<MigrationComplete>) {
         self.store = store
@@ -103,7 +103,7 @@ struct MigrationCompleteView: View {
         .screenHorizontalPadding()
         .onAppear { store.send(.onAppear) }
         .navigationBarBackButtonHidden()
-        .navigationBarItems(trailing: trailingNavItem)
+        .zashiNavigationBarItems(trailing: trailingNavItem)
         .alert($store.scope(state: \.alert, action: \.alert))
         // `$store.<flag>.sending` rather than a hand-rolled `Binding(get:set:)`: SwiftUI invokes a
         // hand-rolled binding's `get` during ITS update cycle, outside the `WithPerceptionTracking`

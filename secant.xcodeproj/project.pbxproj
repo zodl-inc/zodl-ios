@@ -641,6 +641,7 @@
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
 				3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */,
+				349071B93007BBE1008BD84F /* XCLocalSwiftPackageReference "LocalPackages/keystone-sdk-ios" */,
 				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;

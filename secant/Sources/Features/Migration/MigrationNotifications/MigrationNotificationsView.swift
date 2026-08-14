@@ -13,7 +13,7 @@ import SwiftUI
 
 struct MigrationNotificationsView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationNotifications>
+    @PlatformBindable var store: StoreOf<MigrationNotifications>
 
     init(store: StoreOf<MigrationNotifications>) {
         self.store = store

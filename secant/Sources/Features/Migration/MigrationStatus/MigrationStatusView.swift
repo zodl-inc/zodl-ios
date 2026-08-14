@@ -51,7 +51,7 @@ struct MigrationStatusView: View {
     /// different rates in one frame.
     @Shared(.inMemory(.exchangeRate)) private var currencyConversion: CurrencyConversion?
 
-    @Perception.Bindable var store: StoreOf<MigrationStatus>
+    @PlatformBindable var store: StoreOf<MigrationStatus>
 
     init(store: StoreOf<MigrationStatus>) {
         self.store = store
@@ -569,6 +569,11 @@ private extension View {
 
 // MARK: - First-render prewarm
 
+// `UIHostingController`-based prewarm is iOS-only (AppKit's analogous `NSHostingController` would
+// need its own off-screen host-window plumbing to match, and this is a micro-optimization, not
+// migration logic) — `AppDelegate`, the only caller, is itself `#if os(iOS)`-gated (see
+// AppDelegate.swift), so this is already unreachable on macOS; the gate below just lets it compile.
+#if os(iOS)
 /// MOB-1466 (field, 2026-08-03): the FIRST render of this screen's view tree costs the process a
 /// one-time payment — Swift instantiates generic metadata for the whole nested SwiftUI hierarchy
 /// (timeline → rows → badges → …), and in unoptimized debug builds that payment is 1–2 s of main
@@ -597,6 +602,7 @@ enum MigrationStatusPrewarm {
         host.view.layoutIfNeeded()
     }
 }
+#endif
 
 // MARK: - Mock data
 

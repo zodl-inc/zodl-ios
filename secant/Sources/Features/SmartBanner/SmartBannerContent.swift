@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import ComposableArchitecture
+import Foundation
 
 extension SmartBannerView {
     func titleStyle() -> Color {

@@ -15,7 +15,7 @@ private let ironwoodAnnouncementFAQURL = "https://support.zodl.com/article/42-mo
 
 struct IronwoodAnnouncementView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<IronwoodAnnouncement>
+    @PlatformBindable var store: StoreOf<IronwoodAnnouncement>
 
     init(store: StoreOf<IronwoodAnnouncement>) {
         self.store = store
@@ -127,7 +127,7 @@ struct IronwoodAnnouncementView: View {
                 }
             }
         }
-        .navigationBarHidden(true)
+        .zashiNavigationBarHidden(true)
         .screenHorizontalPadding()
         .applyScreenBackground()
     }

@@ -74,7 +74,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                 showsCloseButton: true,
                 dismiss: { isPresented = false }
             ) {
-                sheetContent
+                sheetContent()
             }
             .onChange(of: isPresented) { _, newValue in
                 if !newValue { onDismiss?() }
@@ -190,7 +190,7 @@ extension View {
                 // but the card keeps drawing the stale snapshot (e.g. filter chips never toggle, reset
                 // doesn't clear them). iOS re-renders via the native sheet's parent propagation regardless;
                 // wrapping is behaviour-neutral there. One wrap here covers every `.zashiSheet` dialog.
-                sheetContent: WithPerceptionTracking { content() }
+                sheetContent: { WithPerceptionTracking { content() } }
             )
         )
     }

@@ -36,7 +36,7 @@ import SwiftUI
 
 struct MigrationReviewTransferView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationReviewTransfer>
+    @PlatformBindable var store: StoreOf<MigrationReviewTransfer>
     @Shared(.inMemory(.exchangeRate)) private var currencyConversion: CurrencyConversion?
 
     init(store: StoreOf<MigrationReviewTransfer>) {

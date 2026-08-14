@@ -16,7 +16,7 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationScheduledView: View {
-    @Perception.Bindable var store: StoreOf<MigrationScheduled>
+    @PlatformBindable var store: StoreOf<MigrationScheduled>
 
     init(store: StoreOf<MigrationScheduled>) {
         self.store = store

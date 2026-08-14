@@ -403,7 +403,7 @@ struct MigrationSending {
             }
             let immediateUSK: UnifiedSpendingKey
             do {
-                immediateUSK = try MigrationSpendingKeyDerivation.deriveUSK(
+                immediateUSK = try await MigrationSpendingKeyDerivation.deriveUSK(
                     zip32AccountIndex: zip32AccountIndex,
                     walletStorage: walletStorage,
                     mnemonic: mnemonic,

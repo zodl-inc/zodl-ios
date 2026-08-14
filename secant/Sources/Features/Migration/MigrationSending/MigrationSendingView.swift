@@ -29,7 +29,7 @@ struct MigrationSendingView: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
-    @Perception.Bindable var store: StoreOf<MigrationSending>
+    @PlatformBindable var store: StoreOf<MigrationSending>
 
     init(store: StoreOf<MigrationSending>) {
         self.store = store

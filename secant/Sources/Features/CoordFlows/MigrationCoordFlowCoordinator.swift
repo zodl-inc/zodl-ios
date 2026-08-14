@@ -18,6 +18,7 @@
 import Foundation
 import SwiftUI
 import ComposableArchitecture
+import OrderedCollections
 @preconcurrency import ZcashLightClientKit
 
 // MARK: - PHASE 7: the SDK's own Keystone firmware type
@@ -323,7 +324,7 @@ extension MigrationCoordFlow {
                     let networkType = zcashSDKEnvironment.network().networkType
                     return .run { [sdkSynchronizer, migrationManager, walletStorage, mnemonic, derivationTool, networkType, zip32AccountIndex, account] send in
                         do {
-                            let usk = try MigrationSpendingKeyDerivation.deriveUSK(
+                            let usk = try await MigrationSpendingKeyDerivation.deriveUSK(
                                 zip32AccountIndex: zip32AccountIndex,
                                 walletStorage: walletStorage,
                                 mnemonic: mnemonic,
