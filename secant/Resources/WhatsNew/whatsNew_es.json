@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.9.5",
+            "date": "17-08-2026",
+            "timestamp": 1786958314,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios problemas en el motor de sincronización Slipstream."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.4",
             "date": "14-08-2026",
             "timestamp": 1786659332,
