@@ -29,9 +29,13 @@ struct ConfirmSubmissionView: View {
             let status = session?.batchSubmissionStatus ?? .idle
             let pollTitle = store.allRounds.first { $0.id == roundId }?.title ?? ""
             let weightString = Self.formatZec(session?.votingWeight ?? 0)
-            let drafts = session?.draftVotes ?? [:]
             let submittedVotes = session?.votes ?? [:]
             let bundleCount = session?.bundleCount ?? 0
+            // Finding #8 (CHP.md): a bare `draftVotes.isEmpty` check would keep
+            // the CTA disabled for a proposal that's already on-chain but whose
+            // shares never reached the helper servers — see
+            // `RoundSession.hasPendingSubmissionWork`.
+            let hasPendingSubmissionWork = session?.hasPendingSubmissionWork ?? false
             let delegationStatus = session?.delegationProofStatus ?? .notStarted
             let isKeystoneUser = store.isKeystoneUser
 
@@ -56,7 +60,7 @@ struct ConfirmSubmissionView: View {
                 bottomSection(
                     status: status,
                     delegationStatus: delegationStatus,
-                    drafts: drafts,
+                    hasPendingSubmissionWork: hasPendingSubmissionWork,
                     submittedVotes: submittedVotes,
                     bundleCount: bundleCount
                 )
@@ -311,7 +315,7 @@ struct ConfirmSubmissionView: View {
     private func bottomSection(
         status: BatchSubmissionStatus,
         delegationStatus: ProofStatus,
-        drafts: [UInt32: VoteChoice],
+        hasPendingSubmissionWork: Bool,
         submittedVotes: [UInt32: VoteChoice],
         bundleCount: UInt32
     ) -> some View {
@@ -324,7 +328,7 @@ struct ConfirmSubmissionView: View {
             ) {
                 store.send(.submitAllDraftsTapped(roundId: roundId))
             }
-            .disabled(drafts.isEmpty || bundleCount == 0)
+            .disabled(!hasPendingSubmissionWork || bundleCount == 0)
 
         case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
             // Progress card stays on screen while the error sheets (driven

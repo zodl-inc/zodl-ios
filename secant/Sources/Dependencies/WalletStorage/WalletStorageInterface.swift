@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 @preconcurrency import MnemonicSwift
 @preconcurrency import ZcashLightClientKit
 
@@ -112,6 +113,6 @@ struct WalletStorageClient {
     /// Per-account voting hotkey. Scoped by `AccountUUID` so two accounts on
     /// the same device get distinct hotkeys (and therefore distinct on-chain
     /// voter identities), instead of being linkable via a shared hotkey.
-    var importVotingHotkey: @Sendable (_ phrase: String, _ accountId: AccountUUID) throws -> Void
+    var importVotingHotkey: @Sendable (_ storedSecret: Data, _ accountId: AccountUUID) throws -> Void
     var exportVotingHotkey: @Sendable (_ accountId: AccountUUID) throws -> StoredVotingHotkey
 }

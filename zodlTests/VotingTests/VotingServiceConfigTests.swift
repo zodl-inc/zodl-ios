@@ -22,7 +22,8 @@ import Testing
             "tally": "v0",
             "vote_server": "v1"
           },
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1, "poly_len": 4096}
         }
         """
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
@@ -32,6 +33,8 @@ import Testing
         #expect(config.pirEndpoints.first?.label == "pir-1")
         #expect(config.supportedVersions.voteServer == "v1")
         #expect(config.supportedVersions.pir == ["v0", "v1"])
+        // v1.3.0 chain field (MOB-1678): parsed for forward-compat, unconsumed on the rc.5 pin.
+        #expect(config.pirLayout.polyLen == 4096)
     }
 
     @Test func decodeAcceptsConfigWithoutProposalsSnapshotOrDeadline() {
@@ -41,7 +44,8 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """
 
@@ -57,11 +61,14 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """.utf8))
 
         #expect(config.rounds.isEmpty)
+        // Pre-v1.3.0 / cached / mainnet-until-tomorrow: no poly_len key at all still decodes.
+        #expect(config.pirLayout.polyLen == nil)
         #expect(throws: Never.self) {
             try config.validate()
         }
@@ -79,7 +86,8 @@ import Testing
                     eaPk: Data(repeating: 0x01, count: 32),
                     signatures: []
                 )
-            ]
+            ],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
 
         #expect(throws: (any Error).self) {
@@ -253,7 +261,8 @@ import Testing
             voteServers: [.init(url: "https://x", label: "a")],
             pirEndpoints: [.init(url: "https://y", label: "b")],
             supportedVersions: supportedVersions,
-            rounds: [:]
+            rounds: [:],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
     }
 
@@ -404,7 +413,8 @@ import Testing
             rounds: [
                 roundId: makeEntry(),
                 invalidRoundId: makeEntry(signature: badSignature)
-            ]
+            ],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
 
         let filtered = serviceConfigRetainingRoundsWithValidSignatures(config, trustedKeys: [makeTrustedKey()])
@@ -716,6 +726,7 @@ import Testing
         let result = try await delegateSharePayloads(
             [payload],
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://online-one.example.com",
                 "https://offline.example.com",
@@ -754,6 +765,7 @@ import Testing
         let result = try await delegateSharePayloads(
             payloads,
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline.example.com",
                 "https://online.example.com"
@@ -787,6 +799,7 @@ import Testing
         let result = try await delegateSharePayloads(
             [payload],
             roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline-one.example.com",
                 "https://offline-two.example.com",
@@ -817,6 +830,7 @@ import Testing
             _ = try await delegateSharePayloads(
                 [makeRecoverySharePayload()],
                 roundIdHex: "aabb",
+                proposalId: 1,
                 initialServerURLs: [
                     "https://offline-one.example.com",
                     "https://offline-two.example.com"
@@ -826,13 +840,110 @@ import Testing
             )
         }
     }
+
+    // MOB-1678: a live incident (2026-08-12) had both vote servers return
+    // deterministic HTTP 400s for a malformed request body. The old code
+    // pruned both and surfaced `noReachableVoteServers` — the generic
+    // "check your internet connection" copy for a bug that had nothing to do
+    // with reachability. These three tests pin the fix's classification.
+
+    @Test func httpRejectionAbortsDelegationInsteadOfPruningAndContinuing() async {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await delegateSharePayloads(
+                [payload],
+                roundIdHex: "aabb",
+                proposalId: 1,
+                initialServerURLs: [
+                    "https://rejecting.example.com",
+                    "https://never-tried.example.com"
+                ],
+                postShare: { server, _ in
+                    await recorder.record(server)
+                    if server == "https://rejecting.example.com" {
+                        throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+                    }
+                },
+                selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+            )
+        }
+
+        guard case .httpError(let statusCode, let message)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
+        #expect(message == "vote_round_id: expected 32 bytes, got 0")
+
+        // The healthy second server is never tried, and the rejecting server is
+        // never retried either — this is an abort, not a prune-and-continue.
+        let recordedServers = await recorder.servers()
+        #expect(recordedServers == ["https://rejecting.example.com"])
+    }
+
+    @Test func serverErrorRejectionKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            roundIdHex: "aabb",
+            proposalId: 1,
+            initialServerURLs: [
+                "https://degraded.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://degraded.example.com" {
+                    throw SvAPIError.httpError(statusCode: 503, message: "upstream unavailable")
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // 5xx is transient server trouble, not a deterministic client-side
+        // rejection — failover behavior is unchanged by this fix.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
+    }
+
+    @Test func transportFailureKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            roundIdHex: "aabb",
+            proposalId: 1,
+            initialServerURLs: [
+                "https://timing-out.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://timing-out.example.com" {
+                    throw URLError(.timedOut)
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // Transport/connection failures keep today's behavior: the unreachable
+        // server is pruned and the share is backfilled from the remaining pool
+        // within the same delegation attempt.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
+    }
 }
 
 @Suite struct DelegateSharesWithFallbackTests {
     @Test func delegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, serverURLs in
+        votingAPI.delegateShares = { _, _, _, serverURLs in
             let attempt = await attempts.increment()
             if attempt < 3 {
                 throw ShareDelegationError.noReachableVoteServers
@@ -843,6 +954,7 @@ import Testing
         let result = try await Voting.delegateSharesWithFallback(
             [],
             roundId: "aabb",
+            proposalId: 1,
             votingAPI: votingAPI,
             serverURLs: ["https://vote.example.com"],
             retryDelay: .zero
@@ -856,7 +968,7 @@ import Testing
     @Test func delegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
         let attempts = AttemptCounter()
         var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _ in
+        votingAPI.delegateShares = { _, _, _, _ in
             _ = await attempts.increment()
             throw SharePostFailure()
         }
@@ -865,11 +977,44 @@ import Testing
             _ = try await Voting.delegateSharesWithFallback(
                 [],
                 roundId: "aabb",
+                proposalId: 1,
                 votingAPI: votingAPI,
                 serverURLs: ["https://vote.example.com"],
                 retryDelay: .zero
             )
         }
+        let attemptCount = await attempts.value()
+        #expect(attemptCount == 1)
+    }
+
+    // MOB-1678: same non-exhaustion rethrow path as the generic test above,
+    // pinned to the concrete case a live wire bug actually threw — a
+    // deterministic HTTP rejection must surface as itself, not get relabeled
+    // `noReachableVoteServers` or absorbed into the 3x reachability retry.
+    @Test func delegateSharesWithFallbackRethrowsHttpRejectionWithoutRetry() async {
+        let attempts = AttemptCounter()
+        var votingAPI = VotingAPIClient()
+        votingAPI.delegateShares = { _, _, _, _ in
+            _ = await attempts.increment()
+            throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+        }
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await Voting.delegateSharesWithFallback(
+                [],
+                roundId: "aabb",
+                proposalId: 1,
+                votingAPI: votingAPI,
+                serverURLs: ["https://vote.example.com"],
+                retryDelay: .zero
+            )
+        }
+
+        guard case .httpError(let statusCode, _)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
         let attemptCount = await attempts.value()
         #expect(attemptCount == 1)
     }
@@ -929,21 +1074,9 @@ private func makeShareDelegation(
 }
 
 private func makeRecoverySharePayload(index: UInt32 = 0) -> SharePayload {
-    let share = EncryptedShare(
-        c1: Data(repeating: UInt8(index + 1), count: 32),
-        c2: Data(repeating: UInt8(index + 2), count: 32),
+    SharePayload(
+        wireJson: "{\"share_index\":\(index),\"submit_at\":99}",
         shareIndex: index
-    )
-    return SharePayload(
-        sharesHash: Data(repeating: 0x01, count: 32),
-        proposalId: 1,
-        voteDecision: 0,
-        encShare: share,
-        treePosition: 10,
-        allEncShares: [share],
-        shareComms: [Data(repeating: 0x03, count: 32)],
-        primaryBlind: Data(repeating: 0x04, count: 32),
-        submitAt: 99
     )
 }
 #endif

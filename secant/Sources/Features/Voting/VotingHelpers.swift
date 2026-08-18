@@ -312,6 +312,7 @@ enum Voting {
     static func delegateSharesWithFallback(
         _ payloads: [SharePayload],
         roundId: String,
+        proposalId: UInt32,
         votingAPI: VotingAPIClient,
         serverURLs: [String],
         retryDelay: Duration = .seconds(2)
@@ -323,7 +324,7 @@ enum Voting {
         var lastExhaustionError: ShareDelegationError?
         for attempt in 1...3 {
             do {
-                return try await votingAPI.delegateShares(payloads, roundId, serverURLs)
+                return try await votingAPI.delegateShares(payloads, roundId, proposalId, serverURLs)
             } catch let error as ShareDelegationError where error == .noReachableVoteServers {
                 lastExhaustionError = error
                 LoggerProxy.warn("delegateShares attempt \(attempt)/3 exhausted vote servers")
@@ -336,7 +337,8 @@ enum Voting {
             }
         }
 
-        throw lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
+        let finalError = lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
+        throw finalError
     }
 }
 
@@ -461,6 +463,16 @@ enum VotingErrorMapper {
         }
         if rawError.contains("delegation bundle build failed") || rawError.contains("create_proof failed") {
             return String(localizable: .coinVoteStoreUserErrorProofGenerationFailed)
+        }
+        if rawError.contains("refusing to overwrite") {
+            // Triage fingerprint for finding #10 (CHP.md): `zcash_voting` stores
+            // `pczt_sighash` and its sibling setup blobs write-once per (round, wallet,
+            // bundle), and randomized re-builds can never match — this guard firing means
+            // a rebuild ran over persisted setup. The delegation pipeline now resumes
+            // from persisted setup instead of rebuilding, so this path is near-unreachable;
+            // if it surfaces anyway, retrying resumes correctly, so map it onto the
+            // existing retryable out-of-sync message rather than leaking crate internals.
+            return String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight)
         }
         if rawError.contains("NoTreeState") || rawError.contains("no tree state") {
             return String(localizable: .coinVoteStoreUserErrorNoTreeState)
