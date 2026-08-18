@@ -1193,6 +1193,110 @@ import Testing
     }
 }
 
+/// A vote commitment's 16 shares each carry that share's `primary_blind` in the
+/// clear, alongside the full `share_comms` vector. A helper that receives every
+/// share therefore learns every blind against every commitment and can solve for
+/// the share values — recovering the voter's exact balance. `zcash_voting` 3.0.0
+/// closes this in its own planner by omitting the server at index
+/// `share_index % 16` from that share's initial targets; ZODL drives its own
+/// fan-out, so the same guarantee is enforced here.
+@Suite struct ShareDelegationSpreadTests {
+    @Test func noHelperReceivesEveryShareOnInitialSubmission() async throws {
+        let recorder = ShareTargetRecorder()
+        let payloads = (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) }
+        let servers = [
+            "https://helper-a.example.com",
+            "https://helper-b.example.com",
+            "https://helper-c.example.com"
+        ]
+
+        _ = try await delegateSharePayloads(
+            payloads,
+            proposalId: 1,
+            initialServerURLs: servers,
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+            },
+            // Worst case on purpose: a selector with no spread of its own hands
+            // the same prefix to every share. The omission rule is what has to
+            // break the correlation, not the selector's randomness.
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        for server in servers {
+            let received = await recorder.shareIndices(for: server)
+            #expect(received.count < 16, "\(server) received all 16 shares — it can recover the voter's balance")
+        }
+    }
+
+    /// The omitted server for a share is fixed by its position in the *configured*
+    /// helper list. `delegateSharePayloads` prunes failed helpers from its working
+    /// set mid-commitment, and if the omission were computed against that shrinking
+    /// list the indices would shift: a helper whose omitted share moves backwards
+    /// past the share already being sent never comes due again, and can collect the
+    /// entire remainder of the commitment.
+    @Test func helperOmissionFollowsConfiguredOrderWhenAnotherHelperIsPruned() async throws {
+        let recorder = ShareTargetRecorder()
+        let helperA = "https://helper-a.example.com"
+        let helperB = "https://helper-b.example.com"
+        let helperC = "https://helper-c.example.com"
+        let helperD = "https://helper-d.example.com"
+
+        // B fails on its first attempt (share 0) and is pruned, so every later share
+        // is planned against a 3-helper working set while the configured list stays 4.
+        _ = try await delegateSharePayloads(
+            (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) },
+            proposalId: 1,
+            initialServerURLs: [helperA, helperB, helperC, helperD],
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+                if server == helperB { throw SharePostFailure() }
+            },
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        // C sits at configured index 2, so share 2 is the one it must miss — and
+        // share 1 (B's index) must still reach it. Indexing the pruned list instead
+        // swaps these two.
+        let received = await recorder.shareIndices(for: helperC)
+        #expect(received.contains(1), "share 1 belongs to the pruned helper's index — C must not inherit its omission")
+        #expect(!received.contains(2), "C sits at configured index 2, so share 2 must stay omitted after pruning")
+    }
+
+    @Test func fallbackStillReachesTheOmittedHelperWhenTheOthersFail() async throws {
+        let recorder = ShareTargetRecorder()
+        // Share 0 omits the server at index 0 from its initial targets.
+        let omitted = "https://helper-a.example.com"
+        let failing = "https://helper-b.example.com"
+
+        _ = try? await delegateSharePayloads(
+            [makeRecoverySharePayload(index: 0)],
+            proposalId: 1,
+            initialServerURLs: [omitted, failing],
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+                if server == failing { throw SharePostFailure() }
+            },
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        let reached = await recorder.shareIndices(for: omitted)
+        #expect(reached.contains(0), "initial-submission omission must not survive into fallback — the share would be lost")
+    }
+}
+
+private actor ShareTargetRecorder {
+    private var byServer: [String: Set<Int>] = [:]
+
+    func record(server: String, shareIndex: Int) {
+        byServer[server, default: []].insert(shareIndex)
+    }
+
+    func shareIndices(for server: String) -> Set<Int> {
+        byServer[server] ?? []
+    }
+}
+
 private actor SharePostRecorder {
     private var postedServers: [String] = []
 

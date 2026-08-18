@@ -374,6 +374,10 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
 typealias SharePost = @Sendable (_ serverURL: String, _ body: [String: Any]) async throws -> Void
 typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount: Int) -> [String]
 
+/// Shares per vote commitment, mirroring `zcash_voting`'s `VOTE_COMMITMENT_SHARE_COUNT`.
+/// Drives the initial-target spread in `delegateSharePayloads`.
+let voteCommitmentShareCount = 16
+
 /// Strictly decodes a hex string to `Data`: the input must have even length and every
 /// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
 /// above — which silently drops any pair that fails to parse, the exact lenient-decoder
@@ -460,13 +464,52 @@ func delegateSharePayloads(
     var lastError: Error?
     var results: [DelegatedShareInfo] = []
 
+    // A full commitment's 16 share payloads each carry that share's `primary_blind`
+    // in the clear next to the whole `share_comms` vector, so a helper holding every
+    // share holds every blind against every commitment and can solve back to the
+    // voter's exact balance. `zcash_voting` 3.0.0 closes this inside its own planner
+    // (`select_batch_share_submission_targets`) by dropping the server at index
+    // `share_index % 16` from that share's initial targets, which leaves every helper
+    // provably short of at least one share. ZODL drives its own fan-out rather than
+    // calling that planner, so the same rule is applied here, under the crate's own
+    // gate: a complete 16-share commitment across more than one helper. Single-share
+    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
+    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
+    // excludes them upstream.
+    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
+        // The guarantee is scoped to initial submission only. Once a target has failed
+        // and we are backfilling, the omitted helper becomes eligible again — losing a
+        // share entirely is worse than one helper holding a complete set, and the crate
+        // scopes its own guarantee the same way.
+        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
-            let candidates = availableServers.filter { !triedServers.contains($0) }
+            var candidates = availableServers.filter { !triedServers.contains($0) }
+            if isInitialAttempt && spreadInitialTargets {
+                let spread = candidates.filter { candidate in
+                    // Indexed against the CONFIGURED list, never `availableServers`:
+                    // failed helpers are pruned from the working set mid-commitment, and
+                    // indexing that shrinking list would slide a helper into a departed
+                    // peer's slot. A helper whose omitted share moves backwards past the
+                    // share being sent never comes due again and can take the whole
+                    // remainder of the commitment — the exact correlation this prevents.
+                    // The crate has no such problem: it plans against a fixed slice.
+                    guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
+                    return position % voteCommitmentShareCount != Int(payload.shareIndex)
+                }
+                // Never let the omission starve a share: ceil(n/2) targets are always
+                // available after dropping at most one helper, but fail open rather
+                // than drop the share if that ever stops holding.
+                if !spread.isEmpty {
+                    candidates = spread
+                }
+            }
+            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
