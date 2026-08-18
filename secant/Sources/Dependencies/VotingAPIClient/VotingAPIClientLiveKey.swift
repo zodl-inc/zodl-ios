@@ -374,12 +374,18 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
 typealias SharePost = @Sendable (_ serverURL: String, _ body: [String: Any]) async throws -> Void
 typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount: Int) -> [String]
 
+/// Shares per vote commitment, mirroring `zcash_voting`'s `VOTE_COMMITMENT_SHARE_COUNT`.
+/// Drives the initial-target spread in `delegateSharePayloads`.
+let voteCommitmentShareCount = 16
+
 /// Strictly decodes a hex string to `Data`: the input must have even length and every
 /// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
 /// above — which silently drops any pair that fails to parse, the exact lenient-decoder
 /// pattern behind campaign finding #3 — any deviation here fails the whole decode instead
-/// of yielding a truncated or garbage result.
-private func strictHexData(_ hex: String) -> Data? {
+/// of yielding a truncated or garbage result. Internal (not private) for its sole
+/// remaining caller, `RoundAuthenticator.signingPayloadV2`, which decodes round ids
+/// with this strictness for auth v2 signing.
+func strictHexData(_ hex: String) -> Data? {
     guard hex.count % 2 == 0 else { return nil }
     var data = Data()
     var idx = hex.startIndex
@@ -396,28 +402,19 @@ private func strictHexData(_ hex: String) -> Data? {
     return data
 }
 
-/// rc.5's `VoteShareWire` (the crate's wire DTO for one share) does not carry a
-/// `vote_round_id` field at all — only its siblings `DelegationSubmissionWire` and
-/// `VoteCommitmentWire` do. The `/shielded-vote/v1/shares` server nonetheless requires the
-/// field (HTTP 400 `vote_round_id: expected 32 bytes, got 0` otherwise), so this injects it
-/// app-side from `roundIdHex`. Measured server contract: the shares endpoint hex-decodes
-/// `vote_round_id` (unlike the delegate-vote and cast-vote endpoints, which accept base64
-/// for the same field name — asymmetry confirmed live 2026-08-12), so this sends the
-/// validated 64-char hex string verbatim, not base64. Candidate for removal once the
-/// crate's `VoteShareWire` carries the field itself.
-func sharePostBody(
-    for payload: SharePayload,
-    roundIdHex: String
-) -> [String: Any] {
+/// The share POST body is the crate's wire JSON verbatim. Since zcash_voting
+/// 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id` itself (a canonical 64-char
+/// lowercase-hex value populated from the persisted recovery bundle), which retired
+/// the rc.5-era app-side injection that used to add the field here. Measured server
+/// contract: the `/shielded-vote/v1/shares` endpoint hex-decodes `vote_round_id`
+/// (unlike the delegate-vote and cast-vote endpoints, which accept base64 for the
+/// same field name — asymmetry confirmed live 2026-08-12), and the crate emits
+/// exactly that hex form, so nothing is added or rewritten app-side.
+func sharePostBody(for payload: SharePayload) -> [String: Any] {
     let data = Data(payload.wireJson.utf8)
-    guard var body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+    guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
         return [:]
     }
-    guard let roundIdData = strictHexData(roundIdHex), roundIdData.count == 32 else {
-        LoggerProxy.error("sharePostBody: invalid roundIdHex (expected 64 hex chars, got \(roundIdHex.count))")
-        return body
-    }
-    body["vote_round_id"] = roundIdHex
     return body
 }
 
@@ -458,7 +455,6 @@ private func applyShareAttemptOutcome(
 
 func delegateSharePayloads(
     _ payloads: [SharePayload],
-    roundIdHex: String,
     proposalId: UInt32,
     initialServerURLs: [String],
     postShare: @escaping SharePost,
@@ -468,13 +464,52 @@ func delegateSharePayloads(
     var lastError: Error?
     var results: [DelegatedShareInfo] = []
 
+    // A full commitment's 16 share payloads each carry that share's `primary_blind`
+    // in the clear next to the whole `share_comms` vector, so a helper holding every
+    // share holds every blind against every commitment and can solve back to the
+    // voter's exact balance. `zcash_voting` 3.0.0 closes this inside its own planner
+    // (`select_batch_share_submission_targets`) by dropping the server at index
+    // `share_index % 16` from that share's initial targets, which leaves every helper
+    // provably short of at least one share. ZODL drives its own fan-out rather than
+    // calling that planner, so the same rule is applied here, under the crate's own
+    // gate: a complete 16-share commitment across more than one helper. Single-share
+    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
+    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
+    // excludes them upstream.
+    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
+        // The guarantee is scoped to initial submission only. Once a target has failed
+        // and we are backfilling, the omitted helper becomes eligible again — losing a
+        // share entirely is worse than one helper holding a complete set, and the crate
+        // scopes its own guarantee the same way.
+        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
-            let candidates = availableServers.filter { !triedServers.contains($0) }
+            var candidates = availableServers.filter { !triedServers.contains($0) }
+            if isInitialAttempt && spreadInitialTargets {
+                let spread = candidates.filter { candidate in
+                    // Indexed against the CONFIGURED list, never `availableServers`:
+                    // failed helpers are pruned from the working set mid-commitment, and
+                    // indexing that shrinking list would slide a helper into a departed
+                    // peer's slot. A helper whose omitted share moves backwards past the
+                    // share being sent never comes due again and can take the whole
+                    // remainder of the commitment — the exact correlation this prevents.
+                    // The crate has no such problem: it plans against a fixed slice.
+                    guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
+                    return position % voteCommitmentShareCount != Int(payload.shareIndex)
+                }
+                // Never let the omission starve a share: ceil(n/2) targets are always
+                // available after dropping at most one helper, but fail open rather
+                // than drop the share if that ever stops holding.
+                if !spread.isEmpty {
+                    candidates = spread
+                }
+            }
+            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
@@ -490,7 +525,7 @@ func delegateSharePayloads(
                         do {
                             // Build body inside the task: [String: Any] isn't Sendable, but SharePayload is —
                             // recompute per task so the sending closure only captures Sendable values.
-                            let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
+                            let body = sharePostBody(for: payload)
                             try await postShare(server, body)
                             return (server, .success(()))
                         } catch {
@@ -547,7 +582,6 @@ func delegateSharePayloads(
 
 func resubmitSharePayload(
     _ payload: SharePayload,
-    roundIdHex: String,
     configuredServerURLs: [String],
     sentToURLs: [String],
     postShare: @escaping SharePost,
@@ -556,7 +590,7 @@ func resubmitSharePayload(
     let sentSet = Set(sentToURLs)
     let untried = orderServers(configuredServerURLs.filter { !sentSet.contains($0) })
     let alreadySent = orderServers(configuredServerURLs.filter { sentSet.contains($0) })
-    let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
+    let body = sharePostBody(for: payload)
 
     for server in untried + alreadySent {
         do {
@@ -768,11 +802,14 @@ private func authenticateVotingSession(_ session: VotingSession) async throws ->
     }
 
     let roundIdHex = hexString(from: session.voteRoundId)
+    // `rounds` and `pirLayout` intentionally come from the same stored dynamic config:
+    // the v2 attestation signs the round id together with that config's PIR layout.
     let status = RoundAuthenticator.authenticate(
         chainEaPK: session.eaPK,
         roundIdHex: roundIdHex,
         rounds: configuration.serviceConfig.rounds,
-        trustedKeys: configuration.staticConfig.trustedKeys
+        trustedKeys: configuration.staticConfig.trustedKeys,
+        pirLayout: configuration.serviceConfig.pirLayout
     )
     guard status == .authenticated else {
         LoggerProxy.error(
@@ -802,13 +839,20 @@ private func authenticatedVotingSessions(from rounds: [[String: Any]]) async thr
 ///
 /// Round authentication is intentionally per-round: one broken historical
 /// signature must hide only that round, while still allowing other active
-/// or finalized rounds to render.
+/// or finalized rounds to render. Verification is v2 (MOB-1678): each signature
+/// covers the round id and this config's own top-level `pir_layout`, so entries
+/// signed for another round id or another layout generation drop here.
 func serviceConfigRetainingRoundsWithValidSignatures(
     _ config: VotingServiceConfig,
     trustedKeys: [StaticVotingConfig.TrustedKey]
 ) -> VotingServiceConfig {
-    let authenticatedRounds = config.rounds.filter { _, entry in
-        RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: trustedKeys)
+    let authenticatedRounds = config.rounds.filter { roundIdHex, entry in
+        RoundAuthenticator.verifyEntrySignatures(
+            entry: entry,
+            roundIdHex: roundIdHex,
+            pirLayout: config.pirLayout,
+            trustedKeys: trustedKeys
+        )
     }
     return VotingServiceConfig(
         configVersion: config.configVersion,
@@ -1019,7 +1063,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 }
             },
-            delegateShares: { payloads, roundIdHex, proposalId, serverURLs in
+            delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
                     // Active foreground delivery uses the submission-local server set.
@@ -1030,7 +1074,6 @@ extension VotingAPIClient: DependencyKey {
                     let tracker = ServerHealthTracker.shared
                     return try await delegateSharePayloads(
                         payloads,
-                        roundIdHex: roundIdHex,
                         proposalId: proposalId,
                         initialServerURLs: serverURLs,
                         postShare: { server, body in
@@ -1075,12 +1118,11 @@ extension VotingAPIClient: DependencyKey {
                     return .pending
                 }
             },
-            resubmitShare: { payload, roundIdHex, excludeURLs in
+            resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
                 return await resubmitSharePayload(
                     payload,
-                    roundIdHex: roundIdHex,
                     configuredServerURLs: configuredServerURLs,
                     sentToURLs: excludeURLs,
                     postShare: { server, body in

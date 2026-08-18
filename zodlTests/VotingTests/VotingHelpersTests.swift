@@ -21,6 +21,42 @@ import Testing
         #expect(message == String(localizable: .coinVoteStoreUserErrorPirInvalidProofData))
     }
 
+    // 3.0-bump fingerprints (MOB-1678): the four new crate message shapes must land on
+    // existing copy, not leak crate internals. Raw strings mirror pir-client 0.4.0-rc.7's
+    // connect ensure, pir-types' validate_supported, and tree_sync.rs's VAN checks.
+
+    @Test func votingErrorMapperMapsPolyLenMismatchToSnapshotMismatch() {
+        let message = VotingErrorMapper.userFriendlyMessage(
+            from: "Invalid input: PIR poly_len mismatch: expected 4096, server advertised 2048"
+        )
+
+        #expect(message == String(localizable: .coinVoteStoreUserErrorPirSnapshotMismatch))
+    }
+
+    @Test func votingErrorMapperMapsUnsupportedPirLayoutToConfigMessage() {
+        let message = VotingErrorMapper.userFriendlyMessage(
+            from: "unsupported PIR layout poly_len 1024; expected 2048 or 4096"
+        )
+
+        #expect(message == String(localizable: .coinVoteStoreUserErrorPirEndpointsMissing))
+    }
+
+    @Test func votingErrorMapperMapsVanLeafMismatchToRetryableOutOfSync() {
+        let message = VotingErrorMapper.userFriendlyMessage(
+            from: "Invalid input: confirmed delegation bundle 0 does not match its synced vote-tree leaf"
+        )
+
+        #expect(message == String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight))
+    }
+
+    @Test func votingErrorMapperMapsVanAbsentFromTreeToNotYetConfirmed() {
+        let message = VotingErrorMapper.userFriendlyMessage(
+            from: "Invalid input: confirmed delegation bundle 1 is absent from the synced vote tree"
+        )
+
+        #expect(message == String(localizable: .coinVoteStoreUserErrorCommitmentTreeNotGrown))
+    }
+
     @Test func smartBundlesUsesRustOrderingAndPerBundleQuantization() {
         let notes = [
             note(value: 31_568_000, position: 0),

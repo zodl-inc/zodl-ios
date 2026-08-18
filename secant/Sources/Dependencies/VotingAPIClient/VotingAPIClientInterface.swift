@@ -69,9 +69,11 @@ struct VotingAPIClient {
     var submitDelegation: @Sendable (_ registration: DelegationRegistration) async throws -> TxResult
     var submitVoteCommitment: @Sendable (_ bundle: VoteCommitmentBundle, _ signature: CastVoteSignature) async throws -> TxResult
     /// Distribute shares across the provided active-submission vote server set.
+    /// The round id travels inside each payload's crate wire JSON (`vote_round_id`,
+    /// carried by `VoteShareWire` since zcash_voting 3.0.0-rc.3), so no separate
+    /// round id parameter exists here.
     var delegateShares: @Sendable (
         _ payloads: [SharePayload],
-        _ roundIdHex: String,
         _ proposalId: UInt32,
         _ serverURLs: [String]
     ) async throws -> ShareDelegationResult
@@ -79,7 +81,7 @@ struct VotingAPIClient {
     var fetchShareStatus: @Sendable (_ helperBaseURL: String, _ roundIdHex: String, _ nullifierHex: String) async throws -> ShareConfirmationResult
     /// Resubmit a single share to configured vote servers, preferring URLs that have not already accepted it.
     /// Returns the list of server URLs that accepted the share (empty if all failed).
-    var resubmitShare: @Sendable (_ payload: SharePayload, _ roundIdHex: String, _ excludeURLs: [String]) async throws -> [String]
+    var resubmitShare: @Sendable (_ payload: SharePayload, _ excludeURLs: [String]) async throws -> [String]
     var fetchProposalTally: @Sendable (_ roundId: Data, _ proposalId: UInt32) async throws -> TallyResult
     /// Query the Cosmos SDK TX endpoint for a confirmed transaction and its ABCI events.
     /// Returns nil if the TX is not yet in a block (404 or network error).
