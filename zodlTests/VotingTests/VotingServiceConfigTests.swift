@@ -143,6 +143,30 @@ import Testing
         }
     }
 
+    /// The bundled anchor is a hand-edited string literal carrying a 64-char hash,
+    /// and `PinnedConfigSource.sha256` is optional by design — a source without a
+    /// `?checksum=` is legal and parses fine (see
+    /// `pinnedConfigSourceParseAcceptsMissingChecksum`). `decodeAndVerify` only
+    /// checks the digest `if let expectedSHA256`, so a pin that loses its checksum
+    /// to a typo, a bad merge, or a truncated edit does not fail — it silently
+    /// accepts whatever the host returns, turning the anchor into plain trust in
+    /// the transport. Nothing else in the suite pins the bundled constant itself.
+    @Test func bundledPinnedSourceCarriesAChecksumSoVerificationCannotSilentlyNoOp() throws {
+        let source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
+
+        #expect(source.url.scheme == "https")
+        let digest = try #require(
+            source.sha256,
+            "bundled pin carries no checksum — decodeAndVerify would accept any bytes the host serves"
+        )
+        #expect(digest.count == 32)
+
+        // The digest is the pin; it must not also travel to the server as a query
+        // the host could key behaviour off.
+        let sentQuery = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(!sentQuery.contains { $0.name == "checksum" })
+    }
+
     @Test func staticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {
         let config = makeStaticConfig()
         let data = try JSONEncoder().encode(config)
