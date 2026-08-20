@@ -22,10 +22,6 @@ struct ShieldingProcessorClient {
     enum State: Equatable {
         case failed(ZcashError)
         case grpc
-        /// The SDK had nothing shieldable to propose (`proposeShielding` returned a nil proposal):
-        /// the transparent balance the caller acted on is already spent or below the shielding
-        /// threshold. A distinct state from `.failed` because nothing went wrong — surfacing it as
-        /// a `ZcashError` is what produced the raw `ZUNKWN0001` alert in MOB-1755.
         case nothingToShield
         case proposal(Proposal)
         case requested
