@@ -30,6 +30,9 @@ extension Root {
                     state.alert = AlertState.shieldFundsFailure(error)
                 case .grpc:
                     state.alert = AlertState.shieldFundsGrpc()
+                case .nothingToShield:
+                    // MOB-1755: not an error — say so plainly and offer no support report.
+                    state.alert = AlertState.shieldFundsNothingToShield()
                 case .proposal(let proposal):
                     state.signWithKeystoneCoordFlowState = .initial
                     state.signWithKeystoneCoordFlowState.sendConfirmationState.proposal = proposal

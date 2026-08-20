@@ -153,7 +153,10 @@ struct Balances {
             
             case .shieldingProcessorStateChanged(let shieldingProcessorState):
                 state.isShielding = shieldingProcessorState == .requested
-                if shieldingProcessorState == .succeeded {
+                if shieldingProcessorState == .succeeded || shieldingProcessorState == .nothingToShield {
+                    // MOB-1755: `.nothingToShield` means this sheet was showing a transparent
+                    // balance that is already spent, so re-read it rather than leave the stale
+                    // figure — and its Shield button — on screen.
                     return .send(.updateBalancesOnAppear)
                 }
                 return .none

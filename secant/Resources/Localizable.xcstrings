@@ -18346,6 +18346,40 @@
         }
       }
     },
+    "shieldFunds.nothingToShield.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your transparent funds have already been shielded. There is nothing left to shield right now."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tus fondos transparentes ya fueron protegidos. No queda nada por proteger en este momento."
+          }
+        }
+      }
+    },
+    "shieldFunds.nothingToShield.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to Shield"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nada que Proteger"
+          }
+        }
+      }
+    },
     "smartBanner.content.autoShielding.button" : {
       "extractionState" : "manual",
       "localizations" : {

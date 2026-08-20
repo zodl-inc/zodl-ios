@@ -972,6 +972,14 @@ extension AlertState where Action == Root.Action {
         }
     }
     
+    static func shieldFundsNothingToShield() -> AlertState {
+        AlertState {
+            TextState(String(localizable: .shieldFundsNothingToShieldTitle))
+        } message: {
+            TextState(String(localizable: .shieldFundsNothingToShieldMessage))
+        }
+    }
+
     static func shieldFundsGrpc() -> AlertState {
         AlertState {
             TextState(String(localizable: .shieldFundsErrorTitle))

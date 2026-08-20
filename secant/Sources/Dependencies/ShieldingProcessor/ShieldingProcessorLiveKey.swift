@@ -54,7 +54,14 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                 do {
                     let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
 
-                    guard let proposal else { throw "shieldFunds with Keystone: nil proposal" }
+                    // MOB-1755: a nil proposal is "nothing shieldable left", not a failure. The
+                    // caller acted on a transparent balance that has since been spent (or never
+                    // cleared the threshold), so report it as such instead of wrapping the words
+                    // in a `ZcashError` the user is then invited to file a support report about.
+                    guard let proposal else {
+                        subject.send(.nothingToShield)
+                        return
+                    }
                     subject.send(.proposal(proposal))
                 } catch {
                     subject.send(.failed(error.toZcashError()))
@@ -69,7 +76,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
 
                     let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
 
-                    guard let proposal else { throw "shieldFunds nil proposal" }
+                    // MOB-1755, see the Keystone branch above.
+                    guard let proposal else {
+                        subject.send(.nothingToShield)
+                        return
+                    }
 
                     let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 

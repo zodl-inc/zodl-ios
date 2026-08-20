@@ -135,11 +135,32 @@ struct SmartBanner {
         var synchronizerStatusSnapshot: SyncStatusSnapshot = .snapshotFor(state: .unprepared)
         var tokenName = "ZEC"
         @Shared(.inMemory(.transactions)) var transactions: IdentifiedArrayOf<TransactionState> = []
+        /// The account's transparent balance as the SDK last reported it, mirrored verbatim in
+        /// `syncStatusChangedEffect` and (asynchronously) by `shieldingOfferEffect`. MOB-1755: it is
+        /// never written optimistically — it renders the shielding banner's amount, so a write made
+        /// for display reasons must never be able to answer "is there anything to shield".
         var transparentBalance = Zatoshi(0)
         @Shared(.inMemory(.walletStatus)) var walletStatus: WalletStatus = .none
 
         var areFundsSpendable: Bool {
             isScanProgressComplete && spendableBalance.amount > 0
+        }
+
+        /// Whether a shield this wallet already started is still in flight. Observed on device
+        /// 2026-08-20: for a second or two after a successful shield the SDK reports the
+        /// PRE-SHIELD `unshielded` again, which reads as a fresh rising edge and re-offers the very
+        /// funds now being shielded — the banner returning with the identical amount. Derived from
+        /// the transaction list rather than latched by hand, so it clears itself when the
+        /// transaction mines, with nothing to reset.
+        var hasPendingShieldingTransaction: Bool {
+            transactions.contains { $0.isShieldingTransaction && $0.isPending }
+        }
+
+        /// Whether `transparentBalance` is an amount the SDK could actually build a shielding
+        /// proposal for. Anything below the threshold — zero above all — would come back from
+        /// `proposeShielding` as a nil proposal (MOB-1755).
+        func isShieldable(_ shieldingThreshold: Zatoshi) -> Bool {
+            transparentBalance >= shieldingThreshold
         }
 
         var feeStr: String {
@@ -204,6 +225,7 @@ struct SmartBanner {
         case evaluatePriority5
         case evaluatePriority6
         case evaluatePriority7
+        case shieldingOfferReevaluationRequested(Zatoshi)
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
@@ -320,28 +342,38 @@ struct SmartBanner {
                 return .none
                 
             case .shieldingProcessorStateChanged(let shieldingProcessorState):
-                if shieldingProcessorState == .succeeded {
-                    state.transparentBalance = .zero
-                }
+                // MOB-1755: `.succeeded` used to write `state.transparentBalance = .zero` here. That
+                // optimistic write was the bug's engine — it is the displayed amount AND was the
+                // input to the "should shielding be offered" comparison, so a cosmetic update
+                // decided control flow. The figure is now mirrored from the SDK in
+                // `syncStatusChangedEffect` and written nowhere else; retiring the offer is handled
+                // below by giving up the slot, which is the only thing this event actually knows.
                 state.isShielding = shieldingProcessorState == .requested
-                if (state.isOpen || state.isSmartBannerSheetPresented) && state.priorityContent == .priority7 {
-                    var hideEverything = false
-                    if case .proposal = shieldingProcessorState {
-                        hideEverything = true
-                    } else if shieldingProcessorState == .succeeded {
-                        hideEverything = true
-                    }
-                    if hideEverything {
-                        return .merge(
-                            .send(.closeAndCleanupBanner),
-                            .send(.closeSheetTapped)
-                        )
-                    }
+                var hideEverything = false
+                if case .proposal = shieldingProcessorState {
+                    hideEverything = true
+                } else if shieldingProcessorState == .succeeded {
+                    hideEverything = true
+                }
+                // MOB-1755: retract a `priority7` that is merely SEATED as well as one already on
+                // screen. `.triggerPriority` claims the slot and only opens it `state.delay` seconds
+                // later, and a shield started from the sheet settles inside that window — the old
+                // `state.isOpen` precondition let the request survive its own success and open a
+                // moment later against the `.zero` written just above, which is the "Shield 0.000"
+                // banner reported here.
+                if hideEverything && (state.priorityContent == .priority7 || state.priorityContentRequested == .priority7) {
+                    return .merge(
+                        .send(.closeAndCleanupBanner),
+                        .send(.closeSheetTapped)
+                    )
                 }
                 return .none
                 
             case .walletAccountChanged:
                 state.remindMeShieldedPhaseCounter = 0
+                // The previous account's figure must not be read as the new one's: the ladder
+                // restarted below re-mirrors it from the SDK for whichever account is now selected.
+                state.transparentBalance = .zero
                 return .merge(
                     // An account switch must stop a post-restore migration re-poll in flight for the
                     // OLD account outright — the decision belongs to whichever account armed it, and
@@ -877,33 +909,14 @@ struct SmartBanner {
 
                 // shielding
             case .evaluatePriority7:
-                guard let account = state.selectedWalletAccount else {
-                    return .none
-                }
-                if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
-                    state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
-                }
-                return .run { [remindMeShieldedPhaseCounter = state.remindMeShieldedPhaseCounter] send in
-                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id],
-                       accountBalance.unshielded >= zcashSDKEnvironment.shieldingThreshold() {
-                        await send(.transparentBalanceUpdated(accountBalance.unshielded))
-                        
-                        if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
-                            let now = Date().timeIntervalSince1970
+                // The LADDER's entry: a decline walks on to the next rung.
+                return shieldingOfferEffect(state: &state, onDecline: .evaluatePriority75)
 
-                            if (remindMeShieldedPhaseCounter == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
-                                || (remindMeShieldedPhaseCounter == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
-                                || (remindMeShieldedPhaseCounter > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now) {
-                                await send(.triggerPriority(.priority7))
-                            }
-                        } else {
-                            // phase 1
-                            await send(.triggerPriority(.priority7))
-                        }
-                    } else {
-                        await send(.evaluatePriority75)
-                    }
-                }
+            case .shieldingOfferReevaluationRequested(let knownUnshielded):
+                // MOB-1755: the SYNC tick's entry — the same question, but a decline stops here
+                // rather than walking the ladder, so a transparent deposit landing can never seat
+                // Tor or currency conversion as a side effect of asking about shielding.
+                return shieldingOfferEffect(state: &state, knownUnshielded: knownUnshielded, onDecline: nil)
                 
                 // tor
             case .evaluatePriority75:
@@ -956,6 +969,14 @@ struct SmartBanner {
                 guard let priorityContentRequested = state.priorityContentRequested else {
                     return .none
                 }
+                // MOB-1755: the shielding banner is an offer to spend a specific amount, so it may
+                // never be seated for an amount the SDK cannot propose. This is the last gate before
+                // the slot is claimed; `.openBanner` re-checks after the delay, because the balance
+                // can go to zero while the banner waits its turn.
+                if priorityContentRequested == .priority7, !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
+                    state.priorityContentRequested = nil
+                    return .none
+                }
                 if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
                     return .none
                 }
@@ -984,6 +1005,11 @@ struct SmartBanner {
                 }
 
             case .openBanner:
+                // MOB-1755: see `.openBannerRequest` — the seat was granted up to `state.delay`
+                // seconds ago and a shield can settle inside that window.
+                if state.priorityContent == .priority7, !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
+                    return .send(.closeBanner(true))
+                }
                 state.delay = 1.0
                 state.isOpen = true
                 return .none
@@ -1257,16 +1283,101 @@ struct SmartBanner {
         .cancellable(id: state.CancelMigrationRepollId, cancelInFlight: true)
     }
 
+    /// MOB-1755: THE shielding-offer decision — one funnel, so every route to the banner asks the
+    /// same question and honours the same "Remind me later" backoff. Previously the ladder consulted
+    /// `exportShieldingReminder` while the sync tick called `.triggerPriority(.priority7)` outright,
+    /// which made a dismissal binding on one path and not the other.
+    ///
+    /// The balance is re-read from the SDK rather than taken from `state.transparentBalance`: this
+    /// runs asynchronously, and the offer must be decided against what the wallet reports at the
+    /// moment of asking. That is also what retires the offer for funds a shield has already spent —
+    /// the spend is recorded in the wallet DB before the transaction is submitted, so `unshielded`
+    /// answers zero from then on, with no in-flight bookkeeping needed on this side.
+    ///
+    /// `onDecline` is the caller's business: the ladder walks on to the next rung, the sync tick
+    /// stops (`nil`).
+    ///
+    /// `knownUnshielded` is the caller's already-authoritative figure, and skipping the wallet-DB
+    /// read when it exists is not an optimisation but a correctness-of-load matter: the sync route
+    /// calls this from a stream emission that ALREADY carries the balance, and the SDK masks
+    /// `unshielded` to zero whenever the chain tip is not current, so during a sync the
+    /// "became shieldable" edge can rise repeatedly. Re-querying on each one put a wallet-DB read
+    /// behind every flip while the same database was under restore write load.
+    private func shieldingOfferEffect(
+        state: inout State,
+        knownUnshielded: Zatoshi? = nil,
+        onDecline: Action?
+    ) -> Effect<Action> {
+        guard let account = state.selectedWalletAccount else {
+            return .none
+        }
+        // The funds are already on their way to the shielded pool; offering them again is an offer
+        // the SDK would refuse. Checked in the ONE funnel, so both routes to the banner honour it.
+        guard !state.hasPendingShieldingTransaction else {
+            return onDecline.map { Effect.send($0) } ?? .none
+        }
+        if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
+            state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
+        }
+        return .run { [remindMeShieldedPhaseCounter = state.remindMeShieldedPhaseCounter, onDecline, knownUnshielded] send in
+            let unshielded: Zatoshi?
+            if let knownUnshielded {
+                unshielded = knownUnshielded
+            } else {
+                unshielded = try? await sdkSynchronizer.getAccountsBalances()[account.id]?.unshielded
+            }
+            guard let unshielded, unshielded >= zcashSDKEnvironment.shieldingThreshold() else {
+                if let onDecline {
+                    await send(onDecline)
+                }
+                return
+            }
+            await send(.transparentBalanceUpdated(unshielded))
+
+            guard let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) else {
+                // phase 1 — never offered, never dismissed
+                await send(.triggerPriority(.priority7))
+                return
+            }
+            let now = Date().timeIntervalSince1970
+            if (remindMeShieldedPhaseCounter == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
+                || (remindMeShieldedPhaseCounter == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
+                || (remindMeShieldedPhaseCounter > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now) {
+                await send(.triggerPriority(.priority7))
+            }
+        }
+    }
+
     /// The pre-existing body of `.synchronizerStateChanged`, extracted verbatim except for the two
     /// migration arms in the `.upToDate` case, so it can be merged with `ironwoodActivationFlipEffect`
     /// instead of racing it for the case's single return value.
     private func syncStatusChangedEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
         let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
+        var didTransparentBalanceBecomeShieldable = false
+        var latestUnshielded = Zatoshi(0)
+
         if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
             // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
             // shielded pool) instead of hand-summing individual pools.
             state.spendableBalance = accountBalance.shieldedSpendableValue
+
+            // MOB-1755: the ONE write to `transparentBalance`, verbatim from the SDK, on every
+            // emission rather than only on a sync-status transition. The rising edge is read from
+            // the two SDK-reported figures either side of it — never from a value this reducer
+            // writes for its own reasons, which is what let a display update decide whether to
+            // offer a shield.
+            //
+            // Guarded on inequality: this method runs on EVERY emission of a stream throttled to
+            // 0.2s, and `transparentBalance` is `@ObservableState` — an unconditional assignment
+            // would notify observers five times a second to re-render an unchanged figure.
+            let threshold = zcashSDKEnvironment.shieldingThreshold()
+            let wasShieldable = state.transparentBalance >= threshold
+            if state.transparentBalance != accountBalance.unshielded {
+                state.transparentBalance = accountBalance.unshielded
+            }
+            latestUnshielded = accountBalance.unshielded
+            didTransparentBalanceBecomeShieldable = !wasShieldable && accountBalance.unshielded >= threshold
         }
 
         // `SyncStatus.==` returns true for ANY two `.error` values (Synchronizer.swift), so a
@@ -1371,24 +1482,6 @@ struct SmartBanner {
             default: break
             }
 
-            if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                if state.priorityContent == .priority7 {
-                    if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                        return .send(.transparentBalanceUpdated(accountBalance.unshielded))
-                    } else {
-                        return .merge(
-                            .send(.closeAndCleanupBanner),
-                            .send(.closeSheetTapped)
-                        )
-                    }
-                } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                    return .merge(
-                        .send(.transparentBalanceUpdated(accountBalance.unshielded)),
-                        .send(.triggerPriority(.priority7))
-                    )
-                }
-            }
-
             // return of restoring/syncing
             let isSyncingHigherPriority = (state.priorityContent?.rawValue ?? 0) > State.PriorityContent.priority4.rawValue
             if isSyncing && (state.priorityContent == nil || isSyncingHigherPriority) {
@@ -1400,6 +1493,33 @@ struct SmartBanner {
                     return .send(.triggerPriority(.priority4))
                 }
             }
+        }
+
+        // MOB-1755: OUTSIDE the status-transition guard above, deliberately. The transparent figure
+        // is mirrored on every emission, so the arms that read it must run on every emission — sited
+        // inside the guard, a rising edge arriving without a status change would be swallowed and,
+        // the mirror having already moved, never seen again.
+        //
+        // The displayed figure needs no action of its own; what is left is the OFFER. Retire one
+        // that stopped being shieldable, and raise one on a rising edge through the same
+        // reminder-aware funnel the ladder uses — raising it here with a bare `.triggerPriority` is
+        // what let a sync tick reinstate a banner the user had dismissed with "Remind me later".
+        if state.priorityContent == .priority7 {
+            if !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
+                return .merge(
+                    .send(.closeAndCleanupBanner),
+                    .send(.closeSheetTapped)
+                )
+            }
+        } else if didTransparentBalanceBecomeShieldable, snapshot.syncStatus == .upToDate {
+            // Gated on a SETTLED sync, for two reasons that happen to agree. Semantically, an offer
+            // to shield is only meaningful once the wallet knows what it holds. Mechanically, the
+            // SDK masks `unshielded` to zero whenever the chain tip is not current
+            // (`WalletSummary.withSpendableMasked`), so mid-sync this figure oscillates between zero
+            // and the real value — and every rising edge here runs `exportShieldingReminder`, a
+            // SYNCHRONOUS Keychain read (`SecItem.copyMatching`) on the main actor. Ungated, a
+            // stream throttled to 0.2s could drive several of those a second and stall the UI.
+            return .send(.shieldingOfferReevaluationRequested(latestUnshielded))
         }
 
         return .none
