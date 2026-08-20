@@ -23,6 +23,7 @@ struct Near1Click {
         static let blockchain = "blockchain"
         static let symbol = "symbol"
         static let assetId = "assetId"
+        static let contractAddress = "contractAddress"
         static let price = "price"
         static let decimals = "decimals"
         static let message = "message"
@@ -270,6 +271,7 @@ struct Near1Click {
                 chain: chain,
                 token: symbol,
                 assetId: assetId,
+                contractAddress: dict[Constants.contractAddress] as? String,
                 usdPrice: Decimal(usdPrice),
                 decimals: decimals
             )

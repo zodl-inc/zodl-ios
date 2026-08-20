@@ -1732,6 +1732,29 @@ extension SwapAndPay.State {
 // MARK: - CrossPay
 
 extension SwapAndPay.State {
+    mutating func applyScannedRequest(_ value: String) {
+        guard let request = CrossPayRequestParser.parse(value) else {
+            address = value
+            return
+        }
+
+        address = request.address
+        guard !isSwapExperienceEnabled, !isSwapToZecExperienceEnabled else { return }
+
+        selectedContact = nil
+        selectedAsset = request.resolveAsset(in: swapAssets, current: selectedAsset)
+        amountAssetText = ""
+        amountUsdText = ""
+        amountText = ""
+
+        guard let amount = request.resolvedAmount(for: selectedAsset),
+              let formatted = conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amount)) else { return }
+
+        amountAssetText = formatted
+        amountText = formatted
+        amountUsdText = payUsdLabel
+    }
+
     var payZecLabel: String {
         guard let zecAsset else {
             return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"
