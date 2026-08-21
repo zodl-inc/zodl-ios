@@ -330,10 +330,18 @@ struct SmartBanner {
                 
             case .shieldingProcessorStateChanged(let shieldingProcessorState):
                 state.isShielding = shieldingProcessorState == .requested
+                // `.nothingToShield` belongs here alongside `.succeeded`/`.proposal`: shielding can be
+                // triggered from the Balances screen (`BalancesStore.shieldFundsTapped`) as well as
+                // this banner's own button, and that call site has no SmartBanner state to close.
+                // Both reducers observe the same shared `shieldingProcessor.observe()` stream, so
+                // without this a shield started from Balances that finds nothing to shield leaves a
+                // stale priority7 banner mounted underneath once the Balances sheet is dismissed —
+                // waiting on the next sync tick to self-correct rather than retracting immediately,
+                // the way every other terminal outcome here already does.
                 var hideEverything = false
                 if case .proposal = shieldingProcessorState {
                     hideEverything = true
-                } else if shieldingProcessorState == .succeeded {
+                } else if shieldingProcessorState == .succeeded || shieldingProcessorState == .nothingToShield {
                     hideEverything = true
                 }
                 if hideEverything && (state.priorityContent == .priority7 || state.priorityContentRequested == .priority7) {

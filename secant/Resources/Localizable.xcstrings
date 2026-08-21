@@ -18352,13 +18352,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your transparent funds have already been shielded. There is nothing left to shield right now."
+            "value" : "There is nothing left to shield right now. Your transparent balance may already be shielded, or it may be too small to shield on its own."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tus fondos transparentes ya fueron protegidos. No queda nada por proteger en este momento."
+            "value" : "No queda nada por proteger en este momento. Es posible que tu saldo transparente ya esté protegido, o que sea demasiado pequeño para protegerlo por sí solo."
           }
         }
       }

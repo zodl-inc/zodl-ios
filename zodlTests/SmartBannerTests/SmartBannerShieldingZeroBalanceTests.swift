@@ -86,6 +86,26 @@ import ComposableArchitecture
         }
     }
 
+    /// Reviewer-flagged gap (P1): `.nothingToShield` belongs beside `.succeeded` here. It is
+    /// reachable from `BalancesStore.shieldFundsTapped` — a call site with no SmartBanner state of
+    /// its own to close — so without this the banner would sit stale until the next sync tick
+    /// happened to notice the balance was never shieldable.
+    @Test func nothingToShieldRetractsASeatedShieldingBanner() async {
+        let store = makeStore(
+            account: Self.account(),
+            transparentBalance: Self.shieldableBalance,
+            priorityContent: .priority7,
+            priorityContentRequested: .priority7
+        )
+
+        await store.send(.shieldingProcessorStateChanged(.nothingToShield))
+        await store.receive(\.closeAndCleanupBanner)
+        await store.receive(\.closeBanner) {
+            $0.priorityContent = nil
+            $0.priorityContentRequested = nil
+        }
+    }
+
     @Test(arguments: [Zatoshi.zero, Zatoshi(99_999)])
     func unshieldableBalanceNeverSeatsABanner(_ balance: Zatoshi) async {
         let store = makeStore(account: Self.account(), transparentBalance: balance)
