@@ -99,3 +99,73 @@ import Testing
         #expect(variant != .residual(amount: Zatoshi(800_000)))
     }
 }
+
+@Suite struct MigrationResidualRouteDerivationTests {
+    private static let ironwood = Zatoshi(1_245_000_000)
+
+    private static func route(
+        state: MigrationState = .notStarted,
+        orchard: Zatoshi,
+        ironwood: Zatoshi = ironwood,
+        isCompleteAcknowledged: Bool = false,
+        isIronwoodActivated: Bool = true
+    ) -> MigrationReentryRoute {
+        MigrationDerivations.reentryRoute(
+            isIronwoodActivated: isIronwoodActivated,
+            state: state,
+            advanceStep: nil,
+            hasInvalid: false,
+            hasOverdue: false,
+            isCompleteAcknowledged: isCompleteAcknowledged,
+            progress: nil,
+            orchardBalance: orchard,
+            ironwoodBalance: ironwood
+        )
+    }
+
+    @Test func aResidualOnAFreshWalletRoutesToTheResidualScreen() {
+        #expect(Self.route(orchard: Zatoshi(800_000)) == .residual)
+    }
+
+    @Test func anOfferableBalanceStillRoutesToTheFork() {
+        #expect(Self.route(orchard: Zatoshi(1_000_000)) == .entry)
+    }
+
+    @Test func theResidualFloorItselfRoutesToTheFork() {
+        #expect(Self.route(orchard: Zatoshi(10_000)) == .entry)
+    }
+
+    @Test func nothingInIronwoodRoutesToTheFork() {
+        #expect(Self.route(orchard: Zatoshi(800_000), ironwood: .zero) == .entry)
+    }
+
+    @Test func preActivationRoutesToTheFork() {
+        #expect(Self.route(orchard: Zatoshi(800_000), isIronwoodActivated: false) == .entry)
+    }
+
+    @Test func anUnacknowledgedCompletionOutranksTheResidual() {
+        #expect(Self.route(state: .complete, orchard: Zatoshi(800_000)) == .complete)
+    }
+
+    @Test func anAcknowledgedCompletionWithAResidualRoutesToTheResidualScreen() {
+        #expect(Self.route(state: .complete, orchard: Zatoshi(800_000), isCompleteAcknowledged: true) == .residual)
+    }
+
+    @Test func anAcknowledgedCompletionWithoutAResidualRoutesToTheFork() {
+        #expect(Self.route(state: .complete, orchard: .zero, isCompleteAcknowledged: true) == .entry)
+    }
+
+    @Test func theDefaultedInputsNeverProduceAResidual() {
+        let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
+            state: .notStarted,
+            advanceStep: nil,
+            hasInvalid: false,
+            hasOverdue: false,
+            isCompleteAcknowledged: false,
+            progress: nil
+        )
+
+        #expect(route == .entry)
+    }
+}

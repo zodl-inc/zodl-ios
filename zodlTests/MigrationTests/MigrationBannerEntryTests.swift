@@ -190,4 +190,41 @@ import ComposableArchitecture
 
         #expect(variant == nil)
     }
+
+    // MARK: - The route behind the residual banner's button
+
+    /// MOB-1749: the LIVE route reads the same balances the banner did — a residual banner's tap
+    /// must open the residual screen, not the fork.
+    @Test func aRestoredWalletWithAnOrchardResidualRoutesToTheResidualScreen() async {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock {
+            $0 = WalletAccount(
+                Account(
+                    id: Self.accountUUID,
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+        }
+
+        let route = await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.syncedState() },
+                getAccountsBalances: { [Self.accountUUID: Self.balances(orchard: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            await MigrationManagerImpl().reentryRoute()
+        }
+
+        #expect(route == .residual)
+
+        // Resets the process-global shared account so this test does not leak state into other
+        // suites running in parallel — this suite is not itself `.serialized`.
+        $selectedWalletAccount.withLock { $0 = nil }
+    }
 }

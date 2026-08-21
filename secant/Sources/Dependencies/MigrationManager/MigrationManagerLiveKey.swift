@@ -142,6 +142,7 @@ extension MigrationManagerClient: DependencyKey {
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
             isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
             migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
+            residualBalances: { await impl.residualBalances(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
@@ -717,6 +718,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // contributes `nil`, which offers no action at all: the failure mode of this input is a
         // quieter screen, never a button the engine will refuse.
         async let advanceStepTask = try? sdkSynchronizer.migrationAdvanceStep(accountUUID)
+        async let residualBalancesTask = residualBalances(accountUUID: accountUUID)
 
         let rawState = await rawStateTask ?? MigrationState.notStarted
         let progress = await progressTask
@@ -724,6 +726,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasOverdue = await hasOverdueTask
         let clock = await clockTask
         let advanceStep = (await advanceStepTask)?.step
+        let residual = await residualBalancesTask
 
         let state = rawState
 
@@ -734,7 +737,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
-            progress: progress
+            progress: progress,
+            orchardBalance: residual.unlockedOrchard,
+            ironwoodBalance: residual.ironwood
         )
 
         // Which screen a banner tap opens, and the inputs that decided it. Added 07-31 after a
@@ -748,7 +753,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // which the user experiences as the app having lied to them.
         MigrationTrace.route(
             route,
-            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated())"
+            // swiftlint:disable:next line_length
+            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated()), orchard \(residual.unlockedOrchard.decimalString()), ironwood \(residual.ironwood.decimalString())"
         )
 
         return route
@@ -1433,6 +1439,19 @@ final class MigrationManagerImpl: @unchecked Sendable {
             return Zatoshi.zero
         }
         return balance.orchardBalance.lockedValue
+    }
+
+    /// MOB-1749: see `MigrationManagerClient.residualBalances`.
+    func residualBalances(accountUUID: AccountUUID?) async -> MigrationResidualBalances {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationResidualBalances.zero }
+        guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
+              let balance = balances[resolvedAccountUUID] else {
+            return MigrationResidualBalances.zero
+        }
+        return MigrationResidualBalances(
+            unlockedOrchard: balance.orchardBalance.unlockedForMigration,
+            ironwood: balance.ironwoodBalance.total()
+        )
     }
 
     /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected
@@ -3343,6 +3362,14 @@ enum MigrationDerivations {
             : nil
     }
 
+    /// MOB-1749: `.residual` when `isResidualCandidate`, else `.entry` — the fallback both
+    /// "nothing running" arms of `reentryRoute` share, mirroring `residualVariant` for the banner.
+    static func residualRoute(orchardBalance: Zatoshi, ironwoodBalance: Zatoshi) -> MigrationReentryRoute {
+        isResidualCandidate(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+            ? MigrationReentryRoute.residual
+            : MigrationReentryRoute.entry
+    }
+
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
     /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
@@ -3761,7 +3788,9 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
-        progress: MigrationProgress?
+        progress: MigrationProgress?,
+        orchardBalance: Zatoshi = .zero,
+        ironwoodBalance: Zatoshi = .zero
     ) -> MigrationReentryRoute {
         reentryRoute(
             isIronwoodActivated: isIronwoodActivated,
@@ -3770,7 +3799,9 @@ enum MigrationDerivations {
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: isCompleteAcknowledged,
-            progress: progress
+            progress: progress,
+            orchardBalance: orchardBalance,
+            ironwoodBalance: ironwoodBalance
         )
     }
 
@@ -3784,7 +3815,9 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
-        progress: MigrationProgress?
+        progress: MigrationProgress?,
+        orchardBalance: Zatoshi = .zero,
+        ironwoodBalance: Zatoshi = .zero
     ) -> MigrationReentryRoute {
         guard isIronwoodActivated else { return MigrationReentryRoute.entry }
 
@@ -3870,7 +3903,16 @@ enum MigrationDerivations {
         }
 
         if case MigrationState.complete = state {
-            return isCompleteAcknowledged ? MigrationReentryRoute.entry : MigrationReentryRoute.complete
+            guard isCompleteAcknowledged else { return MigrationReentryRoute.complete }
+            // MOB-1749: an acknowledged run with a residual left behind re-enters on the Remaining
+            // Orchard Funds screen, never on the fork (which would offer a migration below the
+            // offer floor).
+            return residualRoute(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+        }
+
+        if case MigrationState.notStarted = state {
+            // MOB-1749: the same residual fallback for a wallet that never ran a migration.
+            return residualRoute(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
         }
 
         return MigrationReentryRoute.entry

@@ -1407,6 +1407,9 @@ extension MigrationCoordFlow {
         case .complete:
             return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
 
+        case .residual:
+            return .residual(await residualState(accountUUID: accountUUID))
+
         case .entry:
             return nil
         }
@@ -1458,6 +1461,17 @@ extension MigrationCoordFlow {
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
             dustResolution: isLocked ? .locked : nil
+        )
+    }
+
+    /// MOB-1749: the Remaining Orchard Funds screen's state — both figures from one balances read.
+    /// Always `.offered`: the route answers `.residual` only for an UNLOCKED balance in range, so a
+    /// locked residual never re-enters here (there is nothing left to decide about).
+    private func residualState(accountUUID: AccountUUID?) async -> MigrationResidual.State {
+        let balances = await migrationManager.residualBalances(accountUUID)
+        return MigrationResidual.State(
+            orchardBalance: balances.unlockedOrchard,
+            ironwoodBalance: balances.ironwood
         )
     }
 }
