@@ -42,6 +42,12 @@
 //  `Design.Utility.SuccessGreen._500` (same shade in both modes) to `Design.Avatars.status`, the
 //  Figma-matched semantic token for this avatar-status-dot use, which shifts shade per colorScheme.
 //
+//  MOB-1749: the dust-resolution badge, the callout (with its "Migrate anyway" button and the
+//  attributed-text helper) and the explainer sheet content moved VERBATIM to
+//  `MigrationLockResolutionViews.swift`, shared with the Remaining Orchard Funds screen. This file
+//  keeps only the mapping from its four-state `DustResolution` onto the shared three-state
+//  `MigrationLockResolution` (`.none` never renders any of the shared pieces).
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -53,6 +59,20 @@ struct MigrationCompleteView: View {
 
     init(store: StoreOf<MigrationComplete>) {
         self.store = store
+    }
+
+    /// MOB-1749: the shared views' three-state vocabulary. `.none` never reaches them (every call
+    /// site is guarded on `dustResolution != .none`), so it maps to `.offered` only to keep the
+    /// switch total.
+    private var lockResolution: MigrationLockResolution {
+        switch store.dustResolution {
+        case .none, .offered:
+            return .offered
+        case .locking:
+            return .locking
+        case .locked:
+            return .locked
+        }
     }
 
     var body: some View {
@@ -116,7 +136,9 @@ struct MigrationCompleteView: View {
             // tracking scope, and it reads store state (dust, dustResolution) — so it needs a
             // tracking scope of its own.
             WithPerceptionTracking {
-                lockExplainerSheetContent()
+                MigrationLockExplainerSheetContent {
+                    store.send(.lockExplainerDismissed)
+                }
             }
         }
     }
@@ -138,39 +160,6 @@ struct MigrationCompleteView: View {
         }
     }
 
-    @ViewBuilder private func lockExplainerSheetContent() -> some View {
-        VStack(alignment: .leading, spacing: 32) {
-            Text(localizable: .migrationCompleteLockExplainerTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-
-            VStack(alignment: .leading, spacing: 12) {
-                attributedCalloutText(
-                    markdown: String(localizable: .migrationCompleteLockExplainerBody1),
-                    baseStyle: Design.Text.tertiary,
-                    boldColor: nil
-                )
-
-                attributedCalloutText(
-                    markdown: String(localizable: .migrationCompleteLockExplainerBody2),
-                    baseStyle: Design.Text.tertiary,
-                    boldColor: nil
-                )
-
-                attributedCalloutText(
-                    markdown: String(localizable: .migrationCompleteLockExplainerBody3),
-                    baseStyle: Design.Text.tertiary,
-                    boldColor: nil
-                )
-            }
-
-            ZashiButton(String(localizable: .migrationGotIt)) {
-                store.send(.lockExplainerDismissed)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
-        }
-        .padding(.top, Design.Spacing._3xl)
-    }
-
     // MARK: - Header illustration / badge
 
     @ViewBuilder private var headerIllustration: some View {
@@ -179,37 +168,8 @@ struct MigrationCompleteView: View {
                 .resizable()
                 .frame(width: 148, height: 148)
         } else {
-            dustResolutionBadge
+            MigrationLockBadge()
         }
-    }
-
-    /// Compact coins-swap badge replacing the celebratory illustration whenever dust needs a
-    /// decision or has one recorded. The green check mini-badge reflects that the migration
-    /// itself completed (this IS the Migration Complete screen) — it doesn't track
-    /// `dustResolution`, only whether there's a dust decision to show at all.
-    @ViewBuilder private var dustResolutionBadge: some View {
-        Circle()
-            .fill(Design.Surfaces.bgAlt.color(colorScheme))
-            .frame(width: 40, height: 40)
-            .overlay {
-                Asset.Assets.Icons.coinsSwap.image
-                    .zImage(size: 24, style: Design.Surfaces.bgPrimary)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(Design.Avatars.status.color(colorScheme))
-                    .frame(width: 18, height: 18)
-                    .overlay {
-                        Circle()
-                            .stroke(Design.Surfaces.bgPrimary.color(colorScheme), lineWidth: 2)
-                    }
-                    .overlay {
-                        // MOB-1511 (W5 audit): the MOB-1494 de-hardcoding pass covered the ring and
-                        // the coinsSwap glyph but missed this checkmark — same token now.
-                        Asset.Assets.check.image
-                            .zImage(size: 12, style: Design.Surfaces.bgPrimary)
-                    }
-            }
     }
 
     // MARK: - Summary card
@@ -250,125 +210,21 @@ struct MigrationCompleteView: View {
 
     // MARK: - Dust callout
 
+    /// MOB-1749: the shared callout. The offered copy is this screen's own (`migrationComplete
+    /// .dustBody`); the disabled rule is MOB-1458 F4's — `.locking` (dust-lock in flight) or
+    /// `isMigratingAnyway` (the unlock/propose leg in flight) both park the button.
     @ViewBuilder private var dustCallout: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 0) {
-                Text(calloutTitle)
-                    .zFont(.medium, size: 14, style: calloutTitleStyle)
-
-                Spacer()
-
-                // MOB-1487 (round 3, Figma 3836:8643): the info icon shows in every dust state now
-                // (previously hidden for `.locked`) — only the tint still depends on `dustResolution`.
-                Asset.Assets.infoOutline.image
-                    .zImage(size: 16, style: calloutIconStyle)
-            }
-
-            calloutBody
-
-            if store.dustResolution == .offered || store.dustResolution == .locking {
-                migrateAnywayButton
-                    // MOB-1458 (code review — F4): `.locking` (dust-lock in flight) disabled this
-                    // already; `isMigratingAnyway` (the device-authentication gate + unlock/propose
-                    // leg in flight, MOB-1458) now does too — previously the ONLY state where this
-                    // tap is actually meaningful (`.offered`) left the button live for a double-tap.
-                    .disabled(store.dustResolution == .locking || store.isMigratingAnyway)
-            }
-        }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._2xl)
-                .fill(calloutBackgroundStyle.color(colorScheme))
-        }
-    }
-
-    private var calloutTitle: String {
-        store.dustResolution == .locked
-            ? String(localizable: .migrationCompleteLockedTitle)
-            : String(localizable: .migrationCompleteDustTitle)
-    }
-
-    private var calloutTitleStyle: Colorable {
-        store.dustResolution == .locked ? Design.Text.primary : Design.Utility.WarningYellow._700
-    }
-
-    private var calloutIconStyle: Colorable {
-        store.dustResolution == .locked ? Design.Text.tertiary : Design.Utility.WarningYellow._700
-    }
-
-    private var calloutBackgroundStyle: Colorable {
-        store.dustResolution == .locked ? Design.Surfaces.bgSecondary : Design.Utility.WarningYellow._50
+        MigrationLockCallout(
+            resolution: lockResolution,
+            amount: store.dust,
+            offeredBodyMarkdown: String(localizable: .migrationCompleteDustBody("^[\(amountText)](style: 'boldPrimary')")),
+            isMigrateAnywayDisabled: store.dustResolution == .locking || store.isMigratingAnyway,
+            onMigrateAnyway: { store.send(.migrateAnywayTapped) }
+        )
     }
 
     private var amountText: String {
         "\(store.dust.decimalString()) ZEC"
-    }
-
-    @ViewBuilder private var calloutBody: some View {
-        if store.dustResolution == .locked {
-            lockedBody
-        } else {
-            dustBody
-        }
-    }
-
-    /// `.offered`/`.locking`: bold amount + regular rest, both `WarningYellow._700` — the explicit
-    /// `textColor:` override on `ZashiText` swaps the "boldPrimary" span away from its default
-    /// `Design.Text.primary` without needing a new markdown style case.
-    @ViewBuilder private var dustBody: some View {
-        attributedCalloutText(
-            markdown: String(localizable: .migrationCompleteDustBody("^[\(amountText)](style: 'boldPrimary')")),
-            baseStyle: Design.Utility.WarningYellow._700,
-            boldColor: Design.Utility.WarningYellow._700.color(colorScheme)
-        )
-    }
-
-    /// `.locked`: bold amount primary, rest tertiary — mirrors the pre-MOB-1487 dust callout body
-    /// mechanism exactly, just pointed at the new `lockedBody` copy.
-    @ViewBuilder private var lockedBody: some View {
-        attributedCalloutText(
-            markdown: String(localizable: .migrationCompleteLockedBody("^[\(amountText)](style: 'boldPrimary')")),
-            baseStyle: Design.Text.tertiary,
-            boldColor: nil
-        )
-    }
-
-    @ViewBuilder
-    private func attributedCalloutText(markdown: String, baseStyle: Colorable, boldColor: Color?) -> some View {
-        if let attrText = try? AttributedString(markdown: markdown, including: \.zashiApp) {
-            ZashiText(withAttributedString: attrText, colorScheme: colorScheme, textColor: boldColor)
-                .zFont(size: 14, style: baseStyle)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // `ZashiButton`'s `Type` enum has no per-instance color hook, so this hand-builds the warning
-    // button. MOB-1513 (Figma 3836:8394): the fill moves back onto `Design.Btns.Destructive1.bg` —
-    // Figma's `btn-destroy1-bg` token (adaptive white/near-black), the same one `ZashiButton`'s own
-    // `.destructive1` type uses for its background, and the one this button shares with the
-    // Skip buttons on MigrationBackgroundDeliveryView/MigrationNotificationsView. The prior
-    // `WarningYellow._50` fill (MOB-1511) blended into the callout's own `WarningYellow._50`
-    // background; the border and label stay on `WarningYellow._300`/`._700`.
-    @ViewBuilder private var migrateAnywayButton: some View {
-        Button {
-            store.send(.migrateAnywayTapped)
-        } label: {
-            Text(localizable: .migrationCompleteMigrateAnyway)
-                .zFont(.semiBold, size: 16, style: Design.Utility.WarningYellow._700)
-                .fixedSize()
-                .minimumScaleFactor(0.5)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Btns.Destructive1.bg.color(colorScheme))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
-                        }
-                }
-        }
     }
 
     // MARK: - Primary button
