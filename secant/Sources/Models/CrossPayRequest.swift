@@ -1,4 +1,5 @@
 import Foundation
+import ZcashLightClientKit
 
 struct CrossPayRequest: Equatable {
     enum Amount: Equatable {
@@ -80,18 +81,10 @@ struct CrossPayRequest: Equatable {
 
     private static func nativeTokens(for chain: String) -> Set<String> {
         switch chain.lowercased() {
-        case "arb", "base", "eth": ["eth"]
-        case "avax": ["avax"]
-        case "bch": ["bch"]
+        case "arb", "base": ["eth"]
         case "bsc": ["bnb"]
-        case "btc": ["btc"]
-        case "dash": ["dash"]
-        case "doge": ["doge"]
-        case "ltc": ["ltc"]
-        case "near": ["near", "wnear"]
         case "op": ["eth", "op"]
         case "pol": ["matic", "pol"]
-        case "sol": ["sol"]
         case "xlayer": ["okb"]
         default: [chain.lowercased()]
         }
@@ -104,135 +97,67 @@ struct CrossPayRequest: Equatable {
 
 enum CrossPayRequestParser {
     static func parse(_ value: String) -> CrossPayRequest? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let separator = trimmed.firstIndex(of: ":") else { return nil }
-
-        let scheme = trimmed[..<separator].lowercased()
-        let payload = String(trimmed[trimmed.index(after: separator)...])
-
-        switch scheme {
-        case "bitcoin": return parseBitcoinLike(payload, chain: "btc")
-        case "bitcoincash": return parseBitcoinLike(payload, chain: "bch", preserveScheme: true)
-        case "dash": return parseBitcoinLike(payload, chain: "dash")
-        case "dogecoin": return parseBitcoinLike(payload, chain: "doge")
-        case "ethereum": return parseEthereum(payload)
-        case "litecoin": return parseBitcoinLike(payload, chain: "ltc")
-        case "near": return parseNear(payload)
-        case "solana": return parseSolana(payload)
-        default: return nil
-        }
-    }
-
-    private static func parseBitcoinLike(
-        _ payload: String,
-        chain: String,
-        preserveScheme: Bool = false
-    ) -> CrossPayRequest? {
-        let (target, query) = splitQuery(payload)
-        let addressValue = target.removingPrefix("//").removingPercentEncoding ?? target.removingPrefix("//")
-        guard !addressValue.isEmpty else { return nil }
-        let params = queryParameters(query)
-        let address = preserveScheme ? "bitcoincash:\(addressValue)" : addressValue
-        return CrossPayRequest(
-            address: address,
-            amount: decimal(params["amount"]).map(CrossPayRequest.Amount.display),
-            assetReference: .native(chain: chain)
-        )
-    }
-
-    private static func parseEthereum(_ payload: String) -> CrossPayRequest? {
-        let (targetAndFunction, query) = splitQuery(payload.removingPrefix("pay-"))
-        let segments = targetAndFunction.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
-        var targetAndChain = String(segments[0])
-        let function = segments.count == 2 ? String(segments[1]).lowercased() : nil
-        var chainID: String?
-
-        if let chainSeparator = targetAndChain.lastIndex(of: "@") {
-            chainID = String(targetAndChain[targetAndChain.index(after: chainSeparator)...])
-            targetAndChain = String(targetAndChain[..<chainSeparator])
-        }
-
-        guard !targetAndChain.isEmpty, chainID?.allSatisfy(\.isNumber) != false else { return nil }
-        let params = queryParameters(query)
-
-        if function == nil || function?.isEmpty == true {
+        guard let request = try? PaymentURIParser.parse(value) else { return nil }
+        switch request {
+        case let .bitcoin(request):
             return CrossPayRequest(
-                address: targetAndChain,
-                amount: decimal(params["value"]).map(CrossPayRequest.Amount.atomic),
-                assetReference: .evmNative(chainID: chainID)
+                address: request.address.value,
+                amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
+                assetReference: .native(chain: "btc")
             )
+        case let .ethereum(request):
+            return parseEthereum(request)
+        case let .litecoin(request):
+            return CrossPayRequest(
+                address: request.address.value,
+                amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
+                assetReference: .native(chain: "ltc")
+            )
+        case let .solanaTransfer(request):
+            let asset = request.splToken.map {
+                CrossPayRequest.AssetReference.contract(chain: "sol", chainID: nil, address: $0.value)
+            } ?? .native(chain: "sol")
+            return CrossPayRequest(
+                address: request.recipient.value,
+                amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
+                assetReference: asset
+            )
+        case .solanaTransaction:
+            return nil
         }
-
-        guard function == "transfer",
-              isHexAddress(targetAndChain),
-              let recipient = params["address"],
-              isHexAddress(recipient) else { return nil }
-
-        return CrossPayRequest(
-            address: recipient,
-            amount: decimal(params["uint256"]).map(CrossPayRequest.Amount.atomic),
-            assetReference: .contract(chain: nil, chainID: chainID, address: targetAndChain)
-        )
     }
 
-    private static func parseSolana(_ payload: String) -> CrossPayRequest? {
-        let (target, query) = splitQuery(payload)
-        let address = target.removingPrefix("//").removingPercentEncoding ?? target.removingPrefix("//")
-        guard !address.isEmpty, URL(string: address)?.scheme == nil else { return nil }
-        let params = queryParameters(query)
-        let reference = params["spl-token"].map {
-            CrossPayRequest.AssetReference.contract(chain: "sol", chainID: nil, address: $0)
-        } ?? .native(chain: "sol")
-        return CrossPayRequest(
-            address: address,
-            amount: decimal(params["amount"]).map(CrossPayRequest.Amount.display),
-            assetReference: reference
-        )
+    private static func parseEthereum(_ request: Eip681TransactionRequest) -> CrossPayRequest? {
+        switch request {
+        case let .native(request):
+            return CrossPayRequest(
+                address: request.recipientAddress,
+                amount: decimal(hex: request.valueHex).map(CrossPayRequest.Amount.atomic),
+                assetReference: .evmNative(chainID: request.chainId.map(String.init))
+            )
+        case let .erc20(request):
+            return CrossPayRequest(
+                address: request.recipientAddress,
+                amount: decimal(hex: request.valueHex).map(CrossPayRequest.Amount.atomic),
+                assetReference: .contract(
+                    chain: nil,
+                    chainID: request.chainId.map(String.init),
+                    address: request.tokenContractAddress
+                )
+            )
+        case .unrecognised:
+            return nil
+        }
     }
 
-    private static func parseNear(_ payload: String) -> CrossPayRequest? {
-        let (target, query) = splitQuery(payload)
-        let address = target.removingPrefix("//").removingPercentEncoding ?? target.removingPrefix("//")
-        guard !address.isEmpty else { return nil }
-        return CrossPayRequest(
-            address: address,
-            amount: decimal(queryParameters(query)["amount"]).map(CrossPayRequest.Amount.display),
-            assetReference: .native(chain: "near")
-        )
+    private static func decimal(_ amount: PaymentURIAmount?) -> Decimal? {
+        amount.flatMap { Decimal(string: $0.value, locale: Locale(identifier: "en_US_POSIX")) }
     }
 
-    private static func splitQuery(_ value: String) -> (String, String?) {
-        guard let separator = value.firstIndex(of: "?") else { return (value, nil) }
-        return (String(value[..<separator]), String(value[value.index(after: separator)...]))
-    }
-
-    private static func queryParameters(_ query: String?) -> [String: String] {
-        guard let query else { return [:] }
-        var components = URLComponents()
-        components.percentEncodedQuery = query
-        return components.queryItems?.reduce(into: [:]) { result, item in
-            guard result[item.name.lowercased()] == nil, let value = item.value else { return }
-            result[item.name.lowercased()] = value
-        } ?? [:]
-    }
-
-    private static func decimal(_ value: String?) -> Decimal? {
-        guard let value else { return nil }
-        let number = NSDecimalNumber(string: value, locale: Locale(identifier: "en_US_POSIX"))
-        return number == .notANumber || number.compare(NSDecimalNumber.zero) == .orderedAscending
-            ? nil
-            : number.decimalValue
-    }
-
-    private static func isHexAddress(_ value: String) -> Bool {
-        value.count == 42
-            && value.lowercased().hasPrefix("0x")
-            && value.dropFirst(2).allSatisfy(\.isHexDigit)
-    }
-}
-
-private extension String {
-    func removingPrefix(_ prefix: String) -> String {
-        hasPrefix(prefix) ? String(dropFirst(prefix.count)) : self
+    private static func decimal(hex: String?) -> Decimal? {
+        guard let hex, hex.lowercased().hasPrefix("0x") else { return nil }
+        return hex.dropFirst(2).reduce(Decimal.zero) { value, character in
+            value * 16 + Decimal(character.hexDigitValue ?? 0)
+        }
     }
 }
