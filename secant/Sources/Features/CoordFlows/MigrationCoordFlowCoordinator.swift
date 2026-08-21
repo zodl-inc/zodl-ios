@@ -395,10 +395,19 @@ extension MigrationCoordFlow {
                     await send(.flowFinished)
                 }
 
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
+            case .path(.element(id: _, action: .residual(.delegate(.done)))):
+                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen.
+                // Root's `flowFinished` handling re-evaluates the banner, which reads the balance
+                // fresh: a locked residual has no unlocked balance left, so the banner is gone.
+                return .send(.flowFinished)
+
+            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))),
+                 .path(.element(id: _, action: .residual(.delegate(.migrateAnyway)))):
                 // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
                 // "Migrate anyway" unlocks it and sweeps it through the ordinary immediate pipeline —
                 // one transaction, engine-external, exactly like the manual lane's own sweep.
+                // MOB-1749: the Remaining Orchard Funds screen rides the identical leg — the unlock
+                // is a harmless no-op while nothing is locked.
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
                 return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
                     do {
@@ -425,6 +434,11 @@ extension MigrationCoordFlow {
                     if case .complete(var completeState) = state.path[id: id] {
                         completeState.isMigratingAnyway = false
                         state.path[id: id] = .complete(completeState)
+                    }
+                    // MOB-1749: the residual screen carries the same single-flight flag.
+                    if case .residual(var residualState) = state.path[id: id] {
+                        residualState.isMigratingAnyway = false
+                        state.path[id: id] = .residual(residualState)
                     }
                 }
                 return .none

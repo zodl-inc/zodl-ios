@@ -237,6 +237,7 @@ struct MigrationCoordFlow {
         case migrateAnywayUnlocked
         /// PHASE 6: the unlock or the immediate proposal failed; clears the Complete screen's
         /// single-flight flag so the button comes back.
+        /// MOB-1749: also the Remaining Orchard Funds screen's flag.
         case migrateAnywayFailed
         /// Same, for the Status screen — kept separate because re-entry hydrates it from a
         /// different source (rows + summary) than a fresh push.
