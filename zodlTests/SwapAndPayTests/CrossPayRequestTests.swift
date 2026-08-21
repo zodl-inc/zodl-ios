@@ -43,6 +43,35 @@ struct CrossPayRequestTests {
         #expect(solana.resolvedAmount(for: solanaUsdc) == Decimal(string: "0.01"))
     }
 
+    @Test func contractRequestWithoutChainIdResolvesToCurrentAssetChain() throws {
+        // EIP-681 has no `chain` string, only a numeric chainId, so every ERC-20 request without
+        // an explicit `@chainId` reaches resolveAsset with chain == nil and chainID == nil. Some
+        // token contract addresses are deployed at the same address on multiple chains (CREATE2),
+        // so without a current-asset fallback this would previously match ANY chain holding that
+        // contract address instead of the one the user actually has selected.
+        let baseUsdc = asset(token: "USDC", chain: "base", decimals: 6, contractAddress: usdcContract)
+        let arbUsdc = asset(token: "USDC", chain: "arb", decimals: 6, contractAddress: usdcContract)
+        let request = try #require(
+            CrossPayRequestParser.parse(
+                "ethereum:\(usdcContract)/transfer?address=\(recipient)&uint256=2500000"
+            )
+        )
+
+        #expect(request.resolveAsset(in: [baseUsdc, arbUsdc], current: arbUsdc) == arbUsdc)
+    }
+
+    @Test func contractRequestWithoutChainIdOrCurrentAssetIsRejected() throws {
+        let baseUsdc = asset(token: "USDC", chain: "base", decimals: 6, contractAddress: usdcContract)
+        let arbUsdc = asset(token: "USDC", chain: "arb", decimals: 6, contractAddress: usdcContract)
+        let request = try #require(
+            CrossPayRequestParser.parse(
+                "ethereum:\(usdcContract)/transfer?address=\(recipient)&uint256=2500000"
+            )
+        )
+
+        #expect(request.resolveAsset(in: [baseUsdc, arbUsdc], current: nil) == nil)
+    }
+
     @Test func unsupportedAndPlainValuesAreNotReinterpreted() {
         #expect(CrossPayRequestParser.parse("bc1qplain") == nil)
         #expect(CrossPayRequestParser.parse("near:alice.near") == nil)

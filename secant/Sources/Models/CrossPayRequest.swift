@@ -36,10 +36,16 @@ struct CrossPayRequest: Equatable {
             }
 
         case let .contract(chain, chainID, address):
-            let resolvedChain = Self.resolvedEvmChain(chainID: chainID, fallback: chain)
+            // When the request carries no chain id at all (every ERC-20 request: EIP-681 has no
+            // `chain` string, only a numeric chainId), fall back to the currently-selected asset's
+            // chain, same as `.evmNative`. Without this, a token contract address shared across
+            // chains (a common CREATE2 deployment pattern) would match on ANY chain the wallet
+            // knows about instead of the one the request actually meant.
+            let resolvedChain = Self.resolvedEvmChain(chainID: chainID, fallback: chain ?? current?.chain.lowercased())
             guard chainID == nil || resolvedChain != nil else { return nil }
+            guard let resolvedChain else { return nil }
             candidates = assets.filter { asset in
-                (resolvedChain.map { asset.chain.caseInsensitiveCompare($0) == .orderedSame } ?? true)
+                asset.chain.caseInsensitiveCompare(resolvedChain) == .orderedSame
                     && asset.contractAddress?.caseInsensitiveCompare(address) == .orderedSame
             }
         }
