@@ -93,10 +93,15 @@ import Testing
         #expect(Self.banner(state: .complete, orchard: .zero, isCompleteAcknowledged: true) == nil)
     }
 
+    /// The split phase keeps its OWN answer — a committed run reads as progress, whatever dust the
+    /// Orchard balance happens to still hold. Pinned as the exact variant rather than "not the
+    /// residual": with no rows and nothing in flight the arm answers the run-level readout with
+    /// zero counts and no round labels, and an `!=` would go on passing if that arm started
+    /// answering something else entirely.
     @Test func theSplitPhaseIsUntouched() {
         let variant = Self.banner(state: .splitPendingConfirmation, orchard: Zatoshi(800_000))
 
-        #expect(variant != .residual(amount: Zatoshi(800_000)))
+        #expect(variant == .inProgress(done: 0, total: 0, round: nil, totalRounds: nil))
     }
 }
 

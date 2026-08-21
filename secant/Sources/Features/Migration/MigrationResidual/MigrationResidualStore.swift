@@ -19,8 +19,12 @@
 //  acknowledge, so the coordinator simply finishes the flow. The explainer sheet's own dismiss is
 //  deliberately distinct from `gotItTapped` — it closes only the sheet.
 //
-//  No `.none` state: the screen exists only while there is something to decide. A LOCKED residual
-//  never re-enters here (its unlocked balance is zero, so neither the banner nor the route fire).
+//  No `.none` state: the screen exists only while there is something to decide. What fires the
+//  banner and the route is an UNLOCKED Orchard balance in range, and a fully locked residual has
+//  none — so a wallet that locked everything it had does not come back here. A lock is per-note,
+//  though: a later unlocked arrival (0.005 locked, 0.004 received afterwards) puts an in-range
+//  unlocked balance back on the account and re-enters at `.offered`, with the card naming the
+//  UNLOCKED figure alone — the locked notes are not part of what is offered again.
 //
 
 import ComposableArchitecture

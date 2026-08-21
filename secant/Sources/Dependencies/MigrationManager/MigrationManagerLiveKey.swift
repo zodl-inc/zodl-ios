@@ -751,10 +751,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // MOB-1466: on CHANGE only, with dwell — see `MigrationTrace.route`. A route that moves
         // while the banner's words stay put means the same sentence now opens a different screen,
         // which the user experiences as the app having lied to them.
+        let balanceDetail = "orchard \(residual.unlockedOrchard.decimalString()), ironwood \(residual.ironwood.decimalString())"
         MigrationTrace.route(
             route,
-            // swiftlint:disable:next line_length
-            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated()), orchard \(residual.unlockedOrchard.decimalString()), ironwood \(residual.ironwood.decimalString())"
+            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated()), \(balanceDetail)"
         )
 
         return route
@@ -3338,9 +3338,13 @@ enum MigrationDerivations {
     static let minimumOfferableOrchardBalance = Zatoshi(1_000_000)
 
     /// MOB-1749: the smallest Orchard balance the RESIDUAL banner names — 0.0001 ZEC, EXCLUSIVE.
-    /// At or below it the balance cannot even cover a ZIP 317 fee, so neither locking nor sweeping
-    /// it is worth a screen. Pairs with `minimumOfferableOrchardBalance` (exclusive on this side
-    /// too): the residual lane covers exactly the gap between the two.
+    /// At the floor itself the balance is exactly a ZIP 317 fee, and below it cannot cover one, so
+    /// there is nothing a screen could offer to do with it. Just above the floor a sweep is only
+    /// nominally possible — the fee eats it, leaving no usable output — so "Migrate anyway" there
+    /// lands on the review screen's existing propose-failure sheet; locking, the other choice the
+    /// screen offers, stays meaningful throughout the range. Pairs with
+    /// `minimumOfferableOrchardBalance` (exclusive on this side too): the residual lane covers
+    /// exactly the gap between the two.
     static let minimumResidualOrchardBalance = Zatoshi(10_000)
 
     /// MOB-1749: the residual predicate shared by the banner and the re-entry route — an UNLOCKED

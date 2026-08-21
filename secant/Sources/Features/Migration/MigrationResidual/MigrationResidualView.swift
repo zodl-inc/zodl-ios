@@ -16,7 +16,6 @@ import ComposableArchitecture
 import SwiftUI
 
 struct MigrationResidualView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @Perception.Bindable var store: StoreOf<MigrationResidual>
 
     init(store: StoreOf<MigrationResidual>) {
