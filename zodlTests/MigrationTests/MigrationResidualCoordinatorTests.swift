@@ -78,7 +78,18 @@ import Testing
         return state
     }
 
+    /// "Got it" acknowledges NOTHING — there is no run behind this screen — but it must still
+    /// reconcile before finishing, and that half is not cosmetic.
+    ///
+    /// `MigrationManagerImpl.bannerVariant` serves the PUBLISHED snapshot; a snapshot is rebuilt
+    /// only on a writer edge, and `reconcile()` is the edge this exit owns. Without it the lock
+    /// that just emptied the unlocked Orchard balance changes nothing the banner can see, so
+    /// Root's `flowFinished` re-evaluation reads the stale `.residual(amount:)` and the banner
+    /// keeps offering a residual that no longer exists. Counting the call is therefore the
+    /// assertion — receiving `.flowFinished` alone passed on the broken code.
     @Test func gotItFinishesTheFlowWithNothingToAcknowledge() async {
+        let reconcileCount = LockIsolated<Int>(0)
+
         let store = TestStore(initialState: Self.stateWithResidualScreen()) {
             MigrationCoordFlow()
         } withDependencies: {
@@ -87,6 +98,7 @@ import Testing
             // never reach it — `testValue`'s unimplemented stub would fail the test if it did.
             var client = MigrationManagerClient.noOp
             client.acknowledgeComplete = { _ in Issue.record("the residual screen has no run to acknowledge") }
+            client.reconcile = { reconcileCount.withValue { $0 += 1 } }
             $0.migrationManager = client
         }
         store.exhaustivity = .off
@@ -94,6 +106,11 @@ import Testing
 
         await store.send(.path(.element(id: id, action: .residual(.gotItTapped))))
         await store.receive(\.flowFinished, timeout: .seconds(5))
+
+        #expect(reconcileCount.value == 1, "the exit republishes the snapshot the banner reads — exactly once, before finishing")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
     }
 
     @Test func migrateAnywayUnlocksAndHandsOverToTheImmediateReview() async {

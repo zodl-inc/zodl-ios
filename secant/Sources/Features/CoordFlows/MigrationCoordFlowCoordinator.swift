@@ -396,10 +396,16 @@ extension MigrationCoordFlow {
                 }
 
             case .path(.element(id: _, action: .residual(.delegate(.done)))):
-                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen.
-                // Root's `flowFinished` handling re-evaluates the banner, which reads the balance
-                // fresh: a locked residual has no unlocked balance left, so the banner is gone.
-                return .send(.flowFinished)
+                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen — but
+                // the lock just changed the balance the banner derives from, and `bannerVariant` serves
+                // the PUBLISHED snapshot: `reconcile()` is the writer edge that republishes it (fresh
+                // balances read), the same one the Complete exit rides. Root's `flowFinished` handling
+                // then re-evaluates the banner, which reads that republished value — a locked residual
+                // has no unlocked balance left, so the banner is gone.
+                return .run { [migrationManager] send in
+                    await migrationManager.reconcile()
+                    await send(.flowFinished)
+                }
 
             case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))),
                  .path(.element(id: _, action: .residual(.delegate(.migrateAnyway)))):

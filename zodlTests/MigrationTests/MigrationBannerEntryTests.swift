@@ -31,7 +31,10 @@ import Testing
 import ComposableArchitecture
 @testable import zodl_internal
 
-@Suite struct MigrationBannerEntryTests {
+/// Serialized: several tests here write `@Shared(.inMemory(.selectedWalletAccount))`, which is
+/// process-global — Swift Testing runs a suite's tests in parallel otherwise, and two of them
+/// installing/clearing the same account concurrently is a race, not a test.
+@Suite(.serialized) struct MigrationBannerEntryTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
 
     /// Testnet NU6.3. The tip sits above it, as it does on any wallet that can see Ironwood at all.
@@ -223,8 +226,122 @@ import ComposableArchitecture
 
         #expect(route == .residual)
 
-        // Resets the process-global shared account so this test does not leak state into other
-        // suites running in parallel — this suite is not itself `.serialized`.
+        // Resets the process-global shared account so this test does not leak state into the rest
+        // of the run.
+        $selectedWalletAccount.withLock { $0 = nil }
+    }
+
+    // MARK: - What actually clears the residual banner after a lock
+
+    /// The same account as the fixtures above, as a `WalletAccount` — `reconcile()` resolves its
+    /// candidate accounts from `@Shared(.inMemory(.selectedWalletAccount))`.
+    private static func account() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: accountUUID,
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// The post-lock shape of the same wallet: the residual is still THERE, it is just no longer
+    /// spendable — `lockedValue` holds it and `spendableValue` is zero, which is exactly what
+    /// `PoolBalance.unlockedForMigration` (the figure every residual arm reads) drops to.
+    private static func lockedResidual(orchard: Zatoshi, ironwood: Zatoshi) -> AccountBalance {
+        AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            orchardBalance: PoolBalance(
+                spendableValue: .zero,
+                changePendingConfirmation: .zero,
+                valuePendingSpendability: .zero,
+                lockedValue: orchard
+            ),
+            ironwoodBalance: PoolBalance(spendableValue: ironwood, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            unshielded: .zero,
+            awaitingResolution: .zero
+        )
+    }
+
+    /// Short real-time polling for a condition driven by a concurrently-running `Task` — copied
+    /// from `MigrationSnapshotFreshnessTests`, and needed for the same reason: the republish
+    /// `reconcile()` schedules runs in a detached `Task`, so the test must wait for it to land
+    /// rather than assume it did. Sized generously for parallel test load.
+    private static func waitUntil(
+        timeoutNanoseconds: UInt64 = 10_000_000_000,
+        condition: @escaping @Sendable () -> Bool
+    ) async {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    /// MOB-1749 (fix wave): what the residual screen's "Got it" exit actually depends on.
+    ///
+    /// `bannerVariant` is a WINDOW onto the published snapshot — it serves
+    /// `snapshotSubjects[account]?.value?.banner` and only builds when nothing has been published
+    /// yet. A snapshot is rebuilt on a WRITER EDGE, and `reconcile()` is the edge the migration
+    /// flow's exits ride. So locking the residual — which changes only the SDK's balances — does
+    /// not by itself change one word of what the banner says.
+    ///
+    /// The three steps are the whole mechanism: (a) the residual banner is published, (b) the
+    /// balance goes locked and the banner STILL says residual (the negative control — this is the
+    /// staleness the bare `.send(.flowFinished)` exit shipped), (c) `reconcile()` republishes off a
+    /// fresh balances read and the banner goes quiet.
+    @Test func aLockedResidualClearsTheBannerOnlyOnceAReconcileRepublishes() async {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+
+        let storedBalance = LockIsolated<AccountBalance>(
+            Self.balances(orchard: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))
+        )
+
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.syncedState() },
+                getAccountsBalances: { [Self.accountUUID: storedBalance.value] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            // Held for the whole test: the republish `reconcile()` schedules captures the manager
+            // WEAKLY, so a manager that only lived for the `reconcile()` call would be gone before
+            // its own build landed and the poll below would time out on a dead object.
+            let manager = MigrationManagerImpl()
+
+            // (a) The unlocked residual — the banner the screen is entered from. This first ask is
+            // also what creates the account's snapshot subject, so the writer edge in (c) has
+            // something to republish onto.
+            let offered = await manager.bannerVariant(accountUUID: Self.accountUUID)
+            #expect(offered == .residual(amount: Zatoshi(800_000)))
+
+            // (b) NEGATIVE CONTROL. The lock has happened as far as the SDK is concerned; nothing
+            // has told the snapshot pipeline. The banner must still answer `.residual` here — if it
+            // ever stops, the published snapshot is no longer what `bannerVariant` serves and step
+            // (c), along with the coordinator fix it justifies, needs rereading.
+            storedBalance.setValue(Self.lockedResidual(orchard: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000)))
+            let stale = await manager.bannerVariant(accountUUID: Self.accountUUID)
+            #expect(
+                stale == .residual(amount: Zatoshi(800_000)),
+                "a balance change alone is NOT a writer edge — the published snapshot is served unchanged"
+            )
+
+            // (c) The writer edge. `reconcile()` pushes state, which republishes the snapshot off a
+            // fresh `getAccountsBalances` — now the locked shape, whose unlocked Orchard is zero.
+            await manager.reconcile()
+            await Self.waitUntil { manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)?.banner == nil }
+
+            let republished = manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)
+            #expect(republished != nil, "the republish must land a snapshot, not clear the channel")
+
+            let cleared = await manager.bannerVariant(accountUUID: Self.accountUUID)
+            #expect(cleared == nil, "after the republish the banner reads the locked balance and goes quiet")
+        }
+
         $selectedWalletAccount.withLock { $0 = nil }
     }
 }
