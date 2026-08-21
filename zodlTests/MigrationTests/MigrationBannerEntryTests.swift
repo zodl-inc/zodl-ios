@@ -48,6 +48,16 @@ import ComposableArchitecture
         )
     }
 
+    private static func balances(orchard: Zatoshi, ironwood: Zatoshi) -> AccountBalance {
+        AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            orchardBalance: PoolBalance(spendableValue: orchard, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            ironwoodBalance: PoolBalance(spendableValue: ironwood, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            unshielded: .zero,
+            awaitingResolution: .zero
+        )
+    }
+
     /// A wallet that is CAUGHT UP — which now takes saying so.
     ///
     /// This fixture set only the height and inherited `SynchronizerState.zero`'s sync status, so it
@@ -77,6 +87,7 @@ import ComposableArchitecture
     /// `advanceStep` says otherwise, no migration run at all.
     private static func bannerVariant(
         balance: Zatoshi,
+        ironwood: Zatoshi = .zero,
         advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance? = { _ in nil },
         state: @escaping @Sendable () -> SynchronizerState = { syncedState() }
     ) async -> MigrationBannerVariant? {
@@ -84,7 +95,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: state,
                 migrationAdvanceStep: advanceStep,
-                getAccountsBalances: { [accountUUID: orchardOnly(balance)] }
+                getAccountsBalances: { [accountUUID: balances(orchard: balance, ironwood: ironwood)] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { activationHeight }
         } operation: {
@@ -124,6 +135,23 @@ import ComposableArchitecture
     /// out of the fixture unconditionally.
     @Test func aWalletWithNothingInOrchardIsNotOffered() async {
         let variant = await Self.bannerVariant(balance: .zero)
+
+        #expect(variant == nil)
+    }
+
+    /// MOB-1749: the restored/self-migrated wallet the residual lane exists for — Orchard dust
+    /// below the offer floor, real funds already in Ironwood. The LIVE glue must hand the
+    /// Ironwood total to the derivation; the pure table alone cannot prove that.
+    @Test func aRestoredWalletWithAnOrchardResidualAndIronwoodFundsSeesTheResidualBanner() async {
+        let variant = await Self.bannerVariant(balance: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))
+
+        #expect(variant == .residual(amount: Zatoshi(800_000)))
+    }
+
+    /// MOB-1749: the same dust with NOTHING in Ironwood is not a residual — the screen's "You've
+    /// moved to Ironwood" framing would be false.
+    @Test func anOrchardResidualWithNothingInIronwoodStaysQuiet() async {
+        let variant = await Self.bannerVariant(balance: Zatoshi(800_000))
 
         #expect(variant == nil)
     }
