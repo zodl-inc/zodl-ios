@@ -10,6 +10,7 @@
 
 import SwiftUI
 import ComposableArchitecture
+import ZcashLightClientKit
 
 enum MigrationBannerVariant: Equatable {
     case required
@@ -102,6 +103,13 @@ enum MigrationBannerVariant: Equatable {
     /// arm, and the manual-delivery flag never had a production setter; the ready frames' fate
     /// closes ad-2 the same way.)
     case complete
+    /// MOB-1749 (Figma 6855:24738): a RESIDUAL Orchard balance on a wallet that never ran the
+    /// app's migration (restored after migrating elsewhere, or self-migrated) or has fully
+    /// acknowledged it — strictly between 0.0001 and 0.01 ZEC unlocked, with funds already held in
+    /// Ironwood. The LOWEST-priority variant: `MigrationDerivations.bannerVariant` answers it only
+    /// where it used to answer `nil`, so every run state — an unacknowledged `.complete` included —
+    /// keeps outranking it. `amount` is the unlocked Orchard balance the title names.
+    case residual(amount: Zatoshi)
     /// IDLE 1 — TERMINATION (THE BANNER MAP, Lukas 2026-08-06). Figma `5139:35439` / `10639`:
     /// coins-swap glyph, "Migration Progress" / `We'll notify you when to send`
     /// (`migrationBanner.idleInfo`), the ordinary More.
@@ -213,6 +221,7 @@ enum MigrationBannerVariant: Equatable {
         case .updatePlan: return "updatePlan"
         case .transfersExpired: return "transfersExpired"
         case .complete: return "complete"
+        case .residual: return "residual"
         case .idle: return "idle"
         case .idleCounts: return "idleCounts"
         case .checkingStatus: return "checkingStatus"
@@ -241,6 +250,8 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerExpiredTitle(first, last))
         case .complete:
             return String(localizable: .migrationBannerCompleteTitle)
+        case .residual(let amount):
+            return String(localizable: .migrationBannerResidualTitle("\(amount.decimalString()) ZEC"))
         }
     }
 
@@ -288,6 +299,8 @@ enum MigrationBannerVariant: Equatable {
             return String(localizable: .migrationBannerExpiredInfo)
         case .complete:
             return String(localizable: .migrationBannerCompleteInfo)
+        case .residual:
+            return String(localizable: .migrationBannerResidualInfo)
         case .checkingStatus:
             // Figma 5679-8225: checking is the SUBTITLE under the standing "Migration Progress"
             // title — GROUND_RULES D1.
@@ -410,7 +423,7 @@ struct MigrationBannerContentView: View {
         case .updatePlan, .transfersExpired:
             Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, color: titleStyle)
-        case .complete:
+        case .complete, .residual:
             Asset.Assets.infoCircle.image
                 .zImage(size: 20, color: titleStyle)
         }
