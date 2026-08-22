@@ -1,6 +1,12 @@
 import Foundation
 import ZcashLightClientKit
 
+/// A cross-chain payment request resolved from a validated `PaymentURIRequest` (SDK) into a
+/// concrete, app-known `SwapAsset`. Covers Bitcoin and Litecoin on-chain transfers, EVM native
+/// and ERC-20 transfers across the chains in `evmChainsByID` below, and Solana native/SPL-token
+/// transfers. Solana interactive transaction-request links (`.solanaTransaction`) and
+/// unrecognised EIP-681 requests are explicitly out of scope and rejected during parsing --
+/// see `CrossPayRequestParser.parse`.
 struct CrossPayRequest: Equatable {
     enum Amount: Equatable {
         case display(Decimal)
@@ -28,7 +34,11 @@ struct CrossPayRequest: Equatable {
             }
 
         case let .evmNative(chainID):
-            let chain = Self.resolvedEvmChain(chainID: chainID, fallback: current?.chain.lowercased())
+            // Fall back to the currently-selected asset's chain only when it's actually an EVM
+            // chain. Without this, a SOL/BTC/LTC asset selected as `current` would pass through
+            // untouched (nativeTokens' permissive default matches any chain string against
+            // itself), silently pairing a native-EVM payment request with a non-EVM asset.
+            let chain = Self.resolvedEvmChain(chainID: chainID, fallback: Self.evmChainIfKnown(current?.chain))
             guard let chain else { return nil }
             candidates = assets.filter {
                 $0.chain.caseInsensitiveCompare(chain) == .orderedSame
@@ -40,8 +50,10 @@ struct CrossPayRequest: Equatable {
             // `chain` string, only a numeric chainId), fall back to the currently-selected asset's
             // chain, same as `.evmNative`. Without this, a token contract address shared across
             // chains (a common CREATE2 deployment pattern) would match on ANY chain the wallet
-            // knows about instead of the one the request actually meant.
-            let resolvedChain = Self.resolvedEvmChain(chainID: chainID, fallback: chain ?? current?.chain.lowercased())
+            // knows about instead of the one the request actually meant. `chain` (e.g. Solana's
+            // literal "sol") is an explicit, already-trusted value from the parser, not something
+            // that needs the same EVM-chain validation as the `current`-derived fallback.
+            let resolvedChain = Self.resolvedEvmChain(chainID: chainID, fallback: chain ?? Self.evmChainIfKnown(current?.chain))
             guard chainID == nil || resolvedChain != nil else { return nil }
             guard let resolvedChain else { return nil }
             candidates = assets.filter { asset in
@@ -67,17 +79,34 @@ struct CrossPayRequest: Equatable {
         }
     }
 
+    // Known duplication (MOB-1751 review): this table is hand-duplicated in the Android app's
+    // CrossPayRequest.kt (EVM_CHAINS). See https://github.com/zodl-inc/zodl-android/pull/2457
+    // and https://github.com/zodl-inc/zodl-ios/pull/2002 for the tracked follow-up to collapse
+    // this into one shared source.
+    private static let evmChainsByID: [String: String] = [
+        "1": "eth",
+        "10": "op",
+        "56": "bsc",
+        "137": "pol",
+        "196": "xlayer",
+        "8453": "base",
+        "42161": "arb",
+        "43114": "avax"
+    ]
+
+    private static let evmChainTickers = Set(evmChainsByID.values)
+
     private static func evmChain(for chainID: String) -> String? {
-        [
-            "1": "eth",
-            "10": "op",
-            "56": "bsc",
-            "137": "pol",
-            "196": "xlayer",
-            "8453": "base",
-            "42161": "arb",
-            "43114": "avax"
-        ][chainID]
+        evmChainsByID[chainID]
+    }
+
+    /// Returns `chain` unchanged if it's a recognized EVM chain ticker, else `nil`. Used to guard
+    /// the currently-selected-asset fallback in `resolveAsset`: `current` may be on any chain
+    /// (SOL, BTC, LTC, ...), and only an EVM one is a valid disambiguation for an EVM request
+    /// with no explicit chain id.
+    private static func evmChainIfKnown(_ chain: String?) -> String? {
+        guard let chain = chain?.lowercased(), evmChainTickers.contains(chain) else { return nil }
+        return chain
     }
 
     private static func resolvedEvmChain(chainID: String?, fallback: String?) -> String? {

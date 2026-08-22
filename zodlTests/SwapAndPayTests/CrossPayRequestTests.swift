@@ -7,13 +7,25 @@ struct CrossPayRequestTests {
     private let usdcContract = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 
     @Test func supportedRequestsMapToCrossPayFields() throws {
+        let btcAsset = asset(token: "BTC", chain: "btc", decimals: 8)
         let bitcoin = try #require(
             CrossPayRequestParser.parse(
                 "bitcoin:1FsSia9rv4NeEwvJ2GvXrX7LyxYspbN2mo?amount=0.015&label=Shop"
             )
         )
         #expect(bitcoin.address == "1FsSia9rv4NeEwvJ2GvXrX7LyxYspbN2mo")
-        #expect(bitcoin.resolvedAmount(for: asset(token: "BTC", chain: "btc", decimals: 8)) == Decimal(string: "0.015"))
+        #expect(bitcoin.resolveAsset(in: [btcAsset], current: nil) == btcAsset)
+        #expect(bitcoin.resolvedAmount(for: btcAsset) == Decimal(string: "0.015"))
+
+        let ltcAsset = asset(token: "LTC", chain: "ltc", decimals: 8)
+        let litecoin = try #require(
+            CrossPayRequestParser.parse(
+                "litecoin:LT2KVaAy1ppRuxRgrS5RNU3vBsy7RibPeA?amount=1.25&message=Coffee"
+            )
+        )
+        #expect(litecoin.address == "LT2KVaAy1ppRuxRgrS5RNU3vBsy7RibPeA")
+        #expect(litecoin.resolveAsset(in: [ltcAsset], current: nil) == ltcAsset)
+        #expect(litecoin.resolvedAmount(for: ltcAsset) == Decimal(string: "1.25"))
 
         let baseUsdc = asset(
             token: "USDC",
@@ -72,11 +84,47 @@ struct CrossPayRequestTests {
         #expect(request.resolveAsset(in: [baseUsdc, arbUsdc], current: nil) == nil)
     }
 
-    @Test func unsupportedAndPlainValuesAreNotReinterpreted() {
+    @Test func plainAddressIsNotReinterpretedAsAPaymentRequest() {
         #expect(CrossPayRequestParser.parse("bc1qplain") == nil)
+    }
+
+    @Test func unsupportedSchemeIsRejected() {
         #expect(CrossPayRequestParser.parse("near:alice.near") == nil)
+    }
+
+    @Test func solanaInteractiveTransactionRequestIsRejected() {
         #expect(CrossPayRequestParser.parse("solana:https://example.com/pay") == nil)
+    }
+
+    @Test func unrecognisedEip681MethodIsRejected() {
         #expect(CrossPayRequestParser.parse("ethereum:\(usdcContract)/approve?address=\(recipient)") == nil)
+    }
+
+    @Test func evmNativeRequestWithoutChainIdFallsBackToCurrentOnlyWhenItIsAnEvmAsset() throws {
+        // Regression test: resolveAsset used to fall back to `current`'s chain unconditionally,
+        // even when current wasn't an EVM chain at all. nativeTokens' permissive default (a
+        // chain with no special-cased native token matches itself) meant a SOL/BTC/LTC asset
+        // selected as `current` would silently pass through and get matched against a native
+        // ETH/BNB/MATIC-etc. request that had no explicit chain id, pairing an EVM payment
+        // request with a completely unrelated non-EVM asset.
+        let request = try #require(
+            CrossPayRequestParser.parse("ethereum:\(recipient)?value=1e18")
+        )
+        let solAsset = asset(token: "SOL", chain: "sol", decimals: 9)
+
+        #expect(request.resolveAsset(in: [solAsset], current: solAsset) == nil)
+    }
+
+    @Test func evmNativeRequestWithoutChainIdStillFallsBackToACurrentEvmAsset() throws {
+        // The legitimate case the fallback exists for: no explicit chain id (a valid, common
+        // EIP-681 form), and the user already has an EVM asset selected -- that's still a
+        // reasonable disambiguation, unlike falling back to a non-EVM asset.
+        let request = try #require(
+            CrossPayRequestParser.parse("ethereum:\(recipient)?value=1e18")
+        )
+        let ethOnArbitrum = asset(token: "ETH", chain: "arb", decimals: 18)
+
+        #expect(request.resolveAsset(in: [ethOnArbitrum], current: ethOnArbitrum) == ethOnArbitrum)
     }
 
     private func asset(
