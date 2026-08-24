@@ -19,6 +19,31 @@ import Testing
     /// unlocked in Orchard on a wallet whose funds already live in Ironwood.
     private static let residual = MigrationBannerVariant.residual(amount: Zatoshi(800_000))
 
+    /// A plain Zcash-vendor account. The ladder's entry rung refuses to walk without one, so every
+    /// test that exercises the walk (rather than a single case) needs it installed.
+    private static func walletAccount() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 9, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    /// Currency conversion (rung 8) claims the slot whenever it has not been set up, which would
+    /// stop any walk before it reached the bottom. Answering "already configured" is what lets the
+    /// ladder tests measure the rung they are actually about.
+    private static func preferencesWithCurrencyConversionSetUp() -> UserPreferencesStorageClient {
+        var preferences = UserPreferencesStorageClient()
+        preferences.exchangeRate = { UserPreferencesStorage.ExchangeRate(manual: true, automatic: true) }
+        return preferences
+    }
+
     /// BULLET 1 — the fix itself. The pre-verdict CLAIM gate (R3) is the code that used to paint
     /// `.checkingStatus` and take `priorityMigration` for any non-nil variant, residual included;
     /// leaving the session verdict unknown arms it. A residual must walk straight past it: no
@@ -42,10 +67,13 @@ import Testing
             store.exhaustivity = .off
 
             await store.send(.migrationVariantUpdated(Self.residual))
-            await store.receive(\.openBannerRequest)
+            // No account is installed, so the walk this hands off to holds at its own entry gate —
+            // which keeps this test on its own bullet. Where the walk goes when it CAN run is
+            // `residualSeatsTheBottomRungOnceEveryRungAboveDeclines`.
+            await store.receive(\.evaluatePriority1)
 
             #expect(store.state.priorityContent != .priorityMigration, "the residual took the slot that has no snooze")
-            #expect(store.state.priorityContent == .priorityResidual)
+            #expect(store.state.priorityContent == nil, "the residual claimed a slot instead of asking the ladder for one")
             #expect(store.state.migrationBannerVariant == Self.residual, "a residual has no verdict to wait on — it must never render Checking")
             #expect(!store.state.isMigrationCheckDwelling)
         }
@@ -89,8 +117,14 @@ import Testing
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
+            // A seated, open residual is this test's PRECONDITION, not its subject — how a residual
+            // comes to be seated is `residualSeatsTheBottomRungOnceEveryRungAboveDeclines`'s job —
+            // so it is set directly rather than walked to.
             var state = SmartBanner.State()
             state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.priorityContent = .priorityResidual
+            state.migrationBannerVariant = Self.residual
+            state.isOpen = true
 
             let store = TestStore(initialState: state) {
                 SmartBanner()
@@ -100,12 +134,6 @@ import Testing
                 $0.sdkSynchronizer = .mocked()
             }
             store.exhaustivity = .off
-
-            await store.send(.migrationVariantUpdated(Self.residual))
-            await store.receive(\.openBannerRequest)
-            await store.receive(\.openBanner)
-            #expect(store.state.priorityContent == .priorityResidual)
-            #expect(store.state.isOpen)
 
             await store.send(.migrationVariantUpdated(.required))
             // Seated and open, so the request bounces once off the open banner — close, then
@@ -120,32 +148,106 @@ import Testing
         }
     }
 
-    /// BULLET 4 — the demotion is not a mute. With nothing above holding the slot the residual
-    /// seats at its own rung and the banner opens, exactly as the design asks.
-    @Test func residualSeatsTheBottomRungOnAnEmptySlot() async {
+    /// BULLET 4 (AS AMENDED) — the demotion is not a mute, and the ladder is the only way in.
+    ///
+    /// An empty slot is not an invitation: a residual arriving through the funnel re-runs the WALK
+    /// rather than claiming, so every banner above gets its ask first. Here they all decline — no
+    /// restore, no sync backlog, nothing to back up, nothing to shield, the Tor prompt answered,
+    /// currency conversion configured — so the walk reaches the bottom rung and the dust seats
+    /// there, which is the design's whole intent for it.
+    @Test func residualSeatsTheBottomRungOnceEveryRungAboveDeclines() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             var state = SmartBanner.State()
             state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
+
+            // Bound here rather than read inside the dependency closure: that closure is
+            // `@Sendable` and cannot reach a `@MainActor`-isolated static.
+            let answer = Self.residual
 
             let store = TestStore(initialState: state) {
                 SmartBanner()
             } withDependencies: {
                 $0.mainQueue = .immediate
-                $0.migrationManager = .noOp
+                var client = MigrationManagerClient.noOp
+                // The walk asks the manager its own question on the migration rung, and gets the
+                // same answer the funnel just heard — which is what the bottom rung cashes in.
+                client.bannerVariant = { _ in answer }
+                $0.migrationManager = client
                 $0.sdkSynchronizer = .mocked()
+                // Rungs 6, 7 and 75 decline through `.noOp`: no transactions to warrant a backup
+                // prompt, no transparent balance to shield, the Tor setup flag already answered.
+                $0.walletStorage = .noOp
+                $0.userStoredPreferences = Self.preferencesWithCurrencyConversionSetUp()
+                $0.continuousClock = ImmediateClock()
             }
             store.exhaustivity = .off
 
             await store.send(.migrationVariantUpdated(Self.residual))
+
+            // The funnel hands off to the ladder instead of seating anything itself...
+            await store.receive(\.evaluatePriority1)
+            // ...and the walk ends at the new bottom rung.
+            await store.receive(\.evaluatePriorityResidual)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
-            await store.receive(\.openBanner)
 
             #expect(store.state.priorityContent == .priorityResidual)
             #expect(store.state.migrationBannerVariant == Self.residual)
-            #expect(store.state.isOpen)
+        }
+    }
+
+    /// THE NARROWER DOOR the demotion nearly left open (review finding, ruled on as a spec change).
+    ///
+    /// A wallet that owes a backup seats `priority6`; a real sync starts and `priority4` displaces
+    /// it; the sync completes, and the `.upToDate` arm for `priority4` closes the banner and feeds
+    /// `bannerVariant` STRAIGHT into the funnel — bypassing the ladder. With the funnel allowed to
+    /// claim an empty slot, dust took the slot the backup prompt had just been holding, and kept it
+    /// for the session: the exact harm this task exists to prevent, reached by a different route.
+    ///
+    /// Written at the funnel rather than through a scripted sync, because the funnel is where the
+    /// decision is made — an empty slot plus a residual answer, which is precisely the state the
+    /// `.priority4` arm produces.
+    @Test func aResidualArrivingOnAnEmptySlotStillYieldsToWalletBackup() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = SmartBanner.State()
+            state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
+            // The backup rung's own conditions: a Zcash account with history, a stored wallet whose
+            // phrase has not been verified (`.noOp` answers `StoredWallet.placeholder`, which has
+            // not), and no reminder on record — so it claims at phase 1.
+            state.$transactions.withLock { $0 = [TransactionState.mockedReceived] }
+            // The slot is EMPTY, exactly as the closing `.priority4` banner leaves it.
+            let answer = Self.residual
+
+            let store = TestStore(initialState: state) {
+                SmartBanner()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                var client = MigrationManagerClient.noOp
+                client.bannerVariant = { _ in answer }
+                $0.migrationManager = client
+                $0.sdkSynchronizer = .mocked()
+                $0.walletStorage = .noOp
+                $0.userStoredPreferences = Self.preferencesWithCurrencyConversionSetUp()
+                $0.continuousClock = ImmediateClock()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.migrationVariantUpdated(Self.residual))
+            await store.receive(\.evaluatePriority1)
+            await store.receive(\.triggerPriority)
+            await store.receive(\.openBannerRequest)
+
+            #expect(
+                store.state.priorityContent == .priority6,
+                "dust took the slot the wallet-backup prompt was owed — the suppression this fix exists to end"
+            )
+            #expect(store.state.priorityContent != .priorityResidual)
         }
     }
 

@@ -618,7 +618,8 @@ struct SmartBanner {
                 // MOB-1749 review fix: a residual is not a migration the wallet needs to run — it
                 // never claims `priorityMigration` (no snooze, suppressed every other banner) and
                 // has no session verdict to wait on, so it bypasses the checkingStatus machinery
-                // entirely. It claims only the bottom rung, and only when the slot is free.
+                // entirely. It never claims a slot from here at all: the LADDER is the single
+                // authority on seating order, and the bottom rung is the only door in.
                 if let variant, case .residual = variant {
                     state.migrationBannerVariant = variant
                     state.isMigrationCheckDwelling = false
@@ -636,7 +637,17 @@ struct SmartBanner {
                         }
                     }
                     if state.priorityContent == nil {
-                        return .send(.triggerPriority(.priorityResidual))
+                        // An empty slot is not an invitation. A residual answer arriving from
+                        // OUTSIDE the ladder — the post-sync re-read, a reconcile edge — must re-run
+                        // the walk instead of seating itself, or it takes a slot the ladder never
+                        // offered it. The path that made this concrete: a wallet owing a backup
+                        // seats `priority6`, a sync starts and `priority4` displaces it, and the
+                        // `.upToDate` arm for `priority4` closes the banner and feeds the variant
+                        // STRAIGHT into this funnel — an empty slot, no walk, dust sitting where the
+                        // backup prompt belonged for the rest of the session. Re-running the walk is
+                        // what gives every banner above its ask; the bottom rung seats the residual
+                        // only once they have all declined.
+                        return .send(.evaluatePriority1)
                     }
                     // `.priorityResidual` already holds it (content re-renders in place), or a
                     // higher banner does (the arbiter would reject the request anyway).
