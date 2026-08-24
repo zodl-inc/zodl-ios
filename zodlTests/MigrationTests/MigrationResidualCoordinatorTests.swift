@@ -76,14 +76,15 @@ import Testing
 
     // MARK: - Delegates
 
-    private static func stateWithResidualScreen() -> MigrationCoordFlow.State {
+    private static func stateWithResidualScreen(resolution: MigrationLockResolution = .offered) -> MigrationCoordFlow.State {
         var state = MigrationCoordFlow.State.initial
         state.path.append(
             .residual(
                 MigrationResidual.State(
                     orchardBalance: balances.residualOrchard,
                     lockedOrchardBalance: balances.lockedOrchard,
-                    ironwoodBalance: balances.ironwood
+                    ironwoodBalance: balances.ironwood,
+                    resolution: resolution
                 )
             )
         )
@@ -157,7 +158,8 @@ import Testing
     /// still in place (locked notes are excluded from the spendable figure that fires the route).
     /// The residual leg therefore must NOT unlock — the immediate sweep is a send-max over
     /// SPENDABLE notes only, so skipping the unlock makes it cover exactly the balance the card
-    /// names and leaves the prior lock standing.
+    /// names and leaves the prior lock standing. The `.locked` twin below is the leg that DOES
+    /// unlock.
     @Test func migrateAnywayHandsOverToTheImmediateReviewWithoutClearingLocks() async throws {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = Self.account() }
@@ -180,6 +182,55 @@ import Testing
 
         await store.send(.path(.element(id: id, action: .residual(.lock(.migrateAnywayTapped)))))
         await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
+
+        guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
+            Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(reviewState.mode == .immediate)
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
+    /// Wave 2 — the release path. On a LOCKED residual, "Migrate anyway" means "undo the lock and
+    /// move it after all": the leg unlocks exactly once, hands over to the immediate review, and
+    /// flips the screen back to `.offered` so backing out of the review lands on a truthful card.
+    @Test func migrateAnywayOnALockedResidualUnlocksOnceAndReOffers() async throws {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
+
+        let unlockCount = LockIsolated<Int>(0)
+
+        let store = TestStore(initialState: Self.stateWithResidualScreen(resolution: .locked)) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.migrationManager = MigrationManagerClient.noOp
+            $0.sdkSynchronizer = .mocked(
+                unlockMigrationResidual: { _ in
+                    unlockCount.withValue { $0 += 1 }
+                    return 0
+                }
+            )
+        }
+        store.exhaustivity = .off
+        let id = try #require(store.state.path.ids.first)
+
+        await store.send(.path(.element(id: id, action: .residual(.lock(.migrateAnywayTapped)))))
+        await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
+
+        #expect(unlockCount.value == 1, "a locked residual's Migrate anyway must clear the lock it is escaping")
+
+        guard case .residual(let residualState)? = store.state.path.first(where: { element in
+            if case .residual = element { return true }
+            return false
+        }) else {
+            Issue.record("the residual screen left the stack")
+            return
+        }
+        #expect(residualState.lock.resolution == .offered, "the cleared lock must re-offer, not keep claiming .locked")
 
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
             Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
@@ -217,22 +268,29 @@ import Testing
 
     // MARK: - Complete's coordinator leg (MOB-1749 review fix)
 
-    // These two mirror the pair right above, but drive `.complete(.delegate(.migrateAnyway))`
+    // These mirror the residual pair right above, but drive `.complete(.delegate(.migrateAnyway))`
     // instead of `.residual(...)` — the SIBLING leg through the very same
     // `migrateAnywayEffect(accountUUID:clearsOutputLocks:)`. They live in THIS suite, not a
     // Complete-only file, because what they pin only means something read next to the residual
-    // pair above: Complete passes `clearsOutputLocks: true` and DOES call
-    // `unlockMigrationResidual`, where the residual leg deliberately does not.
+    // pair above: Wave 2 gives both screens ONE rule — the leg unlocks iff the TAPPING screen's
+    // resolution is `.locked`. So Complete's `.offered` leg no longer unlocks either, and each
+    // screen's `.locked` leg is the release path that does.
 
-    private static func stateWithCompleteScreen(isMigratingAnyway: Bool = false) -> MigrationCoordFlow.State {
-        var completeState = MigrationComplete.State(dust: Zatoshi(800_000))
+    private static func stateWithCompleteScreen(
+        isMigratingAnyway: Bool = false,
+        resolution: MigrationLockResolution? = nil
+    ) -> MigrationCoordFlow.State {
+        var completeState = MigrationComplete.State(dust: Zatoshi(800_000), resolution: resolution)
         completeState.lock.isMigratingAnyway = isMigratingAnyway
         var state = MigrationCoordFlow.State.initial
         state.path.append(.complete(completeState))
         return state
     }
 
-    @Test func completeMigrateAnywayUnlocksOnceAndHandsOverToTheImmediateReview() async throws {
+    /// Wave 2 flips this leg: Complete's `.offered` tap used to unlock unconditionally, which was
+    /// only ever safe while an already-locked dust hid the button. It no longer does — a prior
+    /// lock can now sit alongside this run's own offer — so the blanket clear has to go.
+    @Test func completeMigrateAnywayAtOfferedNoLongerUnlocks() async throws {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = Self.account() }
         defer { $selectedWalletAccount.withLock { $0 = nil } }
@@ -257,7 +315,53 @@ import Testing
         await store.send(.path(.element(id: id, action: .complete(.delegate(.migrateAnyway)))))
         await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
 
-        #expect(unlockCount.value == 1, "Complete's leg keeps its unlock — unlike the residual leg above, which must skip it")
+        #expect(
+            unlockCount.value == 0,
+            """
+            at .offered nothing is locked that this tap asked to clear — and with a PRIOR lock \
+            present, clearing it here would discard a deliberate earlier decision
+            """
+        )
+
+        guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
+            Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(reviewState.mode == .immediate)
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
+    /// Complete's half of the release path — the same rule the locked residual twin above pins:
+    /// the tapping screen is `.locked`, so this tap is the user undoing that lock, and the unlock
+    /// runs exactly once before the immediate review takes over.
+    @Test func completeMigrateAnywayAtLockedUnlocksOnce() async throws {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
+
+        let unlockCount = LockIsolated<Int>(0)
+
+        let store = TestStore(initialState: Self.stateWithCompleteScreen(resolution: .locked)) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.migrationManager = MigrationManagerClient.noOp
+            $0.sdkSynchronizer = .mocked(
+                unlockMigrationResidual: { _ in
+                    unlockCount.withValue { $0 += 1 }
+                    return 0
+                }
+            )
+        }
+        store.exhaustivity = .off
+        let id = try #require(store.state.path.ids.first)
+
+        await store.send(.path(.element(id: id, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
+
+        #expect(unlockCount.value == 1, "a locked Complete screen's Migrate anyway must clear the lock it is escaping")
 
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
             Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
@@ -270,15 +374,17 @@ import Testing
     }
 
     /// The failure twin, but the throw comes from the unlock call itself rather than a missing
-    /// account (contrast `migrateAnywayWithoutASelectedAccountFailsSoftly` above). `isMigratingAnyway`
-    /// starts TRUE so the re-arm assertion is load-bearing — an already-`false` flag would pass even
-    /// if `.migrateAnywayFailed`'s fixup never ran.
+    /// account (contrast `migrateAnywayWithoutASelectedAccountFailsSoftly` above). Wave 2: the
+    /// screen starts `.locked`, because that is the only leg that calls the unlock at all — and so
+    /// the only one that can throw here. `isMigratingAnyway` starts TRUE so the re-arm assertion is
+    /// load-bearing — an already-`false` flag would pass even if `.migrateAnywayFailed`'s fixup
+    /// never ran.
     @Test func completeMigrateAnywayFailureReArmsTheButton() async throws {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = Self.account() }
         defer { $selectedWalletAccount.withLock { $0 = nil } }
 
-        let store = TestStore(initialState: Self.stateWithCompleteScreen(isMigratingAnyway: true)) {
+        let store = TestStore(initialState: Self.stateWithCompleteScreen(isMigratingAnyway: true, resolution: .locked)) {
             MigrationCoordFlow()
         } withDependencies: {
             $0.mainQueue = .immediate
@@ -301,6 +407,7 @@ import Testing
             return
         }
         #expect(!resultState.lock.isMigratingAnyway, "the failure fixup must re-arm the button")
+        #expect(resultState.lock.resolution == .locked, "a FAILED unlock leaves the lock standing — the card must keep saying so")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)

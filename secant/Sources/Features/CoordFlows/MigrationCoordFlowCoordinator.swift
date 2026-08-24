@@ -404,28 +404,51 @@ extension MigrationCoordFlow {
                 // has no unlocked balance left, so the banner is gone.
                 return reconcileThenFinishEffect()
 
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
-                // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
-                // "Migrate anyway" sweeps it through the ordinary immediate pipeline — one
-                // transaction, engine-external, exactly like the manual lane's own sweep. Complete's
-                // leg keeps its unlock: the button is reachable only from `.offered`, where nothing
-                // is locked (a locked dust hydrates `.locked` and hides it), so the unlock stays a
-                // true no-op kept for behavioral continuity.
+            case .path(.element(id: let id, action: .complete(.delegate(.migrateAnyway)))):
+                // The residual is below the transfer threshold, so it cannot ride the scheduled
+                // lane. "Migrate anyway" sweeps it through the ordinary immediate pipeline — one
+                // transaction, engine-external, exactly like the manual lane's own sweep.
+                //
+                // Wave 2 — ONE rule for both screens: the leg unlocks iff the tapping screen's
+                // resolution is `.locked`. At `.offered` nothing this tap is about is locked, and a
+                // PRIOR deliberate lock (now a real state here — `completeState` offers the run's
+                // own dust even with an earlier lock in place) must survive the sweep. At `.locked`
+                // the unlock IS the point: it is the release path.
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
-                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: true)
+                var clearsOutputLocks = false
+                if case .complete(let completeState) = state.path[id: id] {
+                    clearsOutputLocks = completeState.lock.resolution == .locked
+                }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: clearsOutputLocks)
 
-            case .path(.element(id: _, action: .residual(.delegate(.migrateAnyway)))):
-                // MOB-1749 review fix: the Remaining Orchard Funds screen must NOT clear output
-                // locks. `unlockMigrationResidual` is a blanket clear of ALL the account's locks,
-                // and this screen is reachable with an earlier deliberate lock still in place — the
-                // spendable figure that fires the route EXCLUDES locked notes, so "0.005 locked,
-                // 0.004 received afterwards" re-enters here at `.offered`. The immediate sweep is a
-                // send-max over SPENDABLE notes only: skipping the unlock makes it cover exactly
-                // the balance the card names, and leaves the earlier lock standing.
+            case .path(.element(id: let id, action: .residual(.delegate(.migrateAnyway)))):
+                // Same rule as Complete's arm directly above — see its comment. The `.offered`
+                // no-unlock half is what keeps "0.005 locked earlier, 0.004 received afterwards"
+                // safe: the send-max covers exactly the spendable balance the card names, and the
+                // earlier lock stands.
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
-                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: false)
+                var clearsOutputLocks = false
+                if case .residual(let residualState) = state.path[id: id] {
+                    clearsOutputLocks = residualState.lock.resolution == .locked
+                }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: clearsOutputLocks)
 
-            case .migrateAnywayUnlocked:
+            case .migrateAnywayUnlocked(let clearedLocks):
+                // Wave 2: a cleared lock re-offers. The screen underneath the review must tell the
+                // truth if the user backs out — its balance is unlocked again, so `.locked` would
+                // claim a lock the chain no longer holds. On the no-unlock leg nothing flips.
+                if clearedLocks {
+                    for id in state.path.ids {
+                        if case .complete(var completeState) = state.path[id: id], completeState.lock.resolution == .locked {
+                            completeState.lock.resolution = .offered
+                            state.path[id: id] = .complete(completeState)
+                        }
+                        if case .residual(var residualState) = state.path[id: id], residualState.lock.resolution == .locked {
+                            residualState.lock.resolution = .offered
+                            state.path[id: id] = .residual(residualState)
+                        }
+                    }
+                }
                 // Straight onto the manual lane's own review screen: the user still confirms the
                 // sweep, and every downstream path (software commit, Keystone single-PCZT ceremony,
                 // broadcast-failure routing) is the one that lane already owns. `.immediate` carries
@@ -1500,8 +1523,8 @@ extension MigrationCoordFlow {
         )
     }
 
-    /// PHASE 6, the shared "Migrate anyway" leg. `clearsOutputLocks` is Complete's historical
-    /// no-op unlock; the residual screen must never clear locks — see its case's comment.
+    /// PHASE 6, the shared "Migrate anyway" leg. `clearsOutputLocks` is true exactly when the
+    /// tapping screen's resolution was `.locked` — the release path; see the delegate arms.
     private func migrateAnywayEffect(accountUUID: AccountUUID, clearsOutputLocks: Bool) -> Effect<Action> {
         .run { [sdkSynchronizer, migrationManager] send in
             do {
@@ -1511,7 +1534,7 @@ extension MigrationCoordFlow {
                 // Reconcile before handing over: the Review screen's own proposal reads the
                 // account's spendable Orchard balance.
                 await migrationManager.reconcile()
-                await send(.migrateAnywayUnlocked)
+                await send(.migrateAnywayUnlocked(clearedLocks: clearsOutputLocks))
             } catch {
                 await send(.migrateAnywayFailed)
             }

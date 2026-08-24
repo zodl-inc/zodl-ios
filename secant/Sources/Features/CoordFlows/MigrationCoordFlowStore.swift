@@ -232,10 +232,12 @@ struct MigrationCoordFlow {
         /// in-flight flag so its Continue button is usable again — a dead button is the one outcome
         /// this lane must never produce.
         case recoveryFailed
-        /// PHASE 6: "Migrate anyway" — the residual has been unlocked and the ordinary immediate
-        /// lane takes it from here. Carries no proposal: `MigrationReviewTransfer`'s `.immediate`
-        /// mode proposes for itself on appear, exactly as the manual lane's own entry does.
-        case migrateAnywayUnlocked
+        /// PHASE 6: "Migrate anyway" — the ordinary immediate lane takes the residual from here.
+        /// `clearedLocks` says whether this leg actually cleared a lock — true only on the release
+        /// path, where the tapping screen was `.locked` — so the handler knows whether a screen
+        /// underneath has to re-offer. Carries no proposal: `MigrationReviewTransfer`'s
+        /// `.immediate` mode proposes for itself on appear, exactly as the manual lane's own does.
+        case migrateAnywayUnlocked(clearedLocks: Bool)
         /// PHASE 6: the unlock or the immediate proposal failed; clears the Complete screen's
         /// single-flight flag so the button comes back.
         /// MOB-1749: also the Remaining Orchard Funds screen's flag.
