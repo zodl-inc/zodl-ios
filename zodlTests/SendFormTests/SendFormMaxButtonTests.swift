@@ -49,7 +49,9 @@ private enum MaxButtonTestError: Error {
         var state = SendForm.State.initial
         state.isValidAddress = false
         state.address = Const.validAddress.redacted
+        let previousAccount = state.selectedWalletAccount
         state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         // `sendMaxAmount` is left unimplemented on purpose: if the address guard stopped
         // working, the effect would run and the unimplemented dependency would fail the test.
@@ -67,7 +69,9 @@ private enum MaxButtonTestError: Error {
         var state = SendForm.State.initial
         state.isValidAddress = true
         state.address = Const.validAddress.redacted
+        let previousAccount = state.selectedWalletAccount
         state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         let resolvedAmount = Zatoshi(123_456_789)
 
@@ -95,7 +99,9 @@ private enum MaxButtonTestError: Error {
         state.isValidAddress = true
         state.address = Const.validAddress.redacted
         state.zecAmountText = "1.5".redacted
+        let previousAccount = state.selectedWalletAccount
         state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         let store = TestStore(initialState: state) {
             SendForm()
@@ -117,18 +123,37 @@ private enum MaxButtonTestError: Error {
 
     @Test func isMaxButtonEnabledReflectsAddressBalanceAndInFlightState() {
         var state = SendForm.State.initial
-        state.isValidAddress = false
-        state.walletBalancesState.spendability = .everything
-        #expect(!state.isMaxButtonEnabled)
+        // `selectedWalletAccount` is process-global `@Shared` state; Swift Testing runs
+        // OTHER suites in parallel, so pin it and always restore the previous value.
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         state.isValidAddress = true
+        state.shieldedBalance = Zatoshi(100_000)
+        state.walletBalancesState.spendability = .everything
         #expect(state.isMaxButtonEnabled)
+
+        state.isValidAddress = false
+        #expect(!state.isMaxButtonEnabled)
+        state.isValidAddress = true
 
         state.walletBalancesState.spendability = .nothing
         #expect(!state.isMaxButtonEnabled)
 
         state.walletBalancesState.spendability = .something
         #expect(state.isMaxButtonEnabled)
+
+        // Empty wallet: spendability is `.everything` when totalBalance == .zero (and as
+        // the initial value), so a zero spendable balance must gate the chip off on its own.
+        state.walletBalancesState.spendability = .everything
+        state.shieldedBalance = .zero
+        #expect(!state.isMaxButtonEnabled)
+        state.shieldedBalance = Zatoshi(100_000)
+
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        #expect(!state.isMaxButtonEnabled)
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
 
         state.isMaxRequestInFlight = true
         #expect(!state.isMaxButtonEnabled)

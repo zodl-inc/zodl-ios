@@ -132,7 +132,9 @@ struct SendForm {
 
         var isMaxButtonEnabled: Bool {
             isValidAddress
+            && selectedWalletAccount != nil
             && walletBalancesState.spendability != .nothing
+            && shieldedBalance.amount > 0
             && !isMaxRequestInFlight
         }
 
