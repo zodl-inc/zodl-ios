@@ -178,7 +178,7 @@ struct MigrationComplete {
 
             case .lockDustFailed:
                 state.dustResolution = .offered
-                state.alert = AlertState.lockFailed()
+                state.alert = AlertState.migrationLockFailed()
                 return .none
 
             case .lockDustSucceeded:
@@ -211,22 +211,6 @@ struct MigrationComplete {
                 state.isMigratingAnyway = false
                 return .none
             }
-        }
-    }
-}
-
-// MARK: - Alerts
-
-extension AlertState where Action == MigrationComplete.Action {
-    /// Generic failure copy — `lockMigrationDust` throws a bare error with no user-facing detail to
-    /// surface. Reuses `MigrationNoteSplit`'s failure-sheet copy (same Migration domain, no
-    /// interpolated argument, and "tap below to try again" matches this screen's shape exactly:
-    /// dismissing lands back on `.offered` with "Lock balance" visible again).
-    static func lockFailed() -> AlertState {
-        AlertState {
-            TextState(String(localizable: .migrationNoteSplitFailedTitle))
-        } message: {
-            TextState(String(localizable: .migrationNoteSplitFailedBody))
         }
     }
 }

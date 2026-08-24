@@ -52,7 +52,7 @@ import Testing
         }
         await store.receive(\.lockFailed) { state in
             state.resolution = .offered
-            state.alert = AlertState.lockFailed()
+            state.alert = AlertState.migrationLockFailed()
         }
     }
 
@@ -126,7 +126,7 @@ import Testing
 
     @Test func dismissingTheAlertClearsIt() async {
         var initialState = Self.state()
-        initialState.alert = AlertState.lockFailed()
+        initialState.alert = AlertState.migrationLockFailed()
         let store = TestStore(initialState: initialState) {
             MigrationResidual()
         }

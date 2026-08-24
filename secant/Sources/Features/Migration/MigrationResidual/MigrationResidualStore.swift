@@ -140,7 +140,7 @@ struct MigrationResidual {
 
             case .lockFailed:
                 state.resolution = .offered
-                state.alert = AlertState.lockFailed()
+                state.alert = AlertState.migrationLockFailed()
                 return .none
 
             case .lockSucceeded:
@@ -158,21 +158,6 @@ struct MigrationResidual {
                 state.isMigratingAnyway = false
                 return .none
             }
-        }
-    }
-}
-
-// MARK: - Alerts
-
-extension AlertState where Action == MigrationResidual.Action {
-    /// Same generic failure copy Migration Complete's lock uses — `lockMigrationDust` throws a bare
-    /// error with no user-facing detail, and "tap below to try again" matches this screen's shape
-    /// exactly (dismissing lands back on `.offered` with "Lock balance" visible again).
-    static func lockFailed() -> AlertState {
-        AlertState {
-            TextState(String(localizable: .migrationNoteSplitFailedTitle))
-        } message: {
-            TextState(String(localizable: .migrationNoteSplitFailedBody))
         }
     }
 }
