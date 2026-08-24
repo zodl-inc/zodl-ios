@@ -100,7 +100,7 @@ private enum SwapMaxButtonTestError: Error {
             // rather than a single closure being overridden in place.
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                 getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
-                sendMaxAmount: { _, recipient in
+                sendMaxAmount: { _, recipient, _ in
                     recipientUsed.setValue(recipient.stringEncoded)
                     return Const.maxAmount
                 }
@@ -190,7 +190,7 @@ private enum SwapMaxButtonTestError: Error {
         } withDependencies: {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                 getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
-                sendMaxAmount: { _, _ in throw SwapMaxButtonTestError.sendMaxAmountFailed }
+                sendMaxAmount: { _, _, _ in throw SwapMaxButtonTestError.sendMaxAmountFailed }
             )
         }
         store.exhaustivity = .off

@@ -194,7 +194,7 @@ extension SDKSynchronizerClient {
         wipe: { Empty<Void, Error>().eraseToAnyPublisher() },
         switchToEndpoint: { _ in },
         proposeTransfer: { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
-        sendMaxAmount: { _, _ in Zatoshi(0) },
+        sendMaxAmount: { _, _, _ in Zatoshi(0) },
         createAndSubmitProposedTransactions: { _, _ in .success(txIds: []) },
         proposeShielding: { _, _, _, _ in nil },
         isSeedRelevantToAnyDerivedAccount: { _ in false },
@@ -372,7 +372,7 @@ extension SDKSynchronizerClient {
         switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
         proposeTransfer:
         @escaping @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
-        sendMaxAmount: @escaping @Sendable (AccountUUID, Recipient) async throws -> Zatoshi = { _, _ in Zatoshi(0) },
+        sendMaxAmount: @escaping @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi = { _, _, _ in Zatoshi(0) },
         createAndSubmitProposedTransactions:
         @escaping @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
         proposeShielding:

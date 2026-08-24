@@ -417,11 +417,29 @@ struct SendForm {
                     return .none
                 }
                 state.isMaxRequestInFlight = true
-                return .run { [address = state.address] send in
+                return .run { [
+                    address = state.address,
+                    isValidTransparentAddress = state.isValidTransparentAddress,
+                    isValidTexAddress = state.isValidTexAddress,
+                    addMemoState = state.addMemoState,
+                    memoText = state.memoState.text
+                ] send in
                     do {
                         let network = zcashSDKEnvironment.network().networkType
                         let recipient = try Recipient(address.data, network: network)
-                        let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient)
+
+                        // Mirror `getProposal`'s memo derivation so the max is computed
+                        // for the exact proposal the Review step will build.
+                        let memo: Memo?
+                        if isValidTransparentAddress || isValidTexAddress {
+                            memo = nil
+                        } else if let candidate = addMemoState ? memoText : nil {
+                            memo = candidate.isEmpty ? nil : try Memo(string: candidate)
+                        } else {
+                            memo = nil
+                        }
+
+                        let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
                         await send(.maxAmountResolved(amount))
                     } catch {
                         await send(.maxAmountFailed)

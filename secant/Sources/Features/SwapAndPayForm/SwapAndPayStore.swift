@@ -447,7 +447,7 @@ struct SwapAndPay {
                             return
                         }
                         let recipient = Recipient.transparent(transparentAddress)
-                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient)
+                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient, nil)
                         await send(.maxAmountResolved(maxAmount))
                     } catch {
                         await send(.maxAmountFailed)

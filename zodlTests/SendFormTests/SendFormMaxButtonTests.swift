@@ -24,6 +24,11 @@ private enum MaxButtonTestError: Error {
         // MultiServerSubmitFlexaRoutingTests) so the reducer's real Recipient(_:network:)
         // parse succeeds under test rather than throwing recipientInvalidInput.
         static let validAddress = "tmP3uLtGx5GPddkq8a6ddmXhqJJ3vy6tpTE"
+        // A real testnet unified address (same fixture as RequestZecTests /
+        // DerivationToolTests), so the recipient is shielded and a memo is allowed.
+        static let validUnifiedAddress = """
+        utest1vergg5jkp4xy8sqfasw6s5zkdpnxvfxlxh35uuc3me7dp596y2r05t6dv9htwe3pf8ksrfr8ksca2lskzjanqtl8uqp5vln3zyy246ejtx86vqftp73j7jg9099jxafyjhfm6u956j3
+        """
     }
 
     private var testWalletAccount: WalletAccount {
@@ -79,7 +84,7 @@ private enum MaxButtonTestError: Error {
             SendForm()
         } withDependencies: {
             $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .testnet) }
-            $0.sdkSynchronizer.sendMaxAmount = { _, _ in resolvedAmount }
+            $0.sdkSynchronizer.sendMaxAmount = { _, _, _ in resolvedAmount }
         }
         store.exhaustivity = .off
 
@@ -107,7 +112,7 @@ private enum MaxButtonTestError: Error {
             SendForm()
         } withDependencies: {
             $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .testnet) }
-            $0.sdkSynchronizer.sendMaxAmount = { _, _ in throw MaxButtonTestError.sendMaxAmountFailed }
+            $0.sdkSynchronizer.sendMaxAmount = { _, _, _ in throw MaxButtonTestError.sendMaxAmountFailed }
         }
         store.exhaustivity = .off
 
@@ -119,6 +124,77 @@ private enum MaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.zecAmountText == "1.5".redacted)
+    }
+
+    // The max must be computed for the exact proposal Review will build — including the
+    // memo, which can change receiver selection and therefore the ZIP-317 fee.
+    @MainActor @Test func maxTappedPassesUserMemoForShieldedRecipient() async {
+        var state = SendForm.State.initial
+        state.isValidAddress = true
+        state.isValidTransparentAddress = false
+        state.isValidTexAddress = false
+        state.addMemoState = true
+        state.memoState.text = "max memo test"
+        state.address = Const.validUnifiedAddress.redacted
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let memoUsed = LockIsolated<String?>("UNSET")
+
+        let store = TestStore(initialState: state) {
+            SendForm()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .testnet) }
+            $0.sdkSynchronizer.sendMaxAmount = { _, _, memo in
+                memoUsed.setValue(memo?.toString())
+                return Zatoshi(100_000)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxTapped) {
+            $0.isMaxRequestInFlight = true
+        }
+        await store.receive(\.maxAmountResolved)
+        await store.finish()
+
+        #expect(memoUsed.value == "max memo test")
+    }
+
+    // Transparent recipients cannot carry a memo — the max call must pass nil even
+    // when the (soon to be cleared) memo field still holds text.
+    @MainActor @Test func maxTappedPassesNilMemoForTransparentRecipient() async {
+        var state = SendForm.State.initial
+        state.isValidAddress = true
+        state.isValidTransparentAddress = true
+        state.addMemoState = true
+        state.memoState.text = "should not ride along"
+        state.address = Const.validAddress.redacted
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let memoUsed = LockIsolated<String?>("UNSET")
+
+        let store = TestStore(initialState: state) {
+            SendForm()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .testnet) }
+            $0.sdkSynchronizer.sendMaxAmount = { _, _, memo in
+                memoUsed.setValue(memo?.toString())
+                return Zatoshi(100_000)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxTapped) {
+            $0.isMaxRequestInFlight = true
+        }
+        await store.receive(\.maxAmountResolved)
+        await store.finish()
+
+        #expect(memoUsed.value == nil)
     }
 
     @Test func isMaxButtonEnabledReflectsAddressBalanceAndInFlightState() {
