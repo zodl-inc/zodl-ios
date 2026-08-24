@@ -199,6 +199,58 @@ import Testing
         }
     }
 
+    /// Wave 2 — the rung-7 dead-end. A wallet holding an above-threshold transparent balance whose
+    /// owner tapped "Remind me later" used to END the walk inside the shielding rung: the
+    /// snooze-not-elapsed branch sent nothing, so Tor, currency conversion and this residual seat
+    /// were unreachable until the snooze elapsed. The walk must continue past a snoozed reminder.
+    @Test func aSnoozedShieldingReminderDoesNotStopTheWalk() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = SmartBanner.State()
+            state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
+
+            let answer = Self.residual
+            let accountUUID = Self.walletAccount().id
+            let snoozedYesterday = ReminedMeTimestamp(timestamp: Date().timeIntervalSince1970 - 3_600, occurence: 1)
+            let aboveThreshold = AccountBalance(
+                saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                orchardBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                ironwoodBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+                unshielded: Zatoshi(100_000_000),
+                awaitingResolution: .zero
+            )
+
+            let store = TestStore(initialState: state) {
+                SmartBanner()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                var client = MigrationManagerClient.noOp
+                client.bannerVariant = { _ in answer }
+                $0.migrationManager = client
+                $0.sdkSynchronizer = .mocked(
+                    getAccountsBalances: { [accountUUID: aboveThreshold] }
+                )
+                var storage = WalletStorageClient.noOp
+                storage.exportShieldingReminder = { _ in snoozedYesterday }
+                $0.walletStorage = storage
+                $0.userStoredPreferences = Self.preferencesWithCurrencyConversionSetUp()
+                $0.continuousClock = ImmediateClock()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.migrationVariantUpdated(Self.residual))
+            await store.receive(\.evaluatePriority1)
+            await store.receive(\.evaluatePriority75)
+            await store.receive(\.evaluatePriorityResidual)
+            await store.receive(\.triggerPriority)
+            await store.receive(\.openBannerRequest)
+
+            #expect(store.state.priorityContent == .priorityResidual, "the snoozed shielding rung ended the walk instead of passing it down")
+        }
+    }
+
     /// THE NARROWER DOOR the demotion nearly left open (review finding, ruled on as a spec change).
     ///
     /// A wallet that owes a backup seats `priority6`; a real sync starts and `priority4` displaces

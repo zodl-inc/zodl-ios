@@ -731,8 +731,7 @@ struct SmartBanner {
                     return .none
                 }
                 MigrationTrace.event(
-                    "migration RELEASED the banner slot — variant became nil"
-                    + " (slot \(state.priorityContent.map { String(describing: $0) } ?? "none"))"
+                    "migration RELEASED the banner slot — variant became nil (slot \(state.priorityContent.map { String(describing: $0) } ?? "none"))"
                 )
                 // MOB-1749 review fix: the residual seat releases on the same edge and for the same
                 // reason — its dust got locked or spent, so the derivation now answers nil and the
