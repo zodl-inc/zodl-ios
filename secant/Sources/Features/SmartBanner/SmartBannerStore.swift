@@ -352,16 +352,7 @@ struct SmartBanner {
                     // merely REQUESTED offer (rank-refused while a higher banner holds the slot)
                     // clears its latch only — closing would tear down the unrelated banner that
                     // is actually seated.
-                    if state.priorityContent == .priority7 {
-                        return .merge(
-                            .send(.closeAndCleanupBanner),
-                            .send(.closeSheetTapped)
-                        )
-                    }
-                    if state.priorityContentRequested == .priority7 {
-                        state.priorityContentRequested = nil
-                    }
-                    return .none
+                    return retractShieldingOffer(state: &state)
                 case .failed, .grpc, .requested, .unknown:
                     return .none
                 }
@@ -930,6 +921,21 @@ struct SmartBanner {
                 if state.transparentBalance != unshielded {
                     state.transparentBalance = unshielded
                 }
+                guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
+                    let retraction = retractShieldingOffer(state: &state)
+                    if state.priorityContent == .priority7 {
+                        // retractShieldingOffer's close for a SEATED banner is a deferred,
+                        // generation-guarded hop (closeAndCleanupBanner → closeBannerIfCurrent) —
+                        // needed elsewhere so a same-tick FRESHER seat can win instead of being
+                        // wiped. It will not have landed by the time evaluatePriority75's own seat
+                        // attempt runs below, in this SAME synchronous pass, so that attempt would
+                        // see the stale priority7 seat and be rank-blocked. Clear it here too: the
+                        // deferred close still fires, but by then evaluatePriority75's own fresher
+                        // seat has bumped the generation, so its guard turns it into a no-op.
+                        state.priorityContent = nil
+                    }
+                    return .merge(retraction, .send(.evaluatePriority75))
+                }
                 return shieldingOfferDecision(state: &state, onDecline: .evaluatePriority75)
 
             case .shieldingOfferReevaluationRequested:
@@ -1352,6 +1358,25 @@ struct SmartBanner {
         return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
     }
 
+    /// The ONE retraction of the shielding offer, shared by every trigger — processor terminal
+    /// states, the sync tick's unshieldable branch, and the ladder fetch. Clears the
+    /// deferred-offer latch (the offer is answered or impossible), closes a SEATED priority7
+    /// banner, and otherwise clears a merely LATCHED request — closing in that case would tear
+    /// down the unrelated banner actually on screen.
+    private func retractShieldingOffer(state: inout State) -> Effect<Action> {
+        state.hasDeferredShieldingOffer = false
+        if state.priorityContent == .priority7 {
+            return .merge(
+                .send(.closeAndCleanupBanner),
+                .send(.closeSheetTapped)
+            )
+        }
+        if state.priorityContentRequested == .priority7 {
+            state.priorityContentRequested = nil
+        }
+        return .none
+    }
+
     /// Whether `priority`'s REQUEST may survive a clean close of a DIFFERENT banner. Survival is
     /// safe only for a lane the arbiter revalidates at seat time (`isPriorityStillValid`): a
     /// surviving stale request from a rule-less lane would seat unconditionally — e.g. a
@@ -1409,18 +1434,8 @@ struct SmartBanner {
             state.transparentBalance = accountBalance.unshielded
         }
         guard state.isShieldable(threshold) else {
-            state.hasDeferredShieldingOffer = false
             // The offer the banner is making (or about to make) is no longer valid.
-            if state.priorityContent == .priority7 {
-                return .merge(
-                    .send(.closeAndCleanupBanner),
-                    .send(.closeSheetTapped)
-                )
-            }
-            if state.priorityContentRequested == .priority7 {
-                state.priorityContentRequested = nil
-            }
-            return .none
+            return retractShieldingOffer(state: &state)
         }
         let didBecomeShieldable = !wasShieldable
         guard didBecomeShieldable || state.hasDeferredShieldingOffer else {

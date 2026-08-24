@@ -55,7 +55,8 @@ import ComposableArchitecture
         transparentBalance: Zatoshi = .zero,
         remindMeShieldedPhaseCounter: Int = 0,
         priorityContent: SmartBanner.State.PriorityContent? = nil,
-        priorityContentRequested: SmartBanner.State.PriorityContent? = nil
+        priorityContentRequested: SmartBanner.State.PriorityContent? = nil,
+        hasDeferredShieldingOffer: Bool = false
     ) -> TestStore<SmartBanner.State, SmartBanner.Action> {
         var state = SmartBanner.State()
         state.$selectedWalletAccount.withLock { $0 = account }
@@ -63,6 +64,7 @@ import ComposableArchitecture
         state.remindMeShieldedPhaseCounter = remindMeShieldedPhaseCounter
         state.priorityContent = priorityContent
         state.priorityContentRequested = priorityContentRequested
+        state.hasDeferredShieldingOffer = hasDeferredShieldingOffer
 
         let store = TestStore(initialState: state) {
             SmartBanner()
@@ -137,6 +139,53 @@ import ComposableArchitecture
 
             #expect(store.state.transparentBalance == .zero)
             #expect(store.state.priorityContentRequested == nil)
+        }
+    }
+
+    /// A terminal shielding outcome answers the offer, so the deferred-offer latch must fall with
+    /// it — a mid-sync crossing armed before a Keystone `.proposal` would otherwise re-raise the
+    /// banner during the signing flow.
+    @Test func terminalOutcomeClearsTheDeferredOfferLatch() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(
+                account: Self.account(),
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7,
+                hasDeferredShieldingOffer: true
+            )
+
+            await store.send(.shieldingProcessorStateChanged(.succeeded)) {
+                $0.hasDeferredShieldingOffer = false
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+        }
+    }
+
+    /// The ladder's own fetch discovering a sub-threshold balance must retract a seated shielding
+    /// banner exactly like the sync tick does — not leave it on screen showing the new, useless
+    /// amount — and then continue the walk to the next lane.
+    @Test func ladderFetchBelowThresholdRetractsTheSeatedBannerAndWalksDown() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7
+            )
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.shieldingBalanceFetched(account.id, Zatoshi(50)))
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority75)
         }
     }
 }
