@@ -252,7 +252,25 @@ struct SendForm {
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
-    
+
+    /// Derives the memo for a proposal — shared by `.getProposal` and `.maxTapped` so the
+    /// Max amount is always computed for the exact proposal Review will build. Memos ride
+    /// only in shielded outputs, so transparent and TEX recipients never carry one.
+    static func proposalMemo(
+        isValidTransparentAddress: Bool,
+        isValidTexAddress: Bool,
+        addMemoState: Bool,
+        memoText: String
+    ) throws -> Memo? {
+        if isValidTransparentAddress || isValidTexAddress {
+            return nil
+        }
+        guard addMemoState, !memoText.isEmpty else {
+            return nil
+        }
+        return try Memo(string: memoText)
+    }
+
     var body: some Reducer<State, Action> {
         BindingReducer()
         
@@ -378,14 +396,12 @@ struct SendForm {
                     do {
                         let recipient = try Recipient(address.data, network: zcashSDKEnvironment.network().networkType)
 
-                        let memo: Memo?
-                        if isValidTransparentAddress || isValidTexAddress {
-                            memo = nil
-                        } else if let candidate = addMemoState ? memoText : nil {
-                            memo = candidate.isEmpty ? nil : try Memo(string: candidate)
-                        } else {
-                            memo = nil
-                        }
+                        let memo = try SendForm.proposalMemo(
+                            isValidTransparentAddress: isValidTransparentAddress,
+                            isValidTexAddress: isValidTexAddress,
+                            addMemoState: addMemoState,
+                            memoText: memoText
+                        )
 
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, amount, memo)
 
@@ -428,16 +444,12 @@ struct SendForm {
                         let network = zcashSDKEnvironment.network().networkType
                         let recipient = try Recipient(address.data, network: network)
 
-                        // Mirror `getProposal`'s memo derivation so the max is computed
-                        // for the exact proposal the Review step will build.
-                        let memo: Memo?
-                        if isValidTransparentAddress || isValidTexAddress {
-                            memo = nil
-                        } else if let candidate = addMemoState ? memoText : nil {
-                            memo = candidate.isEmpty ? nil : try Memo(string: candidate)
-                        } else {
-                            memo = nil
-                        }
+                        let memo = try SendForm.proposalMemo(
+                            isValidTransparentAddress: isValidTransparentAddress,
+                            isValidTexAddress: isValidTexAddress,
+                            addMemoState: addMemoState,
+                            memoText: memoText
+                        )
 
                         let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
                         await send(.maxAmountResolved(amount))
