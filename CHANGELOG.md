@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- [MOB-1753] The vote submission screen now explains that submitting can take a few minutes and that wallets with more voting weight take longer to process.
 - [MOB-1466] Advanced Settings now offers "Restart Migration" while a migration is running. It shows how much has already migrated and how much is left, warns that restarting cancels the current plan for good, and asks for a separate confirmation before anything happens. Transfers that already went out are untouched — they stay migrated — and once the plan is cancelled you set up a new one for the remaining balance the same way you did the first time.
 - [MOB-1466] With a privacy migration in progress, keeping the app open now advances the migration automatically — transfers send on schedule without reopening the app.
 - [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.

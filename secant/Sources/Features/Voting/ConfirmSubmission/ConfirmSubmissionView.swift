@@ -340,8 +340,14 @@ struct ConfirmSubmissionView: View {
             )
             VStack(spacing: Design.Spacing._lg) {
                 VStack(alignment: .leading, spacing: Design.Spacing._lg) {
-                    Text(progressInfo.title)
-                        .zFont(.semiBold, size: 15, style: Design.Text.primary)
+                    VStack(alignment: .leading, spacing: Design.Spacing._xs) {
+                        Text(progressInfo.title)
+                            .zFont(.semiBold, size: 15, style: Design.Text.primary)
+
+                        Text(localizable: .coinVoteConfirmSubmissionProgressExplainer)
+                            .zFont(size: 14, style: Design.Text.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
