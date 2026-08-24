@@ -6,6 +6,12 @@
 //  it appears only where the tables used to answer nil / .entry, so every row here either pins a
 //  bound (0.0001 exclusive, 0.01 exclusive, Ironwood > 0) or pins that an existing answer still wins.
 //
+//  Review fix (2026-08-24): the residual figures ride `MigrationResidualBalances` — one value
+//  carrying the spendable Orchard residual, the locked Orchard balance and the Ironwood total —
+//  rather than a pair of loose Zatoshi parameters, and the route CARRIES that payload so the screen
+//  renders the very figures the decision was made on. `nil` is a real input here: an unreadable
+//  balances read is not an empty wallet, and both tables must degrade rather than invent a zero.
+//
 
 import Foundation
 import Testing
@@ -14,6 +20,14 @@ import Testing
 
 @Suite struct MigrationResidualBannerDerivationTests {
     private static let ironwood = Zatoshi(1_245_000_000)
+
+    private static func residual(
+        orchard: Zatoshi,
+        locked: Zatoshi = .zero,
+        ironwood: Zatoshi = ironwood
+    ) -> MigrationResidualBalances {
+        MigrationResidualBalances(residualOrchard: orchard, lockedOrchard: locked, ironwood: ironwood)
+    }
 
     private static func banner(
         state: MigrationState = .notStarted,
@@ -27,7 +41,7 @@ import Testing
             isIronwoodActivated: isIronwoodActivated,
             state: state,
             orchardBalance: orchard,
-            ironwoodBalance: ironwood,
+            residual: residual(orchard: orchard, ironwood: ironwood),
             isCompleteAcknowledged: isCompleteAcknowledged,
             isMigrationRemainderPending: isMigrationRemainderPending,
             transferRows: []
@@ -103,16 +117,37 @@ import Testing
 
         #expect(variant == .inProgress(done: 0, total: 0, round: nil, totalRounds: nil))
     }
+
+    /// An unreadable balances read is NOT an empty wallet — the arms must stay quiet rather than
+    /// invent a zero.
+    @Test func anUnreadableBalanceReadShowsNothing() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .notStarted,
+            orchardBalance: Zatoshi(800_000),
+            residual: nil,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: []
+        )
+
+        #expect(variant == nil)
+    }
 }
 
 @Suite struct MigrationResidualRouteDerivationTests {
     private static let ironwood = Zatoshi(1_245_000_000)
+
+    private static func residual(orchard: Zatoshi, ironwood: Zatoshi = ironwood) -> MigrationResidualBalances {
+        MigrationResidualBalances(residualOrchard: orchard, lockedOrchard: .zero, ironwood: ironwood)
+    }
 
     private static func route(
         state: MigrationState = .notStarted,
         orchard: Zatoshi,
         ironwood: Zatoshi = ironwood,
         isCompleteAcknowledged: Bool = false,
+        isMigrationRemainderPending: Bool = false,
         isIronwoodActivated: Bool = true
     ) -> MigrationReentryRoute {
         MigrationDerivations.reentryRoute(
@@ -122,14 +157,14 @@ import Testing
             hasInvalid: false,
             hasOverdue: false,
             isCompleteAcknowledged: isCompleteAcknowledged,
+            isMigrationRemainderPending: isMigrationRemainderPending,
             progress: nil,
-            orchardBalance: orchard,
-            ironwoodBalance: ironwood
+            residual: residual(orchard: orchard, ironwood: ironwood)
         )
     }
 
     @Test func aResidualOnAFreshWalletRoutesToTheResidualScreen() {
-        #expect(Self.route(orchard: Zatoshi(800_000)) == .residual)
+        #expect(Self.route(orchard: Zatoshi(800_000)) == .residual(Self.residual(orchard: Zatoshi(800_000))))
     }
 
     @Test func anOfferableBalanceStillRoutesToTheFork() {
@@ -153,14 +188,32 @@ import Testing
     }
 
     @Test func anAcknowledgedCompletionWithAResidualRoutesToTheResidualScreen() {
-        #expect(Self.route(state: .complete, orchard: Zatoshi(800_000), isCompleteAcknowledged: true) == .residual)
+        let route = Self.route(state: .complete, orchard: Zatoshi(800_000), isCompleteAcknowledged: true)
+
+        #expect(route == .residual(Self.residual(orchard: Zatoshi(800_000))))
     }
 
     @Test func anAcknowledgedCompletionWithoutAResidualRoutesToTheFork() {
         #expect(Self.route(state: .complete, orchard: .zero, isCompleteAcknowledged: true) == .entry)
     }
 
-    @Test func theDefaultedInputsNeverProduceAResidual() {
+    /// MOB-1749 review fix: the flag the banner's matching arm consults FIRST. A pending remainder
+    /// means the banner reads "Migration Required / next round" — the tap must open the fork that
+    /// starts it, exactly as it did before the residual lane existed.
+    @Test func aPendingRemainderOutranksTheResidual() {
+        let route = Self.route(
+            state: .complete,
+            orchard: Zatoshi(800_000),
+            isCompleteAcknowledged: true,
+            isMigrationRemainderPending: true
+        )
+
+        #expect(route == .entry)
+    }
+
+    /// An unreadable balances read degrades to the fork deliberately (and the live route traces
+    /// it) — the arms must never mistake it for a residual.
+    @Test func anUnreadableBalanceReadRoutesToTheFork() {
         let route = MigrationDerivations.reentryRoute(
             isIronwoodActivated: true,
             state: .notStarted,
@@ -168,7 +221,9 @@ import Testing
             hasInvalid: false,
             hasOverdue: false,
             isCompleteAcknowledged: false,
-            progress: nil
+            isMigrationRemainderPending: false,
+            progress: nil,
+            residual: nil
         )
 
         #expect(route == .entry)

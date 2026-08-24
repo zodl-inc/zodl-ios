@@ -82,6 +82,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: state,
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: transferRows,
@@ -532,6 +533,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: []
@@ -615,6 +617,7 @@ import ZcashLightClientKit
                 )
             ),
             orchardBalance: Zatoshi(9_999_760_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: stalledRows
@@ -762,6 +765,7 @@ import ZcashLightClientKit
                     isIronwoodActivated: true,
                     state: .inProgress(Self.progress(total: combo.statuses.count)),
                     orchardBalance: Zatoshi(500_000_000),
+                    residual: nil,
                     isCompleteAcknowledged: false,
                     isMigrationRemainderPending: false,
                     transferRows: transfers,
@@ -805,6 +809,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(total: 1)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: [row],

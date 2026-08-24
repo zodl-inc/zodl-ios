@@ -102,7 +102,8 @@ struct MigrationCoordFlow {
         /// never an error surface.
         case recovery(MigrationRecovery)
         /// MOB-1749: the Remaining Orchard Funds decision screen — a re-entry root only (route
-        /// `.residual`), for an unlocked sub-0.01 Orchard residual with no run behind it.
+        /// `.residual(_)`, whose payload hydrates it), for a spendable sub-0.01 Orchard residual
+        /// with no run behind it.
         case residual(MigrationResidual)
         case reviewTransfer(MigrationReviewTransfer)
         case scan(Scan)

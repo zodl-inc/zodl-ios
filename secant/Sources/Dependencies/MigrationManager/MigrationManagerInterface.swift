@@ -70,12 +70,6 @@ struct MigrationManagerClient: Sendable {
     // re-plans from live spendable notes once the migration state is terminal, so it reads zero
     // after a lock; the locked value is what still reports the remainder.
     var migrationLockedAmount: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
-    // MOB-1749: the Remaining Orchard Funds lane's two figures — the UNLOCKED Orchard balance and
-    // the Ironwood pool total — from one `getAccountsBalances` read. `nil` resolves the selected
-    // account; `.zero` on an unresolvable account or a failed read, the same degrade as
-    // `migrationLockedAmount` (a zero pair can never read as a residual). Serves the re-entry route
-    // and the coordinator's screen hydration.
-    var residualBalances: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationResidualBalances = { _ in .zero }
     // MOB-1511 (W2): the multi-round labels' context — CURRENT round (app-persisted completed-run
     // count + 1) and the engine's estimated TOTAL rounds, `nil` when the SDK's estimate has zero
     // runs (see `SDKSynchronizerClient.estimateMigrationRunCount`'s doc).
@@ -467,7 +461,7 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case statusResume                    // row 2
     case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
-    case residual                        // MOB-1749 — notStarted / acknowledged complete with an unlocked Orchard residual and Ironwood funds
+    case residual(MigrationResidualBalances)  // MOB-1749 — notStarted / acknowledged complete (no pending remainder) with a spendable Orchard residual and Ironwood funds; carries the figures the decision was made on, so the screen renders exactly what routed it
     // (row 6 `reviewManual` removed 2026-08-07 with the manual-delivery lane.)
     case entry                           // row 7 (notStarted)
 }

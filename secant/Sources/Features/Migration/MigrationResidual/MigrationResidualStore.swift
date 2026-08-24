@@ -3,11 +3,13 @@
 //  zodl
 //
 //  MOB-1749 "Remaining Orchard Funds" (Figma 6855:24967 / locking 6855:25169 / locked 6855:25254):
-//  the decision screen for a wallet that holds Ironwood funds plus an UNLOCKED Orchard balance
+//  the decision screen for a wallet that holds Ironwood funds plus a SPENDABLE Orchard balance
 //  strictly between 0.0001 and 0.01 ZEC without a migration run behind it — restored after
 //  migrating elsewhere, or self-migrated. Reached only as a re-entry root: `MigrationDerivations
-//  .reentryRoute` answers `.residual` where it used to answer `.entry`, and
-//  `MigrationCoordFlowCoordinator.reentryPathState` hydrates `State` from one balances read.
+//  .reentryRoute` answers `.residual(_)` where it used to answer `.entry`, and
+//  `MigrationCoordFlowCoordinator.reentryPathState` hydrates `State` straight from the figures that
+//  route carries — the one balances read the decision was made on, never a second one that could
+//  disagree with it.
 //
 //  The lock half is Migration Complete's (MOB-1487 rounds 2/3, MOB-1458 F4) without the run
 //  summary: `lockBalanceTapped` (valid only from `.offered`) runs `migrationManager
@@ -20,11 +22,14 @@
 //  deliberately distinct from `gotItTapped` — it closes only the sheet.
 //
 //  No `.none` state: the screen exists only while there is something to decide. What fires the
-//  banner and the route is an UNLOCKED Orchard balance in range, and a fully locked residual has
-//  none — so a wallet that locked everything it had does not come back here. A lock is per-note,
-//  though: a later unlocked arrival (0.005 locked, 0.004 received afterwards) puts an in-range
-//  unlocked balance back on the account and re-enters at `.offered`, with the card naming the
-//  UNLOCKED figure alone — the locked notes are not part of what is offered again.
+//  banner and the route is a SPENDABLE Orchard balance in range (review fix 2026-08-24: spendable,
+//  not "total minus locked" — the SDK reports a locked-but-unconfirmed note as pending rather than
+//  locked, so the old basis made a successful lock look like it had done nothing), and a fully
+//  locked residual has none — so a wallet that locked everything it had does not come back here. A
+//  lock is per-note, though: a later spendable arrival (0.005 locked, 0.004 received afterwards)
+//  puts an in-range spendable balance back on the account and re-enters at `.offered`, with the
+//  card naming the SPENDABLE figure alone — the locked notes are not part of what is offered
+//  again, and are reported separately by `lockedOrchardBalance`'s own row.
 //
 
 import ComposableArchitecture
@@ -38,6 +43,10 @@ struct MigrationResidual {
         /// The unlocked Orchard residual the screen is about. A lock does not change it — the same
         /// number is then the LOCKED amount the locked callout names.
         var orchardBalance: Zatoshi
+        /// The account's LOCKED Orchard balance at hydration — the conditional "Locked in Orchard"
+        /// row. A residual the user locked on an earlier visit is still part of the pool; hiding it
+        /// made this screen disagree with the Balances breakdown.
+        var lockedOrchardBalance: Zatoshi
         /// The account's Ironwood pool total — the "In Ironwood" row.
         var ironwoodBalance: Zatoshi
         var resolution: MigrationLockResolution
@@ -51,10 +60,12 @@ struct MigrationResidual {
 
         init(
             orchardBalance: Zatoshi,
+            lockedOrchardBalance: Zatoshi = .zero,
             ironwoodBalance: Zatoshi,
             resolution: MigrationLockResolution = .offered
         ) {
             self.orchardBalance = orchardBalance
+            self.lockedOrchardBalance = lockedOrchardBalance
             self.ironwoodBalance = ironwoodBalance
             self.resolution = resolution
         }

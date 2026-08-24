@@ -142,7 +142,6 @@ extension MigrationManagerClient: DependencyKey {
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
             isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
             migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
-            residualBalances: { await impl.residualBalances(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
@@ -598,9 +597,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // R13 Brick 2b: the pass's one balances read serves the offer amount — the same
         // expression `orchardBalanceToMigrate` computes, without a second full-wallet read.
         let balance = balances?[resolvedAccountUUID]?.orchardBalance.unlockedForMigration ?? Zatoshi.zero
-        // MOB-1749: the residual arms' second input — the Ironwood pool TOTAL, from the same one
-        // balances read (the figure the migration snapshot shows as `ironwoodHeld`).
-        let ironwoodBalance = balances?[resolvedAccountUUID]?.ironwoodBalance.total() ?? Zatoshi.zero
+        // MOB-1749: the residual arms' figures — from the same one balances read. `nil` (the read
+        // failed) keeps the residual arms quiet rather than inventing an empty wallet.
+        let residual = balances?[resolvedAccountUUID].map { MigrationResidualBalances(accountBalance: $0) }
 
         let state = rawState
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
@@ -610,7 +609,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
             orchardBalance: balance,
-            ironwoodBalance: ironwoodBalance,
+            residual: residual,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
@@ -647,7 +646,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 hasOverdue: hasOverdue,
                 isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) }
             ),
-            detail: "state \(state), orchard \(balance.decimalString()), ironwood \(ironwoodBalance.decimalString())"
+            detail: "state \(state), orchard \(balance.decimalString()), residual \(residual.map { $0.residualOrchard.decimalString() } ?? "unreadable"), ironwood \(residual.map { $0.ironwood.decimalString() } ?? "unreadable")"
         )
         MigrationTrace.rows(transfers: transfers, preparations: preparations)
 
@@ -737,9 +736,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
+            // MOB-1749 review fix: same nil-reads-as-false convention as bannerArm — see its comment.
+            isMigrationRemainderPending: gateStorage.remainderPending(for: accountUUID) ?? false,
             progress: progress,
-            orchardBalance: residual.unlockedOrchard,
-            ironwoodBalance: residual.ironwood
+            residual: residual
         )
 
         // Which screen a banner tap opens, and the inputs that decided it. Added 07-31 after a
@@ -751,7 +751,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // MOB-1466: on CHANGE only, with dwell — see `MigrationTrace.route`. A route that moves
         // while the banner's words stay put means the same sentence now opens a different screen,
         // which the user experiences as the app having lied to them.
-        let balanceDetail = "orchard \(residual.unlockedOrchard.decimalString()), ironwood \(residual.ironwood.decimalString())"
+        let balanceDetail = residual.map {
+            "residual \($0.residualOrchard.decimalString()), locked \($0.lockedOrchard.decimalString()), ironwood \($0.ironwood.decimalString())"
+        } ?? "balances UNREADABLE — residual arms disabled this pass"
         MigrationTrace.route(
             route,
             detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated()), \(balanceDetail)"
@@ -1441,17 +1443,18 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return balance.orchardBalance.lockedValue
     }
 
-    /// MOB-1749: see `MigrationManagerClient.residualBalances`.
-    func residualBalances(accountUUID: AccountUUID?) async -> MigrationResidualBalances {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return MigrationResidualBalances.zero }
+    /// MOB-1749: the residual lane's figures from one `getAccountsBalances` read. `nil` IN resolves
+    /// the selected account; `nil` OUT means the read failed or the account is unresolvable — the
+    /// derivation arms treat that as "not a candidate" and the route's trace names it, so the
+    /// degrade is deliberate and observable rather than a zero that merely looks like an empty
+    /// wallet.
+    func residualBalances(accountUUID: AccountUUID?) async -> MigrationResidualBalances? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
               let balance = balances[resolvedAccountUUID] else {
-            return MigrationResidualBalances.zero
+            return nil
         }
-        return MigrationResidualBalances(
-            unlockedOrchard: balance.orchardBalance.unlockedForMigration,
-            ironwood: balance.ironwoodBalance.total()
-        )
+        return MigrationResidualBalances(accountBalance: balance)
     }
 
     /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected
@@ -3347,31 +3350,20 @@ enum MigrationDerivations {
     /// exactly the gap between the two.
     static let minimumResidualOrchardBalance = Zatoshi(10_000)
 
-    /// MOB-1749: the residual predicate shared by the banner and the re-entry route — an UNLOCKED
-    /// Orchard balance strictly between the residual floor and the offer floor, on a wallet that
-    /// already holds Ironwood funds. The Ironwood gate is deliberate: the screen's "You've moved
-    /// to Ironwood" framing presumes them, so a wallet with nothing in Ironwood is not told about
-    /// Orchard dust at all.
-    static func isResidualCandidate(orchardBalance: Zatoshi, ironwoodBalance: Zatoshi) -> Bool {
-        ironwoodBalance > Zatoshi.zero
-            && orchardBalance > minimumResidualOrchardBalance
-            && orchardBalance < minimumOfferableOrchardBalance
+    /// MOB-1749: `.residual(amount:)` when the balances are a residual candidate, else `nil` — the
+    /// answer both "nothing to offer" arms of `bannerVariant` give, replacing their flat `nil`.
+    /// A `nil` input (an unreadable balances read) can never be a candidate.
+    static func residualVariant(residual: MigrationResidualBalances?) -> MigrationBannerVariant? {
+        guard let residual, residual.isResidualCandidate else { return nil }
+        return MigrationBannerVariant.residual(amount: residual.residualOrchard)
     }
 
-    /// MOB-1749: `.residual(amount:)` when `isResidualCandidate`, else `nil` — the answer both
-    /// "nothing to offer" arms of `bannerVariant` give now, replacing their flat `nil`.
-    static func residualVariant(orchardBalance: Zatoshi, ironwoodBalance: Zatoshi) -> MigrationBannerVariant? {
-        isResidualCandidate(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
-            ? MigrationBannerVariant.residual(amount: orchardBalance)
-            : nil
-    }
-
-    /// MOB-1749: `.residual` when `isResidualCandidate`, else `.entry` — the fallback both
-    /// "nothing running" arms of `reentryRoute` share, mirroring `residualVariant` for the banner.
-    static func residualRoute(orchardBalance: Zatoshi, ironwoodBalance: Zatoshi) -> MigrationReentryRoute {
-        isResidualCandidate(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
-            ? MigrationReentryRoute.residual
-            : MigrationReentryRoute.entry
+    /// MOB-1749: `.residual(_)` (carrying the figures the decision was made on) when the balances
+    /// are a residual candidate, else `.entry` — the fallback both "nothing running" arms of
+    /// `reentryRoute` share, mirroring `residualVariant` for the banner.
+    static func residualRoute(residual: MigrationResidualBalances?) -> MigrationReentryRoute {
+        guard let residual, residual.isResidualCandidate else { return MigrationReentryRoute.entry }
+        return MigrationReentryRoute.residual(residual)
     }
 
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
@@ -3428,12 +3420,13 @@ enum MigrationDerivations {
     /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
     /// consulted (row 1, `.recovery`).
     ///
-    /// MOB-1749: `ironwoodBalance` (the pool TOTAL) feeds the residual arms only.
+    /// MOB-1749: `residual` (spendable/locked/Ironwood figures) feeds the residual arms only; nil
+    /// means the balances read failed and the arms stay quiet.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
         orchardBalance: Zatoshi,
-        ironwoodBalance: Zatoshi = .zero,
+        residual: MigrationResidualBalances?,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
@@ -3505,7 +3498,7 @@ enum MigrationDerivations {
             // MOB-1749: below the floor the answer is no longer a flat nil — a residual on a wallet
             // that already holds Ironwood gets the lowest-priority residual banner instead.
             guard orchardBalance >= minimumOfferableOrchardBalance else {
-                return residualVariant(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+                return residualVariant(residual: residual)
             }
             return MigrationBannerVariant.required
 
@@ -3763,7 +3756,7 @@ enum MigrationDerivations {
             guard isMigrationRemainderPending else {
                 // MOB-1749: an acknowledged run with nothing more to plan is the other place a
                 // residual can sit — still the lowest priority, after every run-state arm above.
-                return residualVariant(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+                return residualVariant(residual: residual)
             }
             return MigrationBannerVariant.nextRoundRequired(round: round, totalRounds: totalRounds)
         }
@@ -3792,20 +3785,20 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
+        isMigrationRemainderPending: Bool,
         progress: MigrationProgress?,
-        orchardBalance: Zatoshi = .zero,
-        ironwoodBalance: Zatoshi = .zero
+        residual: MigrationResidualBalances?
     ) -> MigrationReentryRoute {
         reentryRoute(
             isIronwoodActivated: isIronwoodActivated,
             state: state,
-            answer: advanceStep.map(MigrationEngineAnswer.init(step:)),
+            answer: advanceStep.map { MigrationEngineAnswer(step: $0) },
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: isCompleteAcknowledged,
+            isMigrationRemainderPending: isMigrationRemainderPending,
             progress: progress,
-            orchardBalance: orchardBalance,
-            ironwoodBalance: ironwoodBalance
+            residual: residual
         )
     }
 
@@ -3819,9 +3812,9 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
+        isMigrationRemainderPending: Bool,
         progress: MigrationProgress?,
-        orchardBalance: Zatoshi = .zero,
-        ironwoodBalance: Zatoshi = .zero
+        residual: MigrationResidualBalances?
     ) -> MigrationReentryRoute {
         guard isIronwoodActivated else { return MigrationReentryRoute.entry }
 
@@ -3908,15 +3901,21 @@ enum MigrationDerivations {
 
         if case MigrationState.complete = state {
             guard isCompleteAcknowledged else { return MigrationReentryRoute.complete }
+            // MOB-1749 review fix: a pending remainder wins, exactly as it does in `bannerVariant`'s
+            // matching arm — the banner reads "Migration Required / next round", so the tap must
+            // open the fork that starts that round, never the residual screen. Without this guard
+            // the two surfaces disagreed on the same wallet whenever the flag was still latched.
+            guard !isMigrationRemainderPending else { return MigrationReentryRoute.entry }
             // MOB-1749: an acknowledged run with a residual left behind re-enters on the Remaining
-            // Orchard Funds screen, never on the fork (which would offer a migration below the
-            // offer floor).
-            return residualRoute(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+            // Orchard Funds screen. An UNREADABLE balances read degrades to `.entry` deliberately —
+            // the fork handles a below-floor balance with its propose-failure sheet, and the live
+            // route's trace names the failed read so the degrade is observable.
+            return residualRoute(residual: residual)
         }
 
         if case MigrationState.notStarted = state {
             // MOB-1749: the same residual fallback for a wallet that never ran a migration.
-            return residualRoute(orchardBalance: orchardBalance, ironwoodBalance: ironwoodBalance)
+            return residualRoute(residual: residual)
         }
 
         return MigrationReentryRoute.entry

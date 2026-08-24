@@ -1427,8 +1427,19 @@ extension MigrationCoordFlow {
         case .complete:
             return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
 
-        case .residual:
-            return .residual(await residualState(accountUUID: accountUUID))
+        case .residual(let balances):
+            // MOB-1749 review fix: the screen renders the figures the route decision was made on —
+            // ONE read, no second fetch that could disagree with it (the old second read degraded a
+            // transient failure into a zeroed decision screen). The candidate re-check is a belt: a
+            // payload that stopped qualifying between derivation and push falls back to the fork.
+            guard balances.isResidualCandidate else { return nil }
+            return .residual(
+                MigrationResidual.State(
+                    orchardBalance: balances.residualOrchard,
+                    lockedOrchardBalance: balances.lockedOrchard,
+                    ironwoodBalance: balances.ironwood
+                )
+            )
 
         case .entry:
             return nil
@@ -1481,17 +1492,6 @@ extension MigrationCoordFlow {
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
             dustResolution: isLocked ? .locked : nil
-        )
-    }
-
-    /// MOB-1749: the Remaining Orchard Funds screen's state — both figures from one balances read.
-    /// Always `.offered`: the route answers `.residual` only for an UNLOCKED balance in range, so a
-    /// locked residual never re-enters here (there is nothing left to decide about).
-    private func residualState(accountUUID: AccountUUID?) async -> MigrationResidual.State {
-        let balances = await migrationManager.residualBalances(accountUUID)
-        return MigrationResidual.State(
-            orchardBalance: balances.unlockedOrchard,
-            ironwoodBalance: balances.ironwood
         )
     }
 }

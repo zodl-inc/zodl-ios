@@ -16,7 +16,7 @@ import Testing
 
 @Suite(.serialized) @MainActor struct MigrationResidualCoordinatorTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x0D, count: 16))
-    private static let balances = MigrationResidualBalances(unlockedOrchard: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))
+    private static let balances = MigrationResidualBalances(residualOrchard: Zatoshi(800_000), lockedOrchard: .zero, ironwood: Zatoshi(1_245_000_000))
 
     private static func account() -> WalletAccount {
         WalletAccount(
@@ -40,8 +40,7 @@ import Testing
         } withDependencies: {
             $0.mainQueue = .immediate
             var client = MigrationManagerClient.noOp
-            client.reentryRoute = { .residual }
-            client.residualBalances = { _ in await Self.balances }
+            client.reentryRoute = { .residual(await Self.balances) }
             $0.migrationManager = client
         }
         store.exhaustivity = .off
@@ -55,6 +54,7 @@ import Testing
             return
         }
         #expect(residualState.orchardBalance == Zatoshi(800_000))
+        #expect(residualState.lockedOrchardBalance == .zero)
         #expect(residualState.ironwoodBalance == Zatoshi(1_245_000_000))
         #expect(residualState.resolution == .offered)
         #expect(!store.state.isReentryResolved, "a pushed re-entry destination keeps the fork hidden")
@@ -70,7 +70,8 @@ import Testing
         state.path.append(
             .residual(
                 MigrationResidual.State(
-                    orchardBalance: balances.unlockedOrchard,
+                    orchardBalance: balances.residualOrchard,
+                    lockedOrchardBalance: balances.lockedOrchard,
                     ironwoodBalance: balances.ironwood
                 )
             )

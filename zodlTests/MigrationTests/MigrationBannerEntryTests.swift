@@ -224,7 +224,7 @@ import ComposableArchitecture
             await MigrationManagerImpl().reentryRoute()
         }
 
-        #expect(route == .residual)
+        #expect(route == .residual(MigrationResidualBalances(residualOrchard: Zatoshi(800_000), lockedOrchard: .zero, ironwood: Zatoshi(1_245_000_000))))
 
         // Resets the process-global shared account so this test does not leak state into the rest
         // of the run.
@@ -250,8 +250,8 @@ import ComposableArchitecture
     }
 
     /// The post-lock shape of the same wallet: the residual is still THERE, it is just no longer
-    /// spendable — `lockedValue` holds it and `spendableValue` is zero, which is exactly what
-    /// `PoolBalance.unlockedForMigration` (the figure every residual arm reads) drops to.
+    /// spendable — `lockedValue` holds it and `spendableValue` (the figure every residual arm
+    /// reads) is zero.
     private static func lockedResidual(orchard: Zatoshi, ironwood: Zatoshi) -> AccountBalance {
         AccountBalance(
             saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
