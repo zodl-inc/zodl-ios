@@ -74,6 +74,9 @@ struct MigrationLockDecision {
 
             case .lockBalanceTapped:
                 guard state.resolution == .offered else { return .none }
+                // Wave 2: the sweep hand-over sizes a send-max from the notes this lock would
+                // remove — the two legs are mutually exclusive, in both directions.
+                guard !state.isMigratingAnyway else { return .none }
                 state.resolution = .locking
                 return .run { send in
                     do {
@@ -107,9 +110,11 @@ struct MigrationLockDecision {
                 return .none
 
             case .migrateAnywayTapped:
-                // The view hides this button once `.locked`, but a queued tap must never reach
-                // the coordinator's leg — on Complete that leg still runs the blanket unlock.
-                guard state.resolution != .locked else { return .none }
+                // Wave 2: `.locked` is ALLOWED — it is the release path (the coordinator's leg
+                // unlocks first when the tapping screen is `.locked`). Only the in-flight lock
+                // refuses the tap: `unlockMigrationResidual` racing `lockMigrationResidual` could
+                // leave the screen claiming a lock the chain no longer holds.
+                guard state.resolution != .locking else { return .none }
                 // Backstop for a tap queued ahead of the view's `.disabled` taking effect; the
                 // coordinator's propose leg must never start twice.
                 guard !state.isMigratingAnyway else { return .none }

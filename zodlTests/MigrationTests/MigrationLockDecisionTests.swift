@@ -81,16 +81,39 @@ import Testing
         await store.send(.migrateAnywayTapped)
     }
 
-    /// The view hides "Migrate anyway" once `.locked`, but a tap queued ahead of that — e.g. the
-    /// lock's own completion racing the button's disabled state — must still be inert here: on
-    /// Complete this same leg still runs the blanket unlock, so letting a stray tap through would
-    /// clear output locks the user never asked to clear.
-    @Test func migrateAnywayIsInertOnceLocked() async {
+    /// Wave 2: `.locked` is no longer a dead end — "Migrate anyway" on a locked balance is the
+    /// release path (the coordinator's leg unlocks first when the tapping screen is `.locked`).
+    /// Only the in-flight `.locking` state refuses the tap: the lock and the sweep must never race.
+    @Test func migrateAnywayDelegatesOnceLocked() async {
         let store = TestStore(initialState: MigrationLockDecision.State(resolution: .locked)) {
             MigrationLockDecision()
         }
 
+        await store.send(.migrateAnywayTapped) { state in
+            state.isMigratingAnyway = true
+        }
+        await store.receive(.delegate(.migrateAnyway))
+    }
+
+    @Test func migrateAnywayIsInertWhileLocking() async {
+        let store = TestStore(initialState: MigrationLockDecision.State(resolution: .locking)) {
+            MigrationLockDecision()
+        }
+
         await store.send(.migrateAnywayTapped)
+    }
+
+    /// The reverse race: while a sweep hand-over is in flight, the primary CTA must not start a
+    /// lock — the sweep sizes its send-max from the notes a concurrent lock would remove.
+    @Test func lockIsInertWhileMigratingAnyway() async {
+        var initialState = MigrationLockDecision.State()
+        initialState.isMigratingAnyway = true
+
+        let store = TestStore(initialState: initialState) {
+            MigrationLockDecision()
+        }
+
+        await store.send(.lockBalanceTapped)
     }
 
     /// Audit 2026-08-03 (#11)'s fix, now living in one place so it cannot need re-fixing twice: the

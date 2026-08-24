@@ -219,6 +219,9 @@ struct MigrationCompleteView: View {
                 onLock: { store.send(.lock(.lockBalanceTapped)) },
                 onGotIt: { store.send(.gotItTapped) }
             )
+            // Wave 2: both CTAs this renders (Lock balance, Got it) are inert while the sweep
+            // hand-over is in flight — the reducer backstops the same rule.
+            .disabled(store.lock.isMigratingAnyway)
         } else {
             ZashiButton(String(localizable: .migrationGotIt)) {
                 store.send(.gotItTapped)

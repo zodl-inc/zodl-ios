@@ -63,9 +63,10 @@ struct MigrationLockAttributedText: View {
     }
 }
 
-/// The decision callout: an amber "still needs a decision" card (`.offered` / `.locking`, with the
-/// outlined "Migrate anyway" escape hatch) or the neutral "done" card (`.locked`). Both the offered
-/// and the locked copy differ per screen only in which balance they name, so the caller passes
+/// The decision callout: an amber "still needs a decision" card (`.offered` / `.locking`) or the
+/// neutral "done" card (`.locked`) — both carry the outlined "Migrate anyway" escape hatch (Wave 2:
+/// on `.locked` it is the release path, not a dead end). Both the offered and the locked copy
+/// differ per screen only in which balance they name, so the caller passes
 /// BOTH bodies with the amount span already interpolated (`^[… ZEC](style: 'boldPrimary')`) — one
 /// formatting path per screen, so the offered and locked cards can never end up naming the same
 /// amount two differently-formatted ways. The info icon shows in every state, tinted tertiary when
@@ -93,10 +94,11 @@ struct MigrationLockCallout: View {
 
             bodyText
 
-            if resolution == .offered || resolution == .locking {
-                migrateAnywayButton
-                    .disabled(isMigrateAnywayDisabled)
-            }
+            // Wave 2: rendered in EVERY state, `.locked` included — on a locked balance this
+            // button is the only release path (the coordinator's leg unlocks first). Deviates
+            // from the Figma locked frame (6855:25254 draws no button) by decision 2026-08-24.
+            migrateAnywayButton
+                .disabled(isMigrateAnywayDisabled)
         }
         .padding(16)
         .background {
