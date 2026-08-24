@@ -52,12 +52,14 @@ import ComposableArchitecture
     private func makeStore(
         account: WalletAccount,
         transparentBalance: Zatoshi = .zero,
+        remindMeShieldedPhaseCounter: Int = 0,
         priorityContent: SmartBanner.State.PriorityContent? = nil,
         priorityContentRequested: SmartBanner.State.PriorityContent? = nil
     ) -> TestStore<SmartBanner.State, SmartBanner.Action> {
         var state = SmartBanner.State()
         state.$selectedWalletAccount.withLock { $0 = account }
         state.transparentBalance = transparentBalance
+        state.remindMeShieldedPhaseCounter = remindMeShieldedPhaseCounter
         state.priorityContent = priorityContent
         state.priorityContentRequested = priorityContentRequested
 
@@ -67,6 +69,11 @@ import ComposableArchitecture
         store.exhaustivity = .off
         store.dependencies.mainQueue = .immediate
         store.dependencies.walletStorage = .noOp
+        // `.noOp.exportTorSetupFlag()` deliberately returns `false` (not `nil` — see
+        // WalletStorageTestKey.swift), so a decline that walks the ladder past priority7 falls
+        // through evaluatePriority75 into evaluatePriority8's `sdkSynchronizer.latestState()`
+        // read. Mock it so that unrelated hop doesn't record an "Unimplemented" issue.
+        store.dependencies.sdkSynchronizer = .noOp
         return store
     }
 
@@ -183,19 +190,42 @@ import ComposableArchitecture
         await store.receive(\.shieldingOfferReevaluationRequested) {
             $0.remindMeShieldedPhaseCounter = 1
         }
-        await store.receive(\.transparentBalanceUpdated)
 
         #expect(store.state.priorityContentRequested == nil)
         #expect(store.state.priorityContent == nil)
     }
 
     @Test func pendingShieldIsNotReofferedWhenBalanceBouncesBack() async {
-        let store = makeStore(account: Self.account())
+        let store = makeStore(account: Self.account(), transparentBalance: Self.shieldableBalance)
         store.state.$transactions.withLock { $0 = [Self.pendingShieldingTransaction()] }
 
-        await store.send(.shieldingOfferReevaluationRequested(Self.shieldableBalance))
+        await store.send(.shieldingOfferReevaluationRequested)
 
         #expect(store.state.priorityContentRequested == nil)
         #expect(store.state.priorityContent == nil)
+    }
+
+    /// The ladder's balance fetch failing must walk the pass down, exactly as an unshieldable
+    /// balance does — never seat an offer on whatever stale figure state still holds.
+    @Test func fetchFailureWalksDownToTheNextLane() async {
+        let store = makeStore(account: Self.account(), transparentBalance: Self.shieldableBalance)
+
+        await store.send(.shieldingBalanceFetched(nil))
+        await store.receive(\.evaluatePriority75)
+    }
+
+    /// A successful shield resets the stored reminder; the phase counter must reset with it or
+    /// the help sheet describes a phase ("remind me in a month") the next dismissal won't honor.
+    @Test func reminderClearedAfterShieldResetsPhaseCounter() async {
+        let store = makeStore(
+            account: Self.account(),
+            transparentBalance: Self.shieldableBalance,
+            remindMeShieldedPhaseCounter: 3
+        )
+
+        await store.send(.shieldingOfferReevaluationRequested) {
+            $0.remindMeShieldedPhaseCounter = 0
+        }
+        await store.receive(\.triggerPriority)
     }
 }

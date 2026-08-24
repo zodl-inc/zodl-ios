@@ -212,7 +212,8 @@ struct SmartBanner {
         case evaluatePriority5
         case evaluatePriority6
         case evaluatePriority7
-        case shieldingOfferReevaluationRequested(Zatoshi)
+        case shieldingOfferReevaluationRequested
+        case shieldingBalanceFetched(Zatoshi?)
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
@@ -227,7 +228,6 @@ struct SmartBanner {
         case shieldingProcessorStateChanged(ShieldingProcessorClient.State)
         case smartBannerContentTapped
         case synchronizerStateChanged(RedactableSynchronizerState)
-        case transparentBalanceUpdated(Zatoshi)
         case triggerPriority(State.PriorityContent)
         case walletAccountChanged
 
@@ -890,10 +890,25 @@ struct SmartBanner {
 
                 // shielding
             case .evaluatePriority7:
-                return shieldingOfferEffect(state: &state, onDecline: .evaluatePriority75)
+                guard let account = state.selectedWalletAccount else {
+                    return .none
+                }
+                return .run { send in
+                    let unshielded = try? await sdkSynchronizer.getAccountsBalances()[account.id]?.unshielded
+                    await send(.shieldingBalanceFetched(unshielded))
+                }
 
-            case .shieldingOfferReevaluationRequested(let knownUnshielded):
-                return shieldingOfferEffect(state: &state, knownUnshielded: knownUnshielded, onDecline: nil)
+            case .shieldingBalanceFetched(let unshielded):
+                guard let unshielded else {
+                    return .send(.evaluatePriority75)
+                }
+                if state.transparentBalance != unshielded {
+                    state.transparentBalance = unshielded
+                }
+                return shieldingOfferDecision(state: &state, onDecline: .evaluatePriority75)
+
+            case .shieldingOfferReevaluationRequested:
+                return shieldingOfferDecision(state: &state, onDecline: nil)
                 
                 // tor
             case .evaluatePriority75:
@@ -938,10 +953,6 @@ struct SmartBanner {
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
 
-            case .transparentBalanceUpdated(let balance):
-                state.transparentBalance = balance
-                return .none
-                
             case .openBannerRequest:
                 guard let priorityContentRequested = state.priorityContentRequested else {
                     return .none
@@ -1254,47 +1265,35 @@ struct SmartBanner {
         .cancellable(id: state.CancelMigrationRepollId, cancelInFlight: true)
     }
 
-    /// Applies the same reminder and balance checks to both shielding-offer entry points.
-    private func shieldingOfferEffect(
-        state: inout State,
-        knownUnshielded: Zatoshi? = nil,
-        onDecline: Action?
-    ) -> Effect<Action> {
+    /// The single shielding-offer decision, applied by every entry point — the ladder walk
+    /// (`.evaluatePriority7` via `.shieldingBalanceFetched`) and the sync tick
+    /// (`.shieldingOfferReevaluationRequested`). Fully synchronous against
+    /// `state.transparentBalance`: the value the banner displays is the value the decision used,
+    /// so the offer can never show one figure while the truth is another, and nothing async can
+    /// resurrect a stale balance over a fresher tick's write.
+    private func shieldingOfferDecision(state: inout State, onDecline: Action?) -> Effect<Action> {
+        let declineEffect = onDecline.map { Effect.send($0) } ?? .none
         guard let account = state.selectedWalletAccount else {
             return .none
         }
         guard !state.hasPendingShieldingTransaction else {
-            return onDecline.map { Effect.send($0) } ?? .none
+            return declineEffect
         }
-        if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
-            state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
+        guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
+            return declineEffect
         }
-        return .run { [remindMeShieldedPhaseCounter = state.remindMeShieldedPhaseCounter, onDecline, knownUnshielded] send in
-            let unshielded: Zatoshi?
-            if let knownUnshielded {
-                unshielded = knownUnshielded
-            } else {
-                unshielded = try? await sdkSynchronizer.getAccountsBalances()[account.id]?.unshielded
-            }
-            guard let unshielded, unshielded >= zcashSDKEnvironment.shieldingThreshold() else {
-                if let onDecline {
-                    await send(onDecline)
-                }
-                return
-            }
-            await send(.transparentBalanceUpdated(unshielded))
-
-            guard let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) else {
-                await send(.triggerPriority(.priority7))
-                return
-            }
-            let now = Date().timeIntervalSince1970
-            if (remindMeShieldedPhaseCounter == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
-                || (remindMeShieldedPhaseCounter == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
-                || (remindMeShieldedPhaseCounter > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now) {
-                await send(.triggerPriority(.priority7))
-            }
+        guard let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) else {
+            // No reminder stored — phase 1. A successful shield RESETS the stored reminder, so
+            // the phase counter must reset with it or the help sheet describes the wrong phase.
+            state.remindMeShieldedPhaseCounter = 0
+            return .send(.triggerPriority(.priority7))
         }
+        state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
+        let now = Date().timeIntervalSince1970
+        let isReminderDue = (shieldedReminder.occurence == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
+            || (shieldedReminder.occurence == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
+            || (shieldedReminder.occurence > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now)
+        return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
     }
 
     /// The pre-existing body of `.synchronizerStateChanged`, extracted verbatim except for the two
@@ -1304,7 +1303,6 @@ struct SmartBanner {
         let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
 
         var didTransparentBalanceBecomeShieldable = false
-        var latestUnshielded = Zatoshi(0)
 
         if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
             // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
@@ -1317,7 +1315,6 @@ struct SmartBanner {
             if state.transparentBalance != accountBalance.unshielded {
                 state.transparentBalance = accountBalance.unshielded
             }
-            latestUnshielded = accountBalance.unshielded
             didTransparentBalanceBecomeShieldable = !wasShieldable && accountBalance.unshielded >= threshold
         }
 
@@ -1445,7 +1442,7 @@ struct SmartBanner {
             }
         } else if didTransparentBalanceBecomeShieldable, snapshot.syncStatus == .upToDate {
             // Avoid masked balance changes and synchronous reminder reads while syncing.
-            return .send(.shieldingOfferReevaluationRequested(latestUnshielded))
+            return .send(.shieldingOfferReevaluationRequested)
         }
 
         return .none
