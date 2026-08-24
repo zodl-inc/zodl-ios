@@ -8093,6 +8093,18 @@
         }
       }
     },
+    "general.maxFailed" : {
+      "comment" : "Internal and testnet builds only — shown by the Max button's failure toast. The button itself is compiled in only behind #if ZODL_INTERNAL || SECANT_TESTNET, so this never surfaces to production users and needs no translation — not now, not later.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to get the max amount."
+          }
+        }
+      }
+    },
     "general.more" : {
       "extractionState" : "manual",
       "localizations" : {

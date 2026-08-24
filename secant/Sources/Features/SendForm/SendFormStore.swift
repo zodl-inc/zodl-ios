@@ -45,6 +45,7 @@ struct SendForm {
         var memoState: MessageEditor.State
         var proposal: Proposal?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         var shieldedBalance: Zatoshi
         var walletBalancesState: WalletBalances.State
         var requestsAddressFocus = false
@@ -471,6 +472,7 @@ struct SendForm {
 
             case .maxAmountFailed:
                 state.isMaxRequestInFlight = false
+                state.$toast.withLock { $0 = .top(String(localizable: .generalMaxFailed)) }
                 return .none
 
             case .resetForm:

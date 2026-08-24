@@ -124,6 +124,8 @@ private enum MaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.zecAmountText == "1.5".redacted)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     // The address field stays editable while the request runs; a result that comes back

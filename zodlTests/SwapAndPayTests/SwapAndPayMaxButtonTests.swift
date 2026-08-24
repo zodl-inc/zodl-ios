@@ -176,6 +176,8 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.amountText.isEmpty)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     @MainActor @Test func maxTappedFailurePathClearsInFlightFlagAndLeavesFieldsUntouched() async {
@@ -203,6 +205,8 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.amountText == "1.5")
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     // MARK: - .maxAmountResolved, Swap ZEC -> token
@@ -319,8 +323,9 @@ private enum SwapMaxButtonTestError: Error {
         #expect(store.state.amountUsdText != formatter.string(from: NSDecimalNumber(decimal: expectedUsd.simplified)))
     }
 
-    // Guarded against dividing by a missing price: do nothing rather than produce a bogus amount.
-    @MainActor @Test func maxAmountResolvedDoesNothingInPayModeWhenSelectedAssetHasNoUsdPrice() async {
+    // Guarded against dividing by a missing price: fails cleanly with a toast rather than
+    // producing a bogus amount.
+    @MainActor @Test func maxAmountResolvedFailsInPayModeWhenSelectedAssetHasNoUsdPrice() async {
         var state = payState()
         state.selectedAsset = asset(token: "BTC", usdPrice: 0)
 
@@ -328,14 +333,18 @@ private enum SwapMaxButtonTestError: Error {
         store.exhaustivity = .off
 
         await store.send(.maxAmountResolved(Const.maxAmount))
+        await store.receive(\.maxAmountFailed)
+        await store.finish()
 
         #expect(store.state.amountAssetText.isEmpty)
         #expect(store.state.amountUsdText.isEmpty)
         #expect(store.state.amountText.isEmpty)
         #expect(!store.state.isMaxRequestInFlight)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
-    @MainActor @Test func maxAmountResolvedDoesNothingInPayModeWhenZecAssetIsMissing() async {
+    @MainActor @Test func maxAmountResolvedFailsInPayModeWhenZecAssetIsMissing() async {
         var state = payState()
         state.zecAsset = nil
 
@@ -343,15 +352,22 @@ private enum SwapMaxButtonTestError: Error {
         store.exhaustivity = .off
 
         await store.send(.maxAmountResolved(Const.maxAmount))
+        await store.receive(\.maxAmountFailed)
+        await store.finish()
 
         #expect(store.state.amountAssetText.isEmpty)
         #expect(store.state.amountText.isEmpty)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     // MARK: - .maxAmountResolved, Swap token -> ZEC
 
     @MainActor @Test func maxAmountResolvedIsNoOpInSwapToZecMode() async {
         var state = swapState()
+        // Process-global `@Shared` state: seed a known nil so a sibling test in this
+        // serialized suite leaving a toast set cannot flake this assertion.
+        state.$toast.withLock { $0 = nil }
         state.isSwapToZecExperienceEnabled = true
         state.isMaxRequestInFlight = true
 
@@ -362,6 +378,7 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(store.state.amountText.isEmpty)
         #expect(!store.state.isMaxRequestInFlight)
+        #expect(store.state.toast == nil)
     }
 
     // MARK: - Chip enablement
