@@ -965,9 +965,9 @@ struct SmartBanner {
                 guard let priorityContentRequested = state.priorityContentRequested else {
                     return .none
                 }
-                if priorityContentRequested == .priority7, !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
+                if !isPriorityStillValid(priorityContentRequested, state: state) {
                     state.priorityContentRequested = nil
-                    return .none
+                    return evaluationSuccessor(of: priorityContentRequested).map { Effect.send($0) } ?? .none
                 }
                 if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
                     return .none
@@ -1005,8 +1005,17 @@ struct SmartBanner {
                 }
 
             case .openBanner:
-                if state.priorityContent == .priority7, !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
-                    return .send(.closeBanner(true))
+                if let priorityContent = state.priorityContent, !isPriorityStillValid(priorityContent, state: state) {
+                    guard let successor = evaluationSuccessor(of: priorityContent) else {
+                        return .send(.closeBanner(true))
+                    }
+                    // Concatenate, not merge: the close must clear the slot BEFORE the successor
+                    // evaluates, or the successor's own request could seat first and then be
+                    // wiped by the close's cleanup.
+                    return .concatenate(
+                        .send(.closeBanner(true)),
+                        .send(successor)
+                    )
                 }
                 state.delay = 1.0
                 state.isOpen = true
@@ -1310,6 +1319,32 @@ struct SmartBanner {
             || (shieldedReminder.occurence == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
             || (shieldedReminder.occurence > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now)
         return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
+    }
+
+    /// A lane's seat-validity rule, in ONE place. Consulted when a request is about to seat
+    /// (`openBannerRequest`) and when a seated banner is about to open (`openBanner`); lanes
+    /// with no rule are always valid. Balance-driven retraction of an already-SEATED banner
+    /// lives in `shieldingBalanceSyncEffect` — same rule, event-driven site.
+    private func isPriorityStillValid(_ priority: State.PriorityContent, state: State) -> Bool {
+        switch priority {
+        case .priority7:
+            return state.isShieldable(zcashSDKEnvironment.shieldingThreshold())
+        default:
+            return true
+        }
+    }
+
+    /// Where the priority walk continues when `priority`'s offer turns out invalid at seat/open
+    /// time. Ladder-path invalidations hand the turn to the next lane rather than ending the
+    /// pass; event-driven retractions (sync tick, processor terminal states) deliberately do NOT
+    /// re-walk — they only free the slot, matching the established retraction shape.
+    private func evaluationSuccessor(of priority: State.PriorityContent) -> Action? {
+        switch priority {
+        case .priority7:
+            return .evaluatePriority75
+        default:
+            return nil
+        }
     }
 
     /// Everything balance-derived on a synchronizer tick, merged ALONGSIDE

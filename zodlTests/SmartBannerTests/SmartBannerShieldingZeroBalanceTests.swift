@@ -132,9 +132,13 @@ import ComposableArchitecture
         #expect(store.state.priorityContent == .priority4)
     }
 
+    /// An unshieldable balance must never seat the shielding banner — and because the request
+    /// came from a ladder pass, the pass continues to the next lane (the test clears the stored
+    /// Tor-setup flag so priority75 seats deterministically) instead of dying with nothing shown.
     @Test(arguments: [Zatoshi.zero, Zatoshi(99_999)])
-    func unshieldableBalanceNeverSeatsABanner(_ balance: Zatoshi) async {
+    func unshieldableBalanceSeatsTheNextLaneInstead(_ balance: Zatoshi) async {
         let store = makeStore(account: Self.account(), transparentBalance: balance)
+        store.dependencies.walletStorage.exportTorSetupFlag = { nil }
 
         await store.send(.triggerPriority(.priority7)) {
             $0.priorityContentRequested = .priority7
@@ -142,8 +146,11 @@ import ComposableArchitecture
         await store.receive(\.openBannerRequest) {
             $0.priorityContentRequested = nil
         }
+        await store.receive(\.evaluatePriority75)
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
 
-        #expect(store.state.priorityContent == nil)
+        #expect(store.state.priorityContent == .priority75)
     }
 
     @Test func shieldableBalanceStillSeatsABanner() async {
@@ -160,19 +167,25 @@ import ComposableArchitecture
         }
     }
 
-    @Test func seatedBannerDoesNotOpenAfterBalanceDropsToZero() async {
+    /// The balance dropped between seating and opening: the stale offer closes, and — same
+    /// ladder-pass rule — the walk continues, so the next lane's banner opens in its place.
+    @Test func seatedBannerClosesAndHandsOverAfterBalanceDropsToZero() async {
         let store = makeStore(
             account: Self.account(),
             transparentBalance: .zero,
             priorityContent: .priority7
         )
+        store.dependencies.walletStorage.exportTorSetupFlag = { nil }
 
         await store.send(.openBanner)
         await store.receive(\.closeBanner) {
             $0.priorityContent = nil
         }
+        await store.receive(\.evaluatePriority75)
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
 
-        #expect(!store.state.isOpen)
+        #expect(store.state.priorityContent == .priority75)
     }
 
     @Test func unchangedSyncStatusBalanceUpdateHonoursReminder() async {
