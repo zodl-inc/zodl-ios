@@ -922,19 +922,27 @@ struct SmartBanner {
                     state.transparentBalance = unshielded
                 }
                 guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
-                    let retraction = retractShieldingOffer(state: &state)
                     if state.priorityContent == .priority7 {
-                        // retractShieldingOffer's close for a SEATED banner is a deferred,
-                        // generation-guarded hop (closeAndCleanupBanner → closeBannerIfCurrent) —
-                        // needed elsewhere so a same-tick FRESHER seat can win instead of being
-                        // wiped. It will not have landed by the time evaluatePriority75's own seat
-                        // attempt runs below, in this SAME synchronous pass, so that attempt would
-                        // see the stale priority7 seat and be rank-blocked. Clear it here too: the
-                        // deferred close still fires, but by then evaluatePriority75's own fresher
-                        // seat has bumped the generation, so its guard turns it into a no-op.
-                        state.priorityContent = nil
+                        state.hasDeferredShieldingOffer = false
+                        // Ladder pass: close SYNCHRONOUSLY so the successor evaluates against an
+                        // empty slot — same rule as `.openBanner`'s invalid-priority branch and
+                        // `.migrationVariantUpdated`'s close. `retractShieldingOffer`'s deferred,
+                        // generation-guarded `closeAndCleanupBanner` hop is the wrong tool here: it
+                        // exists so a same-tick FRESHER seat from a DIFFERENT trigger can win
+                        // instead of being wiped, but on the ladder path the "fresher seat" is this
+                        // SAME pass's own successor — and when the banner is actually open,
+                        // `openBannerRequest`'s reseat dance (`.closeBanner(false)`) ALSO defers
+                        // that successor's seat behind its own hop, so the generation never bumps
+                        // in time and the deferred close can still land and wipe the successor's
+                        // request. A direct, synchronous close schedules no deferred close at all,
+                        // so there is nothing left to race.
+                        return .concatenate(
+                            .send(.closeSheetTapped),
+                            .send(.closeBanner(true)),
+                            .send(.evaluatePriority75)
+                        )
                     }
-                    return .merge(retraction, .send(.evaluatePriority75))
+                    return .merge(retractShieldingOffer(state: &state), .send(.evaluatePriority75))
                 }
                 return shieldingOfferDecision(state: &state, onDecline: .evaluatePriority75)
 

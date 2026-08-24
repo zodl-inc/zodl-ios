@@ -56,7 +56,8 @@ import ComposableArchitecture
         remindMeShieldedPhaseCounter: Int = 0,
         priorityContent: SmartBanner.State.PriorityContent? = nil,
         priorityContentRequested: SmartBanner.State.PriorityContent? = nil,
-        hasDeferredShieldingOffer: Bool = false
+        hasDeferredShieldingOffer: Bool = false,
+        isOpen: Bool = false
     ) -> TestStore<SmartBanner.State, SmartBanner.Action> {
         var state = SmartBanner.State()
         state.$selectedWalletAccount.withLock { $0 = account }
@@ -65,6 +66,7 @@ import ComposableArchitecture
         state.priorityContent = priorityContent
         state.priorityContentRequested = priorityContentRequested
         state.hasDeferredShieldingOffer = hasDeferredShieldingOffer
+        state.isOpen = isOpen
 
         let store = TestStore(initialState: state) {
             SmartBanner()
@@ -186,6 +188,35 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.priorityContent == .priority75)
+        }
+    }
+
+    /// The same ladder retraction, but with the banner actually ON SCREEN (`isOpen == true`) —
+    /// not merely seated behind the pre-open delay. A close routed through the deferred,
+    /// generation-guarded `closeAndCleanupBanner` hop defers the successor's own seat behind the
+    /// `openBannerRequest` reseat dance (`isOpen` branch), so the generation never bumps in time
+    /// and the stale close can still land and wipe the `.priority75` request — this case must
+    /// fail against a fix that only handles the not-yet-open seat.
+    @Test func ladderFetchBelowThresholdRetractsAnOpenSeatedBannerAndWalksDown() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7,
+                isOpen: true
+            )
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.shieldingBalanceFetched(account.id, Zatoshi(50)))
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority75)
+            #expect(store.state.isOpen == true)
         }
     }
 }
