@@ -44,13 +44,15 @@ import Testing
         ironwood: Zatoshi = ironwood,
         isCompleteAcknowledged: Bool = false,
         isMigrationRemainderPending: Bool = false,
-        isIronwoodActivated: Bool = true
+        isIronwoodActivated: Bool = true,
+        isResidualOfferable: Bool = true
     ) -> MigrationBannerVariant? {
         MigrationDerivations.bannerVariant(
             isIronwoodActivated: isIronwoodActivated,
             state: state,
             orchardBalance: orchard,
             residual: residual(orchard: orchard, ironwood: ironwood),
+            isResidualOfferable: isResidualOfferable,
             isCompleteAcknowledged: isCompleteAcknowledged,
             isMigrationRemainderPending: isMigrationRemainderPending,
             transferRows: []
@@ -162,6 +164,26 @@ import Testing
 
         #expect(variant == nil)
     }
+
+    // MARK: - The caught-up gate (wave 2)
+
+    /// GOAL 1's rule extended to the residual: a decision named from a balance the wallet has not
+    /// verified is worse than no banner. `.notStarted` was already held by the impl-side offer
+    /// gate; the acknowledged-`.complete` arm had no gate at all.
+    @Test func aResidualIsNotOfferedWhileTheWalletIsNotCaughtUp() {
+        #expect(Self.banner(orchard: Zatoshi(800_000), isResidualOfferable: false) == nil)
+    }
+
+    @Test func anAcknowledgedCompletionResidualIsNotOfferedWhileNotCaughtUp() {
+        let variant = Self.banner(
+            state: .complete,
+            orchard: Zatoshi(800_000),
+            isCompleteAcknowledged: true,
+            isResidualOfferable: false
+        )
+
+        #expect(variant == nil)
+    }
 }
 
 @Suite struct MigrationResidualRouteDerivationTests {
@@ -187,7 +209,8 @@ import Testing
         ironwood: Zatoshi = ironwood,
         isCompleteAcknowledged: Bool = false,
         isMigrationRemainderPending: Bool = false,
-        isIronwoodActivated: Bool = true
+        isIronwoodActivated: Bool = true,
+        isResidualOfferable: Bool = true
     ) -> MigrationReentryRoute {
         MigrationDerivations.reentryRoute(
             isIronwoodActivated: isIronwoodActivated,
@@ -198,7 +221,8 @@ import Testing
             isCompleteAcknowledged: isCompleteAcknowledged,
             isMigrationRemainderPending: isMigrationRemainderPending,
             progress: nil,
-            residual: residual(orchard: orchard, ironwood: ironwood)
+            residual: residual(orchard: orchard, ironwood: ironwood),
+            isResidualOfferable: isResidualOfferable
         )
     }
 
@@ -285,5 +309,22 @@ import Testing
         )
 
         #expect(route == .entry)
+    }
+
+    // MARK: - The caught-up gate (wave 2)
+
+    @Test func aResidualRouteFallsBackToEntryWhileNotCaughtUp() {
+        #expect(Self.route(orchard: Zatoshi(800_000), isResidualOfferable: false) == MigrationReentryRoute.entry)
+    }
+
+    @Test func anAcknowledgedCompletionRouteFallsBackToEntryWhileNotCaughtUp() {
+        let route = Self.route(
+            state: .complete,
+            orchard: Zatoshi(800_000),
+            isCompleteAcknowledged: true,
+            isResidualOfferable: false
+        )
+
+        #expect(route == MigrationReentryRoute.entry)
     }
 }
