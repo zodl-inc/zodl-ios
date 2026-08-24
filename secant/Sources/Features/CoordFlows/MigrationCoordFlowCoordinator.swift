@@ -1552,7 +1552,7 @@ extension MigrationCoordFlow {
         }
     }
 
-    /// The explicit exits' leaving edge: reconcile migration state, then finish. NOT a snapshot
+    /// The residual Got-it exit's leaving edge: reconcile migration state, then finish. NOT a snapshot
     /// barrier — `reconcile()`'s republish is scheduled, not awaited, and banner freshness after a
     /// lock is `lockMigrationDust`'s own job (it republishes before returning). The button exits
     /// keep the reconcile because their screens stay visible while it runs; the interactive

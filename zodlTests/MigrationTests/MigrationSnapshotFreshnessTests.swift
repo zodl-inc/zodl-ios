@@ -283,8 +283,9 @@ import ComposableArchitecture
 
             try await manager.lockMigrationDust(accountUUID: Self.accountUUID)
 
+            let published = try #require(manager.currentMigrationSnapshot(accountUUID: Self.accountUUID))
             #expect(
-                manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)?.banner == nil,
+                published.banner == nil,
                 "the lock must return with the published snapshot already rebuilt — a stale .residual here is the banner that survives its own lock"
             )
         }

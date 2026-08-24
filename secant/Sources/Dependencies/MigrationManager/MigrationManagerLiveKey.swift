@@ -3281,6 +3281,13 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// the post-write truth is published (the lock). Same no-create rule and the same
     /// inFlight/dirty state machine: when a build is already in flight this marks dirty and
     /// returns — the in-flight build's follow-up carries the post-write truth, slightly later.
+    ///
+    /// The wait is exactly ONE build, never the whole drain. That build's balance read happens
+    /// after the write, so it already carries the post-write truth, and any backlog `dirty` picked
+    /// up meanwhile can only produce something fresher — awaiting it would put every unrelated
+    /// writer edge that lands during the build (a sync completing, a poke, a reconcile) onto the
+    /// user's "Locking…" wait, one full build each, with no bound. So the backlog is handed to a
+    /// detached drain and this returns (see `detachingBacklogAfterFirstBuild`).
     private func republishSnapshotNow(for accountUUID: AccountUUID) async {
         guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
 
@@ -3294,10 +3301,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
         guard shouldStart else { return }
 
-        await republishSnapshotDrainingDirty(for: accountUUID)
+        await republishSnapshotDrainingDirty(for: accountUUID, detachingBacklogAfterFirstBuild: true)
     }
 
-    private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID) async {
+    /// `detachingBacklogAfterFirstBuild` serves the AWAITED caller (`republishSnapshotNow`): it
+    /// returns after one build instead of draining, so the caller's wait is bounded by its own
+    /// build rather than by however many writer edges happen to land during it. The coalescer's
+    /// invariants are untouched across the handoff — `inFlight` stays claimed (the detached drain
+    /// inherits it, never re-claims it), so a request arriving in the gap still coalesces into
+    /// `dirty` exactly as it would mid-drain. `scheduleSnapshotRepublish` keeps the default and
+    /// drains as it always has.
+    private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID, detachingBacklogAfterFirstBuild: Bool = false) async {
         while true {
             let snapshot = await migrationViewSnapshot(accountUUID: accountUUID)
             publishSnapshot(snapshot, for: accountUUID)
@@ -3310,6 +3324,14 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 return false
             }
             guard buildAgain else { return }
+            if detachingBacklogAfterFirstBuild {
+                // The awaited caller got its post-lock build; the backlog keeps `inFlight` and
+                // drains behind it, exactly as a scheduled republish would.
+                Task { [weak self] in
+                    await self?.republishSnapshotDrainingDirty(for: accountUUID)
+                }
+                return
+            }
         }
     }
 
