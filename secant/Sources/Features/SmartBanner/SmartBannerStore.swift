@@ -143,11 +143,11 @@ struct SmartBanner {
         }
 
         var hasPendingShieldingTransaction: Bool {
-            transactions.contains { $0.isShieldingTransaction && $0.isPending }
+            transactions.isAnyShieldingPending()
         }
 
         func isShieldable(_ shieldingThreshold: Zatoshi) -> Bool {
-            transparentBalance >= shieldingThreshold
+            ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: shieldingThreshold)
         }
 
         var feeStr: String {

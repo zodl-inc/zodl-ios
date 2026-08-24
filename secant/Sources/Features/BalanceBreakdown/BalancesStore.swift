@@ -64,7 +64,7 @@ struct Balances {
         }
         
         var isShieldableBalanceAvailable: Bool {
-            transparentBalance.amount >= autoShieldingThreshold.amount
+            ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold)
         }
 
         var isShieldingButtonDisabled: Bool {
