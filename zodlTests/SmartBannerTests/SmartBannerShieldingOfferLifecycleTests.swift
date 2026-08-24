@@ -324,6 +324,39 @@ import ComposableArchitecture
         }
     }
 
+    /// The `isOpen` branch is the sole PRODUCER of `isReseatPending` — pin it directly, since
+    /// every other test in this file only exercises its CONSUMPTION once already true
+    /// (`incumbentReopensWhenTheReseatRequestDiesMidHop` seeds it via `makeStore`, and
+    /// `sameTickRetractionDoesNotWipeAReseatInProgress` lets the reseat complete normally, which
+    /// clears the flag again before anything reads it). `store.receive`'s trailing closure
+    /// asserts against the state as it stood when `openBannerRequest` produced this action — that
+    /// snapshot is checked even at `.off` exhaustivity, which is what makes the producer line
+    /// observable here.
+    @Test func reseatOfAnOpenIncumbentArmsTheRecoveryFlag() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(
+                account: Self.account(),
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority75,
+                isOpen: true
+            )
+
+            await store.send(.triggerPriority(.priority7)) {
+                $0.priorityContentRequested = .priority7
+            }
+            await store.receive(\.openBannerRequest) {
+                $0.isReseatPending = true
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority7)
+            #expect(store.state.isOpen == true)
+        }
+    }
+
     /// The arbiter collapses an open incumbent to make room for a better request
     /// (`openBannerRequest`'s `isOpen` branch), latching `isReseatPending` before the collapse
     /// hop runs. This is the state its re-entry finds when the request died while the hop was in
