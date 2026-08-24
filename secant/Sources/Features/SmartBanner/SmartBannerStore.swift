@@ -101,6 +101,11 @@ struct SmartBanner {
         /// `.upToDate` tick — the per-tick balance write consumes the edge, so without this
         /// latch a mid-sync deposit would never produce an offer.
         var hasDeferredShieldingOffer = false
+        /// The arbiter collapsed the OPEN incumbent to make room for a better request
+        /// (`closeBanner(false)` hop). Consumed on the re-entry: if the request died or went
+        /// invalid inside the hop, the still-seated incumbent re-opens instead of stranding
+        /// collapsed. Dismissals (`remindMeLaterTapped`) never set it.
+        var isReseatPending = false
         var isShielding = false
         var isShieldingAcknowledged = false
         var isShieldingAcknowledgedAtKeychain = false
@@ -994,16 +999,38 @@ struct SmartBanner {
 
             case .openBannerRequest:
                 guard let priorityContentRequested = state.priorityContentRequested else {
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        if state.priorityContent != nil {
+                            return .send(.openBanner)
+                        }
+                    }
                     return .none
                 }
                 if !isPriorityStillValid(priorityContentRequested, state: state) {
                     state.priorityContentRequested = nil
-                    return evaluationSuccessor(of: priorityContentRequested).map { Effect.send($0) } ?? .none
+                    let successorEffect = evaluationSuccessor(of: priorityContentRequested).map { Effect.send($0) } ?? Effect.none
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        if state.priorityContent != nil {
+                            return .merge(successorEffect, .send(.openBanner))
+                        }
+                    }
+                    return successorEffect
                 }
                 if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        return .send(.openBanner)
+                    }
                     return .none
                 }
                 if state.isOpen {
+                    state.isReseatPending = true
+                    // The detour starts a new seat era: a clean close aimed at the pre-detour
+                    // banner (deferred through `closeBannerIfCurrent`) must not land mid-reseat
+                    // and wipe the request/seat the re-entry is about to install.
+                    state.bannerSeatGeneration += 1
                     return .run { send in
                         await send(.closeBanner(false), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     }
@@ -1013,6 +1040,7 @@ struct SmartBanner {
                     // up-to-date tick through the deferred-offer latch.
                     state.hasDeferredShieldingOffer = true
                 }
+                state.isReseatPending = false
                 state.bannerSeatGeneration += 1
                 state.priorityContent = priorityContentRequested
                 return .run { [delay = state.delay] send in
@@ -1415,6 +1443,7 @@ struct SmartBanner {
         switch priority {
         case .priority7:
             return state.isShieldable(zcashSDKEnvironment.shieldingThreshold())
+                && !state.transactions.isAnyShieldingPending()
         default:
             return true
         }

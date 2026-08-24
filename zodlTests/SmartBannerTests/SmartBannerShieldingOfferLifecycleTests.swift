@@ -57,7 +57,8 @@ import ComposableArchitecture
         priorityContent: SmartBanner.State.PriorityContent? = nil,
         priorityContentRequested: SmartBanner.State.PriorityContent? = nil,
         hasDeferredShieldingOffer: Bool = false,
-        isOpen: Bool = false
+        isOpen: Bool = false,
+        isReseatPending: Bool = false
     ) -> TestStore<SmartBanner.State, SmartBanner.Action> {
         var state = SmartBanner.State()
         state.$selectedWalletAccount.withLock { $0 = account }
@@ -67,6 +68,7 @@ import ComposableArchitecture
         state.priorityContentRequested = priorityContentRequested
         state.hasDeferredShieldingOffer = hasDeferredShieldingOffer
         state.isOpen = isOpen
+        state.isReseatPending = isReseatPending
 
         let store = TestStore(initialState: state) {
             SmartBanner()
@@ -319,6 +321,102 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.priorityContent == .priority75)
+        }
+    }
+
+    /// The arbiter collapses an open incumbent to make room for a better request
+    /// (`openBannerRequest`'s `isOpen` branch), latching `isReseatPending` before the collapse
+    /// hop runs. This is the state its re-entry finds when the request died while the hop was in
+    /// flight (e.g. a same-tick retraction clearing `priorityContentRequested` before the
+    /// deferred `closeBanner(false)` re-enters `openBannerRequest`): a nil request with
+    /// `isReseatPending` still set and the incumbent still seated. The re-entry must re-open the
+    /// incumbent rather than strand it collapsed for the rest of the session.
+    ///
+    /// Seeded directly via `isReseatPending:` rather than staged through two sequential
+    /// `store.send` calls: `TestStore.send` drains any already-scheduled effect work — here, the
+    /// whole collapse-and-reseat hop has no genuine suspension point under the `.immediate` main
+    /// queue — before applying a freshly sent action, so a second `send` can never actually land
+    /// INSIDE the hop to make the request die there; the hop always finishes first. Seeding the
+    /// exact post-collapse precondition directly is what makes this deterministic.
+    @Test func incumbentReopensWhenTheReseatRequestDiesMidHop() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(
+                account: Self.account(),
+                priorityContent: .priority75,
+                isReseatPending: true
+            )
+
+            await store.send(.openBannerRequest) {
+                $0.isReseatPending = false
+            }
+            await store.receive(\.openBanner) {
+                $0.isOpen = true
+            }
+
+            #expect(store.state.priorityContent == .priority75)
+        }
+    }
+
+    /// A surviving priority7 request must be re-validated against the FULL offer conditions at
+    /// seat time — a shield already in flight makes the offer stale even while the balance still
+    /// reads shieldable.
+    @Test func pendingShieldInvalidatesASurvivingRequestAtSeatTime() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(
+                account: Self.account(),
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priorityMigration,
+                priorityContentRequested: .priority7
+            )
+            store.state.$transactions.withLock { $0 = [Self.pendingShieldingTransaction()] }
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.closeBanner(true)) {
+                $0.priorityContent = nil
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent != .priority7)
+        }
+    }
+
+    /// The same same-tick race the closed-banner variant above (`sameTickRetractionDoesNotWipe
+    /// TheFreshlySeatedErrorBanner`) guards against, but with the displaced banner OPEN: the
+    /// arbiter defers the fresh seat behind the reseat-collapse hop (`openBannerRequest`'s
+    /// `isOpen` branch), so without bumping the generation there too, the retraction's deferred
+    /// `closeBannerIfCurrent` still matches the pre-detour generation and wipes the request the
+    /// re-entry is about to install.
+    @Test func sameTickRetractionDoesNotWipeAReseatInProgress() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7,
+                isOpen: true
+            )
+
+            await store.send(
+                .synchronizerStateChanged(
+                    Self.syncState(
+                        account: account,
+                        unshielded: .zero,
+                        syncStatus: .error(ZcashError.synchronizerNotPrepared)
+                    )
+                )
+            )
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority2)
         }
     }
 }
