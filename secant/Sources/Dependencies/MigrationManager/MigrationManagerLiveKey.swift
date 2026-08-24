@@ -3335,6 +3335,16 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
+    /// Test-only visibility into the republish coalescer: `true` when no build is in flight and
+    /// nothing is marked dirty for `accountUUID`. The freshness suite uses it to establish the
+    /// UNCONTENDED precondition deterministically — a timing-based drain proved flaky because a
+    /// build's publish→inFlight-clear tail is observable-late under parallel test load.
+    func isSnapshotRepublishIdle(for accountUUID: AccountUUID) -> Bool {
+        snapshotRepublishState.withLock { state in
+            !state.inFlight.contains(accountUUID) && !state.dirty.contains(accountUUID)
+        }
+    }
+
     /// R13 Brick 2b: the ONE publish point — create-if-needed, value-dedupe, and the `SNAPSHOT`
     /// trace line that makes the pipeline auditable end-to-end in the [MIG] log: a build that
     /// changed nothing says so, and a published value prints the exact figures every surface's own

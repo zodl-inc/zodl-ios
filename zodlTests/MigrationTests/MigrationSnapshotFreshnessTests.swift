@@ -134,26 +134,6 @@ import ComposableArchitecture
         }
     }
 
-    /// `waitUntil`'s sibling for the other half of the question: `waitUntil` answers "has the
-    /// concurrent work started to LAND", this one answers "has it DRAINED" — the counter has to
-    /// stop moving for a whole quiet window. Needed wherever a test must meet the snapshot
-    /// republisher IDLE: its coalescer runs a follow-up build behind the one whose publish a
-    /// `waitUntil` observes, and a writer edge that arrives during that follow-up is deferred onto
-    /// it by design (`republishSnapshotNow`). Same real-time deadline as `waitUntil`, so a
-    /// pathologically slow build fails an assertion instead of hanging the suite.
-    private static func waitUntilQuiet(
-        quietNanoseconds: UInt64 = 300_000_000,
-        timeoutNanoseconds: UInt64 = 10_000_000_000,
-        counter: @escaping @Sendable () -> Int
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        var lastSeen = counter() - 1
-        while lastSeen != counter(), DispatchTime.now().uptimeNanoseconds < deadline {
-            lastSeen = counter()
-            try? await Task.sleep(nanoseconds: quietNanoseconds)
-        }
-    }
-
     /// A refresh requested WHILE work is in flight still lands a publish — the old pipeline
     /// dropped it (`guard !isMigrationWorkInFlight`), leaving the screen on the last value
     /// until some later edge.
@@ -223,7 +203,6 @@ import ComposableArchitecture
         Self.installCandidateAccount()
 
         let isLocked = LockIsolated<Bool>(false)
-        let balanceReads = LockIsolated<Int>(0)
         let candidateBalance = AccountBalance(
             saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
             orchardBalance: PoolBalance(spendableValue: Zatoshi(800_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
@@ -251,10 +230,7 @@ import ComposableArchitecture
                     isLocked.setValue(true)
                     return Zatoshi(800_000)
                 },
-                getAccountsBalances: {
-                    balanceReads.withValue { $0 += 1 }
-                    return [Self.accountUUID: isLocked.value ? lockedBalance : candidateBalance]
-                }
+                getAccountsBalances: { [Self.accountUUID: isLocked.value ? lockedBalance : candidateBalance] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
@@ -276,10 +252,11 @@ import ComposableArchitecture
             // in flight makes `republishSnapshotNow` mark dirty and return, leaving the post-lock
             // truth to that build's follow-up. Two builds are queued above (the subscription's, and
             // the refresh's coalesced follow-up) and the wait lands on the FIRST one's publish, so
-            // the second can still be running — which under parallel test load it demonstrably is.
-            // Settle on the balance reads (every build makes one) going quiet, so the writer edge
-            // below meets an idle republisher and the assertion after it is about the lock alone.
-            await Self.waitUntilQuiet { balanceReads.value }
+            // the second can still be running. Ask the coalescer itself rather than timing its side
+            // effects: a build's publish→inFlight-clear tail is observable-late under full-target
+            // load, which is exactly how a quiet-window version of this wait passed locally and
+            // failed in the full run.
+            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
 
             try await manager.lockMigrationDust(accountUUID: Self.accountUUID)
 
