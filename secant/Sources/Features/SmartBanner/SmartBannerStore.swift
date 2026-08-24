@@ -86,6 +86,11 @@ struct SmartBanner {
         var CancelMigrationRepollId = UUID()
         let CancelMigrationStateStreamId = UUID()
 
+        /// Bumped every time a banner is SEATED. A clean close scheduled before a newer seat
+        /// carries the generation it was aimed at; `.closeBannerIfCurrent` drops it when the
+        /// slot has moved on, so a deferred retraction can never wipe a fresher banner.
+        var bannerSeatGeneration = 0
+
         var isScanProgressComplete = false
         var delay = 1.5
         var isOpen = false
@@ -187,6 +192,7 @@ struct SmartBanner {
         case binding(BindingAction<SmartBanner.State>)
         case closeAndCleanupBanner
         case closeBanner(Bool)
+        case closeBannerIfCurrent(Int)
         case closeSheetTapped
         case onAppear
         case onDisappear
@@ -977,6 +983,7 @@ struct SmartBanner {
                         await send(.closeBanner(false), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     }
                 }
+                state.bannerSeatGeneration += 1
                 state.priorityContent = priorityContentRequested
                 return .run { [delay = state.delay] send in
                     try? await mainQueue.sleep(for: .seconds(delay))
@@ -1002,9 +1009,15 @@ struct SmartBanner {
                 return .send(.openBannerRequest)
 
             case .closeAndCleanupBanner:
-                return .run { send in
-                    await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                return .run { [generation = state.bannerSeatGeneration] send in
+                    await send(.closeBannerIfCurrent(generation), animation: .easeInOut(duration: Constants.easeInOutDuration))
                 }
+
+            case .closeBannerIfCurrent(let generation):
+                guard generation == state.bannerSeatGeneration else {
+                    return .none
+                }
+                return .send(.closeBanner(true))
 
             case .openBanner:
                 guard let priorityContent = state.priorityContent else {

@@ -91,4 +91,36 @@ import ComposableArchitecture
             #expect(store.state.isOpen == false)
         }
     }
+
+    /// One tick can both drop the balance below threshold (retracting priority7) and carry a new
+    /// sync error (seating priority2). The retraction's clean close is delivered through an async
+    /// hop and must NOT wipe the error banner the same tick just seated — the error message
+    /// comparison has already been consumed, so the banner would be lost for the session.
+    @Test func sameTickRetractionDoesNotWipeTheFreshlySeatedErrorBanner() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7
+            )
+
+            await store.send(
+                .synchronizerStateChanged(
+                    Self.syncState(
+                        account: account,
+                        unshielded: .zero,
+                        syncStatus: .error(ZcashError.synchronizerNotPrepared)
+                    )
+                )
+            )
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority2)
+        }
+    }
 }
