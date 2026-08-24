@@ -4,8 +4,11 @@
 //
 //  MOB-1749: the Remaining Orchard Funds screen inside `MigrationCoordFlow` — re-entry lands it
 //  hydrated over a hidden root; "Got it" finishes the flow with nothing to acknowledge; "Migrate
-//  anyway" rides the exact unlock → immediate-review leg Migration Complete uses, and a failed
-//  unlock re-arms the button.
+//  anyway" hands over to the same immediate-review leg Migration Complete uses but deliberately
+//  SKIPS the unlock — the residual leg must never clear a prior output lock, and the send-max
+//  sweep covers spendable notes only, so it moves exactly the balance the card names. The only
+//  `.migrateAnywayFailed` trigger left on this leg is a missing selected account, which re-arms
+//  the button.
 //
 
 import ComposableArchitecture
