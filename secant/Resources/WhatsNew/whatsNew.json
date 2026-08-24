@@ -1,6 +1,32 @@
 {
     "releases": [
         {
+            "version": "3.10.0",
+            "date": "19-08-2026",
+            "timestamp": 1787170089,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We brought back Coinholder Polling, so you can take part in Zcash community polls from your wallet."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We rebuilt polling to work with your Ironwood-migrated funds.",
+                        "We made loading polls more reliable when a service we depend on is unavailable."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed errors that could interrupt preparing and submitting your poll answers across multiple signing rounds."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.5",
             "date": "17-08-2026",
             "timestamp": 1786958314,
