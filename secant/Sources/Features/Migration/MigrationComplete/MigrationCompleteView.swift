@@ -4,7 +4,7 @@
 //
 //  "Migration Complete" screen (MOB-1464, Figma S12 · 2696:7267). Summary fields are injected by
 //  the coordinator's `completeState` (MOB-1466) from the real `migrationSummary`/
-//  `migrationLockedAmount` values; a `nil` `totalTransferred`/`durationHours` (MOB-1513, a W1
+//  `residualBalances` values; a `nil` `totalTransferred`/`durationHours` (MOB-1513, a W1
 //  fallback re-entry) renders an em-dash rather than a misleading zero. The `gotItTapped` delegate
 //  is consumed by `MigrationCoordFlowCoordinator` (MOB-1466).
 //
@@ -14,8 +14,9 @@
 //  Dust swaps the illustration for a compact coins-swap badge and drops the success gradient for
 //  the flat screen background, then renders the dust callout as either an amber "still needs a
 //  decision" card (`.offered`/`.locking`, with the "Migrate anyway" escape hatch) or a neutral
-//  "done" card (`.locked`, no button, tertiary-tinted info icon). The primary CTA slot swaps
-//  between "Lock balance", an in-flight "Locking balance" spinner button, and "Got it" accordingly.
+//  "done" card (`.locked`, with the same escape hatch, tertiary-tinted info icon). The primary CTA
+//  slot swaps between "Lock balance", an in-flight "Locking balance" spinner button, and "Got it"
+//  accordingly.
 //
 //  MOB-1487 (round 3, Figma 3925:24209 / locked callout 3836:8643): adds a "What does locking do?"
 //  explainer sheet, reachable via a trailing nav-bar help button shown whenever there is dust. The

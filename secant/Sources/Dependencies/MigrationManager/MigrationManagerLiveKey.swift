@@ -12,9 +12,10 @@
 //  throwing SDK surface — every SDK read degrades to a safe default (false/nil/entry) on either a
 //  missing selected account or a thrown error, so a migration-surface hiccup never crashes launch,
 //  foreground entry, or the smart banner. `migrationSummary`/`migrationTransfers`/`lockMigrationDust`/
-//  `isMigrationDustLocked`/`stateEvents` are new here — relocated from `SDKSynchronizerClient`
-//  (summary/transfers/dust-lock are app-side derivations/persistence, not SDK calls; stateEvents is
-//  the per-account replacement for the old wallet-wide `migrationStateStream`).
+//  `stateEvents` are new here — relocated from `SDKSynchronizerClient` (summary/transfers/dust-lock
+//  are app-side derivations/persistence, not SDK calls; stateEvents is the per-account replacement
+//  for the old wallet-wide `migrationStateStream`). MOB-1749 (wave 2): the balance-derived lock
+//  READ that arrived with them is gone — `residualBalances` answers it from one read.
 //
 //  MOB-1496 (W3) split the privacy gate across the SDK and this client: the SDK owned
 //  broadcast->sync, this client owned sync->send via a post-sync cooldown. BOTH timed halves are
@@ -140,8 +141,7 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.recordTransferBroadcast(accountUUID: accountUUID, result: result)
             },
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
-            isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
-            migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
+            residualBalances: { await impl.residualBalances(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
@@ -1431,35 +1431,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1496: "Lock balance" now calls the SDK's real `lockMigrationResidual` directly — the
     /// cosmetic `Task.sleep` + app-persisted `gateStorage.setDustLocked` bookkeeping this replaces
     /// (pre-real-SDK stand-in) is gone; the lock itself is now genuine and its state lives in the
-    /// account's own `PoolBalance.lockedValue` (see `isMigrationDustLocked` below), not a local
+    /// account's own `PoolBalance.lockedValue` (see `residualBalances` below), not a local
     /// flag. The returned locked total is discarded here — this member is `Void`-returning; a
     /// caller that needs the amount reads it back via balance, same as everywhere else in the app.
     func lockMigrationDust(accountUUID: AccountUUID?) async throws {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         _ = try await sdkSynchronizer.lockMigrationResidual(resolvedAccountUUID)
-    }
-
-    /// MOB-1496: balance-derived now — a nonzero Orchard `PoolBalance.lockedValue` means the
-    /// residual is locked. Async (a live SDK balance read) where the pre-real-SDK stand-in was a
-    /// synchronous `UserDefaults` read; degrades to `false` on an unresolvable account or a failed
-    /// balance read, same "safe default" convention as `orchardBalanceToMigrate` below.
-    func isMigrationDustLocked(accountUUID: AccountUUID?) async -> Bool {
-        await migrationLockedAmount(accountUUID: accountUUID) > Zatoshi.zero
-    }
-
-    /// MOB-1496: the locked remainder amount itself — the account's Orchard
-    /// `PoolBalance.lockedValue`. This is the value the Complete screen's locked confirmation
-    /// shows on re-entry: `migrationSummary().dust` derives from `residualAfterMigration`, which
-    /// re-plans from live *spendable* notes once the migration state is terminal, so it silently
-    /// reads zero after a lock — the locked value is the signal that stays correct. `.zero` on an
-    /// unresolvable account or a failed balance read, same convention as `isMigrationDustLocked`.
-    func migrationLockedAmount(accountUUID: AccountUUID?) async -> Zatoshi {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return Zatoshi.zero }
-        guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
-              let balance = balances[resolvedAccountUUID] else {
-            return Zatoshi.zero
-        }
-        return balance.orchardBalance.lockedValue
     }
 
     /// MOB-1749: the residual lane's figures from one `getAccountsBalances` read. `nil` IN resolves

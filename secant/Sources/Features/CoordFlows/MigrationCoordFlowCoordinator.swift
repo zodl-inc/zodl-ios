@@ -1503,23 +1503,33 @@ extension MigrationCoordFlow {
 
     /// PHASE 6: the terminal screen's state. `dust` alone drives whether there IS a decision — the
     /// screen renders its lock pieces on `hasDust`, so a zero leaves the celebratory rendering
-    /// untouched and `resolution` is only worth naming when the residual is already locked.
+    /// untouched.
     ///
-    /// `migrationLockedAmount` wins over `summary.dust` when the residual is ALREADY locked: after a
-    /// lock, `migrationSummary().dust` re-plans from live spendable notes and reports zero, so
-    /// reading it alone would make a locked balance vanish from the screen that exists to report it.
+    /// Wave 2 — ONE balances read, and the run's own dust WINS. `summary.dust` re-plans from live
+    /// spendable notes, so after a lock it reads zero and the locked figure is the signal that
+    /// stays correct — but the locked figure is ACCOUNT-WIDE, so with an earlier residual-screen
+    /// lock in place a fresh run's dust must not be masked by it: nonzero `summary.dust` hydrates
+    /// `.offered` on that dust (and the `.offered` sweep leg leaves the prior lock standing).
+    /// `.locked` is constructible only with `dust == lockedAmount > 0`, so "locked ⟹ hasDust"
+    /// holds structurally and the view fork cannot drop a locked balance.
     private func completeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationComplete.State {
         let summary = await migrationManager.migrationSummary(accountUUID)
-        let isLocked = await migrationManager.isMigrationDustLocked(accountUUID)
-        let lockedAmount = await migrationManager.migrationLockedAmount(accountUUID)
+        let residualBalances = await migrationManager.residualBalances(accountUUID)
+        if residualBalances == nil {
+            // An unreadable read degrades to "nothing locked" — observable, never silent: with
+            // `summary.dust` also zero this renders the celebratory screen over a possible lock.
+            MigrationTrace.event("completeState: balances UNREADABLE — a lock cannot be reported this pass")
+        }
+        let lockedAmount = residualBalances?.lockedOrchard ?? Zatoshi.zero
+        let isLocked = lockedAmount > Zatoshi.zero
         return MigrationComplete.State(
             totalTransferred: summary.transferred,
-            dust: isLocked ? lockedAmount : summary.dust,
+            dust: summary.dust > Zatoshi.zero ? summary.dust : lockedAmount,
             transfersSent: summary.transfersSent,
             transfersTotal: summary.transfersTotal,
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
-            resolution: isLocked ? .locked : nil
+            resolution: summary.dust > Zatoshi.zero ? nil : (isLocked ? .locked : nil)
         )
     }
 

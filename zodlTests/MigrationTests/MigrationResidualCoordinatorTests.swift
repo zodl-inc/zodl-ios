@@ -421,4 +421,88 @@ import Testing
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
     }
+
+    // MARK: - Complete hydration (wave 2)
+
+    /// Wave 2 — the run's own dust WINS. An account-wide locked figure is not this run's outcome:
+    /// with an earlier residual-screen lock in place AND fresh dust from the run, the screen must
+    /// offer the decision on the fresh dust (the `.offered` leg no longer clears the prior lock).
+    @Test func completeHydratesTheRunsOwnDustOverAPriorLock() async throws {
+        let store = TestStore(initialState: MigrationCoordFlow.State.initial) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            var client = MigrationManagerClient.noOp
+            client.reentryRoute = { MigrationReentryRoute.complete }
+            client.migrationSummary = { _ in
+                MigrationSummary(
+                    transferred: Zatoshi(1_000_000_000),
+                    dust: Zatoshi(300_000),
+                    transfersSent: 5,
+                    transfersTotal: 5,
+                    estimatedDurationHours: 24
+                )
+            }
+            client.residualBalances = { _ in
+                MigrationResidualBalances(
+                    residualOrchard: Zatoshi(300_000),
+                    unlockedOrchard: Zatoshi(300_000),
+                    lockedOrchard: Zatoshi(500_000),
+                    ironwood: Zatoshi(1_000_000_000)
+                )
+            }
+            $0.migrationManager = client
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushHydratedPathState, timeout: .seconds(5))
+
+        guard case .complete(let completeState)? = store.state.path.last else {
+            Issue.record("expected a .complete element, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(completeState.dust == Zatoshi(300_000), "the run's own dust, never the older locked figure")
+        #expect(completeState.lock.resolution == .offered, "fresh dust is a decision nobody has taken yet")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
+    /// The locked figure speaks only when nothing unlocked remains — and then `dust` IS the locked
+    /// amount, so "locked ⟹ hasDust" holds structurally and the view fork cannot drop the callout.
+    @Test func completeHydratesLockedWhenOnlyALockRemains() async throws {
+        let store = TestStore(initialState: MigrationCoordFlow.State.initial) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            var client = MigrationManagerClient.noOp
+            client.reentryRoute = { MigrationReentryRoute.complete }
+            client.migrationSummary = { _ in MigrationSummary.zero }
+            client.residualBalances = { _ in
+                MigrationResidualBalances(
+                    residualOrchard: .zero,
+                    unlockedOrchard: .zero,
+                    lockedOrchard: Zatoshi(500_000),
+                    ironwood: Zatoshi(1_000_000_000)
+                )
+            }
+            $0.migrationManager = client
+        }
+        store.exhaustivity = .off
+
+        await store.send(.onAppear)
+        await store.receive(\.pushHydratedPathState, timeout: .seconds(5))
+
+        guard case .complete(let completeState)? = store.state.path.last else {
+            Issue.record("expected a .complete element, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(completeState.dust == Zatoshi(500_000))
+        #expect(completeState.lock.resolution == .locked)
+        #expect(completeState.hasDust, "locked must imply hasDust — the fork that dropped .locked at zero dust")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
 }
