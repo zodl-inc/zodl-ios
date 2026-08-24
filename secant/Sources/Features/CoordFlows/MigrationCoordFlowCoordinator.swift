@@ -1465,6 +1465,7 @@ extension MigrationCoordFlow {
                 MigrationResidual.State(
                     orchardBalance: balances.residualOrchard,
                     lockedOrchardBalance: balances.lockedOrchard,
+                    pendingOrchardBalance: balances.pendingOrchard,
                     ironwoodBalance: balances.ironwood
                 )
             )

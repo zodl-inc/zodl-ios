@@ -12874,6 +12874,23 @@
         }
       }
     },
+    "migrationResidual.rowPending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendiente en Orchard"
+          }
+        }
+      }
+    },
     "migrationResidual.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {

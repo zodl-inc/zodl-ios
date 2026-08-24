@@ -94,7 +94,9 @@ struct MigrationResidualView: View {
     /// inter-row gap (`isContinuous`). MOB-1749 review fix: a residual the user locked on an
     /// EARLIER visit is still part of the Orchard pool — hiding it made this screen disagree with
     /// the Balances breakdown and never name the amount that earlier visit locked, so a nonzero
-    /// locked balance gets its own middle row.
+    /// locked balance gets its own middle row. Wave 2: pending Orchard value gets its own
+    /// conditional row for the same reason — the rows must sum to the pool total the Balances
+    /// breakdown shows.
     @ViewBuilder private var summaryCard: some View {
         VStack(spacing: 0) {
             MigrationDetailRow(
@@ -108,6 +110,15 @@ struct MigrationResidualView: View {
                 MigrationDetailRow(
                     title: String(localizable: .migrationResidualRowLocked),
                     value: "\(store.lockedOrchardBalance.decimalString()) ZEC",
+                    rowAppereance: .middle,
+                    isContinuous: true
+                )
+            }
+
+            if store.pendingOrchardBalance > .zero {
+                MigrationDetailRow(
+                    title: String(localizable: .migrationResidualRowPending),
+                    value: "\(store.pendingOrchardBalance.decimalString()) ZEC",
                     rowAppereance: .middle,
                     isContinuous: true
                 )

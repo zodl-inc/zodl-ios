@@ -184,6 +184,17 @@ import Testing
 
         #expect(variant == nil)
     }
+
+    // MARK: - Pending disclosure (wave 2)
+
+    /// Wave 2: the disclosure figure — Orchard value in the pending buckets, i.e. the gap between
+    /// the offer basis and the spendable basis. Non-negative by construction (spendable is a
+    /// component of unlocked).
+    @Test func pendingOrchardIsTheGapBetweenTheTwoBases() {
+        let balances = Self.residual(orchard: Zatoshi(500_000), unlocked: Zatoshi(900_000))
+
+        #expect(balances.pendingOrchard == Zatoshi(400_000))
+    }
 }
 
 @Suite struct MigrationResidualRouteDerivationTests {

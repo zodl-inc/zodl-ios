@@ -24,7 +24,7 @@ import Testing
     /// `.zero` the "Locked in Orchard" wiring would pass by doing nothing at all.
     private static let balances = MigrationResidualBalances(
         residualOrchard: Zatoshi(800_000),
-        unlockedOrchard: Zatoshi(800_000),
+        unlockedOrchard: Zatoshi(900_000),
         lockedOrchard: Zatoshi(300_000),
         ironwood: Zatoshi(1_245_000_000)
     )
@@ -66,6 +66,7 @@ import Testing
         }
         #expect(residualState.orchardBalance == Zatoshi(800_000))
         #expect(residualState.lockedOrchardBalance == Zatoshi(300_000))
+        #expect(residualState.pendingOrchardBalance == Zatoshi(100_000))
         #expect(residualState.ironwoodBalance == Zatoshi(1_245_000_000))
         #expect(residualState.lock.resolution == .offered)
         #expect(!store.state.isReentryResolved, "a pushed re-entry destination keeps the fork hidden")

@@ -54,6 +54,14 @@ struct MigrationResidualBalances: Equatable, Sendable {
             && unlockedOrchard < MigrationDerivations.minimumOfferableOrchardBalance
     }
 
+    /// Wave 2: the Orchard value sitting in the pending buckets — the gap between the offer basis
+    /// and the spendable one. DISCLOSURE ONLY: the lane still names, locks and sweeps spendable;
+    /// this row exists so the card's Orchard rows sum to the pool total the Balances breakdown
+    /// shows, instead of silently understating the wallet.
+    var pendingOrchard: Zatoshi {
+        unlockedOrchard - residualOrchard
+    }
+
     init(residualOrchard: Zatoshi, unlockedOrchard: Zatoshi, lockedOrchard: Zatoshi, ironwood: Zatoshi) {
         self.residualOrchard = residualOrchard
         self.unlockedOrchard = unlockedOrchard

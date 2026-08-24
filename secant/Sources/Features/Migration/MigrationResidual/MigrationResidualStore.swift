@@ -64,6 +64,9 @@ struct MigrationResidual {
         /// semantics Migration Complete ships and the Figma locked frame (6855:25254) draws. The
         /// next re-entry re-hydrates from the route's fresh balances, folding the lock into this row.
         var lockedOrchardBalance: Zatoshi
+        /// The account's PENDING Orchard value at hydration (unlocked minus spendable) — the
+        /// conditional "Pending in Orchard" row. Same frozen-snapshot semantics as the rows above.
+        var pendingOrchardBalance: Zatoshi
         /// The account's Ironwood pool total — the "In Ironwood" row.
         var ironwoodBalance: Zatoshi
         /// The shared lock machine. Everything the decision half of this screen reads and writes
@@ -73,11 +76,13 @@ struct MigrationResidual {
         init(
             orchardBalance: Zatoshi,
             lockedOrchardBalance: Zatoshi = .zero,
+            pendingOrchardBalance: Zatoshi = .zero,
             ironwoodBalance: Zatoshi,
             resolution: MigrationLockResolution = .offered
         ) {
             self.orchardBalance = orchardBalance
             self.lockedOrchardBalance = lockedOrchardBalance
+            self.pendingOrchardBalance = pendingOrchardBalance
             self.ironwoodBalance = ironwoodBalance
             self.lock = MigrationLockDecision.State(resolution: resolution)
         }
