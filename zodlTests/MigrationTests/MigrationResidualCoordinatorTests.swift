@@ -363,6 +363,15 @@ import Testing
 
         #expect(unlockCount.value == 1, "a locked Complete screen's Migrate anyway must clear the lock it is escaping")
 
+        guard case .complete(let completeState)? = store.state.path.first(where: { element in
+            if case .complete = element { return true }
+            return false
+        }) else {
+            Issue.record("the complete screen left the stack")
+            return
+        }
+        #expect(completeState.lock.resolution == .offered, "the cleared lock must re-offer, not keep claiming .locked")
+
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
             Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
             return
