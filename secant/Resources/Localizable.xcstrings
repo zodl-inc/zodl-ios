@@ -12840,6 +12840,23 @@
         }
       }
     },
+    "migrationResidual.rowLocked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locked in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloqueado en Orchard"
+          }
+        }
+      }
+    },
     "migrationResidual.rowOrchard" : {
       "extractionState" : "manual",
       "localizations" : {

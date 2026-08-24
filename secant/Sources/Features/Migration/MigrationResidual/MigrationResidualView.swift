@@ -93,8 +93,11 @@ struct MigrationResidualView: View {
         "\(store.orchardBalance.decimalString()) ZEC"
     }
 
-    /// Figma 6855:25020: one continuous card — the two rows share the `bgSecondary` fill with no
-    /// inter-row gap (`isContinuous`).
+    /// Figma 6855:25020: one continuous card — the rows share the `bgSecondary` fill with no
+    /// inter-row gap (`isContinuous`). MOB-1749 review fix: a residual the user locked on an
+    /// EARLIER visit is still part of the Orchard pool — hiding it made this screen disagree with
+    /// the Balances breakdown and never name the amount that earlier visit locked, so a nonzero
+    /// locked balance gets its own middle row.
     @ViewBuilder private var summaryCard: some View {
         VStack(spacing: 0) {
             MigrationDetailRow(
@@ -103,6 +106,15 @@ struct MigrationResidualView: View {
                 rowAppereance: .top,
                 isContinuous: true
             )
+
+            if store.lockedOrchardBalance > .zero {
+                MigrationDetailRow(
+                    title: String(localizable: .migrationResidualRowLocked),
+                    value: "\(store.lockedOrchardBalance.decimalString()) ZEC",
+                    rowAppereance: .middle,
+                    isContinuous: true
+                )
+            }
 
             MigrationDetailRow(
                 title: String(localizable: .migrationResidualRowOrchard),
@@ -148,6 +160,7 @@ struct MigrationResidualView: View {
             store: StoreOf<MigrationResidual>(
                 initialState: MigrationResidual.State(
                     orchardBalance: Zatoshi(800_000),
+                    lockedOrchardBalance: Zatoshi(500_000),
                     ironwoodBalance: Zatoshi(1_245_000_000)
                 )
             ) {
