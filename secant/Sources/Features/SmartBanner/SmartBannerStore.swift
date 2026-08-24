@@ -67,16 +67,21 @@ struct SmartBanner {
             case priority8 // currency conversion
             case priority9 // auto-shielding
             case priorityMigration = -1 // ironwood migration
+            case priorityResidual = 11 // MOB-1749: leftover Orchard dust — the LOWEST rung, seated only when everything above declined
 
             func next() -> PriorityContent {
                 // `priorityMigration` (-1) sits outside the walk-down chain — it is only ever
                 // triggered explicitly, so walking below `priority1` wraps to `priority9` as before.
+                // `priorityResidual` (11) sits outside it too, at the other end: the walk reaches it
+                // by the explicit `.evaluatePriority9` → `.evaluatePriorityResidual` hand-off, never
+                // by stepping down into it, so nothing here has to know about it.
                 guard rawValue > 0 else { return .priority9 }
                 return PriorityContent(rawValue: rawValue - 1) ?? .priority9
             }
 
             /// Display rank — lower wins. `priorityMigration` slots between `priority2` (sync error)
             /// and `priority3` (restoring): operational alerts outrank migration; migration outranks the rest.
+            /// `priorityResidual` (11) sits below every other rung — see its case comment.
             var rank: Double { self == .priorityMigration ? 1.5 : Double(rawValue) }
         }
         
@@ -243,6 +248,7 @@ struct SmartBanner {
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
+        case evaluatePriorityResidual
         case networkMonitorChanged(Bool)
         case openBanner
         case openBannerRequest
@@ -461,6 +467,10 @@ struct SmartBanner {
                     // than at either call site keeps the two entrances on one rule.
                     guard state.migrationBannerVariant != .checkingStatus else { return .none }
                     return .send(.migrationScreenRequested)
+                } else if state.priorityContent == .priorityResidual {
+                    // MOB-1749: same destination as the migration slot — the residual banner's tap
+                    // opens the flow, whose re-entry route lands the Remaining Orchard Funds screen.
+                    return .send(.migrationScreenRequested)
                 } else if state.priorityContent == .priority8 {
                     return .send(.currencyConversionScreenRequested)
                 } else if state.isSyncTimedOut {
@@ -605,6 +615,33 @@ struct SmartBanner {
                 return .send(.migrationVariantUpdated(held))
 
             case .migrationVariantUpdated(let variant):
+                // MOB-1749 review fix: a residual is not a migration the wallet needs to run — it
+                // never claims `priorityMigration` (no snooze, suppressed every other banner) and
+                // has no session verdict to wait on, so it bypasses the checkingStatus machinery
+                // entirely. It claims only the bottom rung, and only when the slot is free.
+                if let variant, case .residual = variant {
+                    state.migrationBannerVariant = variant
+                    state.isMigrationCheckDwelling = false
+                    state.isMigrationVariantDwelling = false
+                    state.migrationVariantQueue = []
+                    state.heldMigrationVariant = nil
+                    state.hasHeldMigrationVariant = false
+                    if state.priorityContent == .priorityMigration {
+                        // Migration claimed the slot (possibly as a pre-verdict Checking hold) and
+                        // the answer resolved to a residual — hand the slot back and re-run the
+                        // ladder so every higher banner gets its chance before the bottom rung.
+                        return .run { send in
+                            await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                            await send(.evaluatePriority1)
+                        }
+                    }
+                    if state.priorityContent == nil {
+                        return .send(.triggerPriority(.priorityResidual))
+                    }
+                    // `.priorityResidual` already holds it (content re-renders in place), or a
+                    // higher banner does (the arbiter would reject the request anyway).
+                    return .none
+                }
                 // GROUND_RULES R3: while migration OWNS the slot, no variant may replace what is on
                 // screen before the session's first engine verdict — a pre-verdict answer is fresh
                 // but answers the wrong question (the flicker: idle at +0.5s, "keep open" at +2.5s,
@@ -682,8 +719,20 @@ struct SmartBanner {
                     // rank guard anyway (equal rank), so skip the round trip.
                     return .none
                 }
-                MigrationTrace.event("migration RELEASED the banner slot — variant became nil")
-                if state.priorityContent == .priorityMigration {
+                MigrationTrace.event(
+                    "migration RELEASED the banner slot — variant became nil"
+                    + " (slot \(state.priorityContent.map { String(describing: $0) } ?? "none"))"
+                )
+                // MOB-1749 review fix: the residual seat releases on the same edge and for the same
+                // reason — its dust got locked or spent, so the derivation now answers nil and the
+                // banner has nothing left to say. Without naming `priorityResidual` here the seat
+                // would survive its own content.
+                //
+                // The CACHED answer is deliberately left alone here — see `retiringResidualAnswer`
+                // for where it is retired and why not in this reduction: clearing it under a seat
+                // this effect has not closed yet would repaint the banner `.required` for however
+                // many frames the close takes to land.
+                if state.priorityContent == .priorityMigration || state.priorityContent == .priorityResidual {
                     // Send `.closeBanner(true)` directly rather than `.closeAndCleanupBanner` —
                     // the latter wraps its send in its own `.run`, which only schedules that
                     // nested effect rather than awaiting it, so a second `await send(...)` right
@@ -786,7 +835,10 @@ struct SmartBanner {
                 state.migrationVariantQueue = []
                 state.heldMigrationVariant = nil
                 state.hasHeldMigrationVariant = false
-                if state.priorityContent == .priorityMigration {
+                // MOB-1749 review fix: the residual seat is migration's memory too, so a reset that
+                // left it standing would keep a stale dust banner over the fresh `.required` answer
+                // the user is owed. Symmetric with the release path above.
+                if state.priorityContent == .priorityMigration || state.priorityContent == .priorityResidual {
                     state.priorityContent = nil
                 }
                 MigrationTrace.event("banner RESET — run cancelled by Restart Migration; re-running the priority ladder")
@@ -801,6 +853,25 @@ struct SmartBanner {
                 }
 
             case let .migrationVariantLoaded(variant):
+                // MOB-1749 review fix: the ladder twin of the `.migrationVariantUpdated` intercept
+                // above — record the content, hand back a wrongly-claimed migration slot, and keep
+                // walking so the bottom rung (`evaluatePriorityResidual`) seats it only if nothing
+                // above claims.
+                if let variant, case .residual = variant {
+                    state.migrationBannerVariant = variant
+                    state.isMigrationCheckDwelling = false
+                    state.isMigrationVariantDwelling = false
+                    state.migrationVariantQueue = []
+                    state.heldMigrationVariant = nil
+                    state.hasHeldMigrationVariant = false
+                    if state.priorityContent == .priorityMigration {
+                        return .run { send in
+                            await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                            await send(.evaluatePriority1)
+                        }
+                    }
+                    return .send(.evaluatePriority3)
+                }
                 // MOB-1466 (field, 2026-08-03): this path was NOT holding during the dwell, and the
                 // hold only ever covered `.migrationVariantUpdated`. So a variant arriving via the
                 // priority ladder replaced `.checkingStatus` immediately and the dwell then fired
@@ -827,6 +898,21 @@ struct SmartBanner {
                     return .none
                 }
                 guard let variant else {
+                    // MOB-1749 review fix: this decline is followed IMMEDIATELY by the walk-down
+                    // that ends at the residual rung, and that rung reads the CACHED answer — so a
+                    // retired residual has to go before the walk, or the ladder would re-seat the
+                    // very banner this nil just declined, once per sync edge, forever. Every walk
+                    // that can reach the rung passes through this rung first, which is what makes
+                    // this the one sufficient place to do it.
+                    //
+                    // Skipped while the residual still HOLDS the slot: releasing a seat is the
+                    // funnel's job (`.migrationVariantUpdated(nil)`), never the walk-down's, and
+                    // clearing the cache under a live seat would repaint it `.required`. Nothing is
+                    // lost by waiting — the rung's re-request is rejected by the arbiter at equal
+                    // rank, and the funnel's release re-runs this ladder with the slot already free.
+                    if state.priorityContent != .priorityResidual {
+                        Self.retiringResidualAnswer(&state)
+                    }
                     // MOB-1466: `nil` conflates "no migration to offer" with "cannot answer YET",
                     // and the walk-down treats both as a firm no — handing the slot to a
                     // lower-priority banner (restoring, then currency conversion) that migration
@@ -994,8 +1080,26 @@ struct SmartBanner {
                 
                 // auto-shielding
             case .evaluatePriority9:
-                return .none
-                
+                return .send(.evaluatePriorityResidual)
+
+                // leftover Orchard dust — MOB-1749 review fix
+            case .evaluatePriorityResidual:
+                // The residual banner is the LOWEST rung: it seats only when every banner above
+                // declined, and any later claimant displaces it through the arbiter. (The migration
+                // rung above deliberately walks PAST a `.residual` answer — that variant must never
+                // hold the top-priority migration slot, which has no snooze and was suppressing the
+                // wallet-backup and shielding banners indefinitely.)
+                //
+                // The flag gate is the same one `.evaluatePriorityMigration` applies, and it is
+                // load-bearing here rather than decorative: this is the ONE rung that claims from
+                // the reducer's cached answer instead of asking its own question, so with migration
+                // off — where the walk never reaches the migration rung that retires that cache —
+                // the gate is what stops a stale residual seating itself.
+                guard state.featureFlags.migration, case .residual = state.migrationBannerVariant else {
+                    return .none
+                }
+                return .send(.triggerPriority(.priorityResidual))
+
             case .triggerPriority(let priority):
                 // MOB-1466 data-gathering: which candidate claims the single banner slot, and when.
                 // Traced through `MigrationTrace` rather than `LoggerProxy` so it carries the
@@ -1357,6 +1461,35 @@ struct SmartBanner {
         }
     }
 
+    /// MOB-1749 review fix. The residual rung is the ONE rung that claims from the reducer's CACHED
+    /// answer (`migrationBannerVariant`) rather than from a fresh one — every other rung asks its
+    /// own question at the moment it is walked. So the cache has to be retired once the derivation
+    /// stops answering `.residual`, or the two nil paths fight each other in a loop the user can
+    /// see: the nil releases the seat and re-runs the ladder, the ladder walks down to the residual
+    /// rung, the rung reads the still-cached `.residual` and seats it again — and the next sync
+    /// edge does the whole dance over.
+    ///
+    /// ONE CALL SITE, in `.migrationVariantLoaded`'s nil decline, and that is sufficient rather
+    /// than merely convenient: every walk that can reach the residual rung passes through the
+    /// migration rung first, so the pass that would cash in a stale answer is always the same pass
+    /// that just heard the derivation decline. Retiring it in the FUNNEL's nil-release instead
+    /// would mutate the variant while its own seat is still on screen, and the close that clears
+    /// that seat is an effect — worth some frames of a `.required` banner nobody meant to show.
+    ///
+    /// Scoped to a CACHED RESIDUAL on purpose. A nil is not always a firm "nothing to migrate"
+    /// (Goal 1's sync gate answers nil for "not caught up" too), so clearing the cache
+    /// unconditionally would drop the `.idle` termination latch — deliberately sticky for the rest
+    /// of the session — on every gate-closed decline. A residual has no latch to lose: it is a
+    /// balance readout, re-derived whole on the next non-nil answer.
+    ///
+    /// `.required` is a PLACEHOLDER here, never an answer — the same role it plays in
+    /// `.migrationRunReset`. Nothing renders it: the caller skips a live residual seat, and every
+    /// migration claim carries its own fresh variant with it.
+    static func retiringResidualAnswer(_ state: inout State) {
+        guard case .residual = state.migrationBannerVariant else { return }
+        state.migrationBannerVariant = .required
+    }
+
     /// MOB-1466 (field-caught 2026-08-03, at-tip cold launch): a migration decline made while the
     /// Goal-1 sync gate is closed ("wallet not caught up") used to be FINAL until a later
     /// `syncing → upToDate` STREAM transition re-asked — and that transition is losable: this
@@ -1583,7 +1716,12 @@ struct SmartBanner {
                     // below: `.migrationVariantUpdated` re-renders an unchanged variant in place,
                     // so skipping the close is what keeps a still-`.required` banner from flickering
                     // shut and open again on every sync completion.
-                    if state.priorityContent == .priorityMigration {
+                    //
+                    // MOB-1749 review fix: the residual seat rides the same arm, and this is what
+                    // lowers the dust banner by itself — locking or spending the residual changes
+                    // only the SDK's balances, so the next sync edge is the moment the derivation
+                    // can answer nil and the release path can retire the seat.
+                    if state.priorityContent == .priorityMigration || state.priorityContent == .priorityResidual {
                         return .send(.migrationReevaluationRequested)
                     }
                     // The syncing banner must not outlive the sync it narrates: close it, THEN

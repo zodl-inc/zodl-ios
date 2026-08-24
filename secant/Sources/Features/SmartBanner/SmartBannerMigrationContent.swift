@@ -345,8 +345,9 @@ extension SmartBannerView {
 /// Figma migration-banner tokens — deliberately NOT `SmartBannerView.titleStyle()`/`infoStyle()`,
 /// which still use the pre-rebrand Purple ramp. Resolved by MOB-1466 (per-priority gradient, not an
 /// app-wide restyle): `SmartBannerView`'s background `LinearGradient` swaps to this same Gray._700
-/// → ._950 pair only while `store.priorityContent == .priorityMigration`; every other banner keeps
-/// the Purple._700 → ._950 pair unchanged.
+/// → ._950 pair only while the slot is held by migration — `.priorityMigration`, or MOB-1749's
+/// `.priorityResidual`, which renders this same content one rung from the bottom; every other
+/// banner keeps the Purple._700 → ._950 pair unchanged.
 struct MigrationBannerContentView: View {
     let variant: MigrationBannerVariant
     let onButtonTap: () -> Void
