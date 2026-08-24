@@ -106,6 +106,24 @@ import ComposableArchitecture
         }
     }
 
+    /// A priority7 request can be latched behind a higher-rank seated banner (the arbiter's rank
+    /// check refuses without clearing the request). A terminal shielding outcome must clear only
+    /// that latch — closing would tear down the unrelated banner actually on screen.
+    @Test func terminalOutcomeClearsALatchedRequestWithoutClosingTheSeatedBanner() async {
+        let store = makeStore(
+            account: Self.account(),
+            transparentBalance: Self.shieldableBalance,
+            priorityContent: .priority4,
+            priorityContentRequested: .priority7
+        )
+
+        await store.send(.shieldingProcessorStateChanged(.succeeded)) {
+            $0.priorityContentRequested = nil
+        }
+
+        #expect(store.state.priorityContent == .priority4)
+    }
+
     @Test(arguments: [Zatoshi.zero, Zatoshi(99_999)])
     func unshieldableBalanceNeverSeatsABanner(_ balance: Zatoshi) async {
         let store = makeStore(account: Self.account(), transparentBalance: balance)
