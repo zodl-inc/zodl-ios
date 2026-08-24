@@ -2739,7 +2739,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// screen. `reconcile()` walks EVERY candidate account each time it runs, so the one guaranteed
     /// call this gate allows could land while the user is reviewing a plan for the SAME account that
     /// reached `.complete` — e.g. "Migrate Anyway" (`MigrationCoordFlowCoordinator.migrateAnyway`/
-    /// `MigrationComplete`'s `dustResolution`), whose visibility is driven by `migrationSummary`'s
+    /// `MigrationComplete`'s lock decision), whose visibility is driven by `migrationSummary`'s
     /// OWN independent residual read (`scheduleStorage`/`residualAfterMigration`), NOT by this
     /// method's `remainderPending` flag — so a user can reach and act on that screen (kicking off
     /// its OWN fresh propose) before this evaluation has run even once. If BOTH proposes were in

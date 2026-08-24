@@ -67,7 +67,7 @@ import Testing
         #expect(residualState.orchardBalance == Zatoshi(800_000))
         #expect(residualState.lockedOrchardBalance == Zatoshi(300_000))
         #expect(residualState.ironwoodBalance == Zatoshi(1_245_000_000))
-        #expect(residualState.resolution == .offered)
+        #expect(residualState.lock.resolution == .offered)
         #expect(!store.state.isReentryResolved, "a pushed re-entry destination keeps the fork hidden")
 
         await store.skipReceivedActions(strict: false)
@@ -178,7 +178,7 @@ import Testing
         store.exhaustivity = .off
         let id = try #require(store.state.path.ids.first)
 
-        await store.send(.path(.element(id: id, action: .residual(.migrateAnywayTapped))))
+        await store.send(.path(.element(id: id, action: .residual(.lock(.migrateAnywayTapped)))))
         await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
 
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
@@ -205,13 +205,13 @@ import Testing
         store.exhaustivity = .off
         let id = try #require(store.state.path.ids.first)
 
-        await store.send(.path(.element(id: id, action: .residual(.migrateAnywayTapped))))
+        await store.send(.path(.element(id: id, action: .residual(.lock(.migrateAnywayTapped)))))
         await store.receive(\.migrateAnywayFailed, timeout: .seconds(5))
 
         guard case .residual(let residualState)? = store.state.path.last else {
             Issue.record("expected the residual screen to remain")
             return
         }
-        #expect(!residualState.isMigratingAnyway)
+        #expect(!residualState.lock.isMigratingAnyway)
     }
 }

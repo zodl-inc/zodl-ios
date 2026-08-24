@@ -2,10 +2,11 @@
 //  MigrationResidualStoreTests.swift
 //  zodlTests
 //
-//  MOB-1749: the Remaining Orchard Funds screen's reducer — the lock half of Migration Complete
-//  (MOB-1487) without a run behind it: lock → locked or back to offered with the failure alert,
-//  single-flight "Migrate anyway" re-armed on every arrival, an explainer sheet that never closes
-//  the screen, and a "Got it" that only delegates.
+//  MOB-1749: the Remaining Orchard Funds screen's reducer. The lock machine itself is
+//  `MigrationLockDecision`'s and is tested there, once, for both adopting screens — what is left
+//  here is this screen's own glue: the alert the child's failure delegate asks for, the
+//  "Migrate anyway" delegate re-surfaced at screen level so the coordinator keeps listening to the
+//  SCREEN, and a "Got it" that only delegates because there is no run to acknowledge.
 //
 
 import ComposableArchitecture
@@ -23,104 +24,18 @@ import Testing
         )
     }
 
-    // MARK: - Lock
-
-    @Test func lockingTheBalanceLandsOnLocked() async {
-        let store = TestStore(initialState: Self.state()) {
+    /// The child owns the return to `.offered`; the screen owns the alert. Starting from `.locking`
+    /// makes both halves load-bearing — from `.offered` the reset would assert nothing.
+    @Test func aLockFailureDelegateShowsTheAlert() async {
+        let store = TestStore(initialState: Self.state(resolution: .locking)) {
             MigrationResidual()
-        } withDependencies: {
-            $0.migrationManager.lockMigrationDust = { _ in }
         }
 
-        await store.send(.lockBalanceTapped) { state in
-            state.resolution = .locking
+        await store.send(.lock(.lockFailed(ZcashError.synchronizerNotPrepared))) { state in
+            state.lock.resolution = .offered
         }
-        await store.receive(\.lockSucceeded) { state in
-            state.resolution = .locked
-        }
-    }
-
-    @Test func aFailedLockReturnsToOfferedWithTheFailureAlert() async {
-        let store = TestStore(initialState: Self.state()) {
-            MigrationResidual()
-        } withDependencies: {
-            $0.migrationManager.lockMigrationDust = { _ in throw ZcashError.synchronizerNotPrepared }
-        }
-
-        await store.send(.lockBalanceTapped) { state in
-            state.resolution = .locking
-        }
-        await store.receive(\.lockFailed) { state in
-            state.resolution = .offered
+        await store.receive(.lock(.delegate(.lockFailed))) { state in
             state.alert = AlertState.migrationLockFailed()
-        }
-    }
-
-    @Test func lockIsOnlyActionableWhileOffered() async {
-        let lockingStore = TestStore(initialState: Self.state(resolution: .locking)) {
-            MigrationResidual()
-        }
-        await lockingStore.send(.lockBalanceTapped)
-
-        let lockedStore = TestStore(initialState: Self.state(resolution: .locked)) {
-            MigrationResidual()
-        }
-        await lockedStore.send(.lockBalanceTapped)
-    }
-
-    // MARK: - Migrate anyway
-
-    @Test func migrateAnywayIsSingleFlight() async {
-        let store = TestStore(initialState: Self.state()) {
-            MigrationResidual()
-        }
-
-        await store.send(.migrateAnywayTapped) { state in
-            state.isMigratingAnyway = true
-        }
-        await store.receive(.delegate(.migrateAnyway))
-        await store.send(.migrateAnywayTapped)
-    }
-
-    @Test func onAppearReArmsMigrateAnyway() async {
-        var initialState = Self.state()
-        initialState.isMigratingAnyway = true
-        let store = TestStore(initialState: initialState) {
-            MigrationResidual()
-        }
-
-        await store.send(.onAppear) { state in
-            state.isMigratingAnyway = false
-        }
-    }
-
-    // MARK: - Exits and the explainer
-
-    @Test func gotItOnlyDelegatesDone() async {
-        let store = TestStore(initialState: Self.state(resolution: .locked)) {
-            MigrationResidual()
-        }
-
-        await store.send(.gotItTapped)
-        await store.receive(.delegate(.done))
-    }
-
-    @Test func theExplainerSheetTogglesWithoutClosingTheScreen() async {
-        let store = TestStore(initialState: Self.state()) {
-            MigrationResidual()
-        }
-
-        await store.send(.lockExplainerHelpTapped) { state in
-            state.isLockExplainerPresented = true
-        }
-        await store.send(.lockExplainerDismissed) { state in
-            state.isLockExplainerPresented = false
-        }
-        await store.send(.lockExplainerPresentedChanged(true)) { state in
-            state.isLockExplainerPresented = true
-        }
-        await store.send(.lockExplainerPresentedChanged(false)) { state in
-            state.isLockExplainerPresented = false
         }
     }
 
@@ -134,5 +49,28 @@ import Testing
         await store.send(.alert(.dismiss)) { state in
             state.alert = nil
         }
+    }
+
+    /// The coordinator listens for the SCREEN's delegate, not the child's — this hop is what keeps
+    /// its `.residual(.delegate(.migrateAnyway))` wiring matching after the extraction.
+    @Test func migrateAnywayResurfacesAtScreenLevel() async {
+        let store = TestStore(initialState: Self.state()) {
+            MigrationResidual()
+        }
+
+        await store.send(.lock(.migrateAnywayTapped)) { state in
+            state.lock.isMigratingAnyway = true
+        }
+        await store.receive(.lock(.delegate(.migrateAnyway)))
+        await store.receive(.delegate(.migrateAnyway))
+    }
+
+    @Test func gotItOnlyDelegatesDone() async {
+        let store = TestStore(initialState: Self.state(resolution: .locked)) {
+            MigrationResidual()
+        }
+
+        await store.send(.gotItTapped)
+        await store.receive(.delegate(.done))
     }
 }

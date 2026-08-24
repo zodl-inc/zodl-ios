@@ -12,14 +12,8 @@
 import SwiftUI
 @preconcurrency import ZcashLightClientKit
 
-/// The three states a leftover Orchard balance can be in on a decision screen. Migration
-/// Complete's own `DustResolution` keeps a fourth (`.none`, no dust at all) that never renders
-/// these pieces, so it maps down to this at its view boundary.
-enum MigrationLockResolution: Equatable {
-    case offered
-    case locking
-    case locked
-}
+// `MigrationLockResolution` — the vocabulary these views branch on — now lives beside the reducer
+// that owns it, in `MigrationLockDecisionStore.swift`.
 
 /// Compact coins-swap badge with the green check mini-badge — Figma 3836:8394 / 6855:25005. The
 /// check says the pool move itself is done; it does not track the lock decision. Adaptive fills

@@ -436,12 +436,12 @@ extension MigrationCoordFlow {
             case .migrateAnywayFailed:
                 for id in state.path.ids {
                     if case .complete(var completeState) = state.path[id: id] {
-                        completeState.isMigratingAnyway = false
+                        completeState.lock.isMigratingAnyway = false
                         state.path[id: id] = .complete(completeState)
                     }
                     // MOB-1749: the residual screen carries the same single-flight flag.
                     if case .residual(var residualState) = state.path[id: id] {
-                        residualState.isMigratingAnyway = false
+                        residualState.lock.isMigratingAnyway = false
                         state.path[id: id] = .residual(residualState)
                     }
                 }
@@ -1475,8 +1475,9 @@ extension MigrationCoordFlow {
         )
     }
 
-    /// PHASE 6: the terminal screen's state. `dust` drives the residual fork — `MigrationComplete
-    /// .State`'s own init derives `.offered` from a non-zero value, so nothing here names it.
+    /// PHASE 6: the terminal screen's state. `dust` alone drives whether there IS a decision — the
+    /// screen renders its lock pieces on `hasDust`, so a zero leaves the celebratory rendering
+    /// untouched and `resolution` is only worth naming when the residual is already locked.
     ///
     /// `migrationLockedAmount` wins over `summary.dust` when the residual is ALREADY locked: after a
     /// lock, `migrationSummary().dust` re-plans from live spendable notes and reports zero, so
@@ -1492,7 +1493,7 @@ extension MigrationCoordFlow {
             transfersTotal: summary.transfersTotal,
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
-            dustResolution: isLocked ? .locked : nil
+            resolution: isLocked ? .locked : nil
         )
     }
 

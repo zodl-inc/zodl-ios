@@ -45,11 +45,11 @@ struct MigrationResidualView: View {
                 Spacer()
 
                 MigrationLockCallout(
-                    resolution: store.resolution,
+                    resolution: store.lock.resolution,
                     amount: store.orchardBalance,
                     offeredBodyMarkdown: String(localizable: .migrationResidualDustBody("^[\(amountText)](style: 'boldPrimary')")),
-                    isMigrateAnywayDisabled: store.resolution == .locking || store.isMigratingAnyway,
-                    onMigrateAnyway: { store.send(.migrateAnywayTapped) }
+                    isMigrateAnywayDisabled: store.lock.resolution == .locking || store.lock.isMigratingAnyway,
+                    onMigrateAnyway: { store.send(.lock(.migrateAnywayTapped)) }
                 )
                 .padding(.bottom, 20)
 
@@ -59,17 +59,17 @@ struct MigrationResidualView: View {
             .padding(.vertical, 1)
             .screenHorizontalPadding()
             .applyScreenBackground()
-            .onAppear { store.send(.onAppear) }
+            .onAppear { store.send(.lock(.onAppear)) }
             .navigationBarBackButtonHidden()
             .navigationBarItems(trailing: helpButton)
             .alert($store.scope(state: \.alert, action: \.alert))
             // `$store.<flag>.sending` rather than a hand-rolled `Binding(get:set:)` — see
             // MigrationCompleteView's identical note on perception tracking.
             .zashiSheet(
-                isPresented: $store.isLockExplainerPresented.sending(\.lockExplainerPresentedChanged)
+                isPresented: $store.lock.isLockExplainerPresented.sending(\.lock.lockExplainerPresentedChanged)
             ) {
                 MigrationLockExplainerSheetContent {
-                    store.send(.lockExplainerDismissed)
+                    store.send(.lock(.lockExplainerDismissed))
                 }
             }
         }
@@ -79,7 +79,7 @@ struct MigrationResidualView: View {
 
     @ViewBuilder private var helpButton: some View {
         Button {
-            store.send(.lockExplainerHelpTapped)
+            store.send(.lock(.lockExplainerHelpTapped))
         } label: {
             Asset.Assets.Icons.help.image
                 .zImage(size: 24, style: Design.Text.primary)
@@ -128,10 +128,10 @@ struct MigrationResidualView: View {
     // MARK: - Primary button
 
     @ViewBuilder private var primaryButton: some View {
-        switch store.resolution {
+        switch store.lock.resolution {
         case .offered:
             ZashiButton(String(localizable: .migrationCompleteLockBalance)) {
-                store.send(.lockBalanceTapped)
+                store.send(.lock(.lockBalanceTapped))
             }
 
         case .locking:
@@ -140,7 +140,7 @@ struct MigrationResidualView: View {
                 type: .tertiary,
                 prefixView: ProgressView()
             ) {
-                store.send(.lockBalanceTapped)
+                store.send(.lock(.lockBalanceTapped))
             }
             .disabled(true)
 
