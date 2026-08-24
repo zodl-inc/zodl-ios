@@ -407,25 +407,26 @@ extension MigrationCoordFlow {
                     await send(.flowFinished)
                 }
 
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))),
-                 .path(.element(id: _, action: .residual(.delegate(.migrateAnyway)))):
+            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
                 // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
-                // "Migrate anyway" unlocks it and sweeps it through the ordinary immediate pipeline —
-                // one transaction, engine-external, exactly like the manual lane's own sweep.
-                // MOB-1749: the Remaining Orchard Funds screen rides the identical leg — the unlock
-                // is a harmless no-op while nothing is locked.
+                // "Migrate anyway" sweeps it through the ordinary immediate pipeline — one
+                // transaction, engine-external, exactly like the manual lane's own sweep. Complete's
+                // leg keeps its unlock: the button is reachable only from `.offered`, where nothing
+                // is locked (a locked dust hydrates `.locked` and hides it), so the unlock stays a
+                // true no-op kept for behavioral continuity.
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
-                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
-                    do {
-                        _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
-                        // Reconcile before handing over: the unlock changes the account's spendable
-                        // Orchard balance, and the Review screen's own proposal reads from it.
-                        await migrationManager.reconcile()
-                        await send(.migrateAnywayUnlocked)
-                    } catch {
-                        await send(.migrateAnywayFailed)
-                    }
-                }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: true)
+
+            case .path(.element(id: _, action: .residual(.delegate(.migrateAnyway)))):
+                // MOB-1749 review fix: the Remaining Orchard Funds screen must NOT clear output
+                // locks. `unlockMigrationResidual` is a blanket clear of ALL the account's locks,
+                // and this screen is reachable with an earlier deliberate lock still in place — the
+                // spendable figure that fires the route EXCLUDES locked notes, so "0.005 locked,
+                // 0.004 received afterwards" re-enters here at `.offered`. The immediate sweep is a
+                // send-max over SPENDABLE notes only: skipping the unlock makes it cover exactly
+                // the balance the card names, and leaves the earlier lock standing.
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: false)
 
             case .migrateAnywayUnlocked:
                 // Straight onto the manual lane's own review screen: the user still confirms the
@@ -1493,5 +1494,23 @@ extension MigrationCoordFlow {
             isFlowRoot: isFlowRoot,
             dustResolution: isLocked ? .locked : nil
         )
+    }
+
+    /// PHASE 6, the shared "Migrate anyway" leg. `clearsOutputLocks` is Complete's historical
+    /// no-op unlock; the residual screen must never clear locks — see its case's comment.
+    private func migrateAnywayEffect(accountUUID: AccountUUID, clearsOutputLocks: Bool) -> Effect<Action> {
+        .run { [sdkSynchronizer, migrationManager] send in
+            do {
+                if clearsOutputLocks {
+                    _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
+                }
+                // Reconcile before handing over: the Review screen's own proposal reads the
+                // account's spendable Orchard balance.
+                await migrationManager.reconcile()
+                await send(.migrateAnywayUnlocked)
+            } catch {
+                await send(.migrateAnywayFailed)
+            }
+        }
     }
 }

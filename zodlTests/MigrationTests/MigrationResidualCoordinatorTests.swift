@@ -122,10 +122,16 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
-    @Test func migrateAnywayUnlocksAndHandsOverToTheImmediateReview() async {
+    /// MOB-1749 review fix: `unlockMigrationResidual` is an SDK-documented blanket clear of ALL
+    /// the account's output locks, and this screen is reachable with an earlier deliberate lock
+    /// still in place (locked notes are excluded from the spendable figure that fires the route).
+    /// The residual leg therefore must NOT unlock — the immediate sweep is a send-max over
+    /// SPENDABLE notes only, so skipping the unlock makes it cover exactly the balance the card
+    /// names and leaves the prior lock standing.
+    @Test func migrateAnywayHandsOverToTheImmediateReviewWithoutClearingLocks() async throws {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = Self.account() }
-        let unlockedAccounts = LockIsolated<[AccountUUID]>([])
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
 
         let store = TestStore(initialState: Self.stateWithResidualScreen()) {
             MigrationCoordFlow()
@@ -133,64 +139,26 @@ import Testing
             $0.mainQueue = .immediate
             $0.migrationManager = MigrationManagerClient.noOp
             $0.sdkSynchronizer = .mocked(
-                unlockMigrationResidual: { accountUUID in
-                    unlockedAccounts.withValue { $0.append(accountUUID) }
+                unlockMigrationResidual: { _ in
+                    Issue.record("the residual leg must never clear the account's output locks")
                     return 0
                 }
             )
         }
         store.exhaustivity = .off
-        let id = try! #require(store.state.path.ids.first)
+        let id = try #require(store.state.path.ids.first)
 
         await store.send(.path(.element(id: id, action: .residual(.migrateAnywayTapped))))
         await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
 
-        #expect(unlockedAccounts.value == [Self.accountUUID], "the leg unlocks the selected account's residual (a no-op when nothing is locked)")
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
             Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
             return
         }
         #expect(reviewState.mode == .immediate)
-        guard case .residual(let residualState)? = store.state.path.first else {
-            Issue.record("the residual screen must stay beneath the review")
-            return
-        }
-        #expect(residualState.isMigratingAnyway, "the flag stays armed while the review is on top; onAppear re-arms on the way back")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
-        $selectedWalletAccount.withLock { $0 = nil }
-    }
-
-    @Test func aFailedUnlockReArmsMigrateAnyway() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
-        $selectedWalletAccount.withLock { $0 = Self.account() }
-
-        let store = TestStore(initialState: Self.stateWithResidualScreen()) {
-            MigrationCoordFlow()
-        } withDependencies: {
-            $0.mainQueue = .immediate
-            $0.migrationManager = MigrationManagerClient.noOp
-            $0.sdkSynchronizer = .mocked(
-                unlockMigrationResidual: { _ in throw ZcashError.synchronizerNotPrepared }
-            )
-        }
-        store.exhaustivity = .off
-        let id = try! #require(store.state.path.ids.first)
-
-        await store.send(.path(.element(id: id, action: .residual(.migrateAnywayTapped))))
-        await store.receive(\.migrateAnywayFailed, timeout: .seconds(5))
-
-        #expect(store.state.path.count == 1, "nothing is pushed on a failed unlock")
-        guard case .residual(let residualState)? = store.state.path.last else {
-            Issue.record("expected the residual screen to remain")
-            return
-        }
-        #expect(!residualState.isMigratingAnyway, "the button must come back after a failed unlock")
-
-        await store.skipReceivedActions(strict: false)
-        await store.skipInFlightEffects(strict: false)
-        $selectedWalletAccount.withLock { $0 = nil }
     }
 
     @Test func migrateAnywayWithoutASelectedAccountFailsSoftly() async {
