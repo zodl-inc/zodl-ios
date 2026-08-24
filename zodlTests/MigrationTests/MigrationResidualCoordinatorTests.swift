@@ -99,7 +99,7 @@ import Testing
     /// Root's `flowFinished` re-evaluation reads the stale `.residual(amount:)` and the banner
     /// keeps offering a residual that no longer exists. Counting the call is therefore the
     /// assertion — receiving `.flowFinished` alone passed on the broken code.
-    @Test func gotItFinishesTheFlowWithNothingToAcknowledge() async {
+    @Test func gotItFinishesTheFlowWithNothingToAcknowledge() async throws {
         let reconcileCount = LockIsolated<Int>(0)
 
         let store = TestStore(initialState: Self.stateWithResidualScreen()) {
@@ -114,7 +114,7 @@ import Testing
             $0.migrationManager = client
         }
         store.exhaustivity = .off
-        let id = try! #require(store.state.path.ids.first)
+        let id = try #require(store.state.path.ids.first)
 
         await store.send(.path(.element(id: id, action: .residual(.gotItTapped))))
         await store.receive(\.flowFinished, timeout: .seconds(5))
@@ -191,9 +191,10 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
-    @Test func migrateAnywayWithoutASelectedAccountFailsSoftly() async {
+    @Test func migrateAnywayWithoutASelectedAccountFailsSoftly() async throws {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = nil }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
 
         let store = TestStore(initialState: Self.stateWithResidualScreen()) {
             MigrationCoordFlow()
@@ -202,7 +203,7 @@ import Testing
             $0.migrationManager = MigrationManagerClient.noOp
         }
         store.exhaustivity = .off
-        let id = try! #require(store.state.path.ids.first)
+        let id = try #require(store.state.path.ids.first)
 
         await store.send(.path(.element(id: id, action: .residual(.migrateAnywayTapped))))
         await store.receive(\.migrateAnywayFailed, timeout: .seconds(5))

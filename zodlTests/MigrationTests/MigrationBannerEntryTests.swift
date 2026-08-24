@@ -241,6 +241,7 @@ import ComposableArchitecture
                 )
             )
         }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
 
         let route = await withDependencies {
             $0.sdkSynchronizer = .mocked(
@@ -262,10 +263,6 @@ import ComposableArchitecture
                 )
             )
         )
-
-        // Resets the process-global shared account so this test does not leak state into the rest
-        // of the run.
-        $selectedWalletAccount.withLock { $0 = nil }
     }
 
     // MARK: - What actually clears the residual banner after a lock
@@ -333,6 +330,7 @@ import ComposableArchitecture
     @Test func aLockedResidualClearsTheBannerOnlyOnceAReconcileRepublishes() async {
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         $selectedWalletAccount.withLock { $0 = Self.account() }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
 
         let storedBalance = LockIsolated<AccountBalance>(
             Self.balances(orchard: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))
@@ -378,7 +376,5 @@ import ComposableArchitecture
             let cleared = await manager.bannerVariant(accountUUID: Self.accountUUID)
             #expect(cleared == nil, "after the republish the banner reads the locked balance and goes quiet")
         }
-
-        $selectedWalletAccount.withLock { $0 = nil }
     }
 }
