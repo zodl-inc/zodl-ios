@@ -14,19 +14,23 @@ import ComposableArchitecture
     /// `.nothingToShield` is a plain outcome, not a failure: it must show its own titled alert
     /// (no error code, no "send report" button — compare `shieldFundsFailure`).
     @Test func nothingToShieldShowsThePlainAlert() async {
-        let initialState = Root.State(
-            destinationState: Root.DestinationState(internalDestination: .welcome),
-            exportLogsState: ExportLogs.State(),
-            onboardingState: RestoreWalletCoordFlow.State(),
-            phraseDisplayState: RecoveryPhraseDisplay.State(),
-            walletConfig: .initial,
-            welcomeState: Welcome.State()
-        )
-        let store = TestStore(initialState: initialState) { Root() }
-        store.exhaustivity = .off
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let initialState = Root.State(
+                destinationState: Root.DestinationState(internalDestination: .welcome),
+                exportLogsState: ExportLogs.State(),
+                onboardingState: RestoreWalletCoordFlow.State(),
+                phraseDisplayState: RecoveryPhraseDisplay.State(),
+                walletConfig: .initial,
+                welcomeState: Welcome.State()
+            )
+            let store = TestStore(initialState: initialState) { Root() }
+            store.exhaustivity = .off
 
-        await store.send(.shieldingProcessorStateChanged(.nothingToShield)) {
-            $0.alert = AlertState.shieldFundsNothingToShield()
+            await store.send(.shieldingProcessorStateChanged(.nothingToShield)) {
+                $0.alert = AlertState.shieldFundsNothingToShield()
+            }
         }
     }
 }
