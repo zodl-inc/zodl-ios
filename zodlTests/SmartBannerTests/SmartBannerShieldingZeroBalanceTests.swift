@@ -274,7 +274,7 @@ import ComposableArchitecture
     @Test func fetchFailureWalksDownToTheNextLane() async {
         let store = makeStore(account: Self.account(), transparentBalance: Self.shieldableBalance)
 
-        await store.send(.shieldingBalanceFetched(nil))
+        await store.send(.shieldingBalanceFetched(Self.account().id, nil))
         await store.receive(\.evaluatePriority75)
     }
 

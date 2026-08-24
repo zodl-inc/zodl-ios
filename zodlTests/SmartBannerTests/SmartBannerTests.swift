@@ -79,15 +79,18 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func shieldingBalanceFetchedStoresBalance() async {
-        // No selected account (fresh in-memory shared state may hold one from another suite —
-        // this test only asserts the balance write, so clear it deterministically).
-        var state = SmartBanner.State()
-        state.$selectedWalletAccount.withLock { $0 = nil }
-        let store = TestStore(initialState: state) { SmartBanner() }
+    @MainActor @Test func shieldingBalanceFetchedIgnoresAMismatchedAccount() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = SmartBanner.State()
+            state.$selectedWalletAccount.withLock { $0 = nil }
+            let store = TestStore(initialState: state) { SmartBanner() }
+            store.exhaustivity = .off
 
-        await store.send(.shieldingBalanceFetched(Zatoshi(12_345))) {
-            $0.transparentBalance = Zatoshi(12_345)
+            await store.send(.shieldingBalanceFetched(AccountUUID(id: [UInt8](repeating: 5, count: 16)), Zatoshi(12_345)))
+
+            #expect(store.state.transparentBalance == .zero)
         }
     }
 

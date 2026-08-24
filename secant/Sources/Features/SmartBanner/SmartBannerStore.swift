@@ -84,6 +84,7 @@ struct SmartBanner {
         var CancelStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
         var CancelMigrationRepollId = UUID()
+        var CancelShieldingBalanceFetchId = UUID()
         let CancelMigrationStateStreamId = UUID()
 
         /// Bumped every time a banner is SEATED. A clean close scheduled before a newer seat
@@ -225,7 +226,7 @@ struct SmartBanner {
         case evaluatePriority6
         case evaluatePriority7
         case shieldingOfferReevaluationRequested
-        case shieldingBalanceFetched(Zatoshi?)
+        case shieldingBalanceFetched(AccountUUID, Zatoshi?)
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
@@ -320,6 +321,7 @@ struct SmartBanner {
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
                     .cancel(id: state.CancelShieldingProcessorId),
+                    .cancel(id: state.CancelShieldingBalanceFetchId),
                     // A post-restore migration repoll armed just before leaving Home must not keep
                     // running off-lifecycle — it would otherwise fire its `bannerVariant` hydration
                     // up to 120s after the screen is gone, and — with `CancelStateStreamId` also
@@ -370,6 +372,9 @@ struct SmartBanner {
                 state.hasDeferredShieldingOffer = false
                 state.priorityContentRequested = nil
                 return .merge(
+                    // An in-flight ladder balance fetch belongs to the OLD account — a switch must
+                    // not let its answer land against the newly selected account's state.
+                    .cancel(id: state.CancelShieldingBalanceFetchId),
                     // An account switch must stop a post-restore migration re-poll in flight for the
                     // OLD account outright — the decision belongs to whichever account armed it, and
                     // the walk below (`.evaluatePriority1`) restarts fresh for the newly selected one.
@@ -909,10 +914,16 @@ struct SmartBanner {
                 }
                 return .run { send in
                     let unshielded = try? await sdkSynchronizer.getAccountsBalances()[account.id]?.unshielded
-                    await send(.shieldingBalanceFetched(unshielded))
+                    await send(.shieldingBalanceFetched(account.id, unshielded))
                 }
+                .cancellable(id: state.CancelShieldingBalanceFetchId, cancelInFlight: true)
 
-            case .shieldingBalanceFetched(let unshielded):
+            case .shieldingBalanceFetched(let accountId, let unshielded):
+                guard accountId == state.selectedWalletAccount?.id else {
+                    // Stale result for a previous account — the switch's own ladder re-walk
+                    // covers the newly selected one.
+                    return .none
+                }
                 guard let unshielded else {
                     return .send(.evaluatePriority75)
                 }

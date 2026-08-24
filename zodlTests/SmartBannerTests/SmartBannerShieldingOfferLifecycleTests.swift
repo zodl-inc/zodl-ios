@@ -123,4 +123,20 @@ import ComposableArchitecture
             #expect(store.state.priorityContent == .priority2)
         }
     }
+
+    /// A balance fetched for the previously selected account must not poison the new account's
+    /// offer state — the account switch's own ladder re-walk covers the new account.
+    @Test func staleFetchForAPreviousAccountIsDropped() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = makeStore(account: Self.account())
+            let previousAccountId = AccountUUID(id: [UInt8](repeating: 3, count: 16))
+
+            await store.send(.shieldingBalanceFetched(previousAccountId, Self.shieldableBalance))
+
+            #expect(store.state.transparentBalance == .zero)
+            #expect(store.state.priorityContentRequested == nil)
+        }
+    }
 }
