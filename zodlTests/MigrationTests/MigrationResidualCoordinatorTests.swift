@@ -126,11 +126,12 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
-    /// MOB-1749 review fix: the swipe-back exit must ride the same writer edge as "Got it". A lock
-    /// taken on this screen changes the balance the PUBLISHED banner snapshot was built from, and a
-    /// bare `.flowFinished` left that snapshot stale — Home kept advertising a residual that was
-    /// already locked, and tapping the stale banner opened the fork.
-    @Test func aBackSwipeOffTheResidualScreenReconcilesBeforeFinishing() async throws {
+    /// Wave 2: the back-swipe closes IMMEDIATELY. The reconcile that used to gate this exit ran on
+    /// the flow's permanently-hidden spinner root (the pop removes the only screen in the same
+    /// reduction), stranding the user on a controlless ProgressView for the reconcile's duration.
+    /// Freshness is the LOCK's job now (`lockMigrationDust` republishes before returning), so the
+    /// exit owes nothing.
+    @Test func aBackSwipeOffTheResidualScreenFinishesImmediately() async throws {
         let reconcileCount = LockIsolated<Int>(0)
 
         let store = TestStore(initialState: Self.stateWithResidualScreen()) {
@@ -147,7 +148,7 @@ import Testing
         await store.send(.path(.popFrom(id: id)))
         await store.receive(\.flowFinished, timeout: .seconds(5))
 
-        #expect(reconcileCount.value == 1, "the swipe exit republishes the snapshot the banner reads, exactly like Got it")
+        #expect(reconcileCount.value == 0, "the swipe exit must not run work the user cannot see or escape")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)

@@ -1437,6 +1437,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func lockMigrationDust(accountUUID: AccountUUID?) async throws {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         _ = try await sdkSynchronizer.lockMigrationResidual(resolvedAccountUUID)
+        // Wave 2: the lock is a WRITER EDGE — it moves value out of the spendable figure the
+        // published snapshot (and so `bannerVariant`) was built from. Republishing HERE, awaited,
+        // is what frees every flow exit from carrying a reconcile barrier: by the time the user
+        // can leave the screen, the snapshot already tells the post-lock truth.
+        await republishSnapshotNow(for: resolvedAccountUUID)
     }
 
     /// MOB-1749: the residual lane's figures from one `getAccountsBalances` read. `nil` IN resolves
@@ -3270,6 +3275,26 @@ final class MigrationManagerImpl: @unchecked Sendable {
         Task { [weak self] in
             await self?.republishSnapshotDrainingDirty(for: accountUUID)
         }
+    }
+
+    /// `scheduleSnapshotRepublish`'s awaited sibling, for writer edges that must not RETURN until
+    /// the post-write truth is published (the lock). Same no-create rule and the same
+    /// inFlight/dirty state machine: when a build is already in flight this marks dirty and
+    /// returns — the in-flight build's follow-up carries the post-write truth, slightly later.
+    private func republishSnapshotNow(for accountUUID: AccountUUID) async {
+        guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
+
+        let shouldStart = snapshotRepublishState.withLock { state -> Bool in
+            if state.inFlight.contains(accountUUID) {
+                state.dirty.insert(accountUUID)
+                return false
+            }
+            state.inFlight.insert(accountUUID)
+            return true
+        }
+        guard shouldStart else { return }
+
+        await republishSnapshotDrainingDirty(for: accountUUID)
     }
 
     private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID) async {

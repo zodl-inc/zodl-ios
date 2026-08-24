@@ -396,12 +396,12 @@ extension MigrationCoordFlow {
                 }
 
             case .path(.element(id: _, action: .residual(.delegate(.done)))):
-                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen — but
-                // the lock just changed the balance the banner derives from, and `bannerVariant` serves
-                // the PUBLISHED snapshot: `reconcile()` is the writer edge that republishes it (fresh
-                // balances read), the same one the Complete exit rides. Root's `flowFinished` handling
-                // then re-evaluates the banner, which reads that republished value — a locked residual
-                // has no unlocked balance left, so the banner is gone.
+                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen — and
+                // nothing to make fresh either: the lock already republished the snapshot
+                // (`lockMigrationDust` is the writer edge, awaited). This reconcile is state
+                // reconciliation, not banner freshness, and this screen stays on-screen while it
+                // runs. Root's `flowFinished` handling then re-evaluates the banner off a snapshot
+                // that has told the post-lock truth since the lock returned.
                 return reconcileThenFinishEffect()
 
             case .path(.element(id: let id, action: .complete(.delegate(.migrateAnyway)))):
@@ -907,10 +907,11 @@ extension MigrationCoordFlow {
                 // `.forEach(\.path, action: \.path)` below removes the element, so `state.path`
                 // here is still the PRE-pop stack — see `MigrationCoordFlowStore.body`.
                 guard !state.isReentryResolved && state.path.ids == [id] else { return .none }
-                // MOB-1749 review fix: leave through the same writer edge the explicit exits ride —
-                // a lock taken on the residual screen changes the balance the PUBLISHED banner
-                // snapshot was built from, and a bare `.flowFinished` left it stale.
-                return reconcileThenFinishEffect()
+                // Wave 2: finish IMMEDIATELY. The reconcile that briefly gated this exit ran on the
+                // permanently-hidden spinner root (the pop removes the only screen in this same
+                // reduction) — a controlless wait. The lock republishes the snapshot itself now
+                // (`lockMigrationDust` — the writer edge), so this exit owes the banner nothing.
+                return .send(.flowFinished)
 
             case .path:
                 return .none
@@ -1551,10 +1552,11 @@ extension MigrationCoordFlow {
         }
     }
 
-    /// The re-entry exits' shared leaving edge: republish the snapshot the banner serves, THEN
-    /// finish. `bannerVariant` answers the PUBLISHED snapshot, and a lock/change made inside the
-    /// flow is invisible to it until a writer edge runs — so every path out of a re-entry stack
-    /// rides this, the explicit buttons and the interactive back-swipe alike.
+    /// The explicit exits' leaving edge: reconcile migration state, then finish. NOT a snapshot
+    /// barrier — `reconcile()`'s republish is scheduled, not awaited, and banner freshness after a
+    /// lock is `lockMigrationDust`'s own job (it republishes before returning). The button exits
+    /// keep the reconcile because their screens stay visible while it runs; the interactive
+    /// back-swipe deliberately does not ride it (see the `.popFrom` arm).
     private func reconcileThenFinishEffect() -> Effect<Action> {
         .run { [migrationManager] send in
             await migrationManager.reconcile()
