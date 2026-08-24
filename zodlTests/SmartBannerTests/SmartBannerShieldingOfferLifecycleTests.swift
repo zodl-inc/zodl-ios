@@ -491,4 +491,39 @@ import ComposableArchitecture
             processorSubject.send(completion: .finished)
         }
     }
+
+    /// The shielding sheet's ghost button stores the phased reminder (this wiring was lost in an
+    /// April 2026 restructuring — the handler existed with no sender). The stored reminder must
+    /// then gate the very next offer.
+    @Test func remindMeLaterStoresTheReminderAndGatesTheNextOffer() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let stored = LockIsolated<ReminedMeTimestamp?>(nil)
+            let store = makeStore(account: account, transparentBalance: Self.shieldableBalance)
+            store.dependencies.walletStorage.importShieldingReminder = { reminder, _ in
+                stored.setValue(reminder)
+            }
+            store.dependencies.walletStorage.exportShieldingReminder = { _ in stored.value }
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.remindMeLaterTapped(.priority7)) {
+                $0.isSmartBannerSheetPresented = false
+                $0.priorityContentRequested = nil
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(stored.value?.occurence == 1)
+
+            await store.send(.shieldingBalanceFetched(account.id, Self.shieldableBalance)) {
+                $0.remindMeShieldedPhaseCounter = 1
+            }
+            await store.receive(\.evaluatePriority75)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+            #expect(store.state.priorityContent == .priority75)
+        }
+    }
 }
