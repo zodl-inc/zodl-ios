@@ -402,10 +402,7 @@ extension MigrationCoordFlow {
                 // balances read), the same one the Complete exit rides. Root's `flowFinished` handling
                 // then re-evaluates the banner, which reads that republished value — a locked residual
                 // has no unlocked balance left, so the banner is gone.
-                return .run { [migrationManager] send in
-                    await migrationManager.reconcile()
-                    await send(.flowFinished)
-                }
+                return reconcileThenFinishEffect()
 
             case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
                 // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
@@ -887,7 +884,10 @@ extension MigrationCoordFlow {
                 // `.forEach(\.path, action: \.path)` below removes the element, so `state.path`
                 // here is still the PRE-pop stack — see `MigrationCoordFlowStore.body`.
                 guard !state.isReentryResolved && state.path.ids == [id] else { return .none }
-                return .send(.flowFinished)
+                // MOB-1749 review fix: leave through the same writer edge the explicit exits ride —
+                // a lock taken on the residual screen changes the balance the PUBLISHED banner
+                // snapshot was built from, and a bare `.flowFinished` left it stale.
+                return reconcileThenFinishEffect()
 
             case .path:
                 return .none
@@ -1511,6 +1511,17 @@ extension MigrationCoordFlow {
             } catch {
                 await send(.migrateAnywayFailed)
             }
+        }
+    }
+
+    /// The re-entry exits' shared leaving edge: republish the snapshot the banner serves, THEN
+    /// finish. `bannerVariant` answers the PUBLISHED snapshot, and a lock/change made inside the
+    /// flow is invisible to it until a writer edge runs — so every path out of a re-entry stack
+    /// rides this, the explicit buttons and the interactive back-swipe alike.
+    private func reconcileThenFinishEffect() -> Effect<Action> {
+        .run { [migrationManager] send in
+            await migrationManager.reconcile()
+            await send(.flowFinished)
         }
     }
 }

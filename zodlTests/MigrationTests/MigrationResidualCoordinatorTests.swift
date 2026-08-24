@@ -125,6 +125,33 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
+    /// MOB-1749 review fix: the swipe-back exit must ride the same writer edge as "Got it". A lock
+    /// taken on this screen changes the balance the PUBLISHED banner snapshot was built from, and a
+    /// bare `.flowFinished` left that snapshot stale — Home kept advertising a residual that was
+    /// already locked, and tapping the stale banner opened the fork.
+    @Test func aBackSwipeOffTheResidualScreenReconcilesBeforeFinishing() async throws {
+        let reconcileCount = LockIsolated<Int>(0)
+
+        let store = TestStore(initialState: Self.stateWithResidualScreen()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            var client = MigrationManagerClient.noOp
+            client.reconcile = { reconcileCount.withValue { $0 += 1 } }
+            $0.migrationManager = client
+        }
+        store.exhaustivity = .off
+        let id = try #require(store.state.path.ids.first)
+
+        await store.send(.path(.popFrom(id: id)))
+        await store.receive(\.flowFinished, timeout: .seconds(5))
+
+        #expect(reconcileCount.value == 1, "the swipe exit republishes the snapshot the banner reads, exactly like Got it")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
     /// MOB-1749 review fix: `unlockMigrationResidual` is an SDK-documented blanket clear of ALL
     /// the account's output locks, and this screen is reachable with an earlier deliberate lock
     /// still in place (locked notes are excluded from the spendable figure that fires the route).
