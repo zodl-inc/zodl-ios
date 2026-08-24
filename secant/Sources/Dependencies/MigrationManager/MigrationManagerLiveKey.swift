@@ -644,6 +644,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         MigrationTrace.banner(
             variant,
             why: bannerReason(
+                variant: variant,
                 state: state,
                 rows: transfers,
                 preparations: preparations,
@@ -1231,12 +1232,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationDerivations.bannerVariant`'s own precedence exactly, so the reason is always the
     /// arm that actually fired rather than a plausible-looking guess assembled separately.
     private func bannerReason(
+        variant: MigrationBannerVariant?,
         state: MigrationState,
         rows: [MigrationTransferRow],
         preparations: [MigrationTransferRow],
         hasOverdue: Bool,
         isBroadcastInFlight: Bool
     ) -> String {
+        // MOB-1749 review fix: the residual arms answer where the tables used to answer nil or
+        // next-round. Keyed off the DECIDED variant rather than re-derived, so this reason is
+        // same-precedence by construction — the rule the splitPendingConfirmation note below
+        // exists to enforce.
+        if case .residual = variant {
+            return "residual dust on an Ironwood wallet — below the offer floor, awaiting a lock-or-sweep decision"
+        }
         if case MigrationState.notStarted = state {
             return "no run"
         }
