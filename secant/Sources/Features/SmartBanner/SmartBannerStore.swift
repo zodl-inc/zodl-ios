@@ -1007,7 +1007,12 @@ struct SmartBanner {
                 }
 
             case .openBanner:
-                if let priorityContent = state.priorityContent, !isPriorityStillValid(priorityContent, state: state) {
+                guard let priorityContent = state.priorityContent else {
+                    // A retraction can empty the slot while the delayed open is in flight —
+                    // opening now would expand the banner shell around no content.
+                    return .none
+                }
+                if !isPriorityStillValid(priorityContent, state: state) {
                     guard let successor = evaluationSuccessor(of: priorityContent) else {
                         return .send(.closeBanner(true))
                     }

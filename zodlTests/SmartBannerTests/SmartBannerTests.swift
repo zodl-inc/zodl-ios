@@ -66,7 +66,12 @@ import ComposableArchitecture
     // MARK: - Simple reducer transitions
 
     @MainActor @Test func openBannerOpensAndShortensSubsequentDelay() async {
-        let store = TestStore(initialState: SmartBanner.State()) { SmartBanner() }
+        // `.openBanner` now no-ops over an empty slot (see
+        // SmartBannerShieldingOfferLifecycleTests.openBannerWithEmptySlotDoesNothing) — seat a
+        // banner first so this test still exercises the open-and-shorten-delay behavior.
+        var state = SmartBanner.State()
+        state.priorityContent = .priority4
+        let store = TestStore(initialState: state) { SmartBanner() }
 
         await store.send(.openBanner) {
             $0.delay = 1.0
