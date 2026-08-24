@@ -126,6 +126,26 @@ private enum MaxButtonTestError: Error {
         #expect(store.state.zecAmountText == "1.5".redacted)
     }
 
+    // The address field stays editable while the request runs; a result that comes back
+    // for a different address than the one now in the field must be dropped.
+    @MainActor @Test func maxAmountResolvedForStaleAddressIsDropped() async {
+        var state = SendForm.State.initial
+        state.isValidAddress = true
+        state.address = Const.validUnifiedAddress.redacted
+        state.zecAmountText = "1.5".redacted
+
+        let store = TestStore(initialState: state) {
+            SendForm()
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxAmountResolved(Const.validAddress.redacted, Zatoshi(123_456_789)))
+        await store.finish()
+
+        #expect(store.state.zecAmountText == "1.5".redacted)
+        #expect(!store.state.isMaxRequestInFlight)
+    }
+
     // The max must be computed for the exact proposal Review will build — including the
     // memo, which can change receiver selection and therefore the ZIP-317 fee.
     @MainActor @Test func maxTappedPassesUserMemoForShieldedRecipient() async {

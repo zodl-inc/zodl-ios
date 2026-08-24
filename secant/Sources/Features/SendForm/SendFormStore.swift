@@ -224,7 +224,7 @@ struct SendForm {
         case dismissAddressBookHint
         case exchangeRateSetupChanged
         case maxAmountFailed
-        case maxAmountResolved(Zatoshi)
+        case maxAmountResolved(RedactableString, Zatoshi)
         case maxTapped
         case memo(MessageEditor.Action)
         case onAppear
@@ -452,15 +452,21 @@ struct SendForm {
                         )
 
                         let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
-                        await send(.maxAmountResolved(amount))
+                        await send(.maxAmountResolved(address, amount))
                     } catch {
                         await send(.maxAmountFailed)
                     }
                 }
                 .cancellable(id: state.maxCancelId)
 
-            case let .maxAmountResolved(amount):
+            case let .maxAmountResolved(resolvedFor, amount):
                 state.isMaxRequestInFlight = false
+                // The user may have edited the address while the request ran; a max
+                // computed for another recipient (e.g. a cheaper fee class than a TEX
+                // send) must not be applied.
+                guard state.address == resolvedFor else {
+                    return .none
+                }
                 return .send(.zecAmountUpdated(amount.decimalString().redacted))
 
             case .maxAmountFailed:
