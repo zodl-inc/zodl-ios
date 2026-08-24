@@ -295,6 +295,8 @@ struct SendForm {
                 return .send(.exchangeRateSetupChanged)
 
             case .onDisapear:
+                state.isMaxRequestInFlight = false
+                state.isAddressBookHintVisible = false
                 return .merge(
                     .cancel(id: state.cancelId),
                     .cancel(id: state.maxCancelId)

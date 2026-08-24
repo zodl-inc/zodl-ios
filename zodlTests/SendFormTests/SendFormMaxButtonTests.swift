@@ -128,6 +128,39 @@ private enum MaxButtonTestError: Error {
         state.$toast.withLock { $0 = nil }
     }
 
+    // `.onDisapear` cancels the in-flight request; the flag must not stay stuck true
+    // (the chip would spin forever), and the hint must not stay stuck visible now that
+    // its dismiss timer gets genuinely cancelled.
+    @MainActor @Test func onDisapearCancelsInFlightMaxRequestAndClearsFlags() async {
+        var state = SendForm.State.initial
+        state.isValidAddress = true
+        state.isAddressBookHintVisible = true
+        state.address = Const.validAddress.redacted
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let store = TestStore(initialState: state) {
+            SendForm()
+        } withDependencies: {
+            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .testnet) }
+            $0.sdkSynchronizer.sendMaxAmount = { _, _, _ in
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+                return Zatoshi(1)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxTapped) {
+            $0.isMaxRequestInFlight = true
+        }
+        await store.send(.onDisapear) {
+            $0.isMaxRequestInFlight = false
+            $0.isAddressBookHintVisible = false
+        }
+        await store.finish()
+    }
+
     // The address field stays editable while the request runs; a result that comes back
     // for a different address than the one now in the field must be dropped.
     @MainActor @Test func maxAmountResolvedForStaleAddressIsDropped() async {

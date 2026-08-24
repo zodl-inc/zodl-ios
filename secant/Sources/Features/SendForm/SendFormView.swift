@@ -231,6 +231,9 @@ struct SendFormView: View {
                                 store.send(.requestsAddressFocusResolved)
                             }
                         }
+                        .onDisappear {
+                            store.send(.onDisapear)
+                        }
                         .applyScreenBackground()
                     }
                 }

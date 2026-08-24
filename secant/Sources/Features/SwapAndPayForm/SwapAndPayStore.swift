@@ -375,6 +375,7 @@ struct SwapAndPay {
 
             case .onDisappear:
                 // __LD2 TESTing
+                state.isMaxRequestInFlight = false
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),

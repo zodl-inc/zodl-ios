@@ -209,6 +209,36 @@ private enum SwapMaxButtonTestError: Error {
         state.$toast.withLock { $0 = nil }
     }
 
+    // Cancelling the flow (`.cancelSwapTapped` sends `.onDisappear`) while a max request
+    // runs must not leave the chip permanently spinning.
+    @MainActor @Test func onDisappearCancelsInFlightMaxRequestAndClearsFlag() async {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let store = TestStore(initialState: state) {
+            SwapAndPay()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
+                sendMaxAmount: { _, _, _ in
+                    try await Task.sleep(nanoseconds: 60_000_000_000)
+                    return Zatoshi(1)
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxTapped) {
+            $0.isMaxRequestInFlight = true
+        }
+        await store.send(.onDisappear) {
+            $0.isMaxRequestInFlight = false
+        }
+        await store.finish()
+    }
+
     // MARK: - .maxAmountResolved, Swap ZEC -> token
 
     // The plain ZEC string must keep full zatoshi precision: `simplified` (used by the sibling
