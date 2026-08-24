@@ -161,12 +161,16 @@ struct SwapAndPay {
             walletBalancesState.spendability
         }
 
-        /// Max chip on the Swap (ZEC -> token) screen. The balance must be spendable and no
-        /// max/quote request may be running.
+        /// Max chip on the Swap (ZEC -> token) screen. There must be a spendable balance
+        /// and a selected account, no max/quote request may be running, and — when the
+        /// field is in USD mode — a usable ZEC price to convert the max with.
         var isSwapMaxButtonEnabled: Bool {
             spendability != .nothing
+            && walletBalancesState.shieldedBalance.amount > 0
+            && selectedWalletAccount != nil
             && !isMaxRequestInFlight
             && !isQuoteRequestInFlight
+            && (!isInputInUsd || (zecAsset?.usdPrice ?? 0) > 0)
         }
 
         /// Max chip on the Pay screen. On top of the Swap conditions the max has to be
