@@ -89,6 +89,12 @@ struct SmartBanner {
         var isScanProgressComplete = false
         var delay = 1.5
         var isOpen = false
+        /// A transparent deposit crossed the shielding threshold while sync was still running.
+        /// The offer is deliberately not raised mid-sync (balances can be partially scanned and
+        /// the reminder read is synchronous), but the crossing must survive until the next
+        /// `.upToDate` tick — the per-tick balance write consumes the edge, so without this
+        /// latch a mid-sync deposit would never produce an offer.
+        var hasDeferredShieldingOffer = false
         var isShielding = false
         var isShieldingAcknowledged = false
         var isShieldingAcknowledgedAtKeychain = false
@@ -355,6 +361,8 @@ struct SmartBanner {
             case .walletAccountChanged:
                 state.remindMeShieldedPhaseCounter = 0
                 state.transparentBalance = .zero
+                state.hasDeferredShieldingOffer = false
+                state.priorityContentRequested = nil
                 return .merge(
                     // An account switch must stop a post-restore migration re-poll in flight for the
                     // OLD account outright — the decision belongs to whichever account armed it, and
@@ -482,13 +490,13 @@ struct SmartBanner {
                 }
                 
             case .synchronizerStateChanged(let latestState):
-                // Computed as two independent effects and merged, rather than folded into one flow —
+                // Computed as independent effects and merged, rather than folded into one flow —
                 // `syncStatusChangedEffect` below has many early-return branches, and any one of
-                // those firing on the same tick as an activation flip must not silently swallow the
-                // flip's re-evaluation (a cold-launch tick is exactly where both are likely to
-                // coincide: the priority walk racing the first chain-tip fetch is the scenario
-                // `ironwoodActivationFlipEffect` exists to correct).
+                // those firing on the same tick must not silently swallow the activation flip's
+                // re-evaluation OR a balance-driven shielding retraction/offer (a cold-launch
+                // tick is exactly where these coincide).
                 let activationFlipEffect = ironwoodActivationFlipEffect(state: &state)
+                let shieldingBalanceEffect = shieldingBalanceSyncEffect(state: &state, latestState: latestState)
                 // Snapshot the syncStatus BEFORE `syncStatusChangedEffect` runs, so a genuine
                 // transition — of ANY kind, not just the one that may arm a fresh post-restore
                 // repoll — can cancel a STALE repoll left over from an EARLIER transition first.
@@ -498,11 +506,11 @@ struct SmartBanner {
                 let previousSyncStatus = state.synchronizerStatusSnapshot.syncStatus
                 let syncStatusEffect = syncStatusChangedEffect(state: &state, latestState: latestState)
                 guard state.synchronizerStatusSnapshot.syncStatus != previousSyncStatus else {
-                    return .merge(activationFlipEffect, syncStatusEffect)
+                    return .merge(activationFlipEffect, shieldingBalanceEffect, syncStatusEffect)
                 }
                 return .concatenate(
                     .cancel(id: state.CancelMigrationRepollId),
-                    .merge(activationFlipEffect, syncStatusEffect)
+                    .merge(activationFlipEffect, shieldingBalanceEffect, syncStatusEffect)
                 )
 
             case .migrationForegroundCheckStarted:
@@ -978,7 +986,15 @@ struct SmartBanner {
             case .closeBanner(let clean):
                 state.isOpen = false
                 if clean {
-                    state.priorityContentRequested = nil
+                    // Cleanup clears the closing banner's OWN request (after a seat the two are
+                    // equal). A DIFFERENT lane's request latched behind the seated banner
+                    // (rank-refused in `openBannerRequest`) is not this banner's state to
+                    // destroy — it survives so the `openBannerRequest` below can seat it.
+                    // Without this, an offer raised on the same tick that closes the current
+                    // banner is wiped and never re-asked.
+                    if state.priorityContentRequested == state.priorityContent {
+                        state.priorityContentRequested = nil
+                    }
                     state.priorityContent = nil
                 }
                 return .send(.openBannerRequest)
@@ -1296,27 +1312,61 @@ struct SmartBanner {
         return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
     }
 
+    /// Everything balance-derived on a synchronizer tick, merged ALONGSIDE
+    /// `syncStatusChangedEffect` rather than folded into it: that function early-returns from
+    /// ~8 status arms, and none of them may swallow a balance-driven retraction or offer. Owns
+    /// the `spendableBalance` / `transparentBalance` writes, retracting a stale priority7 offer,
+    /// and dispatching the offer re-evaluation when the balance crosses the shielding threshold.
+    private func shieldingBalanceSyncEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
+        guard let account = state.selectedWalletAccount,
+              let accountBalance = latestState.data.accountsBalances[account.id]
+        else {
+            return .none
+        }
+        // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
+        // shielded pool) instead of hand-summing individual pools.
+        state.spendableBalance = accountBalance.shieldedSpendableValue
+
+        let threshold = zcashSDKEnvironment.shieldingThreshold()
+        let wasShieldable = state.isShieldable(threshold)
+        if state.transparentBalance != accountBalance.unshielded {
+            state.transparentBalance = accountBalance.unshielded
+        }
+        guard state.isShieldable(threshold) else {
+            state.hasDeferredShieldingOffer = false
+            // The offer the banner is making (or about to make) is no longer valid.
+            if state.priorityContent == .priority7 {
+                return .merge(
+                    .send(.closeAndCleanupBanner),
+                    .send(.closeSheetTapped)
+                )
+            }
+            if state.priorityContentRequested == .priority7 {
+                state.priorityContentRequested = nil
+            }
+            return .none
+        }
+        let didBecomeShieldable = !wasShieldable
+        guard didBecomeShieldable || state.hasDeferredShieldingOffer else {
+            return .none
+        }
+        guard case .upToDate = latestState.data.syncStatus else {
+            // Crossed while syncing — hold the edge until sync completes instead of dropping it.
+            state.hasDeferredShieldingOffer = true
+            return .none
+        }
+        state.hasDeferredShieldingOffer = false
+        guard state.priorityContent != .priority7 else {
+            return .none
+        }
+        return .send(.shieldingOfferReevaluationRequested)
+    }
+
     /// The pre-existing body of `.synchronizerStateChanged`, extracted verbatim except for the two
     /// migration arms in the `.upToDate` case, so it can be merged with `ironwoodActivationFlipEffect`
     /// instead of racing it for the case's single return value.
     private func syncStatusChangedEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
         let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
-
-        var didTransparentBalanceBecomeShieldable = false
-
-        if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-            // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
-            // shielded pool) instead of hand-summing individual pools.
-            state.spendableBalance = accountBalance.shieldedSpendableValue
-
-            // Balance changes can arrive without a sync-status transition.
-            let threshold = zcashSDKEnvironment.shieldingThreshold()
-            let wasShieldable = state.transparentBalance >= threshold
-            if state.transparentBalance != accountBalance.unshielded {
-                state.transparentBalance = accountBalance.unshielded
-            }
-            didTransparentBalanceBecomeShieldable = !wasShieldable && accountBalance.unshielded >= threshold
-        }
 
         // `SyncStatus.==` returns true for ANY two `.error` values (Synchronizer.swift), so a
         // status comparison alone can never see one error replace another — the sheet would
@@ -1431,18 +1481,6 @@ struct SmartBanner {
                     return .send(.triggerPriority(.priority4))
                 }
             }
-        }
-
-        if state.priorityContent == .priority7 {
-            if !state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) {
-                return .merge(
-                    .send(.closeAndCleanupBanner),
-                    .send(.closeSheetTapped)
-                )
-            }
-        } else if didTransparentBalanceBecomeShieldable, snapshot.syncStatus == .upToDate {
-            // Avoid masked balance changes and synchronous reminder reads while syncing.
-            return .send(.shieldingOfferReevaluationRequested)
         }
 
         return .none

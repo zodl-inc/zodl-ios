@@ -29,10 +29,11 @@ import ComposableArchitecture
 
     private static func syncState(
         account: WalletAccount,
-        unshielded: Zatoshi
+        unshielded: Zatoshi,
+        syncStatus: SyncStatus = .upToDate
     ) -> RedactableSynchronizerState {
         var syncState = SynchronizerState.zero
-        syncState.syncStatus = .upToDate
+        syncState.syncStatus = syncStatus
         syncState.accountsBalances = [
             account.id: AccountBalance(saplingBalance: .zero, orchardBalance: .zero, unshielded: unshielded)
         ]
@@ -193,6 +194,56 @@ import ComposableArchitecture
 
         #expect(store.state.priorityContentRequested == nil)
         #expect(store.state.priorityContent == nil)
+    }
+
+    /// A transparent deposit that crosses the threshold while sync is still running must produce
+    /// the offer once sync completes. The per-tick balance write consumes the crossing edge, so
+    /// without a latch the mid-sync deposit is silently lost for the whole session.
+    @Test func depositDuringSyncOffersOnceSyncCompletes() async {
+        let account = Self.account()
+        let store = makeStore(account: account)
+
+        await store.send(
+            .synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance, syncStatus: .syncing(0.5, false)))
+        ) {
+            $0.transparentBalance = Self.shieldableBalance
+        }
+
+        await store.send(.synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance)))
+        await store.receive(\.shieldingOfferReevaluationRequested)
+        await store.receive(\.triggerPriority)
+        // `store.state` only reflects actions pulled off the received-actions queue — the seat
+        // itself happens one hop further, in `.openBannerRequest`. Drain the rest of the cascade
+        // before reading final state instead of asserting the remaining hops by name.
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.priorityContent == .priority7)
+    }
+
+    /// A tick that BOTH completes the sync AND carries the qualifying balance must not lose the
+    /// offer to the status machinery's early returns — here, the seated syncing banner's own
+    /// close, which used to exit the function before the re-offer could fire.
+    @Test func offerSurvivesTheTickThatClosesTheSyncingBanner() async {
+        let account = Self.account()
+        let store = makeStore(account: account, priorityContent: .priority4)
+
+        await store.send(.synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance))) {
+            $0.transparentBalance = Self.shieldableBalance
+        }
+        await store.receive(\.shieldingOfferReevaluationRequested)
+        await store.receive(\.triggerPriority)
+        // `.closeAndCleanupBanner` races the shielding chain above — both are legs of the same
+        // `.merge` in `.synchronizerStateChanged`, so their relative arrival order on the
+        // received-actions queue is not guaranteed, and naming it here as a third `.receive`
+        // can starve on an action already consumed while skipping ahead to `.triggerPriority`.
+        // Its own effects (`.closeBanner`, the resulting `.openBannerRequest`) still run
+        // independently of whether this test observes the action by name — drain and read the
+        // settled state instead of asserting a cross-branch order that doesn't exist.
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.priorityContent == .priority7)
     }
 
     @Test func pendingShieldIsNotReofferedWhenBalanceBouncesBack() async {
