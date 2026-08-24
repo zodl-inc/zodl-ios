@@ -461,7 +461,10 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case statusResume                    // row 2
     case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
-    case residual(MigrationResidualBalances)  // MOB-1749 — notStarted / acknowledged complete (no pending remainder) with a spendable Orchard residual and Ironwood funds; carries the figures the decision was made on, so the screen renders exactly what routed it
+    // MOB-1749 — notStarted / acknowledged complete (no pending remainder) with a spendable Orchard
+    // residual and Ironwood funds. Carries the figures the decision was made on, so the screen
+    // renders exactly what routed it rather than a second read that could disagree.
+    case residual(MigrationResidualBalances)
     // (row 6 `reviewManual` removed 2026-08-07 with the manual-delivery lane.)
     case entry                           // row 7 (notStarted)
 }

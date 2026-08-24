@@ -51,10 +51,15 @@ import ComposableArchitecture
         )
     }
 
-    private static func balances(orchard: Zatoshi, ironwood: Zatoshi) -> AccountBalance {
+    /// `pending` lands in the Orchard pool's `valuePendingSpendability` — value the wallet holds
+    /// but cannot spend yet. It is what separates the two Orchard bases: the OFFER is sized from
+    /// `unlockedForMigration` (spendable plus both pending buckets), the RESIDUAL from spendable
+    /// alone, and with `pending` at its default of zero the two coincide and no fixture can tell
+    /// them apart.
+    private static func balances(orchard: Zatoshi, ironwood: Zatoshi, pending: Zatoshi = .zero) -> AccountBalance {
         AccountBalance(
             saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
-            orchardBalance: PoolBalance(spendableValue: orchard, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            orchardBalance: PoolBalance(spendableValue: orchard, changePendingConfirmation: .zero, valuePendingSpendability: pending),
             ironwoodBalance: PoolBalance(spendableValue: ironwood, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
             unshielded: .zero,
             awaitingResolution: .zero
@@ -91,6 +96,7 @@ import ComposableArchitecture
     private static func bannerVariant(
         balance: Zatoshi,
         ironwood: Zatoshi = .zero,
+        pending: Zatoshi = .zero,
         advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance? = { _ in nil },
         state: @escaping @Sendable () -> SynchronizerState = { syncedState() }
     ) async -> MigrationBannerVariant? {
@@ -98,7 +104,7 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(
                 latestState: state,
                 migrationAdvanceStep: advanceStep,
-                getAccountsBalances: { [accountUUID: balances(orchard: balance, ironwood: ironwood)] }
+                getAccountsBalances: { [accountUUID: balances(orchard: balance, ironwood: ironwood, pending: pending)] }
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { activationHeight }
         } operation: {
@@ -149,6 +155,28 @@ import ComposableArchitecture
         let variant = await Self.bannerVariant(balance: Zatoshi(800_000), ironwood: Zatoshi(1_245_000_000))
 
         #expect(variant == .residual(amount: Zatoshi(800_000)))
+    }
+
+    /// MOB-1749 review fix: WHICH Orchard figure the residual lane reads, pinned end to end.
+    ///
+    /// Nothing spendable, 0.005 ZEC awaiting spendability, real funds in Ironwood. On the SPENDABLE
+    /// basis this is not a residual and the banner stays quiet; on the old `unlockedForMigration`
+    /// basis it is squarely in the band and the banner offers to lock it.
+    ///
+    /// Offering it is the bug the basis change closes. The lock would succeed — and the SDK would
+    /// go on reporting the value as PENDING rather than locked, so the next balances read puts the
+    /// same figure back in the band and the banner returns exactly as it was. The user locks, the
+    /// banner reappears, they lock again. This test fails the moment `init(accountBalance:)` goes
+    /// back to `unlockedForMigration`, which is the only thing standing between the lane and that
+    /// loop.
+    @Test func aPendingOnlyOrchardBalanceIsNotAResidual() async {
+        let variant = await Self.bannerVariant(
+            balance: .zero,
+            ironwood: Zatoshi(1_245_000_000),
+            pending: Zatoshi(500_000)
+        )
+
+        #expect(variant == nil, "a balance the wallet cannot spend yet is not dust it can be asked to lock")
     }
 
     /// MOB-1749: the same dust with NOTHING in Ironwood is not a residual — the screen's "You've
@@ -224,7 +252,16 @@ import ComposableArchitecture
             await MigrationManagerImpl().reentryRoute()
         }
 
-        #expect(route == .residual(MigrationResidualBalances(residualOrchard: Zatoshi(800_000), lockedOrchard: .zero, ironwood: Zatoshi(1_245_000_000))))
+        #expect(
+            route == .residual(
+                MigrationResidualBalances(
+                    residualOrchard: Zatoshi(800_000),
+                    unlockedOrchard: Zatoshi(800_000),
+                    lockedOrchard: .zero,
+                    ironwood: Zatoshi(1_245_000_000)
+                )
+            )
+        )
 
         // Resets the process-global shared account so this test does not leak state into the rest
         // of the run.

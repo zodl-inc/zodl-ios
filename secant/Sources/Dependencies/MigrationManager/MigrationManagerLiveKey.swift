@@ -637,6 +637,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // held for less than a readable moment. `bannerVariant` is recomputed on every poke and on
         // every screen appearance — forty identical lines used to be indistinguishable from forty
         // flickers, and it is the flickers that get reported as bugs.
+        // "unreadable" rather than a zero: the residual arms stood down because the balances read
+        // FAILED, and a trace that printed 0.00 would read as an empty wallet instead.
+        let residualDetail = residual.map { $0.residualOrchard.decimalString() } ?? "unreadable"
+        let ironwoodDetail = residual.map { $0.ironwood.decimalString() } ?? "unreadable"
         MigrationTrace.banner(
             variant,
             why: bannerReason(
@@ -646,7 +650,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 hasOverdue: hasOverdue,
                 isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) }
             ),
-            detail: "state \(state), orchard \(balance.decimalString()), residual \(residual.map { $0.residualOrchard.decimalString() } ?? "unreadable"), ironwood \(residual.map { $0.ironwood.decimalString() } ?? "unreadable")"
+            detail: "state \(state), orchard \(balance.decimalString()), residual \(residualDetail), ironwood \(ironwoodDetail)"
         )
         MigrationTrace.rows(transfers: transfers, preparations: preparations)
 

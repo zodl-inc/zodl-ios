@@ -40,8 +40,8 @@ struct MigrationResidual {
     @ObservableState
     struct State: Equatable {
         @Presents var alert: AlertState<Action>?
-        /// The unlocked Orchard residual the screen is about. A lock does not change it — the same
-        /// number is then the LOCKED amount the locked callout names.
+        /// The SPENDABLE Orchard residual the screen is about. A lock does not change it — the
+        /// same number is then the LOCKED amount the locked callout names.
         var orchardBalance: Zatoshi
         /// The account's LOCKED Orchard balance at hydration — the conditional "Locked in Orchard"
         /// row. A residual the user locked on an earlier visit is still part of the pool; hiding it

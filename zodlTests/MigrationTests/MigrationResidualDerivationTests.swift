@@ -21,12 +21,21 @@ import Testing
 @Suite struct MigrationResidualBannerDerivationTests {
     private static let ironwood = Zatoshi(1_245_000_000)
 
+    /// `unlocked` defaults to `orchard` — the ordinary wallet, where nothing is pending and the
+    /// two bases coincide, so every band test below keeps reading as one number. Pass it
+    /// explicitly only to pull the offer basis away from the spendable one.
     private static func residual(
         orchard: Zatoshi,
+        unlocked: Zatoshi? = nil,
         locked: Zatoshi = .zero,
         ironwood: Zatoshi = ironwood
     ) -> MigrationResidualBalances {
-        MigrationResidualBalances(residualOrchard: orchard, lockedOrchard: locked, ironwood: ironwood)
+        MigrationResidualBalances(
+            residualOrchard: orchard,
+            unlockedOrchard: unlocked ?? orchard,
+            lockedOrchard: locked,
+            ironwood: ironwood
+        )
     }
 
     private static func banner(
@@ -118,6 +127,26 @@ import Testing
         #expect(variant == .inProgress(done: 0, total: 0, round: nil, totalRounds: nil))
     }
 
+    /// MOB-1749 review fix: the two lanes read DIFFERENT bases — the OFFER is sized from
+    /// `unlockedForMigration` (spendable plus both pending buckets), the residual from spendable
+    /// alone. A pending-heavy wallet therefore sits in the residual band on one basis and above the
+    /// offer floor on the other, and before the fix the banner said "Migration Required" while the
+    /// route opened the Remaining Orchard Funds screen. `isResidualCandidate`'s upper bound now
+    /// rides the offer's own figure precisely so the two can never split. Twin in the route suite.
+    @Test func aPendingHeavyBalanceAboveTheOfferFloorIsTheOfferNotTheResidual() {
+        let variant = MigrationDerivations.bannerVariant(
+            isIronwoodActivated: true,
+            state: .notStarted,
+            orchardBalance: Zatoshi(1_300_000),
+            residual: Self.residual(orchard: Zatoshi(800_000), unlocked: Zatoshi(1_300_000)),
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            transferRows: []
+        )
+
+        #expect(variant == .required)
+    }
+
     /// An unreadable balances read is NOT an empty wallet — the arms must stay quiet rather than
     /// invent a zero.
     @Test func anUnreadableBalanceReadShowsNothing() {
@@ -138,8 +167,18 @@ import Testing
 @Suite struct MigrationResidualRouteDerivationTests {
     private static let ironwood = Zatoshi(1_245_000_000)
 
-    private static func residual(orchard: Zatoshi, ironwood: Zatoshi = ironwood) -> MigrationResidualBalances {
-        MigrationResidualBalances(residualOrchard: orchard, lockedOrchard: .zero, ironwood: ironwood)
+    /// `unlocked` defaults to `orchard` — see the banner suite's twin.
+    private static func residual(
+        orchard: Zatoshi,
+        unlocked: Zatoshi? = nil,
+        ironwood: Zatoshi = ironwood
+    ) -> MigrationResidualBalances {
+        MigrationResidualBalances(
+            residualOrchard: orchard,
+            unlockedOrchard: unlocked ?? orchard,
+            lockedOrchard: .zero,
+            ironwood: ironwood
+        )
     }
 
     private static func route(
@@ -206,6 +245,25 @@ import Testing
             orchard: Zatoshi(800_000),
             isCompleteAcknowledged: true,
             isMigrationRemainderPending: true
+        )
+
+        #expect(route == .entry)
+    }
+
+    /// MOB-1749 review fix: the route twin of the banner suite's test of the same name — the same
+    /// pending-heavy wallet, the same struct, and the answer that must match it: the fork, because
+    /// the offer lane is the one that fires.
+    @Test func aPendingHeavyBalanceAboveTheOfferFloorIsTheOfferNotTheResidual() {
+        let route = MigrationDerivations.reentryRoute(
+            isIronwoodActivated: true,
+            state: .notStarted,
+            advanceStep: nil,
+            hasInvalid: false,
+            hasOverdue: false,
+            isCompleteAcknowledged: false,
+            isMigrationRemainderPending: false,
+            progress: nil,
+            residual: Self.residual(orchard: Zatoshi(800_000), unlocked: Zatoshi(1_300_000))
         )
 
         #expect(route == .entry)

@@ -16,7 +16,15 @@ import Testing
 
 @Suite(.serialized) @MainActor struct MigrationResidualCoordinatorTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x0D, count: 16))
-    private static let balances = MigrationResidualBalances(residualOrchard: Zatoshi(800_000), lockedOrchard: .zero, ironwood: Zatoshi(1_245_000_000))
+    /// A non-zero `lockedOrchard`: a residual the user locked on an earlier visit, still sitting in
+    /// the pool. It has to be non-zero for the hydration assertion below to be load-bearing — with
+    /// `.zero` the "Locked in Orchard" wiring would pass by doing nothing at all.
+    private static let balances = MigrationResidualBalances(
+        residualOrchard: Zatoshi(800_000),
+        unlockedOrchard: Zatoshi(800_000),
+        lockedOrchard: Zatoshi(300_000),
+        ironwood: Zatoshi(1_245_000_000)
+    )
 
     private static func account() -> WalletAccount {
         WalletAccount(
@@ -54,7 +62,7 @@ import Testing
             return
         }
         #expect(residualState.orchardBalance == Zatoshi(800_000))
-        #expect(residualState.lockedOrchardBalance == .zero)
+        #expect(residualState.lockedOrchardBalance == Zatoshi(300_000))
         #expect(residualState.ironwoodBalance == Zatoshi(1_245_000_000))
         #expect(residualState.resolution == .offered)
         #expect(!store.state.isReentryResolved, "a pushed re-entry destination keeps the fork hidden")
