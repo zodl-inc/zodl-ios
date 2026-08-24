@@ -322,10 +322,15 @@ struct SmartBanner {
                 
             case .onDisappear:
                 // __LD2 TESTED
+                // CancelShieldingProcessorId is deliberately NOT cancelled here: a shield started
+                // from the Balances sheet on a pushed screen (Send/Pay flow) reaches its terminal
+                // state while Home is covered, and the terminal outcomes are one-shot — the
+                // subject resets to `.unknown` right after, so a resubscribe on the next appear
+                // would never see them. The onAppear subscription uses cancelInFlight, so
+                // re-appearing replaces rather than duplicates the stream.
                 return .merge(
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
-                    .cancel(id: state.CancelShieldingProcessorId),
                     .cancel(id: state.CancelShieldingBalanceFetchId),
                     // A post-restore migration repoll armed just before leaving Home must not keep
                     // running off-lifecycle — it would otherwise fire its `bannerVariant` hydration

@@ -3,6 +3,7 @@
 //  zodlTests
 //
 
+@preconcurrency import Combine
 import Foundation
 import Testing
 import ComposableArchitecture
@@ -450,6 +451,44 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.priorityContent == .priority2)
+        }
+    }
+
+    /// A shield can finish while Home is covered by the Send/Pay flow (the Balances sheet shares
+    /// the processor). The banner must keep observing the processor across onDisappear, or the
+    /// terminal outcome is lost to the un-replayable subject reset and the stale offer survives.
+    @Test func terminalOutcomeAfterOnDisappearStillRetractsTheBanner() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let processorSubject = CurrentValueSubject<ShieldingProcessorClient.State, Never>(ShieldingProcessorClient.State.unknown)
+            let store = makeStore(
+                account: Self.account(),
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7
+            )
+            // Assigned as a full client value (not a member mutation): neither `ShieldingProcessorClient`
+            // nor `NetworkMonitorClient` has a `testValue`, and `makeStore` never pre-sets either one, so
+            // a `store.dependencies.x.member = ...` compound assignment would GET the unset dependency
+            // first — tripping "has no test implementation" — before the mutation ever lands.
+            store.dependencies.shieldingProcessor = ShieldingProcessorClient(
+                observe: { processorSubject.eraseToAnyPublisher() },
+                shieldFunds: { }
+            )
+            store.dependencies.networkMonitor = NetworkMonitorClient(
+                networkMonitorStream: { Empty().eraseToAnyPublisher() }
+            )
+
+            await store.send(.onAppear)
+            await store.send(.onDisappear)
+            processorSubject.send(ShieldingProcessorClient.State.succeeded)
+            await store.receive(\.shieldingProcessorStateChanged)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == nil)
+            processorSubject.send(completion: .finished)
         }
     }
 }
