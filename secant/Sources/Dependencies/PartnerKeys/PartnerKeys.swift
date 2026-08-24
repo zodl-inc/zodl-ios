@@ -17,7 +17,7 @@ struct PartnerKeys {
         static let nearKey = "nearKey"
         static let cmcKey = "cmcKey"
         static let nearFeeDepositAddress = "nearFeeDepositAddress"
-#if DEBUG
+#if !SECANT_DISTRIB
         static let testSeed = "testSeed"
 #endif
     }
@@ -46,7 +46,7 @@ struct PartnerKeys {
         PartnerKeys.value(for: Constants.nearFeeDepositAddress)
     }
     
-#if DEBUG
+#if !SECANT_DISTRIB
     static var testSeed: String? {
         PartnerKeys.value(for: Constants.testSeed)
     }
