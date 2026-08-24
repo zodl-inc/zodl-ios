@@ -46,8 +46,8 @@ struct MigrationResidualView: View {
 
                 MigrationLockCallout(
                     resolution: store.lock.resolution,
-                    amount: store.orchardBalance,
                     offeredBodyMarkdown: String(localizable: .migrationResidualDustBody("^[\(amountText)](style: 'boldPrimary')")),
+                    lockedBodyMarkdown: String(localizable: .migrationCompleteLockedBody("^[\(amountText)](style: 'boldPrimary')")),
                     isMigrateAnywayDisabled: store.lock.resolution == .locking || store.lock.isMigratingAnyway,
                     onMigrateAnyway: { store.send(.lock(.migrateAnywayTapped)) }
                 )
@@ -78,12 +78,8 @@ struct MigrationResidualView: View {
     // MARK: - Nav bar
 
     @ViewBuilder private var helpButton: some View {
-        Button {
+        MigrationLockHelpButton {
             store.send(.lock(.lockExplainerHelpTapped))
-        } label: {
-            Asset.Assets.Icons.help.image
-                .zImage(size: 24, style: Design.Text.primary)
-                .padding(Design.Spacing.navBarButtonPadding)
         }
     }
 
@@ -128,27 +124,11 @@ struct MigrationResidualView: View {
     // MARK: - Primary button
 
     @ViewBuilder private var primaryButton: some View {
-        switch store.lock.resolution {
-        case .offered:
-            ZashiButton(String(localizable: .migrationCompleteLockBalance)) {
-                store.send(.lock(.lockBalanceTapped))
-            }
-
-        case .locking:
-            ZashiButton(
-                String(localizable: .migrationCompleteLockingBalance),
-                type: .tertiary,
-                prefixView: ProgressView()
-            ) {
-                store.send(.lock(.lockBalanceTapped))
-            }
-            .disabled(true)
-
-        case .locked:
-            ZashiButton(String(localizable: .migrationGotIt)) {
-                store.send(.gotItTapped)
-            }
-        }
+        MigrationLockPrimaryButton(
+            resolution: store.lock.resolution,
+            onLock: { store.send(.lock(.lockBalanceTapped)) },
+            onGotIt: { store.send(.gotItTapped) }
+        )
     }
 }
 

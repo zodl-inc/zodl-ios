@@ -10,7 +10,6 @@
 //
 
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
 
 // `MigrationLockResolution` — the vocabulary these views branch on — now lives beside the reducer
 // that owns it, in `MigrationLockDecisionStore.swift`.
@@ -65,16 +64,18 @@ struct MigrationLockAttributedText: View {
 }
 
 /// The decision callout: an amber "still needs a decision" card (`.offered` / `.locking`, with the
-/// outlined "Migrate anyway" escape hatch) or the neutral "done" card (`.locked`). The offered copy
-/// differs per screen, so the caller passes it with the amount span already interpolated
-/// (`^[… ZEC](style: 'boldPrimary')`); the locked copy is the shared `migrationComplete.lockedBody`.
-/// The info icon shows in every state, tinted tertiary when locked and warning-yellow otherwise.
+/// outlined "Migrate anyway" escape hatch) or the neutral "done" card (`.locked`). Both the offered
+/// and the locked copy differ per screen only in which balance they name, so the caller passes
+/// BOTH bodies with the amount span already interpolated (`^[… ZEC](style: 'boldPrimary')`) — one
+/// formatting path per screen, so the offered and locked cards can never end up naming the same
+/// amount two differently-formatted ways. The info icon shows in every state, tinted tertiary when
+/// locked and warning-yellow otherwise.
 struct MigrationLockCallout: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let resolution: MigrationLockResolution
-    let amount: Zatoshi
     let offeredBodyMarkdown: String
+    let lockedBodyMarkdown: String
     let isMigrateAnywayDisabled: Bool
     let onMigrateAnyway: () -> Void
 
@@ -122,14 +123,10 @@ struct MigrationLockCallout: View {
         resolution == .locked ? Design.Surfaces.bgSecondary : Design.Utility.WarningYellow._50
     }
 
-    private var amountText: String {
-        "\(amount.decimalString()) ZEC"
-    }
-
     @ViewBuilder private var bodyText: some View {
         if resolution == .locked {
             MigrationLockAttributedText(
-                markdown: String(localizable: .migrationCompleteLockedBody("^[\(amountText)](style: 'boldPrimary')")),
+                markdown: lockedBodyMarkdown,
                 baseStyle: Design.Text.tertiary,
                 boldColor: nil
             )
@@ -164,6 +161,54 @@ struct MigrationLockCallout: View {
                                 .stroke(Design.Utility.WarningYellow._300.color(colorScheme), lineWidth: 1)
                         }
                 }
+        }
+    }
+}
+
+/// The decision screens' primary CTA — Lock balance (`.offered`), the disabled in-flight
+/// Locking… (`.locking`), Got it (`.locked`). Callers with a "nothing to decide" state
+/// (Migration Complete's no-dust completion) short-circuit BEFORE this view.
+struct MigrationLockPrimaryButton: View {
+    let resolution: MigrationLockResolution
+    let onLock: () -> Void
+    let onGotIt: () -> Void
+
+    var body: some View {
+        switch resolution {
+        case .offered:
+            ZashiButton(String(localizable: .migrationCompleteLockBalance)) {
+                onLock()
+            }
+
+        case .locking:
+            ZashiButton(
+                String(localizable: .migrationCompleteLockingBalance),
+                type: .tertiary,
+                prefixView: ProgressView()
+            ) {
+                onLock()
+            }
+            .disabled(true)
+
+        case .locked:
+            ZashiButton(String(localizable: .migrationGotIt)) {
+                onGotIt()
+            }
+        }
+    }
+}
+
+/// The trailing nav-bar help button that opens the shared explainer sheet.
+struct MigrationLockHelpButton: View {
+    let onTap: () -> Void
+
+    var body: some View {
+        Button {
+            onTap()
+        } label: {
+            Asset.Assets.Icons.help.image
+                .zImage(size: 24, style: Design.Text.primary)
+                .padding(Design.Spacing.navBarButtonPadding)
         }
     }
 }
@@ -214,15 +259,15 @@ struct MigrationLockExplainerSheetContent: View {
         MigrationLockBadge()
         MigrationLockCallout(
             resolution: .offered,
-            amount: Zatoshi(800_000),
             offeredBodyMarkdown: "^[0.008 ZEC](style: 'boldPrimary') is still in Orchard.",
+            lockedBodyMarkdown: "",
             isMigrateAnywayDisabled: false,
             onMigrateAnyway: { }
         )
         MigrationLockCallout(
             resolution: .locked,
-            amount: Zatoshi(800_000),
             offeredBodyMarkdown: "",
+            lockedBodyMarkdown: "^[0.008 ZEC](style: 'boldPrimary') is now locked in Orchard.",
             isMigrateAnywayDisabled: false,
             onMigrateAnyway: { }
         )

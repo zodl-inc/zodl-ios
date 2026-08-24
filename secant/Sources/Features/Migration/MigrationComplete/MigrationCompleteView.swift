@@ -133,12 +133,8 @@ struct MigrationCompleteView: View {
     /// touch `navigationBarBackButtonHidden()` above).
     @ViewBuilder private var trailingNavItem: some View {
         if store.hasDust {
-            Button {
+            MigrationLockHelpButton {
                 store.send(.lock(.lockExplainerHelpTapped))
-            } label: {
-                Asset.Assets.Icons.help.image
-                    .zImage(size: 24, style: Design.Text.primary)
-                    .padding(Design.Spacing.navBarButtonPadding)
             }
         }
     }
@@ -199,8 +195,8 @@ struct MigrationCompleteView: View {
     @ViewBuilder private var dustCallout: some View {
         MigrationLockCallout(
             resolution: store.lock.resolution,
-            amount: store.dust,
             offeredBodyMarkdown: String(localizable: .migrationCompleteDustBody("^[\(amountText)](style: 'boldPrimary')")),
+            lockedBodyMarkdown: String(localizable: .migrationCompleteLockedBody("^[\(amountText)](style: 'boldPrimary')")),
             isMigrateAnywayDisabled: store.lock.resolution == .locking || store.lock.isMigratingAnyway,
             onMigrateAnyway: { store.send(.lock(.migrateAnywayTapped)) }
         )
@@ -212,34 +208,20 @@ struct MigrationCompleteView: View {
 
     // MARK: - Primary button
 
-    /// Nothing to decide, or the decision already taken, both leave the run's own acknowledgement
-    /// as the CTA; only a live decision replaces it with the lock buttons.
+    /// No dust means nothing to decide, so the run's own acknowledgement is the CTA outright.
+    /// Whenever there is dust, the shared `MigrationLockPrimaryButton` owns the CTA instead — its
+    /// own `.locked` arm renders that identical Got-it button, so the two paths converge on the
+    /// same rendered button without this view needing to special-case `.locked` itself.
     @ViewBuilder private var primaryButton: some View {
-        if !store.hasDust || store.lock.resolution == .locked {
+        if store.hasDust {
+            MigrationLockPrimaryButton(
+                resolution: store.lock.resolution,
+                onLock: { store.send(.lock(.lockBalanceTapped)) },
+                onGotIt: { store.send(.gotItTapped) }
+            )
+        } else {
             ZashiButton(String(localizable: .migrationGotIt)) {
                 store.send(.gotItTapped)
-            }
-        } else {
-            switch store.lock.resolution {
-            case .offered:
-                ZashiButton(String(localizable: .migrationCompleteLockBalance)) {
-                    store.send(.lock(.lockBalanceTapped))
-                }
-
-            case .locking:
-                ZashiButton(
-                    String(localizable: .migrationCompleteLockingBalance),
-                    type: .tertiary,
-                    prefixView: ProgressView()
-                ) {
-                    store.send(.lock(.lockBalanceTapped))
-                }
-                .disabled(true)
-
-            case .locked:
-                // Unreachable: the branch above already claimed `.locked`. Here only to keep the
-                // switch total.
-                EmptyView()
             }
         }
     }
