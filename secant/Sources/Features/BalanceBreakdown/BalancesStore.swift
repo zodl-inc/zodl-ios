@@ -203,7 +203,7 @@ struct Balances {
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+                || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
                 || state.totalBalance == .zero
                 
                 // spendability

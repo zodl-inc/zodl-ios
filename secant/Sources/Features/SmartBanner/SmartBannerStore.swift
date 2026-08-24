@@ -896,9 +896,7 @@ struct SmartBanner {
                         state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
                         let now = Date().timeIntervalSince1970
 
-                        if (state.remindMeWalletBackupPhaseCounter == 1 && walletBackupReminder.timestamp + Constants.remindMe2days < now)
-                            || (state.remindMeWalletBackupPhaseCounter == 2 && walletBackupReminder.timestamp + Constants.remindMe2weeks < now)
-                            || (state.remindMeWalletBackupPhaseCounter > 2 && walletBackupReminder.timestamp + Constants.remindMeMonth < now) {
+                        if walletBackupReminder.isDue(now: now) {
                             return .send(.triggerPriority(.priority6))
                         }
                     } else {
@@ -1399,10 +1397,7 @@ struct SmartBanner {
         }
         state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
         let now = Date().timeIntervalSince1970
-        let isReminderDue = (shieldedReminder.occurence == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
-            || (shieldedReminder.occurence == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
-            || (shieldedReminder.occurence > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now)
-        guard isReminderDue else {
+        guard shieldedReminder.isDue(now: now) else {
             // The user deferred the offer — the pass moves on instead of dying here, and the
             // armed latch re-asks on a later tick once the reminder matures.
             return declineEffect
@@ -1640,5 +1635,15 @@ extension SmartBanner.State {
     var isSyncTimedOut: Bool {
         lastKnownErrorMessage.lowercased().contains("504 gateway timeout")
         || lastKnownErrorMessage.lowercased().contains("tor error: tor: operation timed out at exit")
+    }
+}
+
+extension ReminedMeTimestamp {
+    /// The phase ladder shared by the wallet-backup and shielding reminders: 2 days after the
+    /// first dismissal, 2 weeks after the second, a month after every later one.
+    func isDue(now: TimeInterval) -> Bool {
+        (occurence == 1 && timestamp + SmartBanner.Constants.remindMe2days < now)
+            || (occurence == 2 && timestamp + SmartBanner.Constants.remindMe2weeks < now)
+            || (occurence > 2 && timestamp + SmartBanner.Constants.remindMeMonth < now)
     }
 }

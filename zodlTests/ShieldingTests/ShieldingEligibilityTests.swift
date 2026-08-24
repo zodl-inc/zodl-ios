@@ -48,3 +48,26 @@ import ComposableArchitecture
         #expect(transactions.isAnyShieldingPending())
     }
 }
+
+// `WalletBalances.State` carries `@Shared(.inMemory(...))` properties (`currencyConversion`,
+// `selectedWalletAccount`), so constructing it touches process-global in-memory storage — the same
+// reason `WalletBalancesTests` (WalletBalancesTests.swift) is `.serialized` rather than living in
+// the plain `ShieldingEligibilityTests` suite above. A dedicated `.serialized` suite with pinned
+// storage keeps this test isolated from concurrently running suites that also touch that storage.
+@Suite(.serialized) struct WalletBalancesEligibilityTests {
+    /// WalletBalances and Balances compute "processing with zero available" from the same wallet
+    /// and must agree at exactly the shielding threshold (the SDK's rule is inclusive).
+    @Test func walletBalancesProcessingRuleIsInclusiveAtTheThreshold() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = WalletBalances.State()
+            state.shieldedBalance = .zero
+            state.totalBalance = Zatoshi(100_000)
+            state.transparentBalance = Zatoshi(100_000)
+            state.autoShieldingThreshold = Zatoshi(100_000)
+
+            #expect(!state.isProcessingZeroAvailableBalance)
+        }
+    }
+}
