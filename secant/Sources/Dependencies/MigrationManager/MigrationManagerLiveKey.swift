@@ -1440,8 +1440,46 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // Wave 2: the lock is a WRITER EDGE — it moves value out of the spendable figure the
         // published snapshot (and so `bannerVariant`) was built from. Republishing HERE, awaited,
         // is what frees every flow exit from carrying a reconcile barrier: by the time the user
-        // can leave the screen, the snapshot already tells the post-lock truth.
-        await republishSnapshotNow(for: resolvedAccountUUID)
+        // can leave the screen, the snapshot already tells the post-lock truth, bounded — see
+        // `lockRepublishTimeoutNanoseconds`.
+        await awaitBounded(nanoseconds: Self.lockRepublishTimeoutNanoseconds) { [weak self] in
+            await self?.republishSnapshotNow(for: resolvedAccountUUID)
+        }
+    }
+
+    /// Final-review fix: the longest `lockMigrationDust` will WAIT for its awaited republish. The
+    /// bound exists for the pathological case only (a wedged SDK read behind a server switch or a
+    /// broadcast): past it the build keeps running detached — cancelling it would leak the
+    /// coalescer's claimed `inFlight` — and the SmartBanner snapshot subscription delivers the
+    /// late publish, the same heal path the coalescer's contended branch already rides.
+    private static let lockRepublishTimeoutNanoseconds: UInt64 = 10_000_000_000
+
+    /// Awaits `operation` for at most `nanoseconds`, then returns while the operation keeps
+    /// running unstructured. Never cancels the operation — see `lockRepublishTimeoutNanoseconds`.
+    private func awaitBounded(nanoseconds: UInt64, _ operation: @escaping @Sendable () async -> Void) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let hasResumed = OSAllocatedUnfairLock(initialState: false)
+            let resumeOnce: @Sendable () -> Void = {
+                let shouldResume = hasResumed.withLock { done -> Bool in
+                    if done {
+                        return false
+                    }
+                    done = true
+                    return true
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+            Task {
+                await operation()
+                resumeOnce()
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                resumeOnce()
+            }
+        }
     }
 
     /// MOB-1749: the residual lane's figures from one `getAccountsBalances` read. `nil` IN resolves
@@ -3490,6 +3528,7 @@ enum MigrationDerivations {
         state: MigrationState,
         orchardBalance: Zatoshi,
         residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
         isResidualOfferable: Bool = true,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
@@ -3853,6 +3892,7 @@ enum MigrationDerivations {
         isMigrationRemainderPending: Bool,
         progress: MigrationProgress?,
         residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
         isResidualOfferable: Bool = true
     ) -> MigrationReentryRoute {
         reentryRoute(
@@ -3883,6 +3923,7 @@ enum MigrationDerivations {
         isMigrationRemainderPending: Bool,
         progress: MigrationProgress?,
         residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
         isResidualOfferable: Bool = true
     ) -> MigrationReentryRoute {
         guard isIronwoodActivated else { return MigrationReentryRoute.entry }

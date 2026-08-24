@@ -18,7 +18,9 @@
 //  so audit 2026-08-03 #11's re-arm fix had to be made twice). What stays here is this screen's own
 //  glue: the failure ALERT the child's `.lockFailed` delegate asks for, the `.migrateAnyway`
 //  delegate re-surfaced at screen level so the coordinator keeps listening to the SCREEN (it rides
-//  the same immediate-review leg Complete uses, minus the unlock), and `gotItTapped` — reachable
+//  the same immediate-review leg Complete uses, both screens sharing ONE rule: the leg unlocks iff
+//  the TAPPING screen's own resolution is `.locked`, in which case the clear is blanket), and
+//  `gotItTapped` — reachable
 //  only from `.locked`, delegating `.done`, since there is no run to acknowledge. The explainer
 //  sheet's own dismiss is deliberately distinct from `gotItTapped`: it closes only the sheet.
 //

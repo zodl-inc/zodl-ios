@@ -26,8 +26,9 @@
 //  Whether there is anything to decide is `hasDust` (`dust > 0`), never a state of the lock machine:
 //  the old `DustResolution` carried a fourth `.none` case that the view had to map away at its own
 //  boundary, and a vocabulary that can say "no dust" to a machine that only ever runs when there IS
-//  dust is a vocabulary that can lie. The coordinator hydrates `dust` and, when the residual is
-//  already locked, pins `resolution` to `.locked`.
+//  dust is a vocabulary that can lie. The coordinator hydrates `dust` from the run's own summary
+//  first; the account-wide locked figure speaks — and pins `resolution` to `.locked` — only when
+//  the run left nothing unlocked.
 //
 
 import ComposableArchitecture
@@ -71,7 +72,7 @@ struct MigrationComplete {
             self.totalTransferred = totalTransferred
             self.dust = dust
             // `.offered` is the resting state of a decision nobody has taken yet; a caller that
-            // knows better (the coordinator, on an already-locked residual) says so explicitly.
+            // knows better (the coordinator, when only a locked balance remains) says so explicitly.
             // With no dust the machine is simply never rendered, so its value is moot.
             self.lock = MigrationLockDecision.State(resolution: resolution ?? .offered)
             self.transfersSent = transfersSent

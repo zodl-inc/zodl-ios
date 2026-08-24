@@ -257,6 +257,10 @@ import ComposableArchitecture
             // load, which is exactly how a quiet-window version of this wait passed locally and
             // failed in the full run.
             await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            #expect(
+                manager.isSnapshotRepublishIdle(for: Self.accountUUID),
+                "quiescence precondition timed out — raise waitUntil's deadline before suspecting the product"
+            )
 
             try await manager.lockMigrationDust(accountUUID: Self.accountUUID)
 

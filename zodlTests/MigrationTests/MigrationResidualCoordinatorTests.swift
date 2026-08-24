@@ -233,6 +233,8 @@ import Testing
             return
         }
         #expect(residualState.lock.resolution == .offered, "the cleared lock must re-offer, not keep claiming .locked")
+        #expect(residualState.orchardBalance == Zatoshi(1_100_000), "the released figure folds into the spendable one")
+        #expect(residualState.lockedOrchardBalance == .zero, "nothing is locked after a blanket clear")
 
         guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
             Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")

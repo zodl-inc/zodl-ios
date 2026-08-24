@@ -413,7 +413,9 @@ extension MigrationCoordFlow {
                 // resolution is `.locked`. At `.offered` nothing this tap is about is locked, and a
                 // PRIOR deliberate lock (now a real state here — `completeState` offers the run's
                 // own dust even with an earlier lock in place) must survive the sweep. At `.locked`
-                // the unlock IS the point: it is the release path.
+                // the unlock IS the point: it is the release path. At `.locked` the clear is
+                // deliberately BLANKET: an earlier visit's lock is released and swept too — the
+                // review screen names the full amount before anything moves (approved 2026-08-24).
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
                 var clearsOutputLocks = false
                 if case .complete(let completeState) = state.path[id: id] {
@@ -422,10 +424,11 @@ extension MigrationCoordFlow {
                 return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: clearsOutputLocks)
 
             case .path(.element(id: let id, action: .residual(.delegate(.migrateAnyway)))):
-                // Same rule as Complete's arm directly above — see its comment. The `.offered`
-                // no-unlock half is what keeps "0.005 locked earlier, 0.004 received afterwards"
-                // safe: the send-max covers exactly the spendable balance the card names, and the
-                // earlier lock stands.
+                // Same rule as Complete's arm directly above — see its comment. On the `.offered`
+                // half, and only there, the leg leaves an earlier lock standing: that no-unlock half
+                // is what keeps "0.005 locked earlier, 0.004 received afterwards" safe, because the
+                // send-max covers exactly the spendable balance the card names. On the `.locked`
+                // half the clear is blanket — every locked note is released and swept.
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
                 var clearsOutputLocks = false
                 if case .residual(let residualState) = state.path[id: id] {
@@ -445,6 +448,14 @@ extension MigrationCoordFlow {
                         }
                         if case .residual(var residualState) = state.path[id: id], residualState.lock.resolution == .locked {
                             residualState.lock.resolution = .offered
+                            // The blanket unlock released every locked note: fold the frozen locked
+                            // figure into the spendable one so the re-offered card names the truth
+                            // (nothing is locked any more). Via a named total rather than `+=`:
+                            // `Zatoshi` is not `AdditiveArithmetic`, so it has no `+=`, and the
+                            // self-assigning `a = a + b` form trips SwiftLint's `shorthand_operator`.
+                            let releasedOrchardBalance = residualState.orchardBalance + residualState.lockedOrchardBalance
+                            residualState.orchardBalance = releasedOrchardBalance
+                            residualState.lockedOrchardBalance = .zero
                             state.path[id: id] = .residual(residualState)
                         }
                     }
