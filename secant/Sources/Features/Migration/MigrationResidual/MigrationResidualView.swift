@@ -4,8 +4,9 @@
 //
 //  MOB-1749 "Remaining Orchard Funds" — Figma 6855:24967 (offered), 6855:25169 (locking),
 //  6855:25254 (locked), explainer sheet 6855:25052. Header badge + title + subtitle and a
-//  two-row continuous summary card sit at the top; the decision callout and the primary CTA are
-//  anchored at the bottom, as the frames draw them. No back button (the frame hides it, exactly
+//  continuous summary card (two rows, plus a Locked in Orchard middle row when an earlier
+//  visit locked part of the balance) sit at the top; the decision callout and the primary CTA
+//  are anchored at the bottom, as the frames draw them. No back button (the frame hides it, exactly
 //  like Migration Complete): the exits are Lock balance → Got it, or Migrate anyway. The trailing
 //  help button opens the shared explainer sheet. Every decision piece is the shared
 //  `MigrationLockResolutionViews` implementation Migration Complete renders.

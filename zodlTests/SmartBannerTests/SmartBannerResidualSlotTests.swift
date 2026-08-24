@@ -392,7 +392,7 @@ import Testing
 
             #expect(
                 store.state.migrationBannerVariant != Self.residual,
-                "the ladder declined the residual and kept the answer that lets the bottom rung re-seat it"
+                "the retirement must clear the cached residual answer — a kept answer would re-seat the banner from stale dust"
             )
         }
     }

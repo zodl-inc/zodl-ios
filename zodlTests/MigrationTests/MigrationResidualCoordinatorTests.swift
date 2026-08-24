@@ -214,4 +214,95 @@ import Testing
         }
         #expect(!residualState.lock.isMigratingAnyway)
     }
+
+    // MARK: - Complete's coordinator leg (MOB-1749 review fix)
+
+    // These two mirror the pair right above, but drive `.complete(.delegate(.migrateAnyway))`
+    // instead of `.residual(...)` — the SIBLING leg through the very same
+    // `migrateAnywayEffect(accountUUID:clearsOutputLocks:)`. They live in THIS suite, not a
+    // Complete-only file, because what they pin only means something read next to the residual
+    // pair above: Complete passes `clearsOutputLocks: true` and DOES call
+    // `unlockMigrationResidual`, where the residual leg deliberately does not.
+
+    private static func stateWithCompleteScreen(isMigratingAnyway: Bool = false) -> MigrationCoordFlow.State {
+        var completeState = MigrationComplete.State(dust: Zatoshi(800_000))
+        completeState.lock.isMigratingAnyway = isMigratingAnyway
+        var state = MigrationCoordFlow.State.initial
+        state.path.append(.complete(completeState))
+        return state
+    }
+
+    @Test func completeMigrateAnywayUnlocksOnceAndHandsOverToTheImmediateReview() async throws {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
+
+        let unlockCount = LockIsolated<Int>(0)
+
+        let store = TestStore(initialState: Self.stateWithCompleteScreen()) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.migrationManager = MigrationManagerClient.noOp
+            $0.sdkSynchronizer = .mocked(
+                unlockMigrationResidual: { _ in
+                    unlockCount.withValue { $0 += 1 }
+                    return 0
+                }
+            )
+        }
+        store.exhaustivity = .off
+        let id = try #require(store.state.path.ids.first)
+
+        await store.send(.path(.element(id: id, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayUnlocked, timeout: .seconds(5))
+
+        #expect(unlockCount.value == 1, "Complete's leg keeps its unlock — unlike the residual leg above, which must skip it")
+
+        guard case .reviewTransfer(let reviewState)? = store.state.path.last else {
+            Issue.record("expected the immediate review on top, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(reviewState.mode == .immediate)
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
+
+    /// The failure twin, but the throw comes from the unlock call itself rather than a missing
+    /// account (contrast `migrateAnywayWithoutASelectedAccountFailsSoftly` above). `isMigratingAnyway`
+    /// starts TRUE so the re-arm assertion is load-bearing — an already-`false` flag would pass even
+    /// if `.migrateAnywayFailed`'s fixup never ran.
+    @Test func completeMigrateAnywayFailureReArmsTheButton() async throws {
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        $selectedWalletAccount.withLock { $0 = Self.account() }
+        defer { $selectedWalletAccount.withLock { $0 = nil } }
+
+        let store = TestStore(initialState: Self.stateWithCompleteScreen(isMigratingAnyway: true)) {
+            MigrationCoordFlow()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.migrationManager = MigrationManagerClient.noOp
+            $0.sdkSynchronizer = .mocked(
+                unlockMigrationResidual: { _ in throw ZcashError.synchronizerNotPrepared }
+            )
+        }
+        store.exhaustivity = .off
+        let id = try #require(store.state.path.ids.first)
+        let pathCountBefore = store.state.path.count
+
+        await store.send(.path(.element(id: id, action: .complete(.delegate(.migrateAnyway)))))
+        await store.receive(\.migrateAnywayFailed, timeout: .seconds(5))
+
+        #expect(store.state.path.count == pathCountBefore, "a failed unlock must not push the review screen")
+
+        guard case .complete(let resultState)? = store.state.path.last else {
+            Issue.record("expected the complete screen to remain, got \(String(describing: store.state.path.last))")
+            return
+        }
+        #expect(!resultState.lock.isMigratingAnyway, "the failure fixup must re-arm the button")
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+    }
 }

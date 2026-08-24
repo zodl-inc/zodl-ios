@@ -81,6 +81,18 @@ import Testing
         await store.send(.migrateAnywayTapped)
     }
 
+    /// The view hides "Migrate anyway" once `.locked`, but a tap queued ahead of that — e.g. the
+    /// lock's own completion racing the button's disabled state — must still be inert here: on
+    /// Complete this same leg still runs the blanket unlock, so letting a stray tap through would
+    /// clear output locks the user never asked to clear.
+    @Test func migrateAnywayIsInertOnceLocked() async {
+        let store = TestStore(initialState: MigrationLockDecision.State(resolution: .locked)) {
+            MigrationLockDecision()
+        }
+
+        await store.send(.migrateAnywayTapped)
+    }
+
     /// Audit 2026-08-03 (#11)'s fix, now living in one place so it cannot need re-fixing twice: the
     /// flag used to clear only on FAILURE, so a successful hand-over followed by a back-swipe landed
     /// on a screen whose "Migrate anyway" was permanently disabled.

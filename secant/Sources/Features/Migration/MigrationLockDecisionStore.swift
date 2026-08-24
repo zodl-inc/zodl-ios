@@ -107,6 +107,9 @@ struct MigrationLockDecision {
                 return .none
 
             case .migrateAnywayTapped:
+                // The view hides this button once `.locked`, but a queued tap must never reach
+                // the coordinator's leg — on Complete that leg still runs the blanket unlock.
+                guard state.resolution != .locked else { return .none }
                 // Backstop for a tap queued ahead of the view's `.disabled` taking effect; the
                 // coordinator's propose leg must never start twice.
                 guard !state.isMigratingAnyway else { return .none }

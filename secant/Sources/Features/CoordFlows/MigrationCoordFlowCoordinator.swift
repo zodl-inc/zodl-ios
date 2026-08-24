@@ -1431,8 +1431,11 @@ extension MigrationCoordFlow {
         case .residual(let balances):
             // MOB-1749 review fix: the screen renders the figures the route decision was made on —
             // ONE read, no second fetch that could disagree with it (the old second read degraded a
-            // transient failure into a zeroed decision screen). The candidate re-check is a belt: a
-            // payload that stopped qualifying between derivation and push falls back to the fork.
+            // transient failure into a zeroed decision screen). The candidate re-check below cannot
+            // actually fail — `balances` is immutable and `.residual` is only ever emitted after the
+            // same predicate already passed — so treat it as a type-level assertion that documents
+            // the invariant (this route emits `.residual` only for candidates), not a runtime guard
+            // against a race.
             guard balances.isResidualCandidate else { return nil }
             return .residual(
                 MigrationResidual.State(

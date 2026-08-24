@@ -3791,6 +3791,7 @@ enum MigrationDerivations {
     /// The rule this encodes: THE ROUTE MAY ONLY OFFER AN ACTION THE ENGINE IS ASKING FOR. A clock
     /// reading is evidence about time, not about what the run needs — only `migrationAdvanceStep`
     /// knows that, and now it is the one that decides.
+    // swiftlint:disable:next function_parameter_count
     static func reentryRoute(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -3818,6 +3819,7 @@ enum MigrationDerivations {
     /// The route table itself, over the app's answer vocabulary — so the `.replan` and
     /// `.reevaluate` arms are reachable (and pinned) before the SDK splits them out of
     /// `.requiresAttention`. See `MigrationEngineAnswer`.
+    // swiftlint:disable:next function_parameter_count
     static func reentryRoute(
         isIronwoodActivated: Bool,
         state: MigrationState,

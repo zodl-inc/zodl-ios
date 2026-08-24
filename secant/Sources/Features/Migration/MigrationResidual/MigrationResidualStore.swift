@@ -33,6 +33,14 @@
 //  figure alone — the locked notes are not part of what is offered again, and are reported
 //  separately by `lockedOrchardBalance`'s own row.
 //
+//  Within a single visit the card is a HYDRATION snapshot, not a live balance, by design: locking
+//  flips `lock.resolution` to `.locked` but never rewrites `orchardBalance` or
+//  `lockedOrchardBalance`, so the rows keep reading as of arrival while the locked callout narrates
+//  the same frozen `orchardBalance` figure as the amount that just got locked — the same
+//  static-card semantics Migration Complete ships, and the same thing the Figma locked frame
+//  (6855:25254) draws. The next re-entry re-hydrates fresh from the route's own balances, folding
+//  the lock into this row.
+//
 
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -48,6 +56,13 @@ struct MigrationResidual {
         /// The account's LOCKED Orchard balance at hydration — the conditional "Locked in Orchard"
         /// row. A residual the user locked on an earlier visit is still part of the pool; hiding it
         /// made this screen disagree with the Balances breakdown.
+        ///
+        /// This row freezes at its hydration figure for the rest of the current visit, by design:
+        /// an in-session lock only flips `lock.resolution` to `.locked`, it never rewrites this
+        /// balance (or `orchardBalance`). The locked callout that then renders instead names the
+        /// just-locked amount from that same static `orchardBalance` — the same static-card
+        /// semantics Migration Complete ships and the Figma locked frame (6855:25254) draws. The
+        /// next re-entry re-hydrates from the route's fresh balances, folding the lock into this row.
         var lockedOrchardBalance: Zatoshi
         /// The account's Ironwood pool total — the "In Ironwood" row.
         var ironwoodBalance: Zatoshi
