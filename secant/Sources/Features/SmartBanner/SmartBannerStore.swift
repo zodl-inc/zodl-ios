@@ -987,12 +987,14 @@ struct SmartBanner {
                 state.isOpen = false
                 if clean {
                     // Cleanup clears the closing banner's OWN request (after a seat the two are
-                    // equal). A DIFFERENT lane's request latched behind the seated banner
-                    // (rank-refused in `openBannerRequest`) is not this banner's state to
-                    // destroy — it survives so the `openBannerRequest` below can seat it.
-                    // Without this, an offer raised on the same tick that closes the current
-                    // banner is wiped and never re-asked.
-                    if state.priorityContentRequested == state.priorityContent {
+                    // equal) — and any latched request from a lane the arbiter does not
+                    // revalidate at seat time (`canRequestSurviveCleanClose`). A priority7
+                    // request latched behind the seated banner survives so the
+                    // `openBannerRequest` below can seat it: without this, an offer raised on
+                    // the same tick that closes the current banner is wiped and never re-asked.
+                    let requestSurvives = state.priorityContentRequested != state.priorityContent
+                        && state.priorityContentRequested.map { canRequestSurviveCleanClose($0) } == true
+                    if !requestSurvives {
                         state.priorityContentRequested = nil
                     }
                     state.priorityContent = nil
@@ -1319,6 +1321,16 @@ struct SmartBanner {
             || (shieldedReminder.occurence == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
             || (shieldedReminder.occurence > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now)
         return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
+    }
+
+    /// Whether `priority`'s REQUEST may survive a clean close of a DIFFERENT banner. Survival is
+    /// safe only for a lane the arbiter revalidates at seat time (`isPriorityStillValid`): a
+    /// surviving stale request from a rule-less lane would seat unconditionally — e.g. a
+    /// `.priority1` request latched behind the migration banner during a network blip would
+    /// seat a phantom "no connection" banner once migration closes. priority7 is the one lane
+    /// that both needs survival (a same-tick offer racing a close) and is safe to grant it.
+    private func canRequestSurviveCleanClose(_ priority: State.PriorityContent) -> Bool {
+        priority == .priority7
     }
 
     /// A lane's seat-validity rule, in ONE place. Consulted when a request is about to seat

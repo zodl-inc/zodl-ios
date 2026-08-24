@@ -663,6 +663,10 @@ struct TransactionStateMockHelper {
 }
 
 extension IdentifiedArrayOf<TransactionState> {
+    func isAnythingPending() -> Bool {
+        return contains(where: \.isPending)
+    }
+
     /// True while a shielding transaction is still in flight — the guard callers use to avoid
     /// re-offering funds that are already on their way to being shielded.
     func isAnyShieldingPending() -> Bool {

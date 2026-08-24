@@ -292,4 +292,67 @@ import ComposableArchitecture
         }
         await store.receive(\.triggerPriority)
     }
+
+    /// A latched request from a lane WITHOUT a seat-time validity rule must NOT survive a clean
+    /// close: e.g. a priority1 (no connection) request latched behind the migration banner
+    /// during a network blip would otherwise seat a phantom offline banner — with no rule to
+    /// invalidate it — once migration closes, blocking every lower lane for the session.
+    @Test func staleRulelessRequestDoesNotSurviveACleanClose() async {
+        let store = makeStore(
+            account: Self.account(),
+            transparentBalance: Self.shieldableBalance,
+            priorityContent: .priorityMigration,
+            priorityContentRequested: .priority1
+        )
+
+        await store.send(.closeBanner(true)) {
+            $0.priorityContent = nil
+            $0.priorityContentRequested = nil
+        }
+        await store.receive(\.openBannerRequest)
+
+        #expect(store.state.priorityContent == nil)
+    }
+
+    /// The exhaustive switch's negative half: a failure outcome is not a terminal "offer is
+    /// stale" signal — the funds are still unshielded, so the offer must stay.
+    @Test func failureOutcomesKeepTheSeatedShieldingBanner() async {
+        let store = makeStore(
+            account: Self.account(),
+            transparentBalance: Self.shieldableBalance,
+            priorityContent: .priority7,
+            priorityContentRequested: .priority7
+        )
+
+        await store.send(.shieldingProcessorStateChanged(.failed("boom".toZcashError())))
+        await store.send(.shieldingProcessorStateChanged(.grpc))
+
+        #expect(store.state.priorityContent == .priority7)
+        #expect(store.state.priorityContentRequested == .priority7)
+    }
+
+    /// An account switch abandons the old account's offer state: the deferred-offer latch, any
+    /// latched priority7 request, and the displayed balance all belong to the account that
+    /// armed them.
+    @Test func accountSwitchClearsShieldingOfferState() async {
+        let account = Self.account()
+        let store = makeStore(
+            account: account,
+            priorityContentRequested: .priority7
+        )
+
+        await store.send(
+            .synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance, syncStatus: .syncing(0.5, false)))
+        ) {
+            $0.transparentBalance = Self.shieldableBalance
+            $0.hasDeferredShieldingOffer = true
+        }
+
+        await store.send(.walletAccountChanged) {
+            $0.transparentBalance = .zero
+            $0.hasDeferredShieldingOffer = false
+            $0.priorityContentRequested = nil
+            $0.remindMeShieldedPhaseCounter = 0
+        }
+    }
 }
