@@ -219,4 +219,106 @@ import ComposableArchitecture
             #expect(store.state.isOpen == true)
         }
     }
+
+    /// The syncing banner outranks the shielding offer and may displace it — but the offer is
+    /// still owed. Displacement arms the deferred-offer latch so the next up-to-date tick
+    /// re-raises it through the normal request path.
+    @Test func displacementByTheSyncingBannerReArmsTheOffer() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7
+            )
+
+            await store.send(.triggerPriority(.priority4)) {
+                $0.priorityContentRequested = .priority4
+            }
+            await store.receive(\.openBannerRequest) {
+                $0.priorityContent = .priority4
+                $0.hasDeferredShieldingOffer = true
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            // The up-to-date tick both re-arms the reevaluation through the deferred-offer latch
+            // and — pre-existing behavior, unrelated to this latch — closes the now-finished
+            // syncing banner in the very same tick, so the re-raised offer claims the freed slot
+            // immediately rather than waiting for a later tick.
+            await store.send(.synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance)))
+            await store.receive(\.shieldingOfferReevaluationRequested)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContentRequested == .priority7)
+            #expect(store.state.priorityContent == .priority7)
+            #expect(store.state.isOpen == true)
+        }
+    }
+
+    /// A decline for a reason that can expire (a stored, not-yet-due reminder) must not consume
+    /// the deferred edge: the latch stays armed so a later tick re-asks, and the offer fires the
+    /// moment the reminder matures.
+    @Test func notDueReminderDeclineKeepsTheLatchArmed() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let reminder = LockIsolated(
+                ReminedMeTimestamp(timestamp: Date().timeIntervalSince1970, occurence: 1)
+            )
+            let store = makeStore(account: account)
+            store.dependencies.walletStorage.exportShieldingReminder = { _ in reminder.value }
+
+            await store.send(.synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance))) {
+                $0.transparentBalance = Self.shieldableBalance
+                $0.hasDeferredShieldingOffer = true
+            }
+            await store.receive(\.shieldingOfferReevaluationRequested) {
+                $0.remindMeShieldedPhaseCounter = 1
+            }
+            #expect(store.state.hasDeferredShieldingOffer == true)
+            #expect(store.state.priorityContentRequested == nil)
+
+            reminder.setValue(
+                ReminedMeTimestamp(timestamp: Date().timeIntervalSince1970 - 86_400 * 3, occurence: 1)
+            )
+            await store.send(.synchronizerStateChanged(Self.syncState(account: account, unshielded: Self.shieldableBalance)))
+            await store.receive(\.shieldingOfferReevaluationRequested)
+            await store.receive(\.triggerPriority) {
+                $0.hasDeferredShieldingOffer = false
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority7)
+        }
+    }
+
+    /// A stored-but-not-due reminder declines the offer; the ladder pass must hand the turn to
+    /// the next lane instead of dying at lane 7 for the whole reminder window.
+    @Test func notDueReminderContinuesTheLadderPass() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(account: account, transparentBalance: Self.shieldableBalance)
+            store.dependencies.walletStorage.exportShieldingReminder = { _ in
+                ReminedMeTimestamp(timestamp: Date().timeIntervalSince1970, occurence: 1)
+            }
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.shieldingBalanceFetched(account.id, Self.shieldableBalance)) {
+                $0.remindMeShieldedPhaseCounter = 1
+            }
+            await store.receive(\.evaluatePriority75)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority75)
+        }
+    }
 }

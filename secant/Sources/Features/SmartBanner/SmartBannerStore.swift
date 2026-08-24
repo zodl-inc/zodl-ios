@@ -1008,6 +1008,11 @@ struct SmartBanner {
                         await send(.closeBanner(false), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     }
                 }
+                if state.priorityContent == .priority7 && priorityContentRequested != .priority7 {
+                    // A displaced shielding offer is still owed — re-raise it on the next
+                    // up-to-date tick through the deferred-offer latch.
+                    state.hasDeferredShieldingOffer = true
+                }
                 state.bannerSeatGeneration += 1
                 state.priorityContent = priorityContentRequested
                 return .run { [delay = state.delay] send in
@@ -1346,16 +1351,17 @@ struct SmartBanner {
         guard let account = state.selectedWalletAccount else {
             return .none
         }
-        guard !state.hasPendingShieldingTransaction else {
+        guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
             return declineEffect
         }
-        guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
+        guard !state.hasPendingShieldingTransaction else {
             return declineEffect
         }
         guard let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) else {
             // No reminder stored — phase 1. A successful shield RESETS the stored reminder, so
             // the phase counter must reset with it or the help sheet describes the wrong phase.
             state.remindMeShieldedPhaseCounter = 0
+            state.hasDeferredShieldingOffer = false
             return .send(.triggerPriority(.priority7))
         }
         state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
@@ -1363,7 +1369,13 @@ struct SmartBanner {
         let isReminderDue = (shieldedReminder.occurence == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
             || (shieldedReminder.occurence == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
             || (shieldedReminder.occurence > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now)
-        return isReminderDue ? .send(.triggerPriority(.priority7)) : .none
+        guard isReminderDue else {
+            // The user deferred the offer — the pass moves on instead of dying here, and the
+            // armed latch re-asks on a later tick once the reminder matures.
+            return declineEffect
+        }
+        state.hasDeferredShieldingOffer = false
+        return .send(.triggerPriority(.priority7))
     }
 
     /// The ONE retraction of the shielding offer, shared by every trigger — processor terminal
@@ -1454,10 +1466,14 @@ struct SmartBanner {
             state.hasDeferredShieldingOffer = true
             return .none
         }
-        state.hasDeferredShieldingOffer = false
-        guard state.priorityContent != .priority7 else {
+        if state.priorityContent == .priority7 {
+            state.hasDeferredShieldingOffer = false
             return .none
         }
+        // The offer is OWED from here: a decline for a reason that can expire (pending shield,
+        // not-yet-due reminder) keeps the latch armed so later up-to-date ticks re-ask; only an
+        // actual trigger, an unshieldable balance, an account switch, or a retraction clears it.
+        state.hasDeferredShieldingOffer = true
         return .send(.shieldingOfferReevaluationRequested)
     }
 
