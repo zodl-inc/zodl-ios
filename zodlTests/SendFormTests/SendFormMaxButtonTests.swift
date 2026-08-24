@@ -133,13 +133,16 @@ private enum MaxButtonTestError: Error {
         state.isValidAddress = true
         state.address = Const.validUnifiedAddress.redacted
         state.zecAmountText = "1.5".redacted
+        state.isMaxRequestInFlight = true
 
         let store = TestStore(initialState: state) {
             SendForm()
         }
         store.exhaustivity = .off
 
-        await store.send(.maxAmountResolved(Const.validAddress.redacted, Zatoshi(123_456_789)))
+        await store.send(.maxAmountResolved(Const.validAddress.redacted, Zatoshi(123_456_789))) {
+            $0.isMaxRequestInFlight = false
+        }
         await store.finish()
 
         #expect(store.state.zecAmountText == "1.5".redacted)
