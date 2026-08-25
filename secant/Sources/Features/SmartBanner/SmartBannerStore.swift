@@ -91,6 +91,11 @@ struct SmartBanner {
         /// carries the generation it was aimed at; `.closeBannerIfCurrent` drops it when the
         /// slot has moved on, so a deferred retraction can never wipe a fresher banner.
         var bannerSeatGeneration = 0
+        /// The seat generation whose priority7 banner was RETRACTED (terminal shielding outcome
+        /// or unshieldable balance) but whose deferred close has not landed yet. While the seat
+        /// still reads `.priority7` in that window it is a zombie: a displacement seating over it
+        /// must NOT re-arm the deferred-offer latch — the offer was answered, not displaced.
+        var retractedSeatGeneration: Int?
 
         var isScanProgressComplete = false
         var delay = 1.5
@@ -371,6 +376,7 @@ struct SmartBanner {
                 state.remindMeShieldedPhaseCounter = 0
                 state.transparentBalance = .zero
                 state.hasDeferredShieldingOffer = false
+                state.retractedSeatGeneration = nil
                 state.priorityContentRequested = nil
                 return .merge(
                     // An in-flight ladder balance fetch belongs to the OLD account — a switch must
@@ -1038,9 +1044,14 @@ struct SmartBanner {
                         await send(.closeBanner(false), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     }
                 }
-                if state.priorityContent == .priority7 && priorityContentRequested != .priority7 {
+                if state.priorityContent == .priority7
+                    && priorityContentRequested != .priority7
+                    && state.bannerSeatGeneration != state.retractedSeatGeneration {
                     // A displaced shielding offer is still owed — re-raise it on the next
-                    // up-to-date tick through the deferred-offer latch.
+                    // up-to-date tick through the deferred-offer latch. The generation check
+                    // excludes a ZOMBIE seat: a retraction already cleared the latch and scheduled
+                    // a deferred close for this same generation, and priorityContent just hasn't
+                    // caught up yet — that is an answered offer, not a live one being displaced.
                     state.hasDeferredShieldingOffer = true
                 }
                 state.isReseatPending = false
@@ -1414,6 +1425,7 @@ struct SmartBanner {
     private func retractShieldingOffer(state: inout State) -> Effect<Action> {
         state.hasDeferredShieldingOffer = false
         if state.priorityContent == .priority7 {
+            state.retractedSeatGeneration = state.bannerSeatGeneration
             return .merge(
                 .send(.closeAndCleanupBanner),
                 .send(.closeSheetTapped)

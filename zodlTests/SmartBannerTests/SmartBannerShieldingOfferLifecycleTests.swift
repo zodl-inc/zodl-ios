@@ -262,6 +262,45 @@ import ComposableArchitecture
         }
     }
 
+    /// `shieldingBalanceSyncEffect`'s unshieldable branch and `syncStatusChangedEffect`'s error
+    /// branch are SIBLING effects of the SAME `.synchronizerStateChanged` tick
+    /// (`.merge(activationFlipEffect, shieldingBalanceEffect, syncStatusEffect)`). The retraction
+    /// clears the latch and schedules a generation-guarded deferred close through
+    /// `closeAndCleanupBanner`, but `priorityContent` still reads `.priority7` until that close
+    /// actually lands — a zombie seat. The sibling's `.triggerPriority(.priority2)` reliably reaches
+    /// `openBannerRequest` while the seat is still a zombie (proven empirically: this same-tick
+    /// shape wins the race deterministically, unlike two sequential top-level `store.send`s, which
+    /// `TestStore`'s generous yielding always resolves before the next send). Displacing a zombie
+    /// is not displacing a LIVE offer — it must not re-arm the latch the retraction just cleared.
+    @Test func displacementOverAZombieSeatDoesNotReArmTheLatch() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.account()
+            let store = makeStore(
+                account: account,
+                transparentBalance: Self.shieldableBalance,
+                priorityContent: .priority7,
+                priorityContentRequested: .priority7
+            )
+
+            await store.send(
+                .synchronizerStateChanged(
+                    Self.syncState(
+                        account: account,
+                        unshielded: .zero,
+                        syncStatus: .error(ZcashError.synchronizerNotPrepared)
+                    )
+                )
+            )
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.hasDeferredShieldingOffer == false)
+            #expect(store.state.priorityContent == .priority2)
+        }
+    }
+
     /// A decline for a reason that can expire (a stored, not-yet-due reminder) must not consume
     /// the deferred edge: the latch stays armed so a later tick re-asks, and the offer fires the
     /// moment the reminder matures.
