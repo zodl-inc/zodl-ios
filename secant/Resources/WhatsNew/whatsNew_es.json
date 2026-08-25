@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.10.1",
+            "date": "25-08-2026",
+            "timestamp": 1787649786,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos un banner en la pantalla de inicio y una pantalla de seguimiento para el pequeño monto de ZEC que puede quedar en Orchard después de migrar a Ironwood, para que decidas si bloquearlo o moverlo."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos la migración con una billetera Keystone: ahora las migraciones se dividen en rondas de firma que tu dispositivo puede procesar.",
+                        "Corregimos un aviso que pedía proteger un saldo en cero justo después de que un depósito ya se había protegido."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.0",
             "date": "19-08-2026",
             "timestamp": 1787170089,

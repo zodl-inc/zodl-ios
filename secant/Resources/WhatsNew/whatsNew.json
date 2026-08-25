@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.10.1",
+            "date": "25-08-2026",
+            "timestamp": 1787649786,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added a home screen banner and follow-up screen for the small amount of ZEC that can be left in Orchard after migrating to Ironwood, so you can choose whether to lock it or move it."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed migrating with a Keystone wallet, so migrations are now split into signing rounds your device can handle.",
+                        "We fixed a prompt that asked you to shield a zero balance right after a deposit had already been shielded."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.0",
             "date": "19-08-2026",
             "timestamp": 1787170089,
