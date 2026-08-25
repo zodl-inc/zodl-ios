@@ -40,16 +40,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Select latest Xcode
-        # macos-15 runners ship multiple Xcodes; default-selected may be 16.x.
-        # XCUITest from older Xcode driving an iOS 26 sim causes maestro tap/
-        # input quirks (empty seed fields). Pin to the newest Xcode available.
+      - name: Select latest Xcode with an iOS runtime
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            echo "Selecting $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
-          fi
+          for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+            if xcrun simctl list runtimes available | grep -q 'iOS'; then
+              echo "Selecting $XCODE"
+              break
+            fi
+          done
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Checkout app
@@ -235,12 +235,16 @@ jobs:
         phase: [1, 2]
     name: e2e-ios (phase ${{ matrix.phase }})
     steps:
-      - name: Select latest Xcode
+      - name: Select latest Xcode with an iOS runtime
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            sudo xcode-select -s "$LATEST/Contents/Developer"
-          fi
+          for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+            if xcrun simctl list runtimes available | grep -q 'iOS'; then
+              echo "Selecting $XCODE"
+              break
+            fi
+          done
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Checkout smoke tests

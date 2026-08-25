@@ -43,19 +43,16 @@ jobs:
           slipstream-app-id: ${{ secrets.SLIPSTREAM_APP_ID }}
           slipstream-app-private-key: ${{ secrets.SLIPSTREAM_APP_PRIVATE_KEY }}
 
-      - name: Select latest Xcode
-        # macos-26 runners ship multiple Xcodes; default-selected is 16.x
-        # (Swift 6.0). The project is SWIFT_VERSION=6.0, and Swift 6.0 treats
-        # some concurrency diagnostics as errors that 6.2+ relaxed back to
-        # warnings ("Approachable Concurrency"). Without this step CI fails
-        # on call sites that compile fine in newer Xcode locally. Pin to the
-        # newest Xcode the runner has so the compiler matches local builds.
+      - name: Select latest Xcode with an iOS runtime
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            echo "Selecting $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
-          fi
+          for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+            if xcrun simctl list runtimes available | grep -q 'iOS'; then
+              echo "Selecting $XCODE"
+              break
+            fi
+          done
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Compute Xcode cache key
