@@ -68,12 +68,3 @@ runs:
       shell: bash
       working-directory: .ci/zcash-swift-wallet-sdk
       run: make configure-local-ffi
-
-    - name: Materialize SDK at project-relative path
-      shell: bash
-      run: |
-        SDK_PATH="$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
-        rm -rf "$SDK_PATH"
-        rsync -a --exclude .git --exclude target \
-          "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk/" "$SDK_PATH/"
-        test -f "$SDK_PATH/Package.swift"

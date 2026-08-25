@@ -95,6 +95,13 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-
 
+      - name: Materialize pinned SDK for Xcode
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
+          rsync -a --exclude .git --exclude target \
+            "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk/" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk/"
+          test -f "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk/Package.swift"
+
       - name: Resolve packages
         run: |
           for attempt in 1 2 3; do
