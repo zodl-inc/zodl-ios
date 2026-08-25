@@ -98,17 +98,8 @@ struct SendFormView: View {
                                                 value: .bounds
                                             ) { $0 }
                                             
-                                            VStack(alignment: .leading) {
-                                                HStack {
-                                                    Text(String(localizable: .sendAmount))
-                                                        .lineLimit(1)
-                                                        .truncationMode(.middle)
-                                                        .font(.custom(FontFamily.Inter.medium.name, size: 14))
-                                                        .zForegroundColor(Design.Inputs.Filled.label)
-
-                                                    Spacer()
-
-                                                    #if ZODL_INTERNAL || SECANT_TESTNET
+                                            VStack(alignment: .leading, spacing: 0) {
+                                                ZashiTextFieldTitle(String(localizable: .sendAmount)) {
                                                     ZashiMaxChip(
                                                         title: String(localizable: .generalMax),
                                                         style: .standard,
@@ -118,7 +109,6 @@ struct SendFormView: View {
                                                         store.send(.maxTapped)
                                                     }
                                                     .accessibilityIdentifier(AccessibilityID.SendForm.maxButton)
-                                                    #endif
                                                 }
                                                 .padding(.bottom, 6)
 
@@ -230,6 +220,9 @@ struct SendFormView: View {
                                 isAddressFocused = true
                                 store.send(.requestsAddressFocusResolved)
                             }
+                        }
+                        .onDisappear {
+                            store.send(.onDisapear)
                         }
                         .applyScreenBackground()
                     }

@@ -41,19 +41,10 @@ extension SwapAndPayForm {
                             
                             addressView()
                             
-                            VStack(alignment: .leading) {
+                            VStack(alignment: .leading, spacing: 0) {
                                 // The field's own `title:` is lifted out into this row so the Max
                                 // chip can sit opposite it, the same treatment as the Send screen.
-                                HStack {
-                                    Text(String(localizable: .sendAmount))
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                        .font(.custom(FontFamily.Inter.medium.name, size: 14))
-                                        .zForegroundColor(Design.Inputs.Filled.label)
-
-                                    Spacer()
-
-                                    #if ZODL_INTERNAL || SECANT_TESTNET
+                                ZashiTextFieldTitle(String(localizable: .sendAmount)) {
                                     ZashiMaxChip(
                                         title: String(localizable: .generalMax),
                                         style: .standard,
@@ -63,7 +54,6 @@ extension SwapAndPayForm {
                                         store.send(.maxTapped)
                                     }
                                     .accessibilityIdentifier(AccessibilityID.CrossPayForm.maxButton)
-                                    #endif
                                 }
                                 .padding(.bottom, 6)
 

@@ -21,6 +21,10 @@ import SwiftUI
 /// `Spendable` label's spinner in `SwapForm`) and the chip is not tappable. When
 /// `isEnabled` is `false`, the chip dims using the same `Design.Text.disabled` token the
 /// rest of the design system uses for disabled labels, rather than an ad-hoc opacity.
+///
+/// The internal/testnet build gate lives HERE and only here: outside
+/// `ZODL_INTERNAL` / `SECANT_TESTNET` builds the chip renders `EmptyView`, so call
+/// sites place it unconditionally and never repeat the `#if`.
 struct ZashiMaxChip: View {
     /// Visual presentation of the chip. Each case fixes both the corner radius and the
     /// letter casing of the title, so the two can never drift apart from the design.
@@ -68,24 +72,27 @@ struct ZashiMaxChip: View {
     }
 
     var body: some View {
+        #if ZODL_INTERNAL || SECANT_TESTNET
         let styledTitle = style.styledTitle(title)
 
         Button {
             action()
         } label: {
-            Group {
+            ZStack {
+                // Always-present sizing ghost: keeps the chip's width identical whether
+                // the label or the spinner is showing.
+                Text(styledTitle)
+                    .zFont(
+                        .semiBold,
+                        size: 14,
+                        style: isEnabled ? Design.Text.secondary : Design.Text.disabled
+                    )
+                    .fixedSize()
+                    .opacity(isInFlight ? 0 : 1)
+
                 if isInFlight {
                     ProgressView()
                         .scaleEffect(0.7)
-                        .frame(width: 11, height: 14)
-                } else {
-                    Text(styledTitle)
-                        .zFont(
-                            .semiBold,
-                            size: 14,
-                            style: isEnabled ? Design.Text.secondary : Design.Text.disabled
-                        )
-                        .fixedSize()
                 }
             }
             .padding(.horizontal, 10)
@@ -98,6 +105,9 @@ struct ZashiMaxChip: View {
         }
         .disabled(!isEnabled || isInFlight)
         .accessibilityLabel(styledTitle)
+        #else
+        EmptyView()
+        #endif
     }
 }
 

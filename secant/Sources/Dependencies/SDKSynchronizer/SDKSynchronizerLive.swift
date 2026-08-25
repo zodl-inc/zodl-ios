@@ -304,11 +304,11 @@ extension SDKSynchronizerClient: DependencyKey {
                     memo: memo
                 )
             },
-            sendMaxAmount: { accountUUID, recipient in
+            sendMaxAmount: { accountUUID, recipient, memo in
                 let proposal = try await synchronizer.proposeSendMax(
                     accountUUID: accountUUID,
                     recipient: recipient,
-                    memo: nil,
+                    memo: memo,
                     mode: .maxSpendable
                 )
 

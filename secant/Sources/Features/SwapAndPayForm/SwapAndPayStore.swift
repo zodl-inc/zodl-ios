@@ -161,12 +161,16 @@ struct SwapAndPay {
             walletBalancesState.spendability
         }
 
-        /// Max chip on the Swap (ZEC -> token) screen. The balance must be spendable and no
-        /// max/quote request may be running.
+        /// Max chip on the Swap (ZEC -> token) screen. There must be a spendable balance
+        /// and a selected account, no max/quote request may be running, and — when the
+        /// field is in USD mode — a usable ZEC price to convert the max with.
         var isSwapMaxButtonEnabled: Bool {
             spendability != .nothing
+            && walletBalancesState.shieldedBalance.amount > 0
+            && selectedWalletAccount != nil
             && !isMaxRequestInFlight
             && !isQuoteRequestInFlight
+            && (!isInputInUsd || (zecAsset?.usdPrice ?? 0) > 0)
         }
 
         /// Max chip on the Pay screen. On top of the Swap conditions the max has to be
@@ -371,6 +375,7 @@ struct SwapAndPay {
 
             case .onDisappear:
                 // __LD2 TESTing
+                state.isMaxRequestInFlight = false
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
@@ -434,16 +439,21 @@ struct SwapAndPay {
                 state.isMaxRequestInFlight = true
                 return .run { [accountId = account.id] send in
                     do {
-                        // The real recipient is the provider's deposit address, which does not exist
-                        // until a quote has been requested. Deposit addresses are transparent, so
-                        // proposing against this account's own transparent receiver lands in the same
-                        // ZIP-317 fee class and yields the same max.
+                        // The real recipient is the provider's deposit address, which does
+                        // not exist until a quote has been requested. Every deposit address
+                        // the supported providers hand out today is transparent, so proposing
+                        // against this account's own transparent receiver lands in the same
+                        // ZIP-317 fee class and yields the same max. If a provider ever
+                        // returns a shielded deposit address instead, the max computed here
+                        // can overshoot by the fee-class difference — that case is caught
+                        // after the quote, when the real `proposeTransfer` fails into the
+                        // existing insufficient-balance sheet.
                         guard let transparentAddress = try await sdkSynchronizer.getTransparentAddress(accountId) else {
                             await send(.maxAmountFailed)
                             return
                         }
                         let recipient = Recipient.transparent(transparentAddress)
-                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient)
+                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient, nil)
                         await send(.maxAmountResolved(maxAmount))
                     } catch {
                         await send(.maxAmountFailed)
@@ -453,6 +463,7 @@ struct SwapAndPay {
 
             case .maxAmountFailed:
                 state.isMaxRequestInFlight = false
+                state.$toast.withLock { $0 = .top(String(localizable: .generalMaxFailed)) }
                 return .none
 
             case let .maxAmountResolved(maxAmount):
@@ -467,9 +478,10 @@ struct SwapAndPay {
                     // `conversionFormatter` is the formatter the field can parse back (no grouping
                     // separators); every dependent label is a computed property, so nothing else
                     // has to be recomputed here.
+                    let formatter = state.conversionFormatter
                     if state.isInputInUsd {
                         guard let zecAsset = state.zecAsset, zecAsset.usdPrice > 0 else {
-                            return .none
+                            return .send(.maxAmountFailed)
                         }
                         // Floored, never rounded: this field is what the insufficient-funds check
                         // divides back into ZEC, so rounding up would flag a Max the user just
@@ -478,23 +490,24 @@ struct SwapAndPay {
                         // and an 8-decimal dollar amount reads as broken next to them. The cost is
                         // at most a cent of the max, far inside the ZIP-317 fee headroom.
                         let amountInUsd = (maxZec * zecAsset.usdPrice).roundedDown(scale: 2)
-                        guard let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd)) else {
-                            return .none
+                        guard let value = formatter.string(from: NSDecimalNumber(decimal: amountInUsd)) else {
+                            return .send(.maxAmountFailed)
                         }
                         state.amountText = value
                     } else {
-                        guard let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: maxZec)) else {
-                            return .none
+                        guard let value = formatter.string(from: NSDecimalNumber(decimal: maxZec)) else {
+                            return .send(.maxAmountFailed)
                         }
                         state.amountText = value
                     }
                 } else {
                     // Pay: the amount is entered in the target token, so the max goes through USD.
+                    let formatter = state.conversionCrossPayFormatter
                     guard let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset else {
-                        return .none
+                        return .send(.maxAmountFailed)
                     }
                     guard zecAsset.usdPrice > 0, selectedAsset.usdPrice > 0 else {
-                        return .none
+                        return .send(.maxAmountFailed)
                     }
                     // Floored, never rounded, at the 8 digits the field accepts: `amountAssetText` is
                     // what the insufficient-funds check reads, so the token amount must not creep
@@ -504,10 +517,10 @@ struct SwapAndPay {
                     // `amountAssetText` — so tapping Max and typing the same token amount agree.
                     let amountInUsd = amountInToken * selectedAsset.usdPrice
                     guard
-                        let tokenValue = state.conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInToken)),
-                        let usdValue = state.conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInUsd))
+                        let tokenValue = formatter.string(from: NSDecimalNumber(decimal: amountInToken)),
+                        let usdValue = formatter.string(from: NSDecimalNumber(decimal: amountInUsd))
                     else {
-                        return .none
+                        return .send(.maxAmountFailed)
                     }
                     // The same trio `.binding(\.amountAssetText)` writes when the user types an amount:
                     // the token field, its USD counterpart (`payUsdLabel`) and `amountText` in token

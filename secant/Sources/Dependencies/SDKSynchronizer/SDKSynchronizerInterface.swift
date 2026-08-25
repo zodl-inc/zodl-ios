@@ -297,7 +297,7 @@ struct SDKSynchronizerClient: Sendable {
     
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
-    var sendMaxAmount: @Sendable (AccountUUID, Recipient) async throws -> Zatoshi
+    var sendMaxAmount: @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi
     /// Creates the proposal's transactions via the SDK `Broadcaster` and submits them to the
     /// endpoints chosen by the user's connection mode (Automatic -> all known servers,
     /// Manual -> the selected server). See `selectedSubmissionEndpoints`.

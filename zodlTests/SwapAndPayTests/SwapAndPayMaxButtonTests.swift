@@ -70,7 +70,7 @@ private enum SwapMaxButtonTestError: Error {
         state.zecAsset = asset(token: "ZEC", usdPrice: Const.zecUsdPrice)
         state.selectedAsset = asset(token: "BTC", usdPrice: Const.tokenUsdPrice)
         state.walletBalancesState.spendability = .everything
-        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        state.walletBalancesState.shieldedBalance = Zatoshi(500_000_000)
         return state
     }
 
@@ -88,14 +88,19 @@ private enum SwapMaxButtonTestError: Error {
     @MainActor @Test func maxTappedProposesAgainstOwnTransparentReceiverAndFillsTheField() async {
         let recipientUsed = LockIsolated<String?>(nil)
 
-        let store = TestStore(initialState: swapState()) {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let store = TestStore(initialState: state) {
             SwapAndPay()
         } withDependencies: {
             // `getTransparentAddress` is a `let` on the client, so the whole client is replaced
             // rather than a single closure being overridden in place.
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                 getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
-                sendMaxAmount: { _, recipient in
+                sendMaxAmount: { _, recipient, _ in
                     recipientUsed.setValue(recipient.stringEncoded)
                     return Const.maxAmount
                 }
@@ -133,7 +138,9 @@ private enum SwapMaxButtonTestError: Error {
 
     @MainActor @Test func maxTappedWithoutSelectedAccountIsNoOp() async {
         var state = swapState()
+        let previousAccount = state.selectedWalletAccount
         state.$selectedWalletAccount.withLock { $0 = nil }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         let store = TestStore(initialState: state) {
             SwapAndPay()
@@ -149,7 +156,12 @@ private enum SwapMaxButtonTestError: Error {
     // A wallet with no transparent receiver cannot be proposed against; that must fail cleanly
     // rather than filling the field with something wrong.
     @MainActor @Test func maxTappedWithoutTransparentAddressFails() async {
-        let store = TestStore(initialState: swapState()) {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let store = TestStore(initialState: state) {
             SwapAndPay()
         } withDependencies: {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(getTransparentAddress: { _ in nil })
@@ -164,18 +176,23 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.amountText.isEmpty)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     @MainActor @Test func maxTappedFailurePathClearsInFlightFlagAndLeavesFieldsUntouched() async {
         var state = swapState()
         state.amountText = "1.5"
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         let store = TestStore(initialState: state) {
             SwapAndPay()
         } withDependencies: {
             $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
                 getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
-                sendMaxAmount: { _, _ in throw SwapMaxButtonTestError.sendMaxAmountFailed }
+                sendMaxAmount: { _, _, _ in throw SwapMaxButtonTestError.sendMaxAmountFailed }
             )
         }
         store.exhaustivity = .off
@@ -188,6 +205,38 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(!store.state.isMaxRequestInFlight)
         #expect(store.state.amountText == "1.5")
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
+    }
+
+    // Cancelling the flow (`.cancelSwapTapped` sends `.onDisappear`) while a max request
+    // runs must not leave the chip permanently spinning.
+    @MainActor @Test func onDisappearCancelsInFlightMaxRequestAndClearsFlag() async {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        let store = TestStore(initialState: state) {
+            SwapAndPay()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getTransparentAddress: { _ in try? TransparentAddress(encoding: Const.transparentAddress, network: .testnet) },
+                sendMaxAmount: { _, _, _ in
+                    try await Task.sleep(nanoseconds: 60_000_000_000)
+                    return Zatoshi(1)
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.maxTapped) {
+            $0.isMaxRequestInFlight = true
+        }
+        await store.send(.onDisappear) {
+            $0.isMaxRequestInFlight = false
+        }
+        await store.finish()
     }
 
     // MARK: - .maxAmountResolved, Swap ZEC -> token
@@ -304,8 +353,9 @@ private enum SwapMaxButtonTestError: Error {
         #expect(store.state.amountUsdText != formatter.string(from: NSDecimalNumber(decimal: expectedUsd.simplified)))
     }
 
-    // Guarded against dividing by a missing price: do nothing rather than produce a bogus amount.
-    @MainActor @Test func maxAmountResolvedDoesNothingInPayModeWhenSelectedAssetHasNoUsdPrice() async {
+    // Guarded against dividing by a missing price: fails cleanly with a toast rather than
+    // producing a bogus amount.
+    @MainActor @Test func maxAmountResolvedFailsInPayModeWhenSelectedAssetHasNoUsdPrice() async {
         var state = payState()
         state.selectedAsset = asset(token: "BTC", usdPrice: 0)
 
@@ -313,14 +363,18 @@ private enum SwapMaxButtonTestError: Error {
         store.exhaustivity = .off
 
         await store.send(.maxAmountResolved(Const.maxAmount))
+        await store.receive(\.maxAmountFailed)
+        await store.finish()
 
         #expect(store.state.amountAssetText.isEmpty)
         #expect(store.state.amountUsdText.isEmpty)
         #expect(store.state.amountText.isEmpty)
         #expect(!store.state.isMaxRequestInFlight)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
-    @MainActor @Test func maxAmountResolvedDoesNothingInPayModeWhenZecAssetIsMissing() async {
+    @MainActor @Test func maxAmountResolvedFailsInPayModeWhenZecAssetIsMissing() async {
         var state = payState()
         state.zecAsset = nil
 
@@ -328,15 +382,22 @@ private enum SwapMaxButtonTestError: Error {
         store.exhaustivity = .off
 
         await store.send(.maxAmountResolved(Const.maxAmount))
+        await store.receive(\.maxAmountFailed)
+        await store.finish()
 
         #expect(store.state.amountAssetText.isEmpty)
         #expect(store.state.amountText.isEmpty)
+        #expect(store.state.toast == Toast.Edge.top(String(localizable: .generalMaxFailed)))
+        state.$toast.withLock { $0 = nil }
     }
 
     // MARK: - .maxAmountResolved, Swap token -> ZEC
 
     @MainActor @Test func maxAmountResolvedIsNoOpInSwapToZecMode() async {
         var state = swapState()
+        // Process-global `@Shared` state: seed a known nil so a sibling test in this
+        // serialized suite leaving a toast set cannot flake this assertion.
+        state.$toast.withLock { $0 = nil }
         state.isSwapToZecExperienceEnabled = true
         state.isMaxRequestInFlight = true
 
@@ -347,12 +408,17 @@ private enum SwapMaxButtonTestError: Error {
 
         #expect(store.state.amountText.isEmpty)
         #expect(!store.state.isMaxRequestInFlight)
+        #expect(store.state.toast == nil)
     }
 
     // MARK: - Chip enablement
 
     @Test func swapMaxButtonEnablementReflectsSpendabilityAndInFlightRequests() {
         var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
         #expect(state.isSwapMaxButtonEnabled)
 
         state.walletBalancesState.spendability = .something
@@ -368,11 +434,36 @@ private enum SwapMaxButtonTestError: Error {
         state.isMaxRequestInFlight = false
         state.isQuoteRequestInFlight = true
         #expect(!state.isSwapMaxButtonEnabled)
+
+        state.isQuoteRequestInFlight = false
+
+        // Empty wallet: `.everything` with zero balance must not enable the chip.
+        state.walletBalancesState.shieldedBalance = .zero
+        #expect(!state.isSwapMaxButtonEnabled)
+        state.walletBalancesState.shieldedBalance = Zatoshi(500_000_000)
+
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        #expect(!state.isSwapMaxButtonEnabled)
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+
+        // USD input mode needs a usable ZEC price to convert the max.
+        state.isInputInUsd = true
+        state.zecAsset = asset(token: "ZEC", usdPrice: 0)
+        #expect(!state.isSwapMaxButtonEnabled)
+        state.zecAsset = nil
+        #expect(!state.isSwapMaxButtonEnabled)
+        state.zecAsset = asset(token: "ZEC", usdPrice: Const.zecUsdPrice)
+        #expect(state.isSwapMaxButtonEnabled)
+        state.isInputInUsd = false
     }
 
     // Pay needs the Swap conditions AND a usable price on both sides of the conversion.
     @Test func payMaxButtonEnablementAlsoRequiresUsablePrices() {
         var state = payState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
         #expect(state.isPayMaxButtonEnabled)
 
         state.selectedAsset = asset(token: "BTC", usdPrice: 0)

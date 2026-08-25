@@ -8099,13 +8099,37 @@
       }
     },
     "general.max" : {
-      "comment" : "Internal and testnet builds only, compiled in behind #if ZODL_INTERNAL || SECANT_TESTNET. Never ships to users, so it needs no translation — not now, not later.",
+      "comment" : "Max button on the Send, Pay and Swap amount fields (internal and testnet builds only, compiled in behind #if ZODL_INTERNAL || SECANT_TESTNET).",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Max"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Máx."
+          }
+        }
+      }
+    },
+    "general.maxFailed" : {
+      "comment" : "Toast shown when the Max button cannot fetch or convert the max amount (internal and testnet builds only, compiled in behind #if ZODL_INTERNAL || SECANT_TESTNET).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to get the max amount."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo obtener el monto máximo."
           }
         }
       }
