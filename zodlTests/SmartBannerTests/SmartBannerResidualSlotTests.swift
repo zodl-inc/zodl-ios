@@ -2,10 +2,12 @@
 //  SmartBannerResidualSlotTests.swift
 //  zodlTests
 //
-//  MOB-1749 review fix: the residual banner is informational dust — it must never hold the
-//  top-priority migration slot (that suppressed the wallet-backup and shielding banners
-//  indefinitely, since the migration slot has no snooze). It seats only at the new BOTTOM rung and
-//  any other claimant displaces it.
+//  MOB-1749: the residual banner never holds the top-priority migration slot itself (no snooze,
+//  no session verdict — it bypasses the checkingStatus machinery entirely). Re-ranked 2026-08-25
+//  (approved): it seats at rank 1.75, DIRECTLY BELOW the migration slot — only connectivity and
+//  sync-error alerts and a real migration outrank it; the informational rungs (backup, shielding,
+//  Tor, currency conversion) rank below it. The suppression trade-off was accepted knowingly —
+//  at the old bottom rank a dust wallet could wait behind currency conversion forever.
 //
 
 import ComposableArchitecture
@@ -79,34 +81,40 @@ import Testing
         }
     }
 
-    /// BULLET 2 — the whole point of the demotion. Wallet backup (`priority6`) holds the slot; the
-    /// residual is dust and must wait its turn rather than evict a banner the user actually needs.
-    ///
-    /// Exhaustive on purpose: the residual must not even REQUEST the slot here, and an unasserted
-    /// `.triggerPriority` is what would prove it did.
-    @Test func residualDoesNotDisplaceAHigherBanner() async {
+    /// REVERSED 2026-08-25 (approved): the residual now ranks 1.75 — directly below the migration
+    /// slot — so a residual answer arriving while wallet backup (`priority6`) holds the slot
+    /// re-runs the ladder and takes it. The suppression trade-off was accepted knowingly: the
+    /// residual is actionable and self-retiring, and at rank 11 a dust wallet could wait forever
+    /// behind currency conversion (the field report that triggered the reversal).
+    @Test func residualDisplacesTheInformationalBannersBelowIt() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             var state = SmartBanner.State()
             state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
             state.priorityContent = .priority6
+
+            let answer = Self.residual
 
             let store = TestStore(initialState: state) {
                 SmartBanner()
             } withDependencies: {
                 $0.mainQueue = .immediate
-                $0.migrationManager = .noOp
+                var client = MigrationManagerClient.noOp
+                client.bannerVariant = { _ in answer }
+                $0.migrationManager = client
                 $0.sdkSynchronizer = .mocked()
             }
+            store.exhaustivity = .off
 
-            // The answer is still RECORDED — the content is right the moment the slot frees up —
-            // it simply does not claim anything.
-            await store.send(.migrationVariantUpdated(Self.residual)) {
-                $0.migrationBannerVariant = Self.residual
-            }
+            await store.send(.migrationVariantUpdated(Self.residual))
+            await store.receive(\.evaluatePriority1)
+            await store.receive(\.evaluatePriorityResidual)
+            await store.receive(\.triggerPriority)
+            await store.receive(\.openBannerRequest)
 
-            #expect(store.state.priorityContent == .priority6, "wallet backup lost its slot to informational dust")
+            #expect(store.state.priorityContent == .priorityResidual, "at rank 1.75 the residual outranks the wallet-backup seat")
         }
     }
 
@@ -148,14 +156,12 @@ import Testing
         }
     }
 
-    /// BULLET 4 (AS AMENDED) — the demotion is not a mute, and the ladder is the only way in.
-    ///
-    /// An empty slot is not an invitation: a residual arriving through the funnel re-runs the WALK
-    /// rather than claiming, so every banner above gets its ask first. Here they all decline — no
-    /// restore, no sync backlog, nothing to back up, nothing to shield, the Tor prompt answered,
-    /// currency conversion configured — so the walk reaches the bottom rung and the dust seats
-    /// there, which is the design's whole intent for it.
-    @Test func residualSeatsTheBottomRungOnceEveryRungAboveDeclines() async {
+    /// BULLET 4 (AS RE-AMENDED 2026-08-25) — the ladder is still the only way in: a residual
+    /// arriving through the funnel re-runs the WALK rather than claiming. The walk asks the rungs
+    /// above the migration slot (connectivity, sync error), then the migration rung itself — and a
+    /// `.residual` answer there goes straight to its seat one rank below, never continuing down to
+    /// the informational rungs.
+    @Test func residualSeatsDirectlyBelowTheMigrationRung() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -177,10 +183,6 @@ import Testing
                 client.bannerVariant = { _ in answer }
                 $0.migrationManager = client
                 $0.sdkSynchronizer = .mocked()
-                // Rungs 6, 7 and 75 decline through `.noOp`: no transactions to warrant a backup
-                // prompt, no transparent balance to shield, the Tor setup flag already answered.
-                $0.walletStorage = .noOp
-                $0.userStoredPreferences = Self.preferencesWithCurrencyConversionSetUp()
                 $0.continuousClock = ImmediateClock()
             }
             store.exhaustivity = .off
@@ -189,7 +191,8 @@ import Testing
 
             // The funnel hands off to the ladder instead of seating anything itself...
             await store.receive(\.evaluatePriority1)
-            // ...and the walk ends at the new bottom rung.
+            // ...and the migration rung hands the residual straight to its seat, one rank below —
+            // the walk never continues down to the informational rungs.
             await store.receive(\.evaluatePriorityResidual)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
@@ -201,9 +204,11 @@ import Testing
 
     /// Wave 2 — the rung-7 dead-end. A wallet holding an above-threshold transparent balance whose
     /// owner tapped "Remind me later" used to END the walk inside the shielding rung: the
-    /// snooze-not-elapsed branch sent nothing, so Tor, currency conversion and this residual seat
-    /// were unreachable until the snooze elapsed. The walk must continue past a snoozed reminder.
-    @Test func aSnoozedShieldingReminderDoesNotStopTheWalk() async {
+    /// snooze-not-elapsed branch sent nothing, so the rungs below (Tor, currency conversion) were
+    /// unreachable until the snooze elapsed. Re-anchored 2026-08-25: the residual no longer sits
+    /// below rung 7 (it seats off the migration rung), so the `else` is pinned through Tor —
+    /// entering at the transactions-change rung, the same mid-ladder door production uses.
+    @Test func aSnoozedShieldingReminderStillYieldsTheWalkToTor() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -211,7 +216,6 @@ import Testing
             state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
             state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
 
-            let answer = Self.residual
             let accountUUID = Self.walletAccount().id
             let snoozedYesterday = ReminedMeTimestamp(timestamp: Date().timeIntervalSince1970 - 3_600, occurence: 1)
             let aboveThreshold = AccountBalance(
@@ -226,43 +230,32 @@ import Testing
                 SmartBanner()
             } withDependencies: {
                 $0.mainQueue = .immediate
-                var client = MigrationManagerClient.noOp
-                client.bannerVariant = { _ in answer }
-                $0.migrationManager = client
+                $0.migrationManager = .noOp
                 $0.sdkSynchronizer = .mocked(
                     getAccountsBalances: { [accountUUID: aboveThreshold] }
                 )
                 var storage = WalletStorageClient.noOp
                 storage.exportShieldingReminder = { _ in snoozedYesterday }
+                storage.exportTorSetupFlag = { nil }
                 $0.walletStorage = storage
-                $0.userStoredPreferences = Self.preferencesWithCurrencyConversionSetUp()
                 $0.continuousClock = ImmediateClock()
             }
             store.exhaustivity = .off
 
-            await store.send(.migrationVariantUpdated(Self.residual))
-            await store.receive(\.evaluatePriority1)
+            await store.send(.evaluatePriority6)
             await store.receive(\.evaluatePriority75)
-            await store.receive(\.evaluatePriorityResidual)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
 
-            #expect(store.state.priorityContent == .priorityResidual, "the snoozed shielding rung ended the walk instead of passing it down")
+            #expect(store.state.priorityContent == .priority75, "the snoozed shielding rung ended the walk instead of passing it down")
         }
     }
 
-    /// THE NARROWER DOOR the demotion nearly left open (review finding, ruled on as a spec change).
-    ///
-    /// A wallet that owes a backup seats `priority6`; a real sync starts and `priority4` displaces
-    /// it; the sync completes, and the `.upToDate` arm for `priority4` closes the banner and feeds
-    /// `bannerVariant` STRAIGHT into the funnel — bypassing the ladder. With the funnel allowed to
-    /// claim an empty slot, dust took the slot the backup prompt had just been holding, and kept it
-    /// for the session: the exact harm this task exists to prevent, reached by a different route.
-    ///
-    /// Written at the funnel rather than through a scripted sync, because the funnel is where the
-    /// decision is made — an empty slot plus a residual answer, which is precisely the state the
-    /// `.priority4` arm produces.
-    @Test func aResidualArrivingOnAnEmptySlotStillYieldsToWalletBackup() async {
+    /// REVERSED 2026-08-25 (approved): at rank 1.75 the residual outranks wallet backup, and the
+    /// walk order agrees — the migration rung sits above rung 6, so a residual answer seats before
+    /// the backup rung is ever asked. Same backup-owed fixture as the original test, opposite
+    /// expectation, so the reversal is pinned rather than implied.
+    @Test func aResidualArrivingOnAnEmptySlotOutranksWalletBackup() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -292,14 +285,14 @@ import Testing
 
             await store.send(.migrationVariantUpdated(Self.residual))
             await store.receive(\.evaluatePriority1)
+            await store.receive(\.evaluatePriorityResidual)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
 
             #expect(
-                store.state.priorityContent == .priority6,
-                "dust took the slot the wallet-backup prompt was owed — the suppression this fix exists to end"
+                store.state.priorityContent == .priorityResidual,
+                "the migration rung sits above the backup rung — a residual answer seats before backup is asked"
             )
-            #expect(store.state.priorityContent != .priorityResidual)
         }
     }
 
@@ -398,7 +391,7 @@ import Testing
     /// above gets its chance. The new bottom rung is where the answer is finally cashed in: when
     /// the walk reaches `evaluatePriority9` and nothing has claimed, `evaluatePriorityResidual`
     /// seats it.
-    @Test func theLadderWalksPastAResidualAndSeatsItOnlyAtTheBottom() async {
+    @Test func theMigrationRungHandsAResidualStraightToItsSeat() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -417,21 +410,15 @@ import Testing
             store.exhaustivity = .off
 
             await store.send(.migrationVariantLoaded(Self.residual))
-            await store.receive(\.evaluatePriority3)
-
-            #expect(store.state.priorityContent != .priorityMigration, "the walk-down handed dust the top-priority slot")
-            #expect(store.state.priorityContent == nil, "the residual claimed a rung the walk had not reached yet")
-            #expect(store.state.migrationBannerVariant == Self.residual, "the answer must still be recorded for the bottom rung to cash in")
-
-            // The bottom of the ladder — every rung above declined, so the recorded residual is
-            // what is left to show. (The walk above dead-ends at `evaluatePriority7`'s account
-            // guard in this fixture, so the last rung is driven directly.)
-            await store.send(.evaluatePriority9)
+            // 2026-08-25: the seat sits directly below the migration slot now — the rung's answer
+            // goes straight there instead of walking down past every informational banner.
             await store.receive(\.evaluatePriorityResidual)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
 
+            #expect(store.state.priorityContent != .priorityMigration, "the walk-down handed dust the top-priority slot")
             #expect(store.state.priorityContent == .priorityResidual)
+            #expect(store.state.migrationBannerVariant == Self.residual)
 
             // THE OTHER HALF OF THE SAME RUNG, and the reason it needs one: this rung claims from
             // the CACHED answer, not from a fresh question. So once the dust is gone — the seat

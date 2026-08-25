@@ -67,22 +67,30 @@ struct SmartBanner {
             case priority8 // currency conversion
             case priority9 // auto-shielding
             case priorityMigration = -1 // ironwood migration
-            case priorityResidual = 11 // MOB-1749: leftover Orchard dust — the LOWEST rung, seated only when everything above declined
+            case priorityResidual = 11 // MOB-1749: leftover Orchard dust — ranks 1.75, directly below the migration slot (2026-08-25)
 
             func next() -> PriorityContent {
                 // `priorityMigration` (-1) sits outside the walk-down chain — it is only ever
                 // triggered explicitly, so walking below `priority1` wraps to `priority9` as before.
-                // `priorityResidual` (11) sits outside it too, at the other end: the walk reaches it
-                // by the explicit `.evaluatePriority9` → `.evaluatePriorityResidual` hand-off, never
-                // by stepping down into it, so nothing here has to know about it.
+                // `priorityResidual` (raw 11) sits outside it too: the migration rung hands a
+                // `.residual` answer straight to `.evaluatePriorityResidual`, never by stepping
+                // down into it, so nothing here has to know about it.
                 guard rawValue > 0 else { return .priority9 }
                 return PriorityContent(rawValue: rawValue - 1) ?? .priority9
             }
 
             /// Display rank — lower wins. `priorityMigration` slots between `priority2` (sync error)
             /// and `priority3` (restoring): operational alerts outrank migration; migration outranks the rest.
-            /// `priorityResidual` (11) sits below every other rung — see its case comment.
-            var rank: Double { self == .priorityMigration ? 1.5 : Double(rawValue) }
+            /// `priorityResidual` sits at 1.75, directly below the migration slot (approved
+            /// 2026-08-25, reversing the demotion-to-lowest): only connectivity/sync-error alerts
+            /// and a real migration outrank it. Its raw value (11) stays out of the walk-down chain.
+            var rank: Double {
+                switch self {
+                case .priorityMigration: return 1.5
+                case .priorityResidual: return 1.75
+                default: return Double(rawValue)
+                }
+            }
         }
         
         var CancelNetworkMonitorId = UUID()
@@ -615,11 +623,12 @@ struct SmartBanner {
                 return .send(.migrationVariantUpdated(held))
 
             case .migrationVariantUpdated(let variant):
-                // MOB-1749 review fix: a residual is not a migration the wallet needs to run — it
-                // never claims `priorityMigration` (no snooze, suppressed every other banner) and
-                // has no session verdict to wait on, so it bypasses the checkingStatus machinery
-                // entirely. It never claims a slot from here at all: the LADDER is the single
-                // authority on seating order, and the bottom rung is the only door in.
+                // MOB-1749: a residual is not a migration the wallet needs to run — it never
+                // claims `priorityMigration` itself and has no session verdict to wait on, so it
+                // bypasses the checkingStatus machinery entirely. It never claims a slot from here
+                // at all: the LADDER is the single authority on seating order, and its seat
+                // (rank 1.75, directly below the migration slot — 2026-08-25) is reachable only
+                // through the migration rung's own answer.
                 if let variant, case .residual = variant {
                     state.migrationBannerVariant = variant
                     state.isMigrationCheckDwelling = false
@@ -636,22 +645,15 @@ struct SmartBanner {
                             await send(.evaluatePriority1)
                         }
                     }
-                    if state.priorityContent == nil {
-                        // An empty slot is not an invitation. A residual answer arriving from
-                        // OUTSIDE the ladder — the post-sync re-read, a reconcile edge — must re-run
-                        // the walk instead of seating itself, or it takes a slot the ladder never
-                        // offered it. The path that made this concrete: a wallet owing a backup
-                        // seats `priority6`, a sync starts and `priority4` displaces it, and the
-                        // `.upToDate` arm for `priority4` closes the banner and feeds the variant
-                        // STRAIGHT into this funnel — an empty slot, no walk, dust sitting where the
-                        // backup prompt belonged for the rest of the session. Re-running the walk is
-                        // what gives every banner above its ask; the bottom rung seats the residual
-                        // only once they have all declined.
-                        return .send(.evaluatePriority1)
-                    }
-                    // `.priorityResidual` already holds it (content re-renders in place), or a
-                    // higher banner does (the arbiter would reject the request anyway).
-                    return .none
+                    // Whether the slot is empty or held: re-run the walk and let the arbiter's
+                    // rank guard decide. A residual answer arriving from OUTSIDE the ladder — the
+                    // post-sync re-read, a reconcile edge — must never seat itself from here (the
+                    // ladder is the only door in), and since 2026-08-25 it must also DISPLACE the
+                    // informational banners it now outranks (rank 1.75 vs backup/shielding/Tor/
+                    // currency at 6-9). A seated residual does not churn: the rung's equal-rank
+                    // re-request is rejected by the arbiter, and a higher occupant (connectivity,
+                    // sync error, a real migration) wins the walk before the rung is reached.
+                    return .send(.evaluatePriority1)
                 }
                 // GROUND_RULES R3: while migration OWNS the slot, no variant may replace what is on
                 // screen before the session's first engine verdict — a pre-verdict answer is fresh
@@ -863,10 +865,9 @@ struct SmartBanner {
                 }
 
             case let .migrationVariantLoaded(variant):
-                // MOB-1749 review fix: the ladder twin of the `.migrationVariantUpdated` intercept
-                // above — record the content, hand back a wrongly-claimed migration slot, and keep
-                // walking so the bottom rung (`evaluatePriorityResidual`) seats it only if nothing
-                // above claims.
+                // MOB-1749: the ladder twin of the `.migrationVariantUpdated` intercept above —
+                // record the content, hand back a wrongly-claimed migration slot, and (2026-08-25)
+                // hand the answer straight to its own seat, one rank below this rung.
                 if let variant, case .residual = variant {
                     state.migrationBannerVariant = variant
                     state.isMigrationCheckDwelling = false
@@ -880,7 +881,7 @@ struct SmartBanner {
                             await send(.evaluatePriority1)
                         }
                     }
-                    return .send(.evaluatePriority3)
+                    return .send(.evaluatePriorityResidual)
                 }
                 // MOB-1466 (field, 2026-08-03): this path was NOT holding during the dwell, and the
                 // hold only ever covered `.migrationVariantUpdated`. So a variant arriving via the
@@ -1090,21 +1091,23 @@ struct SmartBanner {
                 
                 // auto-shielding
             case .evaluatePriority9:
-                return .send(.evaluatePriorityResidual)
+                // 2026-08-25: the last rung again — the residual seat moved up beside the
+                // migration rung (see `.evaluatePriorityResidual`), so nothing hangs off the
+                // bottom of the walk any more.
+                return .none
 
-                // leftover Orchard dust — MOB-1749 review fix
+                // leftover Orchard dust — MOB-1749
             case .evaluatePriorityResidual:
-                // The residual banner is the LOWEST rung: it seats only when every banner above
-                // declined, and any later claimant displaces it through the arbiter. (The migration
-                // rung above deliberately walks PAST a `.residual` answer — that variant must never
-                // hold the top-priority migration slot, which has no snooze and was suppressing the
-                // wallet-backup and shielding banners indefinitely.)
+                // The residual's seat, at rank 1.75 — directly below the migration slot (approved
+                // 2026-08-25, reversing the demotion-to-lowest: at the bottom, a dust wallet could
+                // wait behind currency conversion forever). Reached only from the migration rung's
+                // own `.residual` answer, so the informational rungs below are never even asked;
+                // a run-state answer still outranks and displaces it through the arbiter.
                 //
-                // The flag gate is the same one `.evaluatePriorityMigration` applies, and it is
-                // load-bearing here rather than decorative: this is the ONE rung that claims from
-                // the reducer's cached answer instead of asking its own question, so with migration
-                // off — where the walk never reaches the migration rung that retires that cache —
-                // the gate is what stops a stale residual seating itself.
+                // The flag gate is the same one `.evaluatePriorityMigration` applies — belt here:
+                // the only path in is through that rung's own flag guard — and the cache pattern
+                // stands: this is the ONE rung that claims from the reducer's cached answer, and
+                // the migration rung's nil arm retires that cache before every walk-down.
                 guard state.featureFlags.migration, case .residual = state.migrationBannerVariant else {
                     return .none
                 }
@@ -1144,7 +1147,11 @@ struct SmartBanner {
                     }
                     return successorEffect
                 }
-                if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
+                // 2026-08-25: compare RANK, not rawValue — the two diverged when `priorityResidual`
+                // (raw 11) moved to rank 1.75. Rank is the single ordering authority the case
+                // comments describe; this also makes "operational alerts outrank migration"
+                // (rank 1.5 vs 0/1) hold in the displacement direction, as documented.
+                if let priorityContent = state.priorityContent, priorityContentRequested.rank >= priorityContent.rank {
                     if state.isReseatPending {
                         state.isReseatPending = false
                         return .send(.openBanner)
