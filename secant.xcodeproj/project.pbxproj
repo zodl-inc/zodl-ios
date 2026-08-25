@@ -1302,7 +1302,7 @@
 /* Begin XCLocalSwiftPackageReference section */
 		3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../zcash-swift-wallet-sdk";
+			relativePath = ".ci/zcash-swift-wallet-sdk";
 		};
 /* End XCLocalSwiftPackageReference section */
 
