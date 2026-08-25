@@ -76,6 +76,7 @@ import Testing
             isIronwoodActivated: true,
             state: state,
             orchardBalance: orchardBalance,
+            residual: nil,
             isCompleteAcknowledged: isCompleteAcknowledged,
             isMigrationRemainderPending: false,
             transferRows: transferRows,

@@ -34,6 +34,16 @@ import ComposableArchitecture
         return state
     }
 
+    /// The same wallet, CAUGHT UP — `atTipState()` above sets only the height and inherits
+    /// `SynchronizerState.zero`'s sync status, which the residual lane's offer gate reads as "not
+    /// caught up". Mirrors `MigrationBannerEntryTests.syncedState()`, the pinned caught-up fixture.
+    private static func caughtUpState() -> SynchronizerState {
+        var state = SynchronizerState.zero
+        state.latestBlockHeight = tip
+        state.syncStatus = SyncStatus.upToDate
+        return state
+    }
+
     private static func account() -> WalletAccount {
         WalletAccount(
             Account(
@@ -183,6 +193,82 @@ import ComposableArchitecture
             let route = await manager.reentryRoute()
 
             #expect(route == MigrationReentryRoute.statusProgress)
+        }
+    }
+
+    /// Wave 2: the lock is a WRITER EDGE — it changes the balance the published snapshot was built
+    /// from, so it republishes before returning. This is what lets every flow exit (the back-swipe
+    /// included) leave immediately: freshness no longer depends on an exit-path reconcile.
+    @Test func lockingRepublishesTheSnapshotBeforeReturning() async throws {
+        Self.installCandidateAccount()
+
+        let isLocked = LockIsolated<Bool>(false)
+        let candidateBalance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(800_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(1_000_000_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            unshielded: .zero,
+            awaitingResolution: .zero
+        )
+        let lockedBalance = AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            orchardBalance: PoolBalance(
+                spendableValue: .zero,
+                changePendingConfirmation: .zero,
+                valuePendingSpendability: .zero,
+                lockedValue: Zatoshi(800_000)
+            ),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(1_000_000_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero),
+            unshielded: .zero,
+            awaitingResolution: .zero
+        )
+
+        try await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.caughtUpState() },
+                lockMigrationResidual: { _ in
+                    isLocked.setValue(true)
+                    return Zatoshi(800_000)
+                },
+                getAccountsBalances: { [Self.accountUUID: isLocked.value ? lockedBalance : candidateBalance] }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let manager = MigrationManagerImpl()
+
+            let received = LockIsolated<MigrationViewSnapshot?>(nil)
+            var cancellables = Set<AnyCancellable>()
+            manager.migrationSnapshotEvents(accountUUID: Self.accountUUID)
+                .sink { snapshot in received.setValue(snapshot) }
+                .store(in: &cancellables)
+
+            manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
+            await Self.waitUntil { received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) }
+            #expect(
+                received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
+                "precondition: the pre-lock snapshot advertises the residual"
+            )
+            // Second precondition — the AWAITED republish is the uncontended path: a build already
+            // in flight makes `republishSnapshotNow` mark dirty and return, leaving the post-lock
+            // truth to that build's follow-up. Two builds are queued above (the subscription's, and
+            // the refresh's coalesced follow-up) and the wait lands on the FIRST one's publish, so
+            // the second can still be running. Ask the coalescer itself rather than timing its side
+            // effects: a build's publish→inFlight-clear tail is observable-late under full-target
+            // load, which is exactly how a quiet-window version of this wait passed locally and
+            // failed in the full run.
+            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            #expect(
+                manager.isSnapshotRepublishIdle(for: Self.accountUUID),
+                "quiescence precondition timed out — raise waitUntil's deadline before suspecting the product"
+            )
+
+            try await manager.lockMigrationDust(accountUUID: Self.accountUUID)
+
+            let published = try #require(manager.currentMigrationSnapshot(accountUUID: Self.accountUUID))
+            #expect(
+                published.banner == nil,
+                "the lock must return with the published snapshot already rebuilt — a stale .residual here is the banner that survives its own lock"
+            )
         }
     }
 

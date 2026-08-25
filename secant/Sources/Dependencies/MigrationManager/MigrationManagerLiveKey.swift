@@ -12,9 +12,10 @@
 //  throwing SDK surface — every SDK read degrades to a safe default (false/nil/entry) on either a
 //  missing selected account or a thrown error, so a migration-surface hiccup never crashes launch,
 //  foreground entry, or the smart banner. `migrationSummary`/`migrationTransfers`/`lockMigrationDust`/
-//  `isMigrationDustLocked`/`stateEvents` are new here — relocated from `SDKSynchronizerClient`
-//  (summary/transfers/dust-lock are app-side derivations/persistence, not SDK calls; stateEvents is
-//  the per-account replacement for the old wallet-wide `migrationStateStream`).
+//  `stateEvents` are new here — relocated from `SDKSynchronizerClient` (summary/transfers/dust-lock
+//  are app-side derivations/persistence, not SDK calls; stateEvents is the per-account replacement
+//  for the old wallet-wide `migrationStateStream`). MOB-1749 (wave 2): the balance-derived lock
+//  READ that arrived with them is gone — `residualBalances` answers it from one read.
 //
 //  MOB-1496 (W3) split the privacy gate across the SDK and this client: the SDK owned
 //  broadcast->sync, this client owned sync->send via a post-sync cooldown. BOTH timed halves are
@@ -140,8 +141,7 @@ extension MigrationManagerClient: DependencyKey {
                 await impl.recordTransferBroadcast(accountUUID: accountUUID, result: result)
             },
             lockMigrationDust: { try await impl.lockMigrationDust(accountUUID: $0) },
-            isMigrationDustLocked: { await impl.isMigrationDustLocked(accountUUID: $0) },
-            migrationLockedAmount: { await impl.migrationLockedAmount(accountUUID: $0) },
+            residualBalances: { await impl.residualBalances(accountUUID: $0) },
             migrationRoundContext: { await impl.migrationRoundContext(accountUUID: $0) },
             migrationPreparationCount: { await impl.migrationPreparationCount(accountUUID: $0) },
             migrationPreparationRows: { await impl.migrationPreparationRows(accountUUID: $0) },
@@ -597,6 +597,9 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // R13 Brick 2b: the pass's one balances read serves the offer amount — the same
         // expression `orchardBalanceToMigrate` computes, without a second full-wallet read.
         let balance = balances?[resolvedAccountUUID]?.orchardBalance.unlockedForMigration ?? Zatoshi.zero
+        // MOB-1749: the residual arms' figures — from the same one balances read. `nil` (the read
+        // failed) keeps the residual arms quiet rather than inventing an empty wallet.
+        let residual = balances?[resolvedAccountUUID].map { MigrationResidualBalances(accountBalance: $0) }
 
         let state = rawState
         // MOB-1511 (W2): the multi-round context for the round-aware banner arms.
@@ -606,6 +609,11 @@ final class MigrationManagerImpl: @unchecked Sendable {
             isIronwoodActivated: isIronwoodActivated(),
             state: state,
             orchardBalance: balance,
+            residual: residual,
+            // Wave 2: the caught-up gate, threaded to the residual arms. The `.notStarted` early
+            // return above already holds the OFFER; this closes the acknowledged-`.complete`
+            // residual arm, which previously ran against whatever the pre-catch-up read said.
+            isResidualOfferable: isCaughtUpForMigrationOffer(),
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: resolvedAccountUUID),
             // MOB-1496: nil (never evaluated) reads as `false` here, same "not known to be
             // pending" convention `MigrationManagerImpl.isMigrationRemainderPending` uses.
@@ -633,16 +641,21 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // held for less than a readable moment. `bannerVariant` is recomputed on every poke and on
         // every screen appearance — forty identical lines used to be indistinguishable from forty
         // flickers, and it is the flickers that get reported as bugs.
+        // "unreadable" rather than a zero: the residual arms stood down because the balances read
+        // FAILED, and a trace that printed 0.00 would read as an empty wallet instead.
+        let residualDetail = residual.map { $0.residualOrchard.decimalString() } ?? "unreadable"
+        let ironwoodDetail = residual.map { $0.ironwood.decimalString() } ?? "unreadable"
         MigrationTrace.banner(
             variant,
             why: bannerReason(
+                variant: variant,
                 state: state,
                 rows: transfers,
                 preparations: preparations,
                 hasOverdue: hasOverdue,
                 isBroadcastInFlight: broadcastsInFlight.withLock { $0.contains(resolvedAccountUUID) }
             ),
-            detail: "state \(state), orchard \(balance.decimalString())"
+            detail: "state \(state), orchard \(balance.decimalString()), residual \(residualDetail), ironwood \(ironwoodDetail)"
         )
         MigrationTrace.rows(transfers: transfers, preparations: preparations)
 
@@ -713,6 +726,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // contributes `nil`, which offers no action at all: the failure mode of this input is a
         // quieter screen, never a button the engine will refuse.
         async let advanceStepTask = try? sdkSynchronizer.migrationAdvanceStep(accountUUID)
+        async let residualBalancesTask = residualBalances(accountUUID: accountUUID)
 
         let rawState = await rawStateTask ?? MigrationState.notStarted
         let progress = await progressTask
@@ -720,6 +734,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         let hasOverdue = await hasOverdueTask
         let clock = await clockTask
         let advanceStep = (await advanceStepTask)?.step
+        let residual = await residualBalancesTask
 
         let state = rawState
 
@@ -730,7 +745,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: gateStorage.isCompleteAcknowledged(for: accountUUID),
-            progress: progress
+            // MOB-1749 review fix: same nil-reads-as-false convention as bannerArm — see its comment.
+            isMigrationRemainderPending: gateStorage.remainderPending(for: accountUUID) ?? false,
+            progress: progress,
+            residual: residual,
+            // Wave 2: no route names a residual figure the wallet has not verified.
+            isResidualOfferable: isCaughtUpForMigrationOffer()
         )
 
         // Which screen a banner tap opens, and the inputs that decided it. Added 07-31 after a
@@ -742,9 +762,12 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // MOB-1466: on CHANGE only, with dwell — see `MigrationTrace.route`. A route that moves
         // while the banner's words stay put means the same sentence now opens a different screen,
         // which the user experiences as the app having lied to them.
+        let balanceDetail = residual.map {
+            "residual \($0.residualOrchard.decimalString()), locked \($0.lockedOrchard.decimalString()), ironwood \($0.ironwood.decimalString())"
+        } ?? "balances UNREADABLE — residual arms disabled this pass"
         MigrationTrace.route(
             route,
-            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated())"
+            detail: "state \(state), hasOverdue \(hasOverdue), hasInvalid \(hasInvalid), activated \(isIronwoodActivated()), \(balanceDetail)"
         )
 
         return route
@@ -1215,12 +1238,20 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// `MigrationDerivations.bannerVariant`'s own precedence exactly, so the reason is always the
     /// arm that actually fired rather than a plausible-looking guess assembled separately.
     private func bannerReason(
+        variant: MigrationBannerVariant?,
         state: MigrationState,
         rows: [MigrationTransferRow],
         preparations: [MigrationTransferRow],
         hasOverdue: Bool,
         isBroadcastInFlight: Bool
     ) -> String {
+        // MOB-1749 review fix: the residual arms answer where the tables used to answer nil or
+        // next-round. Keyed off the DECIDED variant rather than re-derived, so this reason is
+        // same-precedence by construction — the rule the splitPendingConfirmation note below
+        // exists to enforce.
+        if case .residual = variant {
+            return "residual dust on an Ironwood wallet — below the offer floor, awaiting a lock-or-sweep decision"
+        }
         if case MigrationState.notStarted = state {
             return "no run"
         }
@@ -1400,35 +1431,69 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// MOB-1496: "Lock balance" now calls the SDK's real `lockMigrationResidual` directly — the
     /// cosmetic `Task.sleep` + app-persisted `gateStorage.setDustLocked` bookkeeping this replaces
     /// (pre-real-SDK stand-in) is gone; the lock itself is now genuine and its state lives in the
-    /// account's own `PoolBalance.lockedValue` (see `isMigrationDustLocked` below), not a local
+    /// account's own `PoolBalance.lockedValue` (see `residualBalances` below), not a local
     /// flag. The returned locked total is discarded here — this member is `Void`-returning; a
     /// caller that needs the amount reads it back via balance, same as everywhere else in the app.
     func lockMigrationDust(accountUUID: AccountUUID?) async throws {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return }
         _ = try await sdkSynchronizer.lockMigrationResidual(resolvedAccountUUID)
+        // Wave 2: the lock is a WRITER EDGE — it moves value out of the spendable figure the
+        // published snapshot (and so `bannerVariant`) was built from. Republishing HERE, awaited,
+        // is what frees every flow exit from carrying a reconcile barrier: by the time the user
+        // can leave the screen, the snapshot already tells the post-lock truth, bounded — see
+        // `lockRepublishTimeoutNanoseconds`.
+        await awaitBounded(nanoseconds: Self.lockRepublishTimeoutNanoseconds) { [weak self] in
+            await self?.republishSnapshotNow(for: resolvedAccountUUID)
+        }
     }
 
-    /// MOB-1496: balance-derived now — a nonzero Orchard `PoolBalance.lockedValue` means the
-    /// residual is locked. Async (a live SDK balance read) where the pre-real-SDK stand-in was a
-    /// synchronous `UserDefaults` read; degrades to `false` on an unresolvable account or a failed
-    /// balance read, same "safe default" convention as `orchardBalanceToMigrate` below.
-    func isMigrationDustLocked(accountUUID: AccountUUID?) async -> Bool {
-        await migrationLockedAmount(accountUUID: accountUUID) > Zatoshi.zero
+    /// Final-review fix: the longest `lockMigrationDust` will WAIT for its awaited republish. The
+    /// bound exists for the pathological case only (a wedged SDK read behind a server switch or a
+    /// broadcast): past it the build keeps running detached — cancelling it would leak the
+    /// coalescer's claimed `inFlight` — and the SmartBanner snapshot subscription delivers the
+    /// late publish, the same heal path the coalescer's contended branch already rides.
+    private static let lockRepublishTimeoutNanoseconds: UInt64 = 10_000_000_000
+
+    /// Awaits `operation` for at most `nanoseconds`, then returns while the operation keeps
+    /// running unstructured. Never cancels the operation — see `lockRepublishTimeoutNanoseconds`.
+    private func awaitBounded(nanoseconds: UInt64, _ operation: @escaping @Sendable () async -> Void) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let hasResumed = OSAllocatedUnfairLock(initialState: false)
+            let resumeOnce: @Sendable () -> Void = {
+                let shouldResume = hasResumed.withLock { done -> Bool in
+                    if done {
+                        return false
+                    }
+                    done = true
+                    return true
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+            Task {
+                await operation()
+                resumeOnce()
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                resumeOnce()
+            }
+        }
     }
 
-    /// MOB-1496: the locked remainder amount itself — the account's Orchard
-    /// `PoolBalance.lockedValue`. This is the value the Complete screen's locked confirmation
-    /// shows on re-entry: `migrationSummary().dust` derives from `residualAfterMigration`, which
-    /// re-plans from live *spendable* notes once the migration state is terminal, so it silently
-    /// reads zero after a lock — the locked value is the signal that stays correct. `.zero` on an
-    /// unresolvable account or a failed balance read, same convention as `isMigrationDustLocked`.
-    func migrationLockedAmount(accountUUID: AccountUUID?) async -> Zatoshi {
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return Zatoshi.zero }
+    /// MOB-1749: the residual lane's figures from one `getAccountsBalances` read. `nil` IN resolves
+    /// the selected account; `nil` OUT means the read failed or the account is unresolvable — the
+    /// derivation arms treat that as "not a candidate" and the route's trace names it, so the
+    /// degrade is deliberate and observable rather than a zero that merely looks like an empty
+    /// wallet.
+    func residualBalances(accountUUID: AccountUUID?) async -> MigrationResidualBalances? {
+        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         guard let balances = try? await sdkSynchronizer.getAccountsBalances(),
               let balance = balances[resolvedAccountUUID] else {
-            return Zatoshi.zero
+            return nil
         }
-        return balance.orchardBalance.lockedValue
+        return MigrationResidualBalances(accountBalance: balance)
     }
 
     /// MOB-1509: per-account persisted prefs (mode, manual delivery) — `nil` resolves the selected
@@ -2700,7 +2765,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// screen. `reconcile()` walks EVERY candidate account each time it runs, so the one guaranteed
     /// call this gate allows could land while the user is reviewing a plan for the SAME account that
     /// reached `.complete` — e.g. "Migrate Anyway" (`MigrationCoordFlowCoordinator.migrateAnyway`/
-    /// `MigrationComplete`'s `dustResolution`), whose visibility is driven by `migrationSummary`'s
+    /// `MigrationComplete`'s lock decision), whose visibility is driven by `migrationSummary`'s
     /// OWN independent residual read (`scheduleStorage`/`residualAfterMigration`), NOT by this
     /// method's `remainderPending` flag — so a user can reach and act on that screen (kicking off
     /// its OWN fresh propose) before this evaluation has run even once. If BOTH proposes were in
@@ -3250,7 +3315,41 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID) async {
+    /// `scheduleSnapshotRepublish`'s awaited sibling, for writer edges that must not RETURN until
+    /// the post-write truth is published (the lock). Same no-create rule and the same
+    /// inFlight/dirty state machine: when a build is already in flight this marks dirty and
+    /// returns — the in-flight build's follow-up carries the post-write truth, slightly later.
+    ///
+    /// The wait is exactly ONE build, never the whole drain. That build's balance read happens
+    /// after the write, so it already carries the post-write truth, and any backlog `dirty` picked
+    /// up meanwhile can only produce something fresher — awaiting it would put every unrelated
+    /// writer edge that lands during the build (a sync completing, a poke, a reconcile) onto the
+    /// user's "Locking…" wait, one full build each, with no bound. So the backlog is handed to a
+    /// detached drain and this returns (see `detachingBacklogAfterFirstBuild`).
+    private func republishSnapshotNow(for accountUUID: AccountUUID) async {
+        guard snapshotSubjects.withLock({ $0[accountUUID] != nil }) else { return }
+
+        let shouldStart = snapshotRepublishState.withLock { state -> Bool in
+            if state.inFlight.contains(accountUUID) {
+                state.dirty.insert(accountUUID)
+                return false
+            }
+            state.inFlight.insert(accountUUID)
+            return true
+        }
+        guard shouldStart else { return }
+
+        await republishSnapshotDrainingDirty(for: accountUUID, detachingBacklogAfterFirstBuild: true)
+    }
+
+    /// `detachingBacklogAfterFirstBuild` serves the AWAITED caller (`republishSnapshotNow`): it
+    /// returns after one build instead of draining, so the caller's wait is bounded by its own
+    /// build rather than by however many writer edges happen to land during it. The coalescer's
+    /// invariants are untouched across the handoff — `inFlight` stays claimed (the detached drain
+    /// inherits it, never re-claims it), so a request arriving in the gap still coalesces into
+    /// `dirty` exactly as it would mid-drain. `scheduleSnapshotRepublish` keeps the default and
+    /// drains as it always has.
+    private func republishSnapshotDrainingDirty(for accountUUID: AccountUUID, detachingBacklogAfterFirstBuild: Bool = false) async {
         while true {
             let snapshot = await migrationViewSnapshot(accountUUID: accountUUID)
             publishSnapshot(snapshot, for: accountUUID)
@@ -3263,6 +3362,24 @@ final class MigrationManagerImpl: @unchecked Sendable {
                 return false
             }
             guard buildAgain else { return }
+            if detachingBacklogAfterFirstBuild {
+                // The awaited caller got its post-lock build; the backlog keeps `inFlight` and
+                // drains behind it, exactly as a scheduled republish would.
+                Task { [weak self] in
+                    await self?.republishSnapshotDrainingDirty(for: accountUUID)
+                }
+                return
+            }
+        }
+    }
+
+    /// Test-only visibility into the republish coalescer: `true` when no build is in flight and
+    /// nothing is marked dirty for `accountUUID`. The freshness suite uses it to establish the
+    /// UNCONTENDED precondition deterministically — a timing-based drain proved flaky because a
+    /// build's publish→inFlight-clear tail is observable-late under parallel test load.
+    func isSnapshotRepublishIdle(for accountUUID: AccountUUID) -> Bool {
+        snapshotRepublishState.withLock { state in
+            !state.inFlight.contains(accountUUID) && !state.dirty.contains(accountUUID)
         }
     }
 
@@ -3313,6 +3430,42 @@ enum MigrationDerivations {
     /// run that already exists, and the post-completion re-offer is gated on the engine's own
     /// answer (`isMigrationRemainderPending`) rather than on this balance read.
     static let minimumOfferableOrchardBalance = Zatoshi(1_000_000)
+
+    /// MOB-1749: the smallest Orchard balance the RESIDUAL banner names — 0.0001 ZEC, EXCLUSIVE.
+    /// At the floor itself the balance is exactly a ZIP 317 fee, and below it cannot cover one, so
+    /// there is nothing a screen could offer to do with it. Just above the floor a sweep is only
+    /// nominally possible — the fee eats it, leaving no usable output — so "Migrate anyway" there
+    /// lands on the review screen's existing propose-failure sheet; locking, the other choice the
+    /// screen offers, stays meaningful throughout the range. Pairs with
+    /// `minimumOfferableOrchardBalance` (exclusive on this side too): the residual lane covers
+    /// exactly the gap between the two.
+    static let minimumResidualOrchardBalance = Zatoshi(10_000)
+
+    /// MOB-1749: `.residual(amount:)` when the balances are a residual candidate, else `nil` — the
+    /// answer both "nothing to offer" arms of `bannerVariant` give, replacing their flat `nil`.
+    /// A `nil` input (an unreadable balances read) can never be a candidate.
+    ///
+    /// Wave 2: `isResidualOfferable` is GOAL 1's caught-up gate, applied HERE — the single
+    /// derivation point — so every present and future caller is gated: a residual figure read from
+    /// a wallet that is not caught up is unverified, and naming it would offer a lock/sweep
+    /// decision over a number the app cannot stand behind.
+    static func residualVariant(residual: MigrationResidualBalances?, isResidualOfferable: Bool) -> MigrationBannerVariant? {
+        guard isResidualOfferable, let residual, residual.isResidualCandidate else { return nil }
+        return MigrationBannerVariant.residual(amount: residual.residualOrchard)
+    }
+
+    /// MOB-1749: `.residual(_)` (carrying the figures the decision was made on) when the balances
+    /// are a residual candidate, else `.entry` — the fallback both "nothing running" arms of
+    /// `reentryRoute` share, mirroring `residualVariant` for the banner.
+    ///
+    /// Wave 2: `isResidualOfferable` is GOAL 1's caught-up gate, applied HERE — the single
+    /// derivation point — so every present and future caller is gated: a residual figure read from
+    /// a wallet that is not caught up is unverified, and naming it would offer a lock/sweep
+    /// decision over a number the app cannot stand behind.
+    static func residualRoute(residual: MigrationResidualBalances?, isResidualOfferable: Bool) -> MigrationReentryRoute {
+        guard isResidualOfferable, let residual, residual.isResidualCandidate else { return MigrationReentryRoute.entry }
+        return MigrationReentryRoute.residual(residual)
+    }
 
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
@@ -3368,10 +3521,15 @@ enum MigrationDerivations {
     /// call. `reentryRoute` below keeps its OWN `hasInvalid` parameter — that one genuinely is
     /// consulted (row 1, `.recovery`).
     ///
+    /// MOB-1749: `residual` (spendable/locked/Ironwood figures) feeds the residual arms only; nil
+    /// means the balances read failed and the arms stay quiet.
     static func bannerVariant(
         isIronwoodActivated: Bool,
         state: MigrationState,
         orchardBalance: Zatoshi,
+        residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
+        isResidualOfferable: Bool = true,
         isCompleteAcknowledged: Bool,
         isMigrationRemainderPending: Bool,
         transferRows: [MigrationTransferRow],
@@ -3439,7 +3597,13 @@ enum MigrationDerivations {
         case MigrationState.notStarted:
             // MOB-1630: "below 0.01 → no offer", not "any balance → offer" — see
             // `minimumOfferableOrchardBalance`'s doc for why zero was the wrong floor.
-            return orchardBalance >= minimumOfferableOrchardBalance ? MigrationBannerVariant.required : nil
+            //
+            // MOB-1749: below the floor the answer is no longer a flat nil — a residual on a wallet
+            // that already holds Ironwood gets the lowest-priority residual banner instead.
+            guard orchardBalance >= minimumOfferableOrchardBalance else {
+                return residualVariant(residual: residual, isResidualOfferable: isResidualOfferable)
+            }
+            return MigrationBannerVariant.required
 
         case MigrationState.splitPendingConfirmation:
             // MOB-1513 (B4): a committed run whose preps haven't all mined reads as PROGRESS — the
@@ -3692,7 +3856,12 @@ enum MigrationDerivations {
             // `orchardBalance` predicate needed (the engine already said there's something there).
             // MOB-1511 (W2): round-aware re-offer — the counter already incremented at this very
             // completion transition, so `round` here IS the next run's number.
-            return isMigrationRemainderPending ? MigrationBannerVariant.nextRoundRequired(round: round, totalRounds: totalRounds) : nil
+            guard isMigrationRemainderPending else {
+                // MOB-1749: an acknowledged run with nothing more to plan is the other place a
+                // residual can sit — still the lowest priority, after every run-state arm above.
+                return residualVariant(residual: residual, isResidualOfferable: isResidualOfferable)
+            }
+            return MigrationBannerVariant.nextRoundRequired(round: round, totalRounds: totalRounds)
         }
     }
 
@@ -3712,6 +3881,7 @@ enum MigrationDerivations {
     /// The rule this encodes: THE ROUTE MAY ONLY OFFER AN ACTION THE ENGINE IS ASKING FOR. A clock
     /// reading is evidence about time, not about what the run needs — only `migrationAdvanceStep`
     /// knows that, and now it is the one that decides.
+    // swiftlint:disable:next function_parameter_count
     static func reentryRoute(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -3719,22 +3889,30 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
-        progress: MigrationProgress?
+        isMigrationRemainderPending: Bool,
+        progress: MigrationProgress?,
+        residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
+        isResidualOfferable: Bool = true
     ) -> MigrationReentryRoute {
         reentryRoute(
             isIronwoodActivated: isIronwoodActivated,
             state: state,
-            answer: advanceStep.map(MigrationEngineAnswer.init(step:)),
+            answer: advanceStep.map { MigrationEngineAnswer(step: $0) },
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: isCompleteAcknowledged,
-            progress: progress
+            isMigrationRemainderPending: isMigrationRemainderPending,
+            progress: progress,
+            residual: residual,
+            isResidualOfferable: isResidualOfferable
         )
     }
 
     /// The route table itself, over the app's answer vocabulary — so the `.replan` and
     /// `.reevaluate` arms are reachable (and pinned) before the SDK splits them out of
     /// `.requiresAttention`. See `MigrationEngineAnswer`.
+    // swiftlint:disable:next function_parameter_count
     static func reentryRoute(
         isIronwoodActivated: Bool,
         state: MigrationState,
@@ -3742,7 +3920,11 @@ enum MigrationDerivations {
         hasInvalid: Bool,
         hasOverdue: Bool,
         isCompleteAcknowledged: Bool,
-        progress: MigrationProgress?
+        isMigrationRemainderPending: Bool,
+        progress: MigrationProgress?,
+        residual: MigrationResidualBalances?,
+        // TESTS-ONLY default — production callers must pass isCaughtUpForMigrationOffer().
+        isResidualOfferable: Bool = true
     ) -> MigrationReentryRoute {
         guard isIronwoodActivated else { return MigrationReentryRoute.entry }
 
@@ -3828,7 +4010,22 @@ enum MigrationDerivations {
         }
 
         if case MigrationState.complete = state {
-            return isCompleteAcknowledged ? MigrationReentryRoute.entry : MigrationReentryRoute.complete
+            guard isCompleteAcknowledged else { return MigrationReentryRoute.complete }
+            // MOB-1749 review fix: a pending remainder wins, exactly as it does in `bannerVariant`'s
+            // matching arm — the banner reads "Migration Required / next round", so the tap must
+            // open the fork that starts that round, never the residual screen. Without this guard
+            // the two surfaces disagreed on the same wallet whenever the flag was still latched.
+            guard !isMigrationRemainderPending else { return MigrationReentryRoute.entry }
+            // MOB-1749: an acknowledged run with a residual left behind re-enters on the Remaining
+            // Orchard Funds screen. An UNREADABLE balances read degrades to `.entry` deliberately —
+            // the fork handles a below-floor balance with its propose-failure sheet, and the live
+            // route's trace names the failed read so the degrade is observable.
+            return residualRoute(residual: residual, isResidualOfferable: isResidualOfferable)
+        }
+
+        if case MigrationState.notStarted = state {
+            // MOB-1749: the same residual fallback for a wallet that never ran a migration.
+            return residualRoute(residual: residual, isResidualOfferable: isResidualOfferable)
         }
 
         return MigrationReentryRoute.entry

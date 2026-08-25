@@ -24,7 +24,7 @@ struct MigrationNotifications {
         /// Audit 2026-08-03 (C10): single-flight for BOTH CTAs — two fast taps used to emit two
         /// `.continued` delegates, and each pushed its own Transfer Plan, whose duplicate propose
         /// overwrote the SDK's one-slot plan cache (the `migrationPlanStale` race the plan's own
-        /// `isConfirming` exists to prevent). Mirrors `MigrationComplete.isMigratingAnyway`;
+        /// `isConfirming` exists to prevent). Mirrors `MigrationLockDecision.State.isMigratingAnyway`;
         /// re-armed by `.onAppear` when the user backs onto this screen.
         var isProceeding = false
         var variant = Variant.scheduled

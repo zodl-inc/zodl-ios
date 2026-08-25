@@ -10324,6 +10324,40 @@
         }
       }
     },
+    "migrationBanner.residualInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to decide what happens to it"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toca para decidir qué hacer con él"
+          }
+        }
+      }
+    },
+    "migrationBanner.residualTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ left in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ restantes en Orchard"
+          }
+        }
+      }
+    },
     "migrationBanner.sendingTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12768,6 +12802,125 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Qué sucede a continuación"
+          }
+        }
+      }
+    },
+    "migrationResidual.dustBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ is still in Orchard. Moving an amount this specific would link your Ironwood funds back to your Orchard history. We recommend locking it instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ sigue en Orchard. Mover un monto tan específico vincularía tus fondos de Ironwood con tu historial de Orchard. Te recomendamos bloquearlo."
+          }
+        }
+      }
+    },
+    "migrationResidual.rowIronwood" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En Ironwood"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowLocked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locked in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloqueado en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowOrchard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restante en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowPending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendiente en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A small balance is still sitting in Orchard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todavía queda un pequeño saldo en Orchard."
+          }
+        }
+      }
+    },
+    "migrationResidual.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You've moved to Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te has mudado a Ironwood"
           }
         }
       }

@@ -42,6 +42,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: state,
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: [],
@@ -109,6 +110,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: []
