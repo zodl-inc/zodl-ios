@@ -36,7 +36,7 @@ jobs:
     # no pull_request context, so the guard lets them through.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
