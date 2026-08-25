@@ -311,7 +311,7 @@ enum Voting {
     @discardableResult
     static func delegateSharesWithFallback(
         _ payloads: [SharePayload],
-        roundId: String,
+        proposalId: UInt32,
         votingAPI: VotingAPIClient,
         serverURLs: [String],
         retryDelay: Duration = .seconds(2)
@@ -323,7 +323,7 @@ enum Voting {
         var lastExhaustionError: ShareDelegationError?
         for attempt in 1...3 {
             do {
-                return try await votingAPI.delegateShares(payloads, roundId, serverURLs)
+                return try await votingAPI.delegateShares(payloads, proposalId, serverURLs)
             } catch let error as ShareDelegationError where error == .noReachableVoteServers {
                 lastExhaustionError = error
                 LoggerProxy.warn("delegateShares attempt \(attempt)/3 exhausted vote servers")
@@ -336,7 +336,8 @@ enum Voting {
             }
         }
 
-        throw lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
+        let finalError = lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
+        throw finalError
     }
 }
 
@@ -447,8 +448,37 @@ enum VotingErrorMapper {
         if rawError.contains("No PIR server matches") {
             return String(localizable: .coinVoteStoreUserErrorPirSnapshotMismatch)
         }
+        if rawError.contains("PIR poly_len mismatch") {
+            // 3.0-bump fingerprint (MOB-1678): pir-client 0.4.0-rc.7's connect handshake
+            // refuses when the config's advertised poly_len disagrees with what the PIR
+            // server serves ("PIR poly_len mismatch: expected N, server advertised M") —
+            // a config/server generation split, same class as a snapshot mismatch:
+            // out-of-sync service, retry later once the operators converge.
+            return String(localizable: .coinVoteStoreUserErrorPirSnapshotMismatch)
+        }
+        if rawError.contains("unsupported PIR layout") {
+            // 3.0-bump fingerprint (MOB-1678): local layout validation
+            // (`pir_types::PirLayout::validate_supported`, e.g. "unsupported PIR layout
+            // poly_len 1024") — the config advertises a geometry this build cannot query.
+            // Not transient; the update-the-app remedy of the config-class message is the
+            // closest existing copy.
+            return String(localizable: .coinVoteStoreUserErrorPirEndpointsMissing)
+        }
         if rawError.contains("No PIR endpoints are configured") {
             return String(localizable: .coinVoteStoreUserErrorPirEndpointsMissing)
+        }
+        if rawError.contains("does not match its synced vote-tree leaf") {
+            // 3.0-bump fingerprint (MOB-1678): `VoteTreeSync::sync` now verifies confirmed
+            // VAN entries against the synced tree; a mismatch resets the round's tree client
+            // so the next attempt re-syncs from scratch — the existing retryable
+            // out-of-sync copy fits exactly.
+            return String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight)
+        }
+        if rawError.contains("is absent from the synced vote tree") {
+            // 3.0-bump fingerprint (MOB-1678): a confirmed delegation's position hasn't
+            // appeared in the synced vote tree yet; incremental sync state is kept and the
+            // next sync resumes — the wait-for-confirmation copy matches the semantics.
+            return String(localizable: .coinVoteStoreUserErrorCommitmentTreeNotGrown)
         }
         if rawError.contains("Commitment tree did not grow") {
             return String(localizable: .coinVoteStoreUserErrorCommitmentTreeNotGrown)
@@ -461,6 +491,16 @@ enum VotingErrorMapper {
         }
         if rawError.contains("delegation bundle build failed") || rawError.contains("create_proof failed") {
             return String(localizable: .coinVoteStoreUserErrorProofGenerationFailed)
+        }
+        if rawError.contains("refusing to overwrite") {
+            // Triage fingerprint for finding #10 (CHP.md): `zcash_voting` stores
+            // `pczt_sighash` and its sibling setup blobs write-once per (round, wallet,
+            // bundle), and randomized re-builds can never match — this guard firing means
+            // a rebuild ran over persisted setup. The delegation pipeline now resumes
+            // from persisted setup instead of rebuilding, so this path is near-unreachable;
+            // if it surfaces anyway, retrying resumes correctly, so map it onto the
+            // existing retryable out-of-sync message rather than leaking crate internals.
+            return String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight)
         }
         if rawError.contains("NoTreeState") || rawError.contains("no tree state") {
             return String(localizable: .coinVoteStoreUserErrorNoTreeState)

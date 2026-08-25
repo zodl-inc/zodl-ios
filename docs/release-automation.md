@@ -6,8 +6,6 @@ signing keys are stored in the repo or anywhere new**. A fail-closed *preflight*
 reconciles what you ask for against git, the project, and App Store Connect, and
 refuses to build on any mismatch.
 
-For the design rationale and the full check list see the
-[spec](superpowers/specs/2026-06-25-local-fastlane-release-automation-design.md).
 `fastlane/README.md` is the one-screen quick reference.
 
 ## How it fits together
@@ -149,9 +147,31 @@ build number:
 ```
 
 `appstore` is its own App Store Connect app, so its build numbers are a separate
-sequence — start from wherever that app left off. (The build then waits for App
-Store Connect processing; submitting it for review is still done in App Store
-Connect.)
+sequence — start from wherever that app left off.
+
+#### Submitting to App Review with `--submit-review`
+
+After the build is uploaded and App Store Connect has processed it, you can submit it for review:
+
+With `--ref` (build in one go, then submit):
+```bash
+./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1 --submit-review
+```
+
+Without `--ref` (submit an already-uploaded build):
+```bash
+./Scripts/release.sh --variant appstore --version 3.8.0 --build 1 --submit-review
+```
+
+Submitting to App Review:
+- Creates the App Store version record if missing, or adopts an existing one in an editable state (PREPARE_FOR_SUBMISSION, developer-rejected, rejected, metadata-rejected, invalid-binary), renaming it if needed
+- Copies promotional text from the live version into any localization that doesn't have one yet (manually entered text is kept, never overwritten)
+- Writes What's New for every enabled App Store localization from `secant/Resources/WhatsNew/whatsNew*.json` in your **current checkout** (the entry matching `--version` — run `/update-whatsnew` first and commit; note this uses your local working tree, not the ref being built)
+- Attaches the requested build, replacing a wrong one
+- Submits with manual release — you still press Release in App Store Connect after approval
+- Reads back promotional text and What's New per locale from App Store Connect and warns loudly if promotional text is empty where a copy was planned (this is **non-fatal and fixable in App Store Connect without a new review** — edit the missing text directly in ASC and save)
+
+The submission fails if: a version is already submitted/in review (cancel in App Store Connect first), a version is approved-awaiting-release (release it first), the requested version is already live, or any enabled App Store localization lacks a What's New entry for the version.
 
 ## Always check first with `--dry-run`
 
@@ -169,17 +189,20 @@ is lower than the variant's latest on App Store Connect; the ref isn't on
 `.xcode-version`; or no distribution signing identity is present. It *warns* (but
 proceeds) on a build-number gap or an uncommitted working tree.
 
+With `--submit-review`, the dry run also verifies the build's existence and processing state on App Store Connect, the version record's state, and that every enabled App Store localization has a What's New entry for the version.
+
 ## Command reference
 
 ```
 Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [options]
-  --variant     internal | testnet | appstore | internal-testnet
-  --ref         branch, tag, or commit to build (no checkout needed)
-  --version     marketing version you intend to ship (X.Y.Z)
-  --build       build number (integer)
-  --dry-run     run checks, then stop before building
-  --yes         skip the confirmation prompt
-  --skip-tests  skip the unit-test step
+  --variant       internal | testnet | appstore | internal-testnet
+  --ref           branch, tag, or commit to build (optional with --submit-review)
+  --version       marketing version you intend to ship (X.Y.Z)
+  --build         build number (integer)
+  --dry-run       run checks, then stop before building
+  --yes           skip the confirmation prompt
+  --skip-tests    skip the unit-test step
+  --submit-review submit to App Review after upload (appstore only)
   -h, --help
 
 Scripts/bump.sh --version <X.Y.Z> --build <n>
@@ -190,7 +213,7 @@ Scripts/bump.sh --version <X.Y.Z> --build <n>
 | Message | Fix |
 |---|---|
 | `version … does not match project MARKETING_VERSION …` | Run `bump` first, or pass the version the project is actually at. |
-| `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. |
+| `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. With `--submit-review`, you can instead drop `--ref` to submit that already-uploaded build. |
 | `ref is not on origin` | `git push` the branch or commit first. |
 | `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |
 | `PartnerKeys.plist is missing or invalid` | Place a valid plist at `secant/Resources/PartnerKeys.plist` (see `Scripts/validate-partner-keys.sh`). |
@@ -198,6 +221,12 @@ Scripts/bump.sh --version <X.Y.Z> --build <n>
 | `no distribution signing identity` | Ensure your Apple Distribution certificate is in the keychain — the same setup that lets you Archive manually. |
 | `Run through bundler …` | Use `./Scripts/release.sh` / `./Scripts/bump.sh` (or `bundle exec fastlane …`), not bare `fastlane`. |
 | TestFlight build stuck on *Missing Compliance* | Set `ITSAppUsesNonExemptEncryption` so the build clears export compliance automatically. |
+| `build … not found on App Store Connect — pass --ref` | The build was never uploaded: add `--ref` to build it, or fix `--build`. |
+| `build … is still processing` | App Store Connect is still processing the upload — retry in a few minutes. |
+| `already submitted for review` | Cancel the submission in App Store Connect, or wait for the review to finish. |
+| `approved and awaiting release` | Release the approved version in App Store Connect first. |
+| `whatsNew….json has no entry for version …` | Run `/update-whatsnew` for this version and commit the result. |
+| `version … is already live` | That version shipped — bump with `Scripts/bump.sh` and build the next one. |
 
 ## Tests and project files
 

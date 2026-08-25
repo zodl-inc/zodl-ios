@@ -159,9 +159,6 @@ extension MigrationManagerClient: DependencyKey {
                 )
             },
             migrationChainClock: { await impl.migrationChainClock(accountUUID: $0) },
-            shouldWarnBeforeManualSend: { accountUUID, proposal in
-                await impl.shouldWarnBeforeManualSend(accountUUID: accountUUID, proposal: proposal)
-            },
             stateEvents: { accountUUID in impl.stateEvents(accountUUID: accountUUID) },
             migrationSnapshotEvents: { accountUUID in impl.migrationSnapshotEvents(accountUUID: accountUUID) },
             currentMigrationSnapshot: { accountUUID in impl.currentMigrationSnapshot(accountUUID: accountUUID) },
@@ -2387,28 +2384,6 @@ final class MigrationManagerImpl: @unchecked Sendable {
         return anyRowClaimedProvable
     }
 
-    /// A12/B6 — see `MigrationManagerClient.shouldWarnBeforeManualSend`. A dumb assembler: every
-    /// decision (proposal truth vs. the nil-proposal fallback) lives in `MigrationManualSendRisk`,
-    /// this just gathers the three inputs it needs — `proposal?.spendsLegacyOrchardFunds` passes
-    /// straight through as `proposalSpendsOrchard`.
-    ///
-    /// Every read degrades to "no warning": a migration read failing must not block an ordinary
-    /// send, which is a different and much worse failure than missing one advisory sheet. The
-    /// orchard-balance read always runs, proposal or not — the predicate only consults it on the
-    /// nil-proposal path, but it's cheap and keeping it unconditional here avoids this assembler
-    /// branching on which inputs the pure function will actually use.
-    func shouldWarnBeforeManualSend(accountUUID: AccountUUID?, proposal: Proposal?) async -> Bool {
-        guard isIronwoodActivated() else { return false }
-        guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return false }
-        guard let state = await migrationState(accountUUID: resolvedAccountUUID) else { return false }
-
-        return MigrationManualSendRisk.shouldWarn(
-            hasActiveRun: MigrationManualSendRisk.isActiveRun(state),
-            proposalSpendsOrchard: proposal?.spendsLegacyOrchardFunds,
-            hasUnmigratedOrchard: await orchardBalanceToMigrate(accountUUID: resolvedAccountUUID) > Zatoshi.zero
-        )
-    }
-
     /// See `MigrationManagerClient.migrationChainClock` — the public face of `chainClock`, with the
     /// selected-account fallback every `nil`-accepting member here uses.
     func migrationChainClock(accountUUID: AccountUUID?) async -> MigrationChainClock {
@@ -3328,6 +3303,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
 /// `MigrationAttentionReason`, `MigrationTransferRow`) — so `MigrationManagerTests` can exercise
 /// every row directly.
 enum MigrationDerivations {
+    /// MOB-1630: the smallest Orchard balance a fresh migration is offered for — ZIP 318's
+    /// `MAX_RESIDUAL_VALUE` (0.01 ZEC/TAZ), the minimum migratable denomination. Below it the
+    /// engine can never form a single migratable note, so `proposeMigrationTransfers` answers an
+    /// EMPTY schedule (its "nothing to migrate") and an offer could only lead to a dead end: a
+    /// permanent "Migration Required" banner whose tap ends on the propose-failure sheet.
+    ///
+    /// The floor guards the OFFER, deliberately not the run: every other banner arm describes a
+    /// run that already exists, and the post-completion re-offer is gated on the engine's own
+    /// answer (`isMigrationRemainderPending`) rather than on this balance read.
+    static let minimumOfferableOrchardBalance = Zatoshi(1_000_000)
+
     /// MOB-1496 (W5): deterministic account set for the migration BG session tree and re-arm
     /// scheduler — selected account first (when present), then the rest of the wallet's accounts in
     /// their stored order, deduplicated. Shared by `Root.migrationBackgroundSessionEffect` and
@@ -3451,7 +3437,9 @@ enum MigrationDerivations {
 
         switch state {
         case MigrationState.notStarted:
-            return orchardBalance > Zatoshi.zero ? MigrationBannerVariant.required : nil
+            // MOB-1630: "below 0.01 → no offer", not "any balance → offer" — see
+            // `minimumOfferableOrchardBalance`'s doc for why zero was the wrong floor.
+            return orchardBalance >= minimumOfferableOrchardBalance ? MigrationBannerVariant.required : nil
 
         case MigrationState.splitPendingConfirmation:
             // MOB-1513 (B4): a committed run whose preps haven't all mined reads as PROGRESS — the

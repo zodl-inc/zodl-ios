@@ -6,6 +6,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 import XCTestDynamicOverlay
 
 extension WalletStorageClient {
@@ -39,6 +40,6 @@ extension WalletStorageClient {
         importIronwoodAnnouncementFlag: { _ in },
         exportIronwoodAnnouncementFlag: { true },
         importVotingHotkey: { _, _ in },
-        exportVotingHotkey: { _ in .init(seedPhrase: .init(""), version: 0) }
+        exportVotingHotkey: { _ in .init(storedSecret: .init(Data()), version: 0) }
     )
 }

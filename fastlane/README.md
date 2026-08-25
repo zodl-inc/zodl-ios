@@ -29,11 +29,27 @@ Dry run (all checks, no build):
 
     ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --dry-run
 
+Build, upload, and submit to App Review in one go (`appstore` only):
+
+    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --submit-review
+
+Submit a build that is already on App Store Connect (omit `--ref`):
+
+    ./Scripts/release.sh --variant appstore --version 3.8.0 --build 3 --submit-review
+
+Submitting creates (or adopts) the App Store version record, copies promotional
+text from the live version into any localization that doesn't have one yet,
+writes What's New for every enabled localization from
+`secant/Resources/WhatsNew/whatsNew*.json` (the entry matching `--version`),
+attaches the build (replacing a wrong one), and submits with manual release —
+you still press Release in App Store Connect after approval. It refuses to run
+when a version is already in review or approved-but-unreleased.
+
 Bump the marketing version + build (the deliberate version-change step, run in `main`):
 
     ./Scripts/bump.sh --version 3.8.0 --build 1
 
-Other flags: `-y` / `--yes` (skip confirmation), `--skip-tests`, `--help`.
+Other flags: `-y` / `--yes` (skip confirmation), `--skip-tests`, `--submit-review` (`appstore` only), `--help`.
 
 ## What it checks before building
 

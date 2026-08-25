@@ -55,6 +55,7 @@ struct Root {
         /// `.fetchedTransactions` for the whole sync. The `.fetchedTransactions` provenance guard is
         /// what actually keeps a stale or wrong-account payload from corrupting `state.transactions`.
         var CancelTransactionsFetchId = UUID()
+        var CancelPendingTxPollId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()

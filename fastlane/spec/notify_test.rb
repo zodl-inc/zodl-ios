@@ -36,6 +36,14 @@ class ZodlNotifyTest < Minitest::Test
     assert_equal "Ping", fields[:sound]
   end
 
+  def test_payload_submit_success_uses_ping_and_app_review_message
+    fields = Zodl::Notify.payload(event: :submit_success, variants: ["appstore"], version: "3.8.0", build: 5)
+    assert_equal "ZODL release ✅", fields[:title]
+    assert_equal "appstore 3.8.0 (5)", fields[:subtitle]
+    assert_equal "Submitted to App Review", fields[:message]
+    assert_equal "Ping", fields[:sound]
+  end
+
   def test_payload_failure_uses_basso_and_first_line_of_reason
     fields = Zodl::Notify.payload(
       event: :failure, variants: ["appstore"], version: "3.8.0", build: 3,
@@ -95,6 +103,16 @@ class ZodlNotifyTest < Minitest::Test
     assert result
     assert_equal "ZODL release ✅", captured[:title]
     assert_equal "Ping", captured[:sound]
+  end
+
+  def test_post_submit_success_invokes_runner_with_correct_payload
+    captured = nil
+    result = Zodl::Notify.post(
+      event: :submit_success, variants: ["appstore"], version: "3.8.0", build: 5,
+      runner: ->(fields) { captured = fields }
+    )
+    assert result
+    assert_equal "Submitted to App Review", captured[:message]
   end
 
   def test_post_skips_delivery_when_disabled

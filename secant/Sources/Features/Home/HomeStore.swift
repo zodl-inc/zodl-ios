@@ -145,14 +145,17 @@ struct Home {
                 state.isRateEducationEnabled = userStoredPreferences.exchangeRate() == nil
                 return .merge(
                     .publisher {
+                        // Filter BEFORE throttling: throttling the raw stream with `latest: true`
+                        // lets an unrelated event in the same window replace `foundTransactions`
+                        // as "latest" and silently drop the refresh trigger.
                         sdkSynchronizer.eventStream()
-                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .compactMap {
                                 if case SynchronizerEvent.foundTransactions = $0 {
                                     return Home.Action.foundTransactions
                                 }
                                 return nil
                             }
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                     }
                     .cancellable(id: state.CancelEventId, cancelInFlight: true),
                     .send(.smartBanner(.onAppear)),

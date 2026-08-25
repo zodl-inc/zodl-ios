@@ -255,14 +255,18 @@ struct VotingDbState: Equatable, Sendable {
 // MARK: - Hotkey
 
 struct VotingHotkey: Equatable, Sendable {
-    let secretKey: Data
-    let publicKey: Data
-    let address: String
+    /// The material to persist via `WalletStorage.importVotingHotkey(_:accountId:)`. Treat it
+    /// as key material, not as an identifier.
+    let storedSecret: Data
+    /// Raw Orchard address bytes for the hotkey, derived from `storedSecret`.
+    let rawOrchardAddress: Data
+    /// Address index the hotkey's Orchard address was derived at.
+    let addressIndex: UInt32
 
-    init(secretKey: Data, publicKey: Data, address: String) {
-        self.secretKey = secretKey
-        self.publicKey = publicKey
-        self.address = address
+    init(storedSecret: Data, rawOrchardAddress: Data, addressIndex: UInt32) {
+        self.storedSecret = storedSecret
+        self.rawOrchardAddress = rawOrchardAddress
+        self.addressIndex = addressIndex
     }
 }
 
@@ -410,27 +414,36 @@ struct DelegationAction: Equatable, Sendable {
 struct DelegationRegistration: Equatable, Sendable {
     let rk: Data // swiftlint:disable:this identifier_name
     let spendAuthSig: Data
-    let signedNoteNullifier: Data
-    let cmxNew: Data
-    let vanCmx: Data
-    let govNullifiers: [Data]
-    let proof: Data
-    let voteRoundId: Data
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
+    let tx1Effects: String
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
+    let signedNoteNullifier: String
+    let cmxNew: String
+    let vanCmx: String
+    let govNullifiers: [String]
+    let proof: String
+    /// Base64, verbatim from `VotingDelegationSubmission` — never compared as bytes, only
+    /// ever placed on the wire, so it is never decoded.
+    let voteRoundId: String
     let sighash: Data
 
     init(
         rk: Data, // swiftlint:disable:this identifier_name
         spendAuthSig: Data,
-        signedNoteNullifier: Data,
-        cmxNew: Data,
-        vanCmx: Data,
-        govNullifiers: [Data],
-        proof: Data,
-        voteRoundId: Data,
+        tx1Effects: String,
+        signedNoteNullifier: String,
+        cmxNew: String,
+        vanCmx: String,
+        govNullifiers: [String],
+        proof: String,
+        voteRoundId: String,
         sighash: Data
     ) {
         self.rk = rk
         self.spendAuthSig = spendAuthSig
+        self.tx1Effects = tx1Effects
         self.signedNoteNullifier = signedNoteNullifier
         self.cmxNew = cmxNew
         self.vanCmx = vanCmx
@@ -515,35 +528,20 @@ struct VoteCommitmentBundle: Equatable, Sendable, Codable {
 }
 
 /// Payload sent to helper servers for share delegation (not directly to chain).
+///
+/// Wraps `zcash_voting`'s own wire JSON for one share — obtained from
+/// `VotingCryptoClient.recoverWireJson(...)` — verbatim. Every field the old hand-built dialect
+/// carried (`sharesHash`, `allEncShares`, `shareComms`, `primaryBlind`, the encoded `submitAt`)
+/// is already inside `wireJson`; the crate produced and encoded it, so nothing here re-shapes
+/// it. `shareIndex` is kept alongside only for local bookkeeping (matching a POST's outcome back
+/// to the share it was for) — it is never written onto the wire a second time.
 struct SharePayload: Equatable, Sendable {
-    let sharesHash: Data
-    let proposalId: UInt32
-    let voteDecision: UInt32
-    let encShare: EncryptedShare
-    let treePosition: UInt64
-    /// All encrypted shares for this vote (needed by helper servers for verification).
-    let allEncShares: [EncryptedShare]
-    /// Pre-computed per-share Poseidon commitments (N x 32 bytes).
-    let shareComms: [Data]
-    /// Blind factor for this specific share (32 bytes).
-    let primaryBlind: Data
-    /// Unix seconds at which the helper should submit the share; 0 = immediate (last-moment).
-    var submitAt: UInt64
+    let wireJson: String
+    let shareIndex: UInt32
 
-    init(
-        sharesHash: Data, proposalId: UInt32, voteDecision: UInt32, encShare: EncryptedShare,
-        treePosition: UInt64, allEncShares: [EncryptedShare] = [], shareComms: [Data] = [],
-        primaryBlind: Data = Data(), submitAt: UInt64 = 0
-    ) {
-        self.sharesHash = sharesHash
-        self.proposalId = proposalId
-        self.voteDecision = voteDecision
-        self.encShare = encShare
-        self.treePosition = treePosition
-        self.allEncShares = allEncShares
-        self.shareComms = shareComms
-        self.primaryBlind = primaryBlind
-        self.submitAt = submitAt
+    init(wireJson: String, shareIndex: UInt32) {
+        self.wireJson = wireJson
+        self.shareIndex = shareIndex
     }
 }
 

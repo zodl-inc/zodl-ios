@@ -1,19 +1,20 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    " %@" : {},
-    "#%@" : {},
-    "%" : {},
-    "%@" : {},
-    "%@ %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ %2$@"
-          }
-        }
-      }
+    " %@" : {
+
+    },
+    "#%@" : {
+
+    },
+    "%" : {
+
+    },
+    "%@" : {
+
+    },
+    "%@ · " : {
+
     },
     "%@ / %@" : {
       "localizations" : {
@@ -25,9 +26,22 @@
         }
       }
     },
-    "%@ ZEC" : {},
-    "%@ · " : {},
-    "%@%%" : {},
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "%@ ZEC" : {
+
+    },
+    "%@..." : {
+
+    },
     "%@%@" : {
       "localizations" : {
         "en" : {
@@ -38,14 +52,15 @@
         }
       }
     },
-    "%@..." : {},
-    "Error: %@" : {},
-    "Zcash" : {
+    "%@%%" : {
+
+    },
+    "~%@ %@" : {
       "localizations" : {
-        "es" : {
+        "en" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zcash"
+            "state" : "new",
+            "value" : "~%1$@ %2$@"
           }
         }
       }
@@ -784,7 +799,9 @@
         }
       }
     },
-    "autoShieldingHelpContent" : {},
+    "autoShieldingHelpContent" : {
+
+    },
     "balance.availableTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2839,6 +2856,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Authorizing..."
+          }
+        }
+      }
+    },
+    "coinVote.confirmSubmission.progressExplainer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This can take a few minutes. Wallets with more voting weight take longer to process."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto puede tardar unos minutos. Las billeteras con más peso de votación tardan más en procesarse."
           }
         }
       }
@@ -7275,6 +7309,9 @@
         }
       }
     },
+    "Error: %@" : {
+
+    },
     "errorPage.action.contactSupport" : {
       "comment" : "MARK: - Error Pages",
       "extractionState" : "manual",
@@ -7448,23 +7485,6 @@
         }
       }
     },
-    "filter.previous30days" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Previous 30 days"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Últimos 30 días"
-          }
-        }
-      }
-    },
     "filter.previous7days" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7478,6 +7498,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Últimos 7 días"
+          }
+        }
+      }
+    },
+    "filter.previous30days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous 30 days"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Últimos 30 días"
           }
         }
       }
@@ -8938,23 +8975,6 @@
         }
       }
     },
-    "keystone.addHWWallet.connectNew" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connect new device"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conectar nuevo dispositivo"
-          }
-        }
-      }
-    },
     "keystone.addHWWallet.connected" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8985,6 +9005,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Tu billetera de hardware Keystone se ha conectado correctamente. Ahora puedes firmar transacciones de forma inalámbrica."
+          }
+        }
+      }
+    },
+    "keystone.addHWWallet.connectNew" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect new device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conectar nuevo dispositivo"
           }
         }
       }
@@ -9335,13 +9372,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Get 5%% off airgapped hardware wallet. Promo code \"Zodl\"."
+            "value" : "Get 5% off airgapped hardware wallet. Promo code \"Zodl\"."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Obtén un 5%% de descuento en una billetera de hardware aislada. Código promocional: 'Zodl'."
+            "state" : "needs_review",
+            "value" : "Obtén un 5% de descuento en una billetera de hardware aislada. Código promocional: 'Zodl'."
           }
         }
       }
@@ -10353,6 +10390,40 @@
         }
       }
     },
+    "migrationComplete.lockedBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ is now locked in Orchard. Locking keeps this amount unspendable to protect your privacy."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ ahora está bloqueado en Orchard. El bloqueo mantiene este monto no gastable para proteger tu privacidad."
+          }
+        }
+      }
+    },
+    "migrationComplete.lockedTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orchard balance locked"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo de Orchard bloqueado"
+          }
+        }
+      }
+    },
     "migrationComplete.lockExplainerBody1" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10417,40 +10488,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "¿Qué hace el bloqueo?"
-          }
-        }
-      }
-    },
-    "migrationComplete.lockedBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ is now locked in Orchard. Locking keeps this amount unspendable to protect your privacy."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%1$@ ahora está bloqueado en Orchard. El bloqueo mantiene este monto no gastable para proteger tu privacidad."
-          }
-        }
-      }
-    },
-    "migrationComplete.lockedTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Orchard balance locked"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Saldo de Orchard bloqueado"
           }
         }
       }
@@ -11900,23 +11937,6 @@
         }
       }
     },
-    "migrationPlan.etaRecomputing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recomputing ETA…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Recalculando la hora estimada…"
-          }
-        }
-      }
-    },
     "migrationPlan.etaMins" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11947,6 +11967,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "en ~%1$lld min"
+          }
+        }
+      }
+    },
+    "migrationPlan.etaRecomputing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recomputing ETA…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recalculando la hora estimada…"
           }
         }
       }
@@ -12699,6 +12736,193 @@
         }
       }
     },
+    "migrationRestart.confirmCta" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm restart"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar reinicio"
+          }
+        }
+      }
+    },
+    "migrationRestart.confirmDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A new plan will be created for your remaining %1$@. The %2$lld transfers already completed stay as they are and won't be repeated."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se creará un nuevo plan para los %1$@ que te quedan. Las %2$lld transferencias ya completadas se mantienen como están y no se repetirán."
+          }
+        }
+      }
+    },
+    "migrationRestart.confirmTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart this migration?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Reiniciar esta migración?"
+          }
+        }
+      }
+    },
+    "migrationRestart.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If your migration looks stuck, you can restart it safely. This creates a new plan for your remaining funds. Completed transfers are not affected."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si tu migración parece atascada, puedes reiniciarla de forma segura. Esto crea un nuevo plan para los fondos que te quedan. Las transferencias completadas no se ven afectadas."
+          }
+        }
+      }
+    },
+    "migrationRestart.migrated" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Migrated"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Migrado"
+          }
+        }
+      }
+    },
+    "migrationRestart.migratedValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld transfers"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld de %2$lld transferencias"
+          }
+        }
+      }
+    },
+    "migrationRestart.remainingBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining balance"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo restante"
+          }
+        }
+      }
+    },
+    "migrationRestart.remainingToMigrate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining to migrate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendiente de migrar"
+          }
+        }
+      }
+    },
+    "migrationRestart.supportNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If restarting doesn't resolve the issue, please reach out to Zodl Support via Send Feedback."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si reiniciar no resuelve el problema, ponte en contacto con el soporte de Zodl mediante Enviar comentarios."
+          }
+        }
+      }
+    },
+    "migrationRestart.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart Migration"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar migración"
+          }
+        }
+      }
+    },
+    "migrationRestart.warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This cancels the current migration plan. It cannot be undone once confirmed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto cancela el plan de migración actual. No se puede deshacer una vez confirmado."
+          }
+        }
+      }
+    },
     "migrationReview.descImmediate" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12899,193 +13123,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Programando…"
-          }
-        }
-      }
-    },
-    "migrationRestart.confirmCta" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Confirm restart"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Confirmar reinicio"
-          }
-        }
-      }
-    },
-    "migrationRestart.confirmDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A new plan will be created for your remaining %1$@. The %2$lld transfers already completed stay as they are and won't be repeated."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se creará un nuevo plan para los %1$@ que te quedan. Las %2$lld transferencias ya completadas se mantienen como están y no se repetirán."
-          }
-        }
-      }
-    },
-    "migrationRestart.confirmTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restart this migration?"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "¿Reiniciar esta migración?"
-          }
-        }
-      }
-    },
-    "migrationRestart.desc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "If your migration looks stuck, you can restart it safely. This creates a new plan for your remaining funds. Completed transfers are not affected."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Si tu migración parece atascada, puedes reiniciarla de forma segura. Esto crea un nuevo plan para los fondos que te quedan. Las transferencias completadas no se ven afectadas."
-          }
-        }
-      }
-    },
-    "migrationRestart.migrated" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Migrated"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Migrado"
-          }
-        }
-      }
-    },
-    "migrationRestart.migratedValue" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld of %2$lld transfers"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%1$lld de %2$lld transferencias"
-          }
-        }
-      }
-    },
-    "migrationRestart.remainingBalance" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Remaining balance"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Saldo restante"
-          }
-        }
-      }
-    },
-    "migrationRestart.remainingToMigrate" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Remaining to migrate"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Pendiente de migrar"
-          }
-        }
-      }
-    },
-    "migrationRestart.supportNote" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "If restarting doesn't resolve the issue, please reach out to Zodl Support via Send Feedback."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Si reiniciar no resuelve el problema, ponte en contacto con el soporte de Zodl mediante Enviar comentarios."
-          }
-        }
-      }
-    },
-    "migrationRestart.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restart Migration"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Reiniciar migración"
-          }
-        }
-      }
-    },
-    "migrationRestart.warning" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This cancels the current migration plan. It cannot be undone once confirmed."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Esto cancela el plan de migración actual. No se puede deshacer una vez confirmado."
           }
         }
       }
@@ -15547,23 +15584,6 @@
         }
       }
     },
-    "restoreWallet.birthday.estimateDate.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "First Wallet Transaction"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Primera Transacción de la Billetera"
-          }
-        }
-      }
-    },
     "restoreWallet.birthday.estimated.info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15594,6 +15614,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Altura de Bloque Estimada"
+          }
+        }
+      }
+    },
+    "restoreWallet.birthday.estimateDate.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First Wallet Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Primera Transacción de la Billetera"
           }
         }
       }
@@ -16753,74 +16790,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mensaje"
-          }
-        }
-      }
-    },
-    "send.orchardDisclaimerBody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en la cadena."
-          }
-        }
-      }
-    },
-    "send.orchardDisclaimerTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This send requires spending Orchard funds"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Este envío requiere gastar fondos de Orchard"
-          }
-        }
-      }
-    },
-    "send.orchardWarning.body" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Te recomendamos migrar tus fondos primero para evitar exponer el importe de la transacción en la cadena."
-          }
-        }
-      }
-    },
-    "send.orchardWarning.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This send requires spending Orchard funds"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Este envío requiere gastar fondos de Orchard"
           }
         }
       }
@@ -18220,6 +18189,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fondos insuficientes"
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue anyway"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar de todos modos"
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.msg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We recommend migrating your funds first to avoid leaking the transaction amount on-chain."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te recomendamos migrar tus fondos primero para evitar revelar el monto de la transacción en la cadena."
+          }
+        }
+      }
+    },
+    "sheet.orchardSpend.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This send requires spending Orchard funds"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este envío requiere gastar fondos de Orchard"
           }
         }
       }
@@ -20777,6 +20797,23 @@
         }
       }
     },
+    "swapAndPay.refundedAmount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded amount"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monto reembolsado"
+          }
+        }
+      }
+    },
     "swapAndPay.refundInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20807,23 +20844,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fondos devueltos"
-          }
-        }
-      }
-    },
-    "swapAndPay.refundedAmount" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refunded amount"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monto reembolsado"
           }
         }
       }
@@ -21508,23 +21528,6 @@
         }
       }
     },
-    "swapStatus.swapRefunded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Swap Refunded"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Swap reembolsado"
-          }
-        }
-      }
-    },
     "swapStatus.swapped" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21555,6 +21558,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Haciendo swap"
+          }
+        }
+      }
+    },
+    "swapStatus.swapRefunded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Swap Refunded"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Swap reembolsado"
           }
         }
       }
@@ -23590,6 +23610,16 @@
         }
       }
     },
+    "Zcash" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zcash"
+          }
+        }
+      }
+    },
     "zecKeyboard.invalid" : {
       "comment" : "MARK: - ZEC Keyboard",
       "extractionState" : "manual",
@@ -23604,16 +23634,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Este monto de transacción no es válido."
-          }
-        }
-      }
-    },
-    "~%@ %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "~%1$@ %2$@"
           }
         }
       }

@@ -22,18 +22,18 @@ runs:
       with:
         repository: zodl-inc/zodl-swift-wallet-sdk
         ref: ${{ inputs.sdk-ref }}
-        path: .ci/zcash-swift-wallet-sdk
+        path: .ci/zodl-swift-wallet-sdk
 
     - name: Restore SDK FFI
       id: ffi-cache
       uses: actions/cache/restore@v5
       with:
-        path: .ci/zcash-swift-wallet-sdk/BuildSupport/products/libzcashlc.xcframework
+        path: .ci/zodl-swift-wallet-sdk/BuildSupport/products/libzcashlc.xcframework
         key: ${{ runner.os }}-${{ runner.arch }}-sdk-ios-simulator-ffi-${{ inputs.sdk-ref }}
 
     - name: Authorize Slipstream checkout
       if: steps.ffi-cache.outputs.cache-hit != 'true'
-      uses: ./.ci/zcash-swift-wallet-sdk/.github/actions/authorize-slipstream
+      uses: ./.ci/zodl-swift-wallet-sdk/.github/actions/authorize-slipstream
       with:
         app-id: ${{ inputs.slipstream-app-id }}
         app-private-key: ${{ inputs.slipstream-app-private-key }}
@@ -48,7 +48,7 @@ runs:
     - name: Build SDK FFI
       if: steps.ffi-cache.outputs.cache-hit != 'true'
       shell: bash
-      working-directory: .ci/zcash-swift-wallet-sdk
+      working-directory: .ci/zodl-swift-wallet-sdk
       run: |
         make -C BuildSupport ios-simulator
         rm -rf BuildSupport/products/libzcashlc.xcframework
@@ -61,10 +61,10 @@ runs:
       continue-on-error: true
       uses: actions/cache/save@v5
       with:
-        path: .ci/zcash-swift-wallet-sdk/BuildSupport/products/libzcashlc.xcframework
+        path: .ci/zodl-swift-wallet-sdk/BuildSupport/products/libzcashlc.xcframework
         key: ${{ steps.ffi-cache.outputs.cache-primary-key }}
 
     - name: Use matching local FFI
       shell: bash
-      working-directory: .ci/zcash-swift-wallet-sdk
+      working-directory: .ci/zodl-swift-wallet-sdk
       run: make configure-local-ffi

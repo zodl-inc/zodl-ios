@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		343DCB8E3019388D00B5E65C /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 343DCB8D3019388D00B5E65C /* ZcashLightClientKit */; };
-		343DCB93301938A200B5E65C /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 343DCB92301938A200B5E65C /* ZcashLightClientKit */; };
+		3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FB303C3A54005A09AD /* ZcashLightClientKit */; };
+		3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */; };
 		34982B6E3014A1C100FF9205 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34982B6D3014A1C100FF9205 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
@@ -167,7 +167,7 @@
 				34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
-				343DCB93301938A200B5E65C /* ZcashLightClientKit in Frameworks */,
+				3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
@@ -181,7 +181,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				343DCB8E3019388D00B5E65C /* ZcashLightClientKit in Frameworks */,
+				3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */,
 				34AA77812F8582EB00D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77492F85814C00D244E2 /* URLRouting in Frameworks */,
 				34AA77292F857E3400D244E2 /* XCTestDynamicOverlay in Frameworks */,
@@ -340,7 +340,7 @@
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
 				34B967642F8CC48700823B20 /* Atomics */,
-				343DCB92301938A200B5E65C /* ZcashLightClientKit */,
+				3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */,
 			);
 			productName = "zodl-production";
 			productReference = 9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */;
@@ -381,7 +381,7 @@
 				34AA77BD2F85861E00D244E2 /* UInt128 */,
 				34B967662F8CC48B00823B20 /* Atomics */,
 				34FB884A3010911000A2F01F /* ZcashLightClientKit */,
-				343DCB8D3019388D00B5E65C /* ZcashLightClientKit */,
+				3464A8FB303C3A54005A09AD /* ZcashLightClientKit */,
 			);
 			productName = "zodl-internal";
 			productReference = 9E5AB4822C94777800065483 /* zodl-internal.app */;
@@ -427,8 +427,8 @@
 				34AA77B52F85848A00D244E2 /* XCRemoteSwiftPackageReference "xcstrings-tool-plugin" */,
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
-				3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */,
 				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
+				3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -843,7 +843,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = co.electriccoin.zodlTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/zodl-internal.app/zodl-internal";
 			};
@@ -877,7 +877,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -890,11 +890,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_TESTNET";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_TESTNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = NO;
 			};
@@ -907,7 +907,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -919,11 +919,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = SECANT_TESTNET;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_TESTNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = YES;
 			};
@@ -936,7 +936,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -948,11 +948,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = SECANT_TESTNET;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_TESTNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = YES;
 			};
@@ -965,7 +965,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -978,11 +978,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_MAINNET";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_MAINNET VOTING_ENABLED";
 				SWIFT_UPCOMING_FEATURE_CONCISE_MAGIC_FILE = NO;
 				SWIFT_UPCOMING_FEATURE_DEPRECATE_APPLICATION_MAIN = NO;
 				SWIFT_UPCOMING_FEATURE_DISABLE_OUTWARD_ACTOR_ISOLATION = NO;
@@ -1005,7 +1005,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1017,11 +1017,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = SECANT_MAINNET;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_MAINNET VOTING_ENABLED";
 				SWIFT_UPCOMING_FEATURE_CONCISE_MAGIC_FILE = NO;
 				SWIFT_UPCOMING_FEATURE_DEPRECATE_APPLICATION_MAIN = NO;
 				SWIFT_UPCOMING_FEATURE_DISABLE_OUTWARD_ACTOR_ISOLATION = NO;
@@ -1124,7 +1124,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1136,11 +1136,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_MAINNET SECANT_DISTRIB";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_MAINNET SECANT_DISTRIB VOTING_ENABLED";
 				SWIFT_UPCOMING_FEATURE_CONCISE_MAGIC_FILE = NO;
 				SWIFT_UPCOMING_FEATURE_DEPRECATE_APPLICATION_MAIN = NO;
 				SWIFT_UPCOMING_FEATURE_DISABLE_OUTWARD_ACTOR_ISOLATION = NO;
@@ -1163,7 +1163,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -1176,11 +1176,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_MAINNET";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG UNREDACTED SECANT_MAINNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = NO;
 			};
@@ -1193,7 +1193,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1205,11 +1205,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = SECANT_MAINNET;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_MAINNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = YES;
 			};
@@ -1222,7 +1222,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1234,11 +1234,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.9.1;
+				MARKETING_VERSION = 3.10.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = SECANT_MAINNET;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECANT_MAINNET VOTING_ENABLED";
 				TARGETED_DEVICE_FAMILY = 1;
 				UPLOAD_CRASHLYTICS_SYMBOLS = YES;
 			};
@@ -1300,9 +1300,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */ = {
+		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ".ci/zcash-swift-wallet-sdk";
+			relativePath = ".ci/zodl-swift-wallet-sdk";
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -1424,14 +1424,13 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		343DCB8D3019388D00B5E65C /* ZcashLightClientKit */ = {
+		3464A8FB303C3A54005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
-		343DCB92301938A200B5E65C /* ZcashLightClientKit */ = {
+		3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3453893B300A5646008677A8 /* XCLocalSwiftPackageReference "../zcash-swift-wallet-sdk" */;
+			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {

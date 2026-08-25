@@ -22,7 +22,8 @@ import Testing
             "tally": "v0",
             "vote_server": "v1"
           },
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1, "poly_len": 4096}
         }
         """
         let config = try JSONDecoder().decode(VotingServiceConfig.self, from: Data(json.utf8))
@@ -32,6 +33,9 @@ import Testing
         #expect(config.pirEndpoints.first?.label == "pir-1")
         #expect(config.supportedVersions.voteServer == "v1")
         #expect(config.supportedVersions.pir == ["v0", "v1"])
+        // v1.3.0 chain field (MOB-1678): load-bearing since the zcash_voting 3.0 bump —
+        // it feeds the delegation FFI and the round-auth v2 payload.
+        #expect(config.pirLayout.polyLen == 4096)
     }
 
     @Test func decodeAcceptsConfigWithoutProposalsSnapshotOrDeadline() {
@@ -41,7 +45,8 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """
 
@@ -57,11 +62,14 @@ import Testing
           "vote_servers": [{"url": "https://x", "label": "a"}],
           "pir_endpoints": [{"url": "https://y", "label": "b"}],
           "supported_versions": {"pir": ["v0"], "vote_protocol": "v0", "tally": "v0", "vote_server": "v1"},
-          "rounds": {}
+          "rounds": {},
+          "pir_layout": {"pir_depth": 1, "tier0_layers": 1, "tier1_layers": 1}
         }
         """.utf8))
 
         #expect(config.rounds.isEmpty)
+        // Pre-v1.3.0 / cached / mainnet-until-tomorrow: no poly_len key at all still decodes.
+        #expect(config.pirLayout.polyLen == nil)
         #expect(throws: Never.self) {
             try config.validate()
         }
@@ -79,7 +87,8 @@ import Testing
                     eaPk: Data(repeating: 0x01, count: 32),
                     signatures: []
                 )
-            ]
+            ],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
 
         #expect(throws: (any Error).self) {
@@ -132,6 +141,30 @@ import Testing
                 continue
             }
         }
+    }
+
+    /// The bundled anchor is a hand-edited string literal carrying a 64-char hash,
+    /// and `PinnedConfigSource.sha256` is optional by design — a source without a
+    /// `?checksum=` is legal and parses fine (see
+    /// `pinnedConfigSourceParseAcceptsMissingChecksum`). `decodeAndVerify` only
+    /// checks the digest `if let expectedSHA256`, so a pin that loses its checksum
+    /// to a typo, a bad merge, or a truncated edit does not fail — it silently
+    /// accepts whatever the host returns, turning the anchor into plain trust in
+    /// the transport. Nothing else in the suite pins the bundled constant itself.
+    @Test func bundledPinnedSourceCarriesAChecksumSoVerificationCannotSilentlyNoOp() throws {
+        let source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
+
+        #expect(source.url.scheme == "https")
+        let digest = try #require(
+            source.sha256,
+            "bundled pin carries no checksum — decodeAndVerify would accept any bytes the host serves"
+        )
+        #expect(digest.count == 32)
+
+        // The digest is the pin; it must not also travel to the server as a query
+        // the host could key behaviour off.
+        let sentQuery = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(!sentQuery.contains { $0.name == "checksum" })
     }
 
     @Test func staticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {
@@ -253,7 +286,8 @@ import Testing
             voteServers: [.init(url: "https://x", label: "a")],
             pirEndpoints: [.init(url: "https://y", label: "b")],
             supportedVersions: supportedVersions,
-            rounds: [:]
+            rounds: [:],
+            pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
     }
 
@@ -272,139 +306,259 @@ import Testing
 
 @Suite struct RoundAuthenticatorTests {
     private let roundId = "58d9319ac86933b81769a7c0972444fa39212ad3790646398de6ce6534de2225"
+    private let otherRoundId = "0000000000000000000000000000000000000000000000000000000000000002"
     private let eaPK = Data(base64Encoded: "N72oXeIF96QwWBtChaCwde3tjTt75ZfAs455V4usYwM=")!
-    private let adminPubkey = Data(base64Encoded: "rKDbmhkoW9ja7dMiCV+1uTao7wXWV6xN/57erkrOuiQ=")!
-    private let adminSignature = Data(
-        base64Encoded: "rnll+KsHIFt73GpyNoWrX57dlcX8hTi8GU5X/xpwg3vcE+jCARUXpD7LsK+OLw6R5q1kU/zccwNgzsmclt4WAg=="
-    )!
+    /// Layout mirroring the crate's `test_pir_layout()` (config/mod.rs tests): 19/12/7/4096.
+    private let pirLayout = VotingServiceConfig.PirLayout(
+        pirDepth: 19,
+        tier0Layers: 12,
+        tier1Layers: 7,
+        polyLen: 4096
+    )
+    /// Fresh per-test admin key; entries are signed the way the crate's tests do —
+    /// ed25519 over the constructed v2 payload (round_auth.rs test recipe).
+    private let adminKey = Curve25519.Signing.PrivateKey()
 
-    @Test func authenticateAcceptsFixtureFromDynamicConfig() {
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: eaPK,
-                roundIdHex: roundId,
-                rounds: [roundId: makeEntry()],
-                trustedKeys: [makeTrustedKey()]
-            ) == .authenticated
+    // Golden vector from zcash_voting 3.0.0-rc.2
+    // (`dynamic_resolution_accepts_vote_sdk_ui_signed_round_entry`, config/mod.rs):
+    // a vote-sdk admin-UI / Keplr-derived key signing the poly_len-bound v2 preimage
+    // (tag || round_id || ea_pk || 19/12/7/4096). Passing pins byte-for-byte
+    // compatibility with the crate's verifier.
+    @Test func authenticateAcceptsCrateGoldenVector() {
+        let goldenRoundId = "06aae723e42cf615d174f338e8f30a72d2bf3275eb9d9e835cc894f197904b20"
+        let goldenKeyId = "keplr:sv1mqts0klc9768rns9h2ykeaka5tve6ts39c2zu3"
+        let goldenEaPK = Data(base64Encoded: "GpYa1sCGIMe2bp1O9UgrThrwkCdxu6oHDmhoBTw6EZ8=")!
+        let goldenPubkey = Data(base64Encoded: "NDygCpG+Y4T4uu8M1Sb/YG+74lUVj9XgYypUoMQMXT8=")!
+        let goldenSig = Data(
+            base64Encoded: "RHbpnj2a1VA+wadIQT3JM/r6ADH11VeA8UgT5dhwhixMcS5Bw5ispndM/ZYH/d2vxNBxTRtZwnLyXZjxcVD+Dg=="
+        )!
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: goldenEaPK,
+            signatures: [.init(keyId: goldenKeyId, alg: "ed25519", sig: goldenSig)]
         )
-    }
-
-    @Test func authenticateReportsMissingRound() {
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: eaPK,
-                roundIdHex: roundId,
-                rounds: [:],
-                trustedKeys: [makeTrustedKey()]
-            ) == .missingRound
-        )
-    }
-
-    @Test func authenticateReportsUnknownAuthVersion() {
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: eaPK,
-                roundIdHex: roundId,
-                rounds: [roundId: makeEntry(authVersion: 2)],
-                trustedKeys: [makeTrustedKey()]
-            ) == .unknownAuthVersion
-        )
-    }
-
-    @Test func authenticateReportsInvalidSignatures() {
-        var badSig = adminSignature
-        badSig[0] ^= 0xFF
-
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: eaPK,
-                roundIdHex: roundId,
-                rounds: [roundId: makeEntry(signature: badSig)],
-                trustedKeys: [makeTrustedKey()]
-            ) == .invalidSignatures
-        )
-    }
-
-    @Test func authenticateReportsEaPKMismatch() {
-        var chainEaPK = eaPK
-        chainEaPK[0] ^= 0xFF
-
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: chainEaPK,
-                roundIdHex: roundId,
-                rounds: [roundId: makeEntry()],
-                trustedKeys: [makeTrustedKey()]
-            ) == .eaPKMismatch
-        )
-    }
-
-    @Test func authenticateReportsInvalidSignaturesWhenEntryEaPKIsShort() {
-        #expect(
-            RoundAuthenticator.authenticate(
-                chainEaPK: eaPK,
-                roundIdHex: roundId,
-                rounds: [roundId: makeEntry(eaPK: Data(repeating: 0x01, count: 31))],
-                trustedKeys: [makeTrustedKey()]
-            ) == .invalidSignatures
-        )
-    }
-
-    @Test func verifyEntrySignaturesRejectsUnknownKeyId() {
-        let entry = makeEntry(keyId: "unknown-key")
-
-        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
-    }
-
-    @Test func verifyEntrySignaturesRejectsSignatureAlgMismatch() {
-        let entry = makeEntry(signatureAlg: "ed448")
-
-        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
-    }
-
-    @Test func verifyEntrySignaturesRejectsTrustedKeyAlgMismatch() {
         let trustedKey = StaticVotingConfig.TrustedKey(
-            keyId: "valar-test",
-            alg: "ed448",
-            pubkey: adminPubkey,
+            keyId: goldenKeyId,
+            alg: "ed25519",
+            pubkey: goldenPubkey,
             notes: nil
         )
 
-        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: makeEntry(), trustedKeys: [trustedKey]))
+        let status = authenticate(
+            chainEaPK: goldenEaPK,
+            roundIdHex: goldenRoundId,
+            rounds: [goldenRoundId: entry],
+            trustedKeys: [trustedKey]
+        )
+        #expect(status == .authenticated)
     }
 
-    @Test func verifyEntrySignaturesRejectsShortSignature() {
-        let entry = makeEntry(signature: Data(repeating: 0x01, count: 63))
+    // Golden byte layout from zcash_voting 3.0.0-rc.2
+    // (`encoding_matches_round_auth_v2_wire_format`, round_auth.rs): round_id [1u8; 32],
+    // ea_pk [2u8; 32], layout 19/12/7/4096, every u32 little-endian.
+    @Test func signingPayloadV2MatchesCrateWireFormat() throws {
+        let payload = try #require(RoundAuthenticator.signingPayloadV2(
+            roundIdHex: String(repeating: "01", count: 32),
+            eaPk: Data(repeating: 0x02, count: 32),
+            pirLayout: pirLayout
+        ))
 
-        #expect(!RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        var expected = Data("zcash-shielded-vote:round-auth:v2".utf8)
+        expected.append(Data(repeating: 0x01, count: 32))
+        expected.append(Data(repeating: 0x02, count: 32))
+        expected.append(Data([19, 0, 0, 0]))
+        expected.append(Data([12, 0, 0, 0]))
+        expected.append(Data([7, 0, 0, 0]))
+        expected.append(Data([0x00, 0x10, 0x00, 0x00]))
+        let matches = payload == expected
+        #expect(matches)
+        #expect(payload.count == 113)
     }
 
-    @Test func verifyEntrySignaturesAcceptsWhenAnySignatureIsValid() {
+    @Test func authenticateAcceptsV2EntrySignedOverV2Payload() throws {
+        let entry = try makeSignedEntry()
+
+        let status = authenticate(rounds: [roundId: entry])
+        #expect(status == .authenticated)
+    }
+
+    @Test func authenticateReportsMissingRound() {
+        let status = authenticate(rounds: [:])
+        #expect(status == .missingRound)
+    }
+
+    // v1 policy pin (MOB-1678, deliberate + overturnable — see `RoundAuthenticator`):
+    // a *valid* v1-style signature over the raw `ea_pk` must no longer authenticate,
+    // matching the crate's `dynamic_resolution_skips_legacy_auth_version_1_rounds`.
+    @Test func authenticateRejectsLegacyV1Entry() throws {
+        let v1Signature = try adminKey.signature(for: eaPK)
         let entry = VotingServiceConfig.RoundEntry(
             authVersion: 1,
             eaPk: eaPK,
+            signatures: [.init(keyId: "valar-test", alg: "ed25519", sig: v1Signature)]
+        )
+
+        let status = authenticate(rounds: [roundId: entry])
+        #expect(status == .unknownAuthVersion)
+    }
+
+    @Test func authenticateReportsInvalidSignatures() throws {
+        var badSig = try makeSignedEntry().signatures[0].sig
+        badSig[0] ^= 0xFF
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: eaPK,
+            signatures: [.init(keyId: "valar-test", alg: "ed25519", sig: badSig)]
+        )
+
+        let status = authenticate(rounds: [roundId: entry])
+        #expect(status == .invalidSignatures)
+    }
+
+    @Test func authenticateReportsEaPKMismatch() throws {
+        var chainEaPK = eaPK
+        chainEaPK[0] ^= 0xFF
+        let entry = try makeSignedEntry()
+
+        let status = authenticate(chainEaPK: chainEaPK, rounds: [roundId: entry])
+        #expect(status == .eaPKMismatch)
+    }
+
+    @Test func authenticateReportsInvalidSignaturesWhenEntryEaPKIsShort() {
+        let shortEaPK = Data(repeating: 0x01, count: 31)
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: shortEaPK,
+            signatures: [.init(keyId: "valar-test", alg: "ed25519", sig: Data(repeating: 0x01, count: 64))]
+        )
+
+        let status = authenticate(chainEaPK: shortEaPK, rounds: [roundId: entry])
+        #expect(status == .invalidSignatures)
+    }
+
+    // The v2 signature binds the round id: the crate's replay test
+    // (`dynamic_resolution_skips_round_entry_replayed_under_different_round_id`).
+    @Test func authenticateRejectsEntryReplayedUnderDifferentRoundId() throws {
+        let entry = try makeSignedEntry() // signed for `roundId`
+
+        let status = authenticate(roundIdHex: otherRoundId, rounds: [otherRoundId: entry])
+        #expect(status == .invalidSignatures)
+    }
+
+    // The v2 signature binds the full PIR layout: a config host swapping poly_len (or any
+    // tier) after signing invalidates the attestation
+    // (`dynamic_resolution_skips_rounds_when_pir_layout_changed_after_signing`).
+    @Test func authenticateRejectsWhenPolyLenChangedAfterSigning() throws {
+        let entry = try makeSignedEntry() // signed over poly_len 4096
+        let swappedLayout = VotingServiceConfig.PirLayout(
+            pirDepth: 19,
+            tier0Layers: 12,
+            tier1Layers: 7,
+            polyLen: 2048
+        )
+
+        let status = authenticate(rounds: [roundId: entry], pirLayout: swappedLayout)
+        #expect(status == .invalidSignatures)
+    }
+
+    // A config that predates `pir_layout.poly_len` cannot carry v2 attestations: the
+    // payload is unconstructible, so nothing authenticates (fail closed).
+    @Test func authenticateRejectsWhenConfigLacksPolyLen() throws {
+        let entry = try makeSignedEntry()
+        let preBumpLayout = VotingServiceConfig.PirLayout(pirDepth: 19, tier0Layers: 12, tier1Layers: 7)
+
+        let status = authenticate(rounds: [roundId: entry], pirLayout: preBumpLayout)
+        #expect(status == .invalidSignatures)
+    }
+
+    // Crate parity (`verify_round_entry` decodes defensively): a round id that does not
+    // strict-hex-decode to exactly 32 bytes can never authenticate.
+    @Test func authenticateRejectsRoundIdsThatDoNotDecodeTo32Bytes() throws {
+        let thirtyOneByteId = String(repeating: "ab", count: 31)
+        let nonHexId = String(repeating: "zz", count: 32)
+        for badId in [thirtyOneByteId, nonHexId] {
+            let entry = try makeSignedEntry(roundIdHex: badId)
+
+            let status = authenticate(roundIdHex: badId, rounds: [badId: entry])
+            #expect(status == .invalidSignatures, "round id \(badId) must never authenticate")
+        }
+    }
+
+    @Test func verifyEntrySignaturesRejectsUnknownKeyId() throws {
+        let entry = try makeSignedEntry(keyId: "unknown-key")
+
+        #expect(!verify(entry))
+    }
+
+    @Test func verifyEntrySignaturesRejectsSignatureAlgMismatch() throws {
+        let entry = try makeSignedEntry(signatureAlg: "ed448")
+
+        #expect(!verify(entry))
+    }
+
+    @Test func verifyEntrySignaturesRejectsTrustedKeyAlgMismatch() throws {
+        let trustedKey = StaticVotingConfig.TrustedKey(
+            keyId: "valar-test",
+            alg: "ed448",
+            pubkey: adminKey.publicKey.rawRepresentation,
+            notes: nil
+        )
+        let entry = try makeSignedEntry()
+
+        let valid = RoundAuthenticator.verifyEntrySignatures(
+            entry: entry,
+            roundIdHex: roundId,
+            pirLayout: pirLayout,
+            trustedKeys: [trustedKey]
+        )
+        #expect(!valid)
+    }
+
+    @Test func verifyEntrySignaturesRejectsShortSignature() {
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: eaPK,
+            signatures: [.init(keyId: "valar-test", alg: "ed25519", sig: Data(repeating: 0x01, count: 63))]
+        )
+
+        #expect(!verify(entry))
+    }
+
+    @Test func verifyEntrySignaturesAcceptsWhenAnySignatureIsValid() throws {
+        let validSignature = try makeSignedEntry().signatures[0].sig
+        let entry = VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: eaPK,
             signatures: [
                 .init(keyId: "valar-test", alg: "ed25519", sig: Data(repeating: 0x01, count: 64)),
-                .init(keyId: "valar-test", alg: "ed25519", sig: adminSignature)
+                .init(keyId: "valar-test", alg: "ed25519", sig: validSignature)
             ]
         )
 
-        #expect(RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: [makeTrustedKey()]))
+        #expect(verify(entry))
     }
 
-    @Test func serviceConfigDropsOnlyRoundsWithoutValidSignatures() {
-        var badSignature = adminSignature
-        badSignature[0] ^= 0xFF
-        let invalidRoundId = String(repeating: "b", count: 64)
+    @Test func serviceConfigDropsOnlyRoundsWithoutValidSignatures() throws {
+        // One entry validly signed for its own id; the same entry replayed verbatim under
+        // another id (signature binds the round id → dropped); one legacy v1 entry (dropped).
+        let validEntry = try makeSignedEntry()
+        let v1Entry = VotingServiceConfig.RoundEntry(
+            authVersion: 1,
+            eaPk: eaPK,
+            signatures: [.init(keyId: "valar-test", alg: "ed25519", sig: try adminKey.signature(for: eaPK))]
+        )
+        let v1RoundId = String(repeating: "b", count: 64)
         let config = VotingServiceConfig(
             configVersion: 1,
             voteServers: [.init(url: "https://vote.example.com", label: "vote")],
             pirEndpoints: [.init(url: "https://pir.example.com", label: "pir")],
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
             rounds: [
-                roundId: makeEntry(),
-                invalidRoundId: makeEntry(signature: badSignature)
-            ]
+                roundId: validEntry,
+                otherRoundId: validEntry,
+                v1RoundId: v1Entry
+            ],
+            pirLayout: pirLayout
         )
 
         let filtered = serviceConfigRetainingRoundsWithValidSignatures(config, trustedKeys: [makeTrustedKey()])
@@ -412,24 +566,58 @@ import Testing
         #expect(Set(filtered.rounds.keys) == [roundId])
     }
 
-    private func makeEntry(
-        authVersion: Int = 1,
-        eaPK: Data? = nil,
+    /// Builds a registry entry signed exactly the way the crate's tests sign theirs:
+    /// ed25519 over `signingPayloadV2` for this suite's round, ea_pk, and layout.
+    private func makeSignedEntry(
+        roundIdHex: String? = nil,
         keyId: String = "valar-test",
-        signatureAlg: String = "ed25519",
-        signature: Data? = nil
-    ) -> VotingServiceConfig.RoundEntry {
-        .init(
-            authVersion: authVersion,
-            eaPk: eaPK ?? self.eaPK,
-            signatures: [
-                .init(keyId: keyId, alg: signatureAlg, sig: signature ?? adminSignature)
-            ]
+        signatureAlg: String = "ed25519"
+    ) throws -> VotingServiceConfig.RoundEntry {
+        // For undecodable round ids the canonical payload cannot exist; sign a stand-in so
+        // the entry still carries a well-formed 64-byte signature for the verifier to refuse.
+        let payload = RoundAuthenticator.signingPayloadV2(
+            roundIdHex: roundIdHex ?? roundId,
+            eaPk: eaPK,
+            pirLayout: pirLayout
+        ) ?? Data("undecodable-round-id-stand-in".utf8)
+        return VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: eaPK,
+            signatures: [.init(keyId: keyId, alg: signatureAlg, sig: try adminKey.signature(for: payload))]
+        )
+    }
+
+    /// `RoundAuthenticator.authenticate` with this suite's fixtures defaulted in.
+    /// Kept as a plain function returning a local so `#expect` only ever compares
+    /// two simple values — inlining the full call into the macro blows past the
+    /// type-checker's expression budget.
+    private func authenticate(
+        chainEaPK: Data? = nil,
+        roundIdHex: String? = nil,
+        rounds: [String: VotingServiceConfig.RoundEntry],
+        trustedKeys: [StaticVotingConfig.TrustedKey]? = nil,
+        pirLayout: VotingServiceConfig.PirLayout? = nil
+    ) -> RoundAuthStatus {
+        RoundAuthenticator.authenticate(
+            chainEaPK: chainEaPK ?? eaPK,
+            roundIdHex: roundIdHex ?? roundId,
+            rounds: rounds,
+            trustedKeys: trustedKeys ?? [makeTrustedKey()],
+            pirLayout: pirLayout ?? self.pirLayout
+        )
+    }
+
+    private func verify(_ entry: VotingServiceConfig.RoundEntry) -> Bool {
+        RoundAuthenticator.verifyEntrySignatures(
+            entry: entry,
+            roundIdHex: roundId,
+            pirLayout: pirLayout,
+            trustedKeys: [makeTrustedKey()]
         )
     }
 
     private func makeTrustedKey() -> StaticVotingConfig.TrustedKey {
-        .init(keyId: "valar-test", alg: "ed25519", pubkey: adminPubkey, notes: nil)
+        .init(keyId: "valar-test", alg: "ed25519", pubkey: adminKey.publicKey.rawRepresentation, notes: nil)
     }
 }
 
@@ -630,13 +818,44 @@ import Testing
     }
 }
 
+// MOB-1678: since zcash_voting 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id`
+// itself (canonical lowercase hex), which retired the app-side injection that used
+// to add the field to the share POST body. These two tests pin the surviving wire
+// contract from its new source: the field still reaches the server, still as
+// lowercase hex, but verbatim from the crate JSON — the app adds nothing.
+@Suite struct SharePostBodyWireContractTests {
+    @Test func shareBodyCarriesCrateProvidedVoteRoundIdVerbatim() {
+        let roundIdHex = String(repeating: "01", count: 32)
+        let payload = SharePayload(
+            wireJson: "{\"vote_round_id\":\"\(roundIdHex)\",\"share_index\":3,\"submit_at\":99}",
+            shareIndex: 3
+        )
+
+        let body = sharePostBody(for: payload)
+
+        #expect(body["vote_round_id"] as? String == roundIdHex)
+        #expect(body["share_index"] as? Int == 3)
+        #expect(body["submit_at"] as? Int == 99)
+    }
+
+    @Test func shareBodyIsTheWireJsonVerbatimWithNothingInjected() {
+        let payload = makeRecoverySharePayload()
+
+        let body = sharePostBody(for: payload)
+
+        // The fixture wire JSON has no vote_round_id, and none may appear in the
+        // body: the crate is the only source of the field now.
+        #expect(body["vote_round_id"] == nil)
+        #expect(Set(body.keys) == Set(["share_index", "submit_at"]))
+    }
+}
+
 @Suite struct ShareResubmissionFallbackTests {
     @Test func resubmissionTriesUntriedHelpersFirst() async {
         let recorder = SharePostRecorder()
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -658,7 +877,6 @@ import Testing
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -686,7 +904,6 @@ import Testing
 
         let acceptedServers = await resubmitSharePayload(
             makeRecoverySharePayload(),
-            roundIdHex: "aabb",
             configuredServerURLs: [
                 "https://already-sent.example.com",
                 "https://untried.example.com"
@@ -715,7 +932,7 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://online-one.example.com",
                 "https://offline.example.com",
@@ -753,7 +970,7 @@ import Testing
 
         let result = try await delegateSharePayloads(
             payloads,
-            roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline.example.com",
                 "https://online.example.com"
@@ -786,7 +1003,7 @@ import Testing
 
         let result = try await delegateSharePayloads(
             [payload],
-            roundIdHex: "aabb",
+            proposalId: 1,
             initialServerURLs: [
                 "https://offline-one.example.com",
                 "https://offline-two.example.com",
@@ -816,7 +1033,7 @@ import Testing
         await #expect(throws: ShareDelegationError.noReachableVoteServers) {
             _ = try await delegateSharePayloads(
                 [makeRecoverySharePayload()],
-                roundIdHex: "aabb",
+                proposalId: 1,
                 initialServerURLs: [
                     "https://offline-one.example.com",
                     "https://offline-two.example.com"
@@ -825,6 +1042,100 @@ import Testing
                 selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
             )
         }
+    }
+
+    // MOB-1678: a live incident (2026-08-12) had both vote servers return
+    // deterministic HTTP 400s for a malformed request body. The old code
+    // pruned both and surfaced `noReachableVoteServers` — the generic
+    // "check your internet connection" copy for a bug that had nothing to do
+    // with reachability. These three tests pin the fix's classification.
+
+    @Test func httpRejectionAbortsDelegationInsteadOfPruningAndContinuing() async {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await delegateSharePayloads(
+                [payload],
+                proposalId: 1,
+                initialServerURLs: [
+                    "https://rejecting.example.com",
+                    "https://never-tried.example.com"
+                ],
+                postShare: { server, _ in
+                    await recorder.record(server)
+                    if server == "https://rejecting.example.com" {
+                        throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+                    }
+                },
+                selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+            )
+        }
+
+        guard case .httpError(let statusCode, let message)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
+        #expect(message == "vote_round_id: expected 32 bytes, got 0")
+
+        // The healthy second server is never tried, and the rejecting server is
+        // never retried either — this is an abort, not a prune-and-continue.
+        let recordedServers = await recorder.servers()
+        #expect(recordedServers == ["https://rejecting.example.com"])
+    }
+
+    @Test func serverErrorRejectionKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            proposalId: 1,
+            initialServerURLs: [
+                "https://degraded.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://degraded.example.com" {
+                    throw SvAPIError.httpError(statusCode: 503, message: "upstream unavailable")
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // 5xx is transient server trouble, not a deterministic client-side
+        // rejection — failover behavior is unchanged by this fix.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
+    }
+
+    @Test func transportFailureKeepsPruneAndFailoverBehavior() async throws {
+        let recorder = SharePostRecorder()
+        let payload = makeRecoverySharePayload()
+
+        let result = try await delegateSharePayloads(
+            [payload],
+            proposalId: 1,
+            initialServerURLs: [
+                "https://timing-out.example.com",
+                "https://online.example.com"
+            ],
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://timing-out.example.com" {
+                    throw URLError(.timedOut)
+                }
+            },
+            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
+        )
+
+        // Transport/connection failures keep today's behavior: the unreachable
+        // server is pruned and the share is backfilled from the remaining pool
+        // within the same delegation attempt.
+        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
+        #expect(result.remainingServerURLs == ["https://online.example.com"])
     }
 }
 
@@ -842,7 +1153,7 @@ import Testing
 
         let result = try await Voting.delegateSharesWithFallback(
             [],
-            roundId: "aabb",
+            proposalId: 1,
             votingAPI: votingAPI,
             serverURLs: ["https://vote.example.com"],
             retryDelay: .zero
@@ -864,7 +1175,7 @@ import Testing
         await #expect(throws: SharePostFailure.self) {
             _ = try await Voting.delegateSharesWithFallback(
                 [],
-                roundId: "aabb",
+                proposalId: 1,
                 votingAPI: votingAPI,
                 serverURLs: ["https://vote.example.com"],
                 retryDelay: .zero
@@ -872,6 +1183,141 @@ import Testing
         }
         let attemptCount = await attempts.value()
         #expect(attemptCount == 1)
+    }
+
+    // MOB-1678: same non-exhaustion rethrow path as the generic test above,
+    // pinned to the concrete case a live wire bug actually threw — a
+    // deterministic HTTP rejection must surface as itself, not get relabeled
+    // `noReachableVoteServers` or absorbed into the 3x reachability retry.
+    @Test func delegateSharesWithFallbackRethrowsHttpRejectionWithoutRetry() async {
+        let attempts = AttemptCounter()
+        var votingAPI = VotingAPIClient()
+        votingAPI.delegateShares = { _, _, _ in
+            _ = await attempts.increment()
+            throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
+        }
+
+        let error = await #expect(throws: SvAPIError.self) {
+            _ = try await Voting.delegateSharesWithFallback(
+                [],
+                proposalId: 1,
+                votingAPI: votingAPI,
+                serverURLs: ["https://vote.example.com"],
+                retryDelay: .zero
+            )
+        }
+
+        guard case .httpError(let statusCode, _)? = error else {
+            Issue.record("expected httpError, got \(String(describing: error))")
+            return
+        }
+        #expect(statusCode == 400)
+        let attemptCount = await attempts.value()
+        #expect(attemptCount == 1)
+    }
+}
+
+/// A vote commitment's 16 shares each carry that share's `primary_blind` in the
+/// clear, alongside the full `share_comms` vector. A helper that receives every
+/// share therefore learns every blind against every commitment and can solve for
+/// the share values — recovering the voter's exact balance. `zcash_voting` 3.0.0
+/// closes this in its own planner by omitting the server at index
+/// `share_index % 16` from that share's initial targets; ZODL drives its own
+/// fan-out, so the same guarantee is enforced here.
+@Suite struct ShareDelegationSpreadTests {
+    @Test func noHelperReceivesEveryShareOnInitialSubmission() async throws {
+        let recorder = ShareTargetRecorder()
+        let payloads = (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) }
+        let servers = [
+            "https://helper-a.example.com",
+            "https://helper-b.example.com",
+            "https://helper-c.example.com"
+        ]
+
+        _ = try await delegateSharePayloads(
+            payloads,
+            proposalId: 1,
+            initialServerURLs: servers,
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+            },
+            // Worst case on purpose: a selector with no spread of its own hands
+            // the same prefix to every share. The omission rule is what has to
+            // break the correlation, not the selector's randomness.
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        for server in servers {
+            let received = await recorder.shareIndices(for: server)
+            #expect(received.count < 16, "\(server) received all 16 shares — it can recover the voter's balance")
+        }
+    }
+
+    /// The omitted server for a share is fixed by its position in the *configured*
+    /// helper list. `delegateSharePayloads` prunes failed helpers from its working
+    /// set mid-commitment, and if the omission were computed against that shrinking
+    /// list the indices would shift: a helper whose omitted share moves backwards
+    /// past the share already being sent never comes due again, and can collect the
+    /// entire remainder of the commitment.
+    @Test func helperOmissionFollowsConfiguredOrderWhenAnotherHelperIsPruned() async throws {
+        let recorder = ShareTargetRecorder()
+        let helperA = "https://helper-a.example.com"
+        let helperB = "https://helper-b.example.com"
+        let helperC = "https://helper-c.example.com"
+        let helperD = "https://helper-d.example.com"
+
+        // B fails on its first attempt (share 0) and is pruned, so every later share
+        // is planned against a 3-helper working set while the configured list stays 4.
+        _ = try await delegateSharePayloads(
+            (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) },
+            proposalId: 1,
+            initialServerURLs: [helperA, helperB, helperC, helperD],
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+                if server == helperB { throw SharePostFailure() }
+            },
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        // C sits at configured index 2, so share 2 is the one it must miss — and
+        // share 1 (B's index) must still reach it. Indexing the pruned list instead
+        // swaps these two.
+        let received = await recorder.shareIndices(for: helperC)
+        #expect(received.contains(1), "share 1 belongs to the pruned helper's index — C must not inherit its omission")
+        #expect(!received.contains(2), "C sits at configured index 2, so share 2 must stay omitted after pruning")
+    }
+
+    @Test func fallbackStillReachesTheOmittedHelperWhenTheOthersFail() async throws {
+        let recorder = ShareTargetRecorder()
+        // Share 0 omits the server at index 0 from its initial targets.
+        let omitted = "https://helper-a.example.com"
+        let failing = "https://helper-b.example.com"
+
+        _ = try? await delegateSharePayloads(
+            [makeRecoverySharePayload(index: 0)],
+            proposalId: 1,
+            initialServerURLs: [omitted, failing],
+            postShare: { server, body in
+                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
+                if server == failing { throw SharePostFailure() }
+            },
+            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
+        )
+
+        let reached = await recorder.shareIndices(for: omitted)
+        #expect(reached.contains(0), "initial-submission omission must not survive into fallback — the share would be lost")
+    }
+}
+
+private actor ShareTargetRecorder {
+    private var byServer: [String: Set<Int>] = [:]
+
+    func record(server: String, shareIndex: Int) {
+        byServer[server, default: []].insert(shareIndex)
+    }
+
+    func shareIndices(for server: String) -> Set<Int> {
+        byServer[server] ?? []
     }
 }
 
@@ -929,21 +1375,9 @@ private func makeShareDelegation(
 }
 
 private func makeRecoverySharePayload(index: UInt32 = 0) -> SharePayload {
-    let share = EncryptedShare(
-        c1: Data(repeating: UInt8(index + 1), count: 32),
-        c2: Data(repeating: UInt8(index + 2), count: 32),
+    SharePayload(
+        wireJson: "{\"share_index\":\(index),\"submit_at\":99}",
         shareIndex: index
-    )
-    return SharePayload(
-        sharesHash: Data(repeating: 0x01, count: 32),
-        proposalId: 1,
-        voteDecision: 0,
-        encShare: share,
-        treePosition: 10,
-        allEncShares: [share],
-        shareComms: [Data(repeating: 0x03, count: 32)],
-        primaryBlind: Data(repeating: 0x04, count: 32),
-        submitAt: 99
     )
 }
 #endif

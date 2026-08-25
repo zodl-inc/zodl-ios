@@ -238,6 +238,31 @@ private func shouldTryNextVoteServer(after error: Error) -> Bool {
     return false
 }
 
+/// Classifies a share-POST failure for the parallel fan-out delegation path
+/// (`delegateSharePayloads` below). This is a *different* path from the one
+/// `shouldTryNextVoteServer` above guards: that classifier only covers the
+/// sequential single-target round-robin used by `getJSON`/`postJSON` (round
+/// fetching, delegate-vote, cast-vote, ...), and it already treats any
+/// httpError as "try the next server" without splitting 4xx from 5xx.
+/// `delegateSharePayloads` didn't consult either classifier — every POST
+/// failure was pruned identically, which is what let a live wire bug (both
+/// vote servers returning deterministic HTTP 400s, measured 2026-08-12)
+/// masquerade as "no reachable server" and burn through 3 whole-set retries.
+///
+/// - A `URLError` means the server was never reached — stays prunable, same
+///   failover behavior as before this fix.
+/// - An `SvAPIError.httpError` means a server DID respond, i.e. it's healthy
+///   and reachable. Within that, 5xx is treated as transient server trouble
+///   (still prunable — another server may well succeed), while anything else
+///   (4xx, and stray non-5xx/non-200 codes) is a deterministic rejection of
+///   this exact request that no amount of retrying or failover can fix, so
+///   it's fatal: it should abort the delegation attempt instead of being
+///   masked as unreachable.
+private func isFatalShareRejection(_ error: Error) -> Bool {
+    guard case SvAPIError.httpError(let statusCode, _) = error else { return false }
+    return statusCode < 500
+}
+
 private func getJSON(_ path: String) async throws -> [String: Any] {
     let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
     var lastError: Error?
@@ -349,39 +374,88 @@ private func postServerJSON(_ serverURL: String, _ path: String, body: [String: 
 typealias SharePost = @Sendable (_ serverURL: String, _ body: [String: Any]) async throws -> Void
 typealias ShareTargetSelector = @Sendable (_ serverURLs: [String], _ targetCount: Int) -> [String]
 
-func sharePostBody(
-    for payload: SharePayload,
-    roundIdHex: String,
-    submitAt: UInt64? = nil
-) -> [String: Any] {
-    [
-        "shares_hash": payload.sharesHash.base64EncodedString(),
-        "proposal_id": payload.proposalId,
-        "vote_decision": payload.voteDecision,
-        "enc_share": [
-            "c1": payload.encShare.c1.base64EncodedString(),
-            "c2": payload.encShare.c2.base64EncodedString(),
-            "share_index": payload.encShare.shareIndex
-        ],
-        "share_index": payload.encShare.shareIndex,
-        "tree_position": payload.treePosition,
-        "vote_round_id": roundIdHex,
-        "all_enc_shares": payload.allEncShares.map { share -> [String: Any] in
-            [
-                "c1": share.c1.base64EncodedString(),
-                "c2": share.c2.base64EncodedString(),
-                "share_index": share.shareIndex
-            ]
-        },
-        "share_comms": payload.shareComms.map { $0.base64EncodedString() },
-        "primary_blind": payload.primaryBlind.base64EncodedString(),
-        "submit_at": submitAt ?? payload.submitAt
-    ]
+/// Shares per vote commitment, mirroring `zcash_voting`'s `VOTE_COMMITMENT_SHARE_COUNT`.
+/// Drives the initial-target spread in `delegateSharePayloads`.
+let voteCommitmentShareCount = 16
+
+/// Strictly decodes a hex string to `Data`: the input must have even length and every
+/// 2-character pair must be a valid hex byte, or this returns `nil`. Unlike `dataFromHex`
+/// above — which silently drops any pair that fails to parse, the exact lenient-decoder
+/// pattern behind campaign finding #3 — any deviation here fails the whole decode instead
+/// of yielding a truncated or garbage result. Internal (not private) for its sole
+/// remaining caller, `RoundAuthenticator.signingPayloadV2`, which decodes round ids
+/// with this strictness for auth v2 signing.
+func strictHexData(_ hex: String) -> Data? {
+    guard hex.count % 2 == 0 else { return nil }
+    var data = Data()
+    var idx = hex.startIndex
+    while idx < hex.endIndex {
+        guard
+            let next = hex.index(idx, offsetBy: 2, limitedBy: hex.endIndex),
+            let byte = UInt8(hex[idx..<next], radix: 16)
+        else {
+            return nil
+        }
+        data.append(byte)
+        idx = next
+    }
+    return data
+}
+
+/// The share POST body is the crate's wire JSON verbatim. Since zcash_voting
+/// 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id` itself (a canonical 64-char
+/// lowercase-hex value populated from the persisted recovery bundle), which retired
+/// the rc.5-era app-side injection that used to add the field here. Measured server
+/// contract: the `/shielded-vote/v1/shares` endpoint hex-decodes `vote_round_id`
+/// (unlike the delegate-vote and cast-vote endpoints, which accept base64 for the
+/// same field name — asymmetry confirmed live 2026-08-12), and the crate emits
+/// exactly that hex form, so nothing is added or rewritten app-side.
+func sharePostBody(for payload: SharePayload) -> [String: Any] {
+    let data = Data(payload.wireJson.utf8)
+    guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        return [:]
+    }
+    return body
+}
+
+/// Per-round failure bookkeeping for one `delegateSharePayloads` fan-out
+/// round: which servers failed, and the first deterministic HTTP rejection
+/// (if any — see `isFatalShareRejection`) that should abort the whole
+/// delegation attempt instead of being pruned like the rest.
+private struct ShareRoundFailures {
+    var servers = Set<String>()
+    var fatalRejection: Error?
+}
+
+/// Applies one server's share-POST outcome to a fan-out round's accept/prune
+/// bookkeeping. A deterministic HTTP rejection is captured into
+/// `roundFailures.fatalRejection` instead of being pruned: the caller aborts
+/// the whole delegation attempt once the round finishes collecting results,
+/// rather than continuing to backfill from other servers. (Servers in one
+/// round share a single wire bug in practice, so which one wins when more
+/// than one rejects doesn't change the outcome.)
+private func applyShareAttemptOutcome(
+    _ outcome: Result<Void, Error>,
+    server: String,
+    shareOffset: Int,
+    acceptedServers: inout [String],
+    roundFailures: inout ShareRoundFailures
+) {
+    switch outcome {
+    case .success:
+        acceptedServers.append(server)
+    case .failure(let error):
+        LoggerProxy.warn("Share \(shareOffset) failed on \(server)")
+        roundFailures.servers.insert(server)
+        if isFatalShareRejection(error) {
+            roundFailures.fatalRejection = error
+        }
+    }
 }
 
 func delegateSharePayloads(
     _ payloads: [SharePayload],
-    roundIdHex: String,
+    proposalId: UInt32,
     initialServerURLs: [String],
     postShare: @escaping SharePost,
     selectTargets: @escaping ShareTargetSelector = { Array($0.shuffled().prefix($1)) }
@@ -390,13 +464,52 @@ func delegateSharePayloads(
     var lastError: Error?
     var results: [DelegatedShareInfo] = []
 
+    // A full commitment's 16 share payloads each carry that share's `primary_blind`
+    // in the clear next to the whole `share_comms` vector, so a helper holding every
+    // share holds every blind against every commitment and can solve back to the
+    // voter's exact balance. `zcash_voting` 3.0.0 closes this inside its own planner
+    // (`select_batch_share_submission_targets`) by dropping the server at index
+    // `share_index % 16` from that share's initial targets, which leaves every helper
+    // provably short of at least one share. ZODL drives its own fan-out rather than
+    // calling that planner, so the same rule is applied here, under the crate's own
+    // gate: a complete 16-share commitment across more than one helper. Single-share
+    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
+    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
+    // excludes them upstream.
+    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
+        // The guarantee is scoped to initial submission only. Once a target has failed
+        // and we are backfilling, the omitted helper becomes eligible again — losing a
+        // share entirely is worse than one helper holding a complete set, and the crate
+        // scopes its own guarantee the same way.
+        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
-            let candidates = availableServers.filter { !triedServers.contains($0) }
+            var candidates = availableServers.filter { !triedServers.contains($0) }
+            if isInitialAttempt && spreadInitialTargets {
+                let spread = candidates.filter { candidate in
+                    // Indexed against the CONFIGURED list, never `availableServers`:
+                    // failed helpers are pruned from the working set mid-commitment, and
+                    // indexing that shrinking list would slide a helper into a departed
+                    // peer's slot. A helper whose omitted share moves backwards past the
+                    // share being sent never comes due again and can take the whole
+                    // remainder of the commitment — the exact correlation this prevents.
+                    // The crate has no such problem: it plans against a fixed slice.
+                    guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
+                    return position % voteCommitmentShareCount != Int(payload.shareIndex)
+                }
+                // Never let the omission starve a share: ceil(n/2) targets are always
+                // available after dropping at most one helper, but fail open rather
+                // than drop the share if that ever stops holding.
+                if !spread.isEmpty {
+                    candidates = spread
+                }
+            }
+            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
@@ -404,35 +517,43 @@ func delegateSharePayloads(
             guard !targets.isEmpty else { break }
 
             triedServers.formUnion(targets)
-            var failedServers = Set<String>()
+            var roundFailures = ShareRoundFailures()
 
-            await withTaskGroup(of: (String, Bool).self) { group in
+            await withTaskGroup(of: (String, Result<Void, Error>).self) { group in
                 for server in targets {
                     group.addTask {
                         do {
                             // Build body inside the task: [String: Any] isn't Sendable, but SharePayload is —
                             // recompute per task so the sending closure only captures Sendable values.
-                            let body = sharePostBody(for: payload, roundIdHex: roundIdHex)
+                            let body = sharePostBody(for: payload)
                             try await postShare(server, body)
-                            return (server, true)
+                            return (server, .success(()))
                         } catch {
-                            return (server, false)
+                            return (server, .failure(error))
                         }
                     }
                 }
 
-                for await (server, ok) in group {
-                    if ok {
-                        acceptedServers.append(server)
-                    } else {
-                        LoggerProxy.warn("Share \(shareOffset) failed on \(server)")
-                        failedServers.insert(server)
-                    }
+                for await (server, outcome) in group {
+                    applyShareAttemptOutcome(
+                        outcome,
+                        server: server,
+                        shareOffset: shareOffset,
+                        acceptedServers: &acceptedServers,
+                        roundFailures: &roundFailures
+                    )
                 }
             }
 
-            if !failedServers.isEmpty {
-                availableServers.removeAll { failedServers.contains($0) }
+            if let fatalRejection = roundFailures.fatalRejection {
+                LoggerProxy.warn(
+                    "Share \(shareOffset) delegation aborted (deterministic rejection): \(fatalRejection.localizedDescription)"
+                )
+                throw fatalRejection
+            }
+
+            if !roundFailures.servers.isEmpty {
+                availableServers.removeAll { roundFailures.servers.contains($0) }
             }
         }
 
@@ -443,8 +564,8 @@ func delegateSharePayloads(
         }
 
         results.append(DelegatedShareInfo(
-            shareIndex: payload.encShare.shareIndex,
-            proposalId: payload.proposalId,
+            shareIndex: payload.shareIndex,
+            proposalId: proposalId,
             acceptedByServers: acceptedServers
         ))
     }
@@ -461,7 +582,6 @@ func delegateSharePayloads(
 
 func resubmitSharePayload(
     _ payload: SharePayload,
-    roundIdHex: String,
     configuredServerURLs: [String],
     sentToURLs: [String],
     postShare: @escaping SharePost,
@@ -470,7 +590,7 @@ func resubmitSharePayload(
     let sentSet = Set(sentToURLs)
     let untried = orderServers(configuredServerURLs.filter { !sentSet.contains($0) })
     let alreadySent = orderServers(configuredServerURLs.filter { sentSet.contains($0) })
-    let body = sharePostBody(for: payload, roundIdHex: roundIdHex, submitAt: 0)
+    let body = sharePostBody(for: payload)
 
     for server in untried + alreadySent {
         do {
@@ -682,11 +802,14 @@ private func authenticateVotingSession(_ session: VotingSession) async throws ->
     }
 
     let roundIdHex = hexString(from: session.voteRoundId)
+    // `rounds` and `pirLayout` intentionally come from the same stored dynamic config:
+    // the v2 attestation signs the round id together with that config's PIR layout.
     let status = RoundAuthenticator.authenticate(
         chainEaPK: session.eaPK,
         roundIdHex: roundIdHex,
         rounds: configuration.serviceConfig.rounds,
-        trustedKeys: configuration.staticConfig.trustedKeys
+        trustedKeys: configuration.staticConfig.trustedKeys,
+        pirLayout: configuration.serviceConfig.pirLayout
     )
     guard status == .authenticated else {
         LoggerProxy.error(
@@ -716,20 +839,28 @@ private func authenticatedVotingSessions(from rounds: [[String: Any]]) async thr
 ///
 /// Round authentication is intentionally per-round: one broken historical
 /// signature must hide only that round, while still allowing other active
-/// or finalized rounds to render.
+/// or finalized rounds to render. Verification is v2 (MOB-1678): each signature
+/// covers the round id and this config's own top-level `pir_layout`, so entries
+/// signed for another round id or another layout generation drop here.
 func serviceConfigRetainingRoundsWithValidSignatures(
     _ config: VotingServiceConfig,
     trustedKeys: [StaticVotingConfig.TrustedKey]
 ) -> VotingServiceConfig {
-    let authenticatedRounds = config.rounds.filter { _, entry in
-        RoundAuthenticator.verifyEntrySignatures(entry: entry, trustedKeys: trustedKeys)
+    let authenticatedRounds = config.rounds.filter { roundIdHex, entry in
+        RoundAuthenticator.verifyEntrySignatures(
+            entry: entry,
+            roundIdHex: roundIdHex,
+            pirLayout: config.pirLayout,
+            trustedKeys: trustedKeys
+        )
     }
     return VotingServiceConfig(
         configVersion: config.configVersion,
         voteServers: config.voteServers,
         pirEndpoints: config.pirEndpoints,
         supportedVersions: config.supportedVersions,
-        rounds: authenticatedRounds
+        rounds: authenticatedRounds,
+        pirLayout: config.pirLayout
     )
 }
 
@@ -896,12 +1027,13 @@ extension VotingAPIClient: DependencyKey {
                         "rk": registration.rk.base64EncodedString(),
                         "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
                         "sighash": registration.sighash.base64EncodedString(),
-                        "signed_note_nullifier": registration.signedNoteNullifier.base64EncodedString(),
-                        "cmx_new": registration.cmxNew.base64EncodedString(),
-                        "van_cmx": registration.vanCmx.base64EncodedString(),
-                        "gov_nullifiers": registration.govNullifiers.map { $0.base64EncodedString() },
-                        "proof": registration.proof.base64EncodedString(),
-                        "vote_round_id": registration.voteRoundId.base64EncodedString()
+                        "tx1_effects": registration.tx1Effects,
+                        "signed_note_nullifier": registration.signedNoteNullifier,
+                        "cmx_new": registration.cmxNew,
+                        "van_cmx": registration.vanCmx,
+                        "gov_nullifiers": registration.govNullifiers,
+                        "proof": registration.proof,
+                        "vote_round_id": registration.voteRoundId
                     ]
                     return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
                         let json = try await postJSON("/shielded-vote/v1/delegate-vote", body: body)
@@ -931,7 +1063,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 }
             },
-            delegateShares: { payloads, roundIdHex, serverURLs in
+            delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
                     // Active foreground delivery uses the submission-local server set.
@@ -942,7 +1074,7 @@ extension VotingAPIClient: DependencyKey {
                     let tracker = ServerHealthTracker.shared
                     return try await delegateSharePayloads(
                         payloads,
-                        roundIdHex: roundIdHex,
+                        proposalId: proposalId,
                         initialServerURLs: serverURLs,
                         postShare: { server, body in
                             do {
@@ -986,12 +1118,11 @@ extension VotingAPIClient: DependencyKey {
                     return .pending
                 }
             },
-            resubmitShare: { payload, roundIdHex, excludeURLs in
+            resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
                 return await resubmitSharePayload(
                     payload,
-                    roundIdHex: roundIdHex,
                     configuredServerURLs: configuredServerURLs,
                     sentToURLs: excludeURLs,
                     postShare: { server, body in

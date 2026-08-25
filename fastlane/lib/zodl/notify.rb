@@ -24,7 +24,7 @@ module Zodl
     # Builds the notification fields for `event`. Pure (no I/O), so the wording
     # and sound selection are unit-testable.
     #
-    #   event   :success | :dry_run_ok | :failure
+    #   event   :success | :submit_success | :dry_run_ok | :failure
     #   reason  failure detail (only its first line is shown); used by :failure
     #
     # Returns { title:, subtitle:, message:, sound: }.
@@ -33,6 +33,8 @@ module Zodl
       case event
       when :success
         { title: "ZODL release ✅", subtitle: subtitle, message: "Uploaded to TestFlight", sound: SUCCESS_SOUND }
+      when :submit_success
+        { title: "ZODL release ✅", subtitle: subtitle, message: "Submitted to App Review", sound: SUCCESS_SOUND }
       when :dry_run_ok
         { title: "ZODL dry run ✅", subtitle: subtitle, message: "Preflight passed", sound: SUCCESS_SOUND }
       when :failure

@@ -141,7 +141,8 @@ import ComposableArchitecture
             requestAuthorization: { true },
             scheduleMigrationNotification: { _, _, _ in },
             cancelMigrationNotifications: { _ in },
-            clearDeliveredMigrationNotifications: { }
+            clearDeliveredMigrationNotifications: { },
+            pendingMigrationNotifications: { [] }
         )
     }
 
@@ -1052,7 +1053,8 @@ import ComposableArchitecture
                     scheduled.withValue { $0.append((notification, date)) }
                 },
                 cancelMigrationNotifications: { _ in },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             // R0: open-lane drives need a live session — pinned via the seam, never the global trace.
@@ -1114,7 +1116,8 @@ import ComposableArchitecture
                 requestAuthorization: { true },
                 scheduleMigrationNotification: { _, _, _ in },
                 cancelMigrationNotifications: { _ in },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             let manager = MigrationManagerImpl(
@@ -1197,7 +1200,8 @@ import ComposableArchitecture
                 requestAuthorization: { true },
                 scheduleMigrationNotification: { _, _, _ in },
                 cancelMigrationNotifications: { scope in cancelScopes.withValue { $0.append(scope) } },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             // R0: open-lane drives need a live session — pinned via the seam, never the global trace.
@@ -1434,7 +1438,8 @@ import ComposableArchitecture
                     scheduled.withValue { $0.append((notification, date)) }
                 },
                 cancelMigrationNotifications: { _ in },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             let manager = MigrationManagerImpl(
@@ -1536,7 +1541,8 @@ import ComposableArchitecture
                     scheduled.withValue { $0.append((notification, date)) }
                 },
                 cancelMigrationNotifications: { _ in },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             let manager = MigrationManagerImpl(
@@ -1598,7 +1604,8 @@ import ComposableArchitecture
                     scheduled.withValue { $0.append((notification, date)) }
                 },
                 cancelMigrationNotifications: { _ in },
-                clearDeliveredMigrationNotifications: { }
+                clearDeliveredMigrationNotifications: { },
+                pendingMigrationNotifications: { [] }
             )
         } operation: {
             let manager = MigrationManagerImpl(

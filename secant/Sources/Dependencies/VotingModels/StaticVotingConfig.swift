@@ -8,9 +8,9 @@ import Foundation
 struct StaticVotingConfig: Codable, Equatable, Sendable {
     static let supportedVersion = 1
     static let algEd25519 = "ed25519"
+    private static let bundledSHA256 = "fb62a56fae28debfdaa092f163cda0dab13295f87d25bbc4d0064d6ccdeb6943"
     static let bundledPinnedSource =
-        "https://raw.githubusercontent.com/valargroup/token-holder-voting-config/2785311d45758e85567d70a1f13709fa01b62c6b/prod/static-voting-config.json" +
-        "?checksum=sha256:bed0116f961226b256a574b52461ce81d9f5294a57e190987dc155f07eb1e431"
+        "https://voting.valargroup.dev/pins/prod/\(bundledSHA256)/static-voting-config.json?checksum=sha256:\(bundledSHA256)"
 
     let staticConfigVersion: Int
     let dynamicConfigURL: URL

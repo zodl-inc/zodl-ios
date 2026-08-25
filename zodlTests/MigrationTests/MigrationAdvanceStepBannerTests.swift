@@ -93,6 +93,18 @@ import Testing
         #expect(Self.banner(advanceStep: nil, orchardBalance: .zero) == nil)
     }
 
+    /// MOB-1630: below 0.01 ZEC/TAZ (ZIP 318's `MAX_RESIDUAL_VALUE`, the smallest migratable
+    /// denomination) the engine can never plan a transfer, so the banner must not offer a
+    /// migration it would immediately dead-end.
+    @Test func noRunWithOnlyDustShowsNothing() {
+        #expect(Self.banner(advanceStep: nil, orchardBalance: Zatoshi(999_999)) == nil)
+    }
+
+    /// MOB-1630: the floor itself is not "below" it — 0.01 ZEC exactly still offers.
+    @Test func noRunAtTheOfferFloorOffersTheMigration() {
+        #expect(Self.banner(advanceStep: nil, orchardBalance: Zatoshi(1_000_000)) == .required)
+    }
+
     /// The immediate send-max sweep runs without a stored run at all. Its aftermath is deliberately
     /// quiet — the balance is already spent, so there is nothing to prompt.
     @Test func theImmediateSweepIsSilent() {

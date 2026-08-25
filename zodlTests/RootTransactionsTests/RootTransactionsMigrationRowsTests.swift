@@ -58,6 +58,7 @@ import ComposableArchitecture
     /// and still publishes their received value for the breakdown sheet's Pending correction.
     @Test func fetchedTransactionsRetainsMigrationRowsAndPublishesPendingValue() async {
         let account = Self.walletAccount(idByte: 7)
+        let scheduler = DispatchQueue.test
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
         let sharedTransactions = initialState.$transactions
@@ -67,6 +68,12 @@ import ComposableArchitecture
             Root()
         } withDependencies: {
             baseNoOpDependencies(&$0)
+            // The pending-transactions poller arms on this payload's unmined rows. On the file's
+            // `.immediate` queue its 30 s sleep would elapse instantly and the tick's no-op fetch
+            // (`getAllTransactions` -> []) would wipe the very rows this test pins. A test clock
+            // that is never advanced keeps the poller armed but dormant — which is also why the
+            // sends below must not `.finish()`: the dormant poller never completes.
+            $0.mainQueue = scheduler.eraseToAnyScheduler()
         }
 
         let payload = IdentifiedArrayOf<TransactionState>(uniqueElements: [
@@ -76,7 +83,7 @@ import ComposableArchitecture
             row(id: "regular-unmined", kind: .notClassified, minedHeight: nil, totalReceived: Zatoshi(7_777))
         ])
 
-        await store.send(.fetchedTransactions(account.id, payload)).finish()
+        store.send(.fetchedTransactions(account.id, payload))
 
         let ids = Set(sharedTransactions.wrappedValue.map(\.id))
         #expect(ids == Set(["prep-unmined", "transfer-unmined", "transfer-mined", "regular-unmined"]))
@@ -90,7 +97,7 @@ import ComposableArchitecture
         let cleanPayload = IdentifiedArrayOf<TransactionState>(uniqueElements: [
             row(id: "regular-unmined", kind: .notClassified, minedHeight: nil, totalReceived: Zatoshi(7_777))
         ])
-        await store.send(.fetchedTransactions(account.id, cleanPayload)).finish()
+        store.send(.fetchedTransactions(account.id, cleanPayload))
         #expect(initialState.unminedMigrationPendingValue == .zero)
     }
 }

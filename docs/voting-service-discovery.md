@@ -4,10 +4,10 @@ How zodl-ios discovers vote servers and PIR endpoints at runtime. The wallet imp
 
 ## Resolution order
 
-1. **Static config** — fetched from a hash-pinned URL embedded in the signed app binary using `URL?checksum=sha256:HEX`. It carries the `dynamic_config_url` and trusted voting admin keys.
-2. **Dynamic config** — fetched from the verified static config's `dynamic_config_url`, currently [`https://voting.valargroup.org/prod/dynamic-voting-config.json`](https://voting.valargroup.org/prod/dynamic-voting-config.json), served through the Cloudflare-managed config host from [`valargroup/token-holder-voting-config`](https://github.com/valargroup/token-holder-voting-config).
+1. **Static config** — fetched from an immutable `voting.valargroup.dev/pins/prod/...` URL embedded in the signed app binary using `URL?checksum=sha256:HEX`. It carries the `dynamic_config_url` and trusted voting admin keys.
+2. **Dynamic config** — fetched from the verified static config's `dynamic_config_url`, currently [`https://voting.valargroup.dev/prod/dynamic-voting-config.json`](https://voting.valargroup.dev/prod/dynamic-voting-config.json). The gateway reads from [`valargroup/token-holder-voting-config`](https://github.com/valargroup/token-holder-voting-config) normally and serves the automatically published Cloudflare copy when GitHub is unavailable.
 
-There is no silent fallback. If the pinned static config source is malformed, the static config fetch fails, the SHA-256 does not match, or the dynamic config is unreachable, returns non-200, decodes to an unsupported shape, or advertises a version the wallet doesn't speak, the wallet routes to the `.configError` screen (`VotingConfigErrorView`) and voting is blocked for the session.
+The wallet does not choose between origins or accept different static config bytes during failover. GitHub-to-Cloudflare fallback happens behind the same gateway URL, and the embedded SHA-256 must still match. If the pinned static config source is malformed, the static config fetch fails, the SHA-256 does not match, or the dynamic config is unreachable, returns non-200, decodes to an unsupported shape, or advertises a version the wallet doesn't speak, the wallet routes to the `.configError` screen (`VotingConfigErrorView`) and voting is blocked for the session.
 
 Implementation lives in [`VotingAPIClientLiveKey.swift`](../secant/Sources/Dependencies/VotingAPIClient/VotingAPIClientLiveKey.swift) (`fetchServiceConfig`).
 

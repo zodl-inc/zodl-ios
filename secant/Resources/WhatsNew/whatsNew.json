@@ -1,6 +1,85 @@
 {
     "releases": [
         {
+            "version": "3.10.0",
+            "date": "19-08-2026",
+            "timestamp": 1787170089,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We brought back Coinholder Polling, so you can take part in Zcash community polls from your wallet."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We rebuilt polling to work with your Ironwood-migrated funds.",
+                        "We made loading polls more reliable when a service we depend on is unavailable."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed errors that could interrupt preparing and submitting your poll answers across multiple signing rounds."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.5",
+            "date": "17-08-2026",
+            "timestamp": 1786958314,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed several issues in the Slipstream sync engine."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.4",
+            "date": "14-08-2026",
+            "timestamp": 1786659332,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an error that could prevent transactions from being sent on some wallets."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.3",
+            "date": "12-08-2026",
+            "timestamp": 1786526020,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed the warning shown when a payment needs to spend Orchard funds that haven't been migrated yet — it now appears every time, not only during a migration."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.9.2",
+            "date": "11-08-2026",
+            "timestamp": 1786458854,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a few issues with how transactions are displayed in the activity list.",
+                        "We fixed a few UI/UX issues in the migration flow."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.9.1",
             "date": "09-08-2026",
             "timestamp": 1786300755,

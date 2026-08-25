@@ -90,7 +90,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/rust/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zodl-swift-wallet-sdk/Package.swift', '.ci/zodl-swift-wallet-sdk/Package.resolved', '.ci/zodl-swift-wallet-sdk/Sources/**', '.ci/zodl-swift-wallet-sdk/Cargo.lock', '.ci/zodl-swift-wallet-sdk/rust/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-e2e-
@@ -123,7 +123,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build/Build/Products/Debug-iphonesimulator
-          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zcash-swift-wallet-sdk/Package.swift', '.ci/zcash-swift-wallet-sdk/Package.resolved', '.ci/zcash-swift-wallet-sdk/Sources/**', '.ci/zcash-swift-wallet-sdk/Cargo.lock', '.ci/zcash-swift-wallet-sdk/rust/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-app-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant/Sources/**', 'modules/Sources/**', 'secant.xcodeproj/**/*.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.ci/zodl-swift-wallet-sdk/Package.swift', '.ci/zodl-swift-wallet-sdk/Package.resolved', '.ci/zodl-swift-wallet-sdk/Sources/**', '.ci/zodl-swift-wallet-sdk/Cargo.lock', '.ci/zodl-swift-wallet-sdk/rust/**') }}
 
       - name: Build for simulator
         if: steps.app-cache.outputs.cache-hit != 'true'

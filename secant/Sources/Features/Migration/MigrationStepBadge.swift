@@ -55,6 +55,11 @@ struct MigrationStepBadge: View {
         /// originally shipped with — a checkmark read as "already done" on a step that had not run
         /// yet. Colors are unchanged. See this file's header doc.
         case neutral
+        /// A "Split Balance" row that still has work to do — the coins-swap glyph, not a step
+        /// number: the timeline's numbering belongs to the transfers, and a split is a precondition
+        /// rather than transfer N. Used for every non-terminal split row at any index; a split that
+        /// has `.sent` takes the green check and one that is `.invalid`/`.expired` takes `.warning`.
+        case splitBalance
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -91,6 +96,10 @@ struct MigrationStepBadge: View {
                 Circle().fill(Design.Surfaces.bgAlt.color(colorScheme))
                 Text("\(number)")
                     .zFont(.semiBold, size: 10, style: Design.Surfaces.bgPrimary)
+            case .splitBalance:
+                Circle().fill(Design.Surfaces.bgTertiary.color(colorScheme))
+                Asset.Assets.Icons.coinsSwap.image
+                    .zImage(size: 12, style: Design.Text.quaternary)
             }
 
             // MOB-1487: 2pt white ring on every state — a "cutout" against the connector line
@@ -111,6 +120,7 @@ struct MigrationStepBadge: View {
         MigrationStepBadge(number: 3, style: .pending)
         MigrationStepBadge(number: 4, style: .warning)
         MigrationStepBadge(number: 5, style: .neutral)
+        MigrationStepBadge(number: 6, style: .splitBalance)
     }
     .padding()
 }

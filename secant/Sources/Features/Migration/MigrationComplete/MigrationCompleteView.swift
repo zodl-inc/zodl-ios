@@ -168,6 +168,7 @@ struct MigrationCompleteView: View {
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
+        .padding(.top, Design.Spacing._3xl)
     }
 
     // MARK: - Header illustration / badge

@@ -97,6 +97,22 @@ extension UserNotificationsClient: DependencyKey {
                     .map { $0.request.identifier }
                     .filter { $0.hasPrefix(MigrationNotification.identifierPrefix) }
                 center.removeDeliveredNotifications(withIdentifiers: deliveredIds)
+            },
+            pendingMigrationNotifications: {
+                // No sorting here — ordering is the report formatter's (tested) job. `fireDate`
+                // is nil for a non-time-interval trigger, which the formatter prints as unknown
+                // rather than this layer guessing.
+                await UNUserNotificationCenter.current().pendingNotificationRequests()
+                    .filter { $0.identifier.hasPrefix(MigrationNotification.identifierPrefix) }
+                    .map { request in
+                        PendingMigrationNotification(
+                            identifier: request.identifier,
+                            title: request.content.title,
+                            body: request.content.body,
+                            fireDate: (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate(),
+                            accountUUID: request.content.userInfo["accountUUID"] as? String
+                        )
+                    }
             }
         )
     }

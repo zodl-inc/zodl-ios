@@ -30,6 +30,13 @@ extension SignWithKeystoneCoordFlow {
                 state.path.append(.scan(scanState))
                 return .none
 
+            // No `.confirmWithKeystone` element to pop back to — this coordinator's root screen
+            // already is it — so mirror `.keystoneFirmwareUpdateCloseTapped` below and clear the
+            // internal path directly.
+            case .sendConfirmation(.cancelTapped):
+                state.path.removeAll()
+                return .none
+
             case .sendConfirmation(.updateResult(let result)):
                 switch result {
                 case .failure:

@@ -37,6 +37,10 @@ struct WalletStorage {
 
         /// Versioning of the stored data
         static let zcashKeychainVersion = 1
+        /// Independent from `zcashKeychainVersion`: voting hotkeys have their own storage
+        /// generation so a hotkey-format change (like this one) never touches the wallet's own
+        /// keychain entry. Bumped 1 → 2 for the `seedPhrase` → `storedSecret` container swap.
+        static let zcashVotingHotkeyVersion = 2
 
         static func accountMetadataFilename(account: Account) -> String {
             Constants.zcashStoredUserMetadataEncryptionKeys + "_\(account.name?.lowercased() ?? "")"
@@ -473,8 +477,11 @@ struct WalletStorage {
 
     // MARK: - Voting Hotkey
 
-    func importVotingHotkey(_ phrase: String, accountId: AccountUUID) throws {
-        let hotkey = StoredVotingHotkey(seedPhrase: SeedPhrase(phrase), version: Constants.zcashKeychainVersion)
+    func importVotingHotkey(_ storedSecret: Data, accountId: AccountUUID) throws {
+        let hotkey = StoredVotingHotkey(
+            storedSecret: VotingHotkeySecret(storedSecret),
+            version: Constants.zcashVotingHotkeyVersion
+        )
         let key = Constants.zcashStoredVotingHotkey(accountId: accountId)
         do {
             guard let data = try encode(object: hotkey) else { throw KeychainError.encoding }
@@ -498,7 +505,7 @@ struct WalletStorage {
         guard let hotkey = try decode(json: reqData, as: StoredVotingHotkey.self) else {
             throw WalletStorageError.uninitializedWallet
         }
-        guard hotkey.version == Constants.zcashKeychainVersion else {
+        guard hotkey.version == Constants.zcashVotingHotkeyVersion else {
             throw WalletStorageError.unsupportedVersion(hotkey.version)
         }
         return hotkey

@@ -76,7 +76,7 @@ struct MigrationPairedIcons: View {
     private var leadingBrandmark: Image {
         switch vendor {
         case .keystone:
-            return Asset.Assets.Partners.keystoneLogo.image
+            return Asset.Assets.Partners.keystone.image
         case .zcash:
             return Asset.Assets.zashiLogoWithBackground.image
         }

@@ -225,9 +225,14 @@ extension Root {
                 // (#7) The one-shot start-failure retry is a foreground mechanism, same as the
                 // tick loop: cancel it and reset its latch so the next foreground starts clean.
                 state.didScheduleStartFailureRetry = false
+                // Tear down ALL synchronizer-driven subscriptions (plus the pending-transactions
+                // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
+                // every one of them.
                 return .merge(
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId),
+                    .cancel(id: state.CancelEventId),
+                    .cancel(id: state.CancelPendingTxPollId),
                     // MOB-1466: the tick loop is a FOREGROUND-only mechanism — the app cannot poll
                     // anything once backgrounded (there is no background lane), so its whole reason
                     // to exist stops the instant sync itself does, on the same boundary. The next
@@ -401,7 +406,9 @@ extension Root {
                     return .merge(
                         migrationReconcileEffect,
                         .cancel(id: state.CancelStateId),
-                        .cancel(id: state.CancelTransactionsStateId)
+                        .cancel(id: state.CancelTransactionsStateId),
+                        .cancel(id: state.CancelEventId),
+                        .cancel(id: state.CancelPendingTxPollId)
                     )
                 }
 
@@ -830,6 +837,17 @@ extension Root {
                         if startedSyncThisPass {
                             await send(.initialization(.registerForSynchronizersUpdate))
                         }
+                        // Backgrounding cancels the transaction subscriptions (event stream and
+                        // `.upToDate` fetch trigger); without re-establishing them here, the first
+                        // background/foreground cycle would leave the transaction list refreshing
+                        // only via chance one-shot fetches for the rest of the process lifetime.
+                        // Re-dispatch is safe: the inner effects replace themselves via
+                        // `.cancellable(cancelInFlight: true)`, and the trailing fetch doubles as
+                        // the catch-up for anything mined while backgrounded. Deliberately OUTSIDE
+                        // the spin cut above: these are transaction streams only — no gate feed, so
+                        // no self-seeded emission (link 3) — and a broadcast-only pass still needs
+                        // the list observing what its own broadcast creates.
+                        await send(.observeTransactions)
                         await send(.refreshAutomaticServer)
                     } catch {
                         if state.bgTask != nil {

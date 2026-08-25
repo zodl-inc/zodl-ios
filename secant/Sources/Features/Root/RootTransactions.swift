@@ -17,8 +17,12 @@ extension Root {
             case .observeTransactions:
                 return .merge(
                     .publisher {
+                        // The transaction events must be filtered out of the stream BEFORE throttling.
+                        // Throttling the raw stream with `latest: true` lets an unrelated event
+                        // (`.connectionStateChanged`, `.storedUTXOs`) arriving in the same window
+                        // replace a `foundTransactions`/`minedTransaction` as "latest", silently
+                        // dropping the only signal that a pending transaction got mined.
                         sdkSynchronizer.eventStream()
-                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .compactMap {
                                 if case SynchronizerEvent.foundTransactions(let transactions, _) = $0 {
                                     return Root.Action.foundTransactions(transactions)
@@ -27,6 +31,7 @@ extension Root {
                                 }
                                 return nil
                             }
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                     }
                     .cancellable(id: state.CancelEventId, cancelInFlight: true),
                     .publisher {
@@ -77,7 +82,9 @@ extension Root {
                         // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
                         // rendered as an EMPTY transaction list with no trace anywhere, reading as
                         // data loss. The list keeps its previous contents; the error goes to the
-                        // log where the next investigation can find it.
+                        // log where the next investigation can find it. No user-facing alert: the
+                        // pending-transactions poller and the next synchronizer event both retry
+                        // this fetch.
                         LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
                     }
                 }
@@ -161,12 +168,44 @@ extension Root {
                 
                 let identifiedArray = IdentifiedArrayOf<TransactionState>(uniqueElements: sortedTransactions)
 
+                // Reconciliation poller: while anything is pending, the list must not depend solely
+                // on push signals (a dropped event or a missed `.upToDate` tick would otherwise leave
+                // a mined transaction rendered as "Sending…" forever). Re-read the local database
+                // every 30 seconds until nothing is pending — a cheap SQLite read, no network.
+                // Managed on every completed fetch, including ones whose payload equals the current
+                // state, so an unchanged list keeps the poller alive.
+                //
+                // Deliberately restricted to `.zcash` transactions, whose pending state is
+                // `minedHeight == nil` and therefore resolvable by exactly the local re-read this
+                // poller performs. For every other type `isPending` reports the SWAP status
+                // (`TransactionState.isPending`), which is owned by the swap provider's metadata and
+                // refreshed by `.autoUpdateCandidatesSwapDetails` in `RootSwaps` — re-reading the
+                // SDK database can never resolve it. Including those here would leave a swap parked
+                // in `.pending`/`.incomplete` (an abandoned or stalled swap never has to resolve)
+                // polling every 30 seconds for the rest of the session, with no state it could
+                // possibly settle.
+                let pendingTransactionsPoller: Effect<Root.Action>
+                if identifiedArray.contains(where: { $0.type == .zcash && $0.isPending }) {
+                    pendingTransactionsPoller = .run { send in
+                        while !Task.isCancelled {
+                            try await mainQueue.sleep(for: .seconds(30))
+                            await send(.fetchTransactionsForTheSelectedAccount)
+                        }
+                    }
+                    .cancellable(id: state.CancelPendingTxPollId, cancelInFlight: true)
+                } else {
+                    pendingTransactionsPoller = .cancel(id: state.CancelPendingTxPollId)
+                }
+
                 // Update transactions
                 if state.transactions != identifiedArray {
                     state.$transactions.withLock {
                         $0 = identifiedArray
                     }
-                    return .send(.home(.smartBanner(.evaluatePriority6)))
+                    return .merge(
+                        pendingTransactionsPoller,
+                        .send(.home(.smartBanner(.evaluatePriority6)))
+                    )
                 }
                 // The fetch still completed even though its result is identical to what's already in
                 // `state.transactions` -- most commonly when switching between two accounts that both
@@ -184,9 +223,10 @@ extension Root {
                 // query. Nothing is waiting on the signal once both flags are already clear.
                 guard state.homeState.transactionListState.isInvalidated
                     || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
-                    return .none
+                    return pendingTransactionsPoller
                 }
                 return .merge(
+                    pendingTransactionsPoller,
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
                 )
