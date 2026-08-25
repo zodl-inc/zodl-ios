@@ -84,11 +84,36 @@ struct SmartBanner {
         var CancelStateStreamId = UUID()
         var CancelShieldingProcessorId = UUID()
         var CancelMigrationRepollId = UUID()
+        var CancelShieldingBalanceFetchId = UUID()
         let CancelMigrationStateStreamId = UUID()
+
+        /// Bumped every time a banner is SEATED, and when a reseat detour begins — the detour
+        /// starts a new seat era even if the reseat never lands (the request can die mid-hop).
+        /// A clean close scheduled before a newer seat carries the generation it was aimed at;
+        /// `.closeBannerIfCurrent` drops it when the slot has moved on, so a deferred retraction
+        /// can never wipe a fresher banner. Only a close ROUTED THROUGH `.closeAndCleanupBanner`
+        /// is guarded this way — a `.closeBanner` sent directly closes immediately, unconditionally.
+        var bannerSeatGeneration = 0
+        /// The seat generation whose priority7 banner was RETRACTED (terminal shielding outcome
+        /// or unshieldable balance) but whose deferred close has not landed yet. While the seat
+        /// still reads `.priority7` in that window it is a zombie: a displacement seating over it
+        /// must NOT re-arm the deferred-offer latch — the offer was answered, not displaced.
+        var retractedSeatGeneration: Int?
 
         var isScanProgressComplete = false
         var delay = 1.5
         var isOpen = false
+        /// A transparent deposit crossed the shielding threshold while sync was still running.
+        /// The offer is deliberately not raised mid-sync (balances can be partially scanned and
+        /// the reminder read is synchronous), but the crossing must survive until the next
+        /// `.upToDate` tick — the per-tick balance write consumes the edge, so without this
+        /// latch a mid-sync deposit would never produce an offer.
+        var hasDeferredShieldingOffer = false
+        /// The arbiter collapsed the OPEN incumbent to make room for a better request
+        /// (`closeBanner(false)` hop). Consumed on the re-entry: if the request died or went
+        /// invalid inside the hop, the still-seated incumbent re-opens instead of stranding
+        /// collapsed. Dismissals (`remindMeLaterTapped`) never set it.
+        var isReseatPending = false
         var isShielding = false
         var isShieldingAcknowledged = false
         var isShieldingAcknowledgedAtKeychain = false
@@ -142,6 +167,14 @@ struct SmartBanner {
             isScanProgressComplete && spendableBalance.amount > 0
         }
 
+        var hasPendingShieldingTransaction: Bool {
+            transactions.isAnyShieldingPending()
+        }
+
+        func isShieldable(_ shieldingThreshold: Zatoshi) -> Bool {
+            ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: shieldingThreshold)
+        }
+
         var feeStr: String {
             Zatoshi(100_000).decimalString()
         }
@@ -173,6 +206,7 @@ struct SmartBanner {
         case binding(BindingAction<SmartBanner.State>)
         case closeAndCleanupBanner
         case closeBanner(Bool)
+        case closeBannerIfCurrent(Int)
         case closeSheetTapped
         case onAppear
         case onDisappear
@@ -204,6 +238,8 @@ struct SmartBanner {
         case evaluatePriority5
         case evaluatePriority6
         case evaluatePriority7
+        case shieldingOfferReevaluationRequested
+        case shieldingBalanceFetched(AccountUUID, Zatoshi?)
         case evaluatePriority75
         case evaluatePriority8
         case evaluatePriority9
@@ -218,7 +254,6 @@ struct SmartBanner {
         case shieldingProcessorStateChanged(ShieldingProcessorClient.State)
         case smartBannerContentTapped
         case synchronizerStateChanged(RedactableSynchronizerState)
-        case transparentBalanceUpdated(Zatoshi)
         case triggerPriority(State.PriorityContent)
         case walletAccountChanged
 
@@ -295,10 +330,16 @@ struct SmartBanner {
                 
             case .onDisappear:
                 // __LD2 TESTED
+                // CancelShieldingProcessorId is deliberately NOT cancelled here: a shield started
+                // from the Balances sheet on a pushed screen (Send/Pay flow) reaches its terminal
+                // state while Home is covered, and the terminal outcomes are one-shot — the
+                // subject resets to `.unknown` right after, so a resubscribe on the next appear
+                // would never see them. The onAppear subscription uses cancelInFlight, so
+                // re-appearing replaces rather than duplicates the stream.
                 return .merge(
                     .cancel(id: state.CancelNetworkMonitorId),
                     .cancel(id: state.CancelStateStreamId),
-                    .cancel(id: state.CancelShieldingProcessorId),
+                    .cancel(id: state.CancelShieldingBalanceFetchId),
                     // A post-restore migration repoll armed just before leaving Home must not keep
                     // running off-lifecycle — it would otherwise fire its `bannerVariant` hydration
                     // up to 120s after the screen is gone, and — with `CancelStateStreamId` also
@@ -320,29 +361,30 @@ struct SmartBanner {
                 return .none
                 
             case .shieldingProcessorStateChanged(let shieldingProcessorState):
-                if shieldingProcessorState == .succeeded {
-                    state.transparentBalance = .zero
-                }
                 state.isShielding = shieldingProcessorState == .requested
-                if (state.isOpen || state.isSmartBannerSheetPresented) && state.priorityContent == .priority7 {
-                    var hideEverything = false
-                    if case .proposal = shieldingProcessorState {
-                        hideEverything = true
-                    } else if shieldingProcessorState == .succeeded {
-                        hideEverything = true
-                    }
-                    if hideEverything {
-                        return .merge(
-                            .send(.closeAndCleanupBanner),
-                            .send(.closeSheetTapped)
-                        )
-                    }
+                switch shieldingProcessorState {
+                case .proposal, .succeeded, .nothingToShield:
+                    // Shielding reached a terminal outcome, so any shielding offer is stale. The
+                    // shield can start outside this banner (Balances' Shield button shares the
+                    // processor stream), so retract here rather than waiting for a sync tick. A
+                    // merely REQUESTED offer (rank-refused while a higher banner holds the slot)
+                    // clears its latch only — closing would tear down the unrelated banner that
+                    // is actually seated.
+                    return retractShieldingOffer(state: &state)
+                case .failed, .grpc, .requested, .unknown:
+                    return .none
                 }
-                return .none
                 
             case .walletAccountChanged:
                 state.remindMeShieldedPhaseCounter = 0
+                state.transparentBalance = .zero
+                state.hasDeferredShieldingOffer = false
+                state.retractedSeatGeneration = nil
+                state.priorityContentRequested = nil
                 return .merge(
+                    // An in-flight ladder balance fetch belongs to the OLD account — a switch must
+                    // not let its answer land against the newly selected account's state.
+                    .cancel(id: state.CancelShieldingBalanceFetchId),
                     // An account switch must stop a post-restore migration re-poll in flight for the
                     // OLD account outright — the decision belongs to whichever account armed it, and
                     // the walk below (`.evaluatePriority1`) restarts fresh for the newly selected one.
@@ -469,13 +511,13 @@ struct SmartBanner {
                 }
                 
             case .synchronizerStateChanged(let latestState):
-                // Computed as two independent effects and merged, rather than folded into one flow —
+                // Computed as independent effects and merged, rather than folded into one flow —
                 // `syncStatusChangedEffect` below has many early-return branches, and any one of
-                // those firing on the same tick as an activation flip must not silently swallow the
-                // flip's re-evaluation (a cold-launch tick is exactly where both are likely to
-                // coincide: the priority walk racing the first chain-tip fetch is the scenario
-                // `ironwoodActivationFlipEffect` exists to correct).
+                // those firing on the same tick must not silently swallow the activation flip's
+                // re-evaluation OR a balance-driven shielding retraction/offer (a cold-launch
+                // tick is exactly where these coincide).
                 let activationFlipEffect = ironwoodActivationFlipEffect(state: &state)
+                let shieldingBalanceEffect = shieldingBalanceSyncEffect(state: &state, latestState: latestState)
                 // Snapshot the syncStatus BEFORE `syncStatusChangedEffect` runs, so a genuine
                 // transition — of ANY kind, not just the one that may arm a fresh post-restore
                 // repoll — can cancel a STALE repoll left over from an EARLIER transition first.
@@ -485,11 +527,11 @@ struct SmartBanner {
                 let previousSyncStatus = state.synchronizerStatusSnapshot.syncStatus
                 let syncStatusEffect = syncStatusChangedEffect(state: &state, latestState: latestState)
                 guard state.synchronizerStatusSnapshot.syncStatus != previousSyncStatus else {
-                    return .merge(activationFlipEffect, syncStatusEffect)
+                    return .merge(activationFlipEffect, shieldingBalanceEffect, syncStatusEffect)
                 }
                 return .concatenate(
                     .cancel(id: state.CancelMigrationRepollId),
-                    .merge(activationFlipEffect, syncStatusEffect)
+                    .merge(activationFlipEffect, shieldingBalanceEffect, syncStatusEffect)
                 )
 
             case .migrationForegroundCheckStarted:
@@ -863,9 +905,7 @@ struct SmartBanner {
                         state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
                         let now = Date().timeIntervalSince1970
 
-                        if (state.remindMeWalletBackupPhaseCounter == 1 && walletBackupReminder.timestamp + Constants.remindMe2days < now)
-                            || (state.remindMeWalletBackupPhaseCounter == 2 && walletBackupReminder.timestamp + Constants.remindMe2weeks < now)
-                            || (state.remindMeWalletBackupPhaseCounter > 2 && walletBackupReminder.timestamp + Constants.remindMeMonth < now) {
+                        if walletBackupReminder.isDue(now: now) {
                             return .send(.triggerPriority(.priority6))
                         }
                     } else {
@@ -880,30 +920,51 @@ struct SmartBanner {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
-                if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
-                    state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
+                return .run { send in
+                    let unshielded = try? await sdkSynchronizer.getAccountsBalances()[account.id]?.unshielded
+                    await send(.shieldingBalanceFetched(account.id, unshielded))
                 }
-                return .run { [remindMeShieldedPhaseCounter = state.remindMeShieldedPhaseCounter] send in
-                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id],
-                       accountBalance.unshielded >= zcashSDKEnvironment.shieldingThreshold() {
-                        await send(.transparentBalanceUpdated(accountBalance.unshielded))
-                        
-                        if let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) {
-                            let now = Date().timeIntervalSince1970
+                .cancellable(id: state.CancelShieldingBalanceFetchId, cancelInFlight: true)
 
-                            if (remindMeShieldedPhaseCounter == 1 && shieldedReminder.timestamp + Constants.remindMe2days < now)
-                                || (remindMeShieldedPhaseCounter == 2 && shieldedReminder.timestamp + Constants.remindMe2weeks < now)
-                                || (remindMeShieldedPhaseCounter > 2 && shieldedReminder.timestamp + Constants.remindMeMonth < now) {
-                                await send(.triggerPriority(.priority7))
-                            }
-                        } else {
-                            // phase 1
-                            await send(.triggerPriority(.priority7))
-                        }
-                    } else {
-                        await send(.evaluatePriority75)
-                    }
+            case .shieldingBalanceFetched(let accountId, let unshielded):
+                guard accountId == state.selectedWalletAccount?.id else {
+                    // Stale result for a previous account — the switch's own ladder re-walk
+                    // covers the newly selected one.
+                    return .none
                 }
+                guard let unshielded else {
+                    return .send(.evaluatePriority75)
+                }
+                if state.transparentBalance != unshielded {
+                    state.transparentBalance = unshielded
+                }
+                guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
+                    if state.priorityContent == .priority7 {
+                        state.hasDeferredShieldingOffer = false
+                        // Ladder pass: close SYNCHRONOUSLY so the successor evaluates against an
+                        // empty slot — same rule as `.openBanner`'s invalid-priority branch and
+                        // `.migrationVariantUpdated`'s close. `retractShieldingOffer`'s deferred,
+                        // generation-guarded `closeAndCleanupBanner` hop is the wrong tool here: it
+                        // exists so a same-tick FRESHER seat from a DIFFERENT trigger can win
+                        // instead of being wiped, but on the ladder path the "fresher seat" is this
+                        // SAME pass's own successor — and when the banner is actually open,
+                        // `openBannerRequest`'s reseat dance (`.closeBanner(false)`) ALSO defers
+                        // that successor's seat behind its own hop, so the generation never bumps
+                        // in time and the deferred close can still land and wipe the successor's
+                        // request. A direct, synchronous close schedules no deferred close at all,
+                        // so there is nothing left to race.
+                        return .concatenate(
+                            .send(.closeSheetTapped),
+                            .send(.closeBanner(true)),
+                            .send(.evaluatePriority75)
+                        )
+                    }
+                    return .merge(retractShieldingOffer(state: &state), .send(.evaluatePriority75))
+                }
+                return shieldingOfferDecision(state: &state, onDecline: .evaluatePriority75)
+
+            case .shieldingOfferReevaluationRequested:
+                return shieldingOfferDecision(state: &state, onDecline: nil)
                 
                 // tor
             case .evaluatePriority75:
@@ -948,22 +1009,56 @@ struct SmartBanner {
                 state.priorityContentRequested = priority
                 return .send(.openBannerRequest)
 
-            case .transparentBalanceUpdated(let balance):
-                state.transparentBalance = balance
-                return .none
-                
             case .openBannerRequest:
                 guard let priorityContentRequested = state.priorityContentRequested else {
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        if state.priorityContent != nil {
+                            return .send(.openBanner)
+                        }
+                    }
                     return .none
                 }
+                if !isPriorityStillValid(priorityContentRequested, state: state) {
+                    state.priorityContentRequested = nil
+                    let successorEffect = evaluationSuccessor(of: priorityContentRequested).map { Effect.send($0) } ?? Effect.none
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        if state.priorityContent != nil {
+                            return .merge(successorEffect, .send(.openBanner))
+                        }
+                    }
+                    return successorEffect
+                }
                 if let priorityContent = state.priorityContent, priorityContentRequested.rawValue >= priorityContent.rawValue {
+                    if state.isReseatPending {
+                        state.isReseatPending = false
+                        return .send(.openBanner)
+                    }
                     return .none
                 }
                 if state.isOpen {
+                    state.isReseatPending = true
+                    // The detour starts a new seat era: a clean close aimed at the pre-detour
+                    // banner (deferred through `closeBannerIfCurrent`) must not land mid-reseat
+                    // and wipe the request/seat the re-entry is about to install.
+                    state.bannerSeatGeneration += 1
                     return .run { send in
                         await send(.closeBanner(false), animation: .easeInOut(duration: Constants.easeInOutDuration))
                     }
                 }
+                if state.priorityContent == .priority7
+                    && priorityContentRequested != .priority7
+                    && state.bannerSeatGeneration != state.retractedSeatGeneration {
+                    // A displaced shielding offer is still owed — re-raise it on the next
+                    // up-to-date tick through the deferred-offer latch. The generation check
+                    // excludes a ZOMBIE seat: a retraction already cleared the latch and scheduled
+                    // a deferred close for this same generation, and priorityContent just hasn't
+                    // caught up yet — that is an answered offer, not a live one being displaced.
+                    state.hasDeferredShieldingOffer = true
+                }
+                state.isReseatPending = false
+                state.bannerSeatGeneration += 1
                 state.priorityContent = priorityContentRequested
                 return .run { [delay = state.delay] send in
                     try? await mainQueue.sleep(for: .seconds(delay))
@@ -973,17 +1068,50 @@ struct SmartBanner {
             case .closeBanner(let clean):
                 state.isOpen = false
                 if clean {
-                    state.priorityContentRequested = nil
+                    // Cleanup clears the closing banner's OWN request (after a seat the two are
+                    // equal) — and any latched request from a lane the arbiter does not
+                    // revalidate at seat time (`canRequestSurviveCleanClose`). A priority7
+                    // request latched behind the seated banner survives so the
+                    // `openBannerRequest` below can seat it: without this, an offer raised on
+                    // the same tick that closes the current banner is wiped and never re-asked.
+                    let requestSurvives = state.priorityContentRequested != state.priorityContent
+                        && state.priorityContentRequested.map { canRequestSurviveCleanClose($0) } == true
+                    if !requestSurvives {
+                        state.priorityContentRequested = nil
+                    }
                     state.priorityContent = nil
                 }
                 return .send(.openBannerRequest)
 
             case .closeAndCleanupBanner:
-                return .run { send in
-                    await send(.closeBanner(true), animation: .easeInOut(duration: Constants.easeInOutDuration))
+                return .run { [generation = state.bannerSeatGeneration] send in
+                    await send(.closeBannerIfCurrent(generation), animation: .easeInOut(duration: Constants.easeInOutDuration))
                 }
 
+            case .closeBannerIfCurrent(let generation):
+                guard generation == state.bannerSeatGeneration else {
+                    return .none
+                }
+                return .send(.closeBanner(true))
+
             case .openBanner:
+                guard let priorityContent = state.priorityContent else {
+                    // A retraction can empty the slot while the delayed open is in flight —
+                    // opening now would expand the banner shell around no content.
+                    return .none
+                }
+                if !isPriorityStillValid(priorityContent, state: state) {
+                    guard let successor = evaluationSuccessor(of: priorityContent) else {
+                        return .send(.closeBanner(true))
+                    }
+                    // Concatenate, not merge: the close must clear the slot BEFORE the successor
+                    // evaluates, or the successor's own request could seat first and then be
+                    // wiped by the close's cleanup.
+                    return .concatenate(
+                        .send(.closeBanner(true)),
+                        .send(successor)
+                    )
+                }
                 state.delay = 1.0
                 state.isOpen = true
                 return .none
@@ -1257,17 +1385,150 @@ struct SmartBanner {
         .cancellable(id: state.CancelMigrationRepollId, cancelInFlight: true)
     }
 
+    /// The single shielding-offer decision, applied by every entry point — the ladder walk
+    /// (`.evaluatePriority7` via `.shieldingBalanceFetched`) and the sync tick
+    /// (`.shieldingOfferReevaluationRequested`). Fully synchronous against
+    /// `state.transparentBalance`: the value the banner displays is the value the decision used,
+    /// so the offer can never show one figure while the truth is another, and nothing async can
+    /// resurrect a stale balance over a fresher tick's write.
+    private func shieldingOfferDecision(state: inout State, onDecline: Action?) -> Effect<Action> {
+        let declineEffect = onDecline.map { Effect.send($0) } ?? .none
+        guard let account = state.selectedWalletAccount else {
+            return .none
+        }
+        guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
+            return declineEffect
+        }
+        guard !state.hasPendingShieldingTransaction else {
+            return declineEffect
+        }
+        guard let shieldedReminder = walletStorage.exportShieldingReminder(account.vendor.name()) else {
+            // No reminder stored — phase 1. A successful shield RESETS the stored reminder, so
+            // the phase counter must reset with it or the help sheet describes the wrong phase.
+            state.remindMeShieldedPhaseCounter = 0
+            state.hasDeferredShieldingOffer = false
+            return .send(.triggerPriority(.priority7))
+        }
+        state.remindMeShieldedPhaseCounter = shieldedReminder.occurence
+        let now = Date().timeIntervalSince1970
+        guard shieldedReminder.isDue(now: now) else {
+            // The user deferred the offer — the pass moves on instead of dying here, and the
+            // armed latch re-asks on a later tick once the reminder matures.
+            return declineEffect
+        }
+        state.hasDeferredShieldingOffer = false
+        return .send(.triggerPriority(.priority7))
+    }
+
+    /// The ONE retraction of the shielding offer, shared by every trigger that needs it —
+    /// processor terminal states, the sync tick's unshieldable branch, and the ladder fetch's
+    /// NOT-seated case. The ladder fetch's SEATED case does NOT route through here: it closes
+    /// synchronously at the call site instead (`.shieldingBalanceFetched`), because the deferred,
+    /// generation-guarded close this function schedules is the wrong tool on that path — see the
+    /// comment there. Clears the deferred-offer latch (the offer is answered or impossible),
+    /// closes a SEATED priority7 banner, and otherwise clears a merely LATCHED request — closing
+    /// in that case would tear down the unrelated banner actually on screen.
+    private func retractShieldingOffer(state: inout State) -> Effect<Action> {
+        state.hasDeferredShieldingOffer = false
+        if state.priorityContent == .priority7 {
+            state.retractedSeatGeneration = state.bannerSeatGeneration
+            return .merge(
+                .send(.closeAndCleanupBanner),
+                .send(.closeSheetTapped)
+            )
+        }
+        if state.priorityContentRequested == .priority7 {
+            state.priorityContentRequested = nil
+        }
+        return .none
+    }
+
+    /// Whether `priority`'s REQUEST may survive a clean close of a DIFFERENT banner. Survival is
+    /// safe only for a lane the arbiter revalidates at seat time (`isPriorityStillValid`): a
+    /// surviving stale request from a rule-less lane would seat unconditionally — e.g. a
+    /// `.priority1` request latched behind the migration banner during a network blip would
+    /// seat a phantom "no connection" banner once migration closes. priority7 is the one lane
+    /// that both needs survival (a same-tick offer racing a close) and is safe to grant it.
+    private func canRequestSurviveCleanClose(_ priority: State.PriorityContent) -> Bool {
+        priority == .priority7
+    }
+
+    /// A lane's seat-validity rule, in ONE place. Consulted when a request is about to seat
+    /// (`openBannerRequest`) and when a seated banner is about to open (`openBanner`); lanes
+    /// with no rule are always valid. Balance-driven retraction of an already-SEATED banner
+    /// lives in `shieldingBalanceSyncEffect` — same rule, event-driven site.
+    private func isPriorityStillValid(_ priority: State.PriorityContent, state: State) -> Bool {
+        switch priority {
+        case .priority7:
+            return state.isShieldable(zcashSDKEnvironment.shieldingThreshold())
+                && !state.transactions.isAnyShieldingPending()
+        default:
+            return true
+        }
+    }
+
+    /// Where the priority walk continues when `priority`'s offer turns out invalid at seat/open
+    /// time. Ladder-path invalidations hand the turn to the next lane rather than ending the
+    /// pass; event-driven retractions (sync tick, processor terminal states) deliberately do NOT
+    /// re-walk — they only free the slot, matching the established retraction shape.
+    private func evaluationSuccessor(of priority: State.PriorityContent) -> Action? {
+        switch priority {
+        case .priority7:
+            return .evaluatePriority75
+        default:
+            return nil
+        }
+    }
+
+    /// Everything balance-derived on a synchronizer tick, merged ALONGSIDE
+    /// `syncStatusChangedEffect` rather than folded into it: that function early-returns from
+    /// ~8 status arms, and none of them may swallow a balance-driven retraction or offer. Owns
+    /// the `spendableBalance` / `transparentBalance` writes, retracting a stale priority7 offer,
+    /// and dispatching the offer re-evaluation when the balance crosses the shielding threshold.
+    private func shieldingBalanceSyncEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
+        guard let account = state.selectedWalletAccount,
+              let accountBalance = latestState.data.accountsBalances[account.id]
+        else {
+            return .none
+        }
+        // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
+        // shielded pool) instead of hand-summing individual pools.
+        state.spendableBalance = accountBalance.shieldedSpendableValue
+
+        let threshold = zcashSDKEnvironment.shieldingThreshold()
+        let wasShieldable = state.isShieldable(threshold)
+        if state.transparentBalance != accountBalance.unshielded {
+            state.transparentBalance = accountBalance.unshielded
+        }
+        guard state.isShieldable(threshold) else {
+            // The offer the banner is making (or about to make) is no longer valid.
+            return retractShieldingOffer(state: &state)
+        }
+        let didBecomeShieldable = !wasShieldable
+        guard didBecomeShieldable || state.hasDeferredShieldingOffer else {
+            return .none
+        }
+        guard case .upToDate = latestState.data.syncStatus else {
+            // Crossed while syncing — hold the edge until sync completes instead of dropping it.
+            state.hasDeferredShieldingOffer = true
+            return .none
+        }
+        if state.priorityContent == .priority7 {
+            state.hasDeferredShieldingOffer = false
+            return .none
+        }
+        // The offer is OWED from here: a decline for a reason that can expire (pending shield,
+        // not-yet-due reminder) keeps the latch armed so later up-to-date ticks re-ask; only an
+        // actual trigger, an unshieldable balance, an account switch, or a retraction clears it.
+        state.hasDeferredShieldingOffer = true
+        return .send(.shieldingOfferReevaluationRequested)
+    }
+
     /// The pre-existing body of `.synchronizerStateChanged`, extracted verbatim except for the two
     /// migration arms in the `.upToDate` case, so it can be merged with `ironwoodActivationFlipEffect`
     /// instead of racing it for the case's single return value.
     private func syncStatusChangedEffect(state: inout State, latestState: RedactableSynchronizerState) -> Effect<Action> {
         let snapshot = SyncStatusSnapshot.snapshotFor(state: latestState.data.syncStatus)
-
-        if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-            // Pool-agnostic accessor: sum sapling + orchard + ironwood (and any future
-            // shielded pool) instead of hand-summing individual pools.
-            state.spendableBalance = accountBalance.shieldedSpendableValue
-        }
 
         // `SyncStatus.==` returns true for ANY two `.error` values (Synchronizer.swift), so a
         // status comparison alone can never see one error replace another — the sheet would
@@ -1371,24 +1632,6 @@ struct SmartBanner {
             default: break
             }
 
-            if let account = state.selectedWalletAccount, let accountBalance = latestState.data.accountsBalances[account.id] {
-                if state.priorityContent == .priority7 {
-                    if accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                        return .send(.transparentBalanceUpdated(accountBalance.unshielded))
-                    } else {
-                        return .merge(
-                            .send(.closeAndCleanupBanner),
-                            .send(.closeSheetTapped)
-                        )
-                    }
-                } else if state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && accountBalance.unshielded > zcashSDKEnvironment.shieldingThreshold() {
-                    return .merge(
-                        .send(.transparentBalanceUpdated(accountBalance.unshielded)),
-                        .send(.triggerPriority(.priority7))
-                    )
-                }
-            }
-
             // return of restoring/syncing
             let isSyncingHigherPriority = (state.priorityContent?.rawValue ?? 0) > State.PriorityContent.priority4.rawValue
             if isSyncing && (state.priorityContent == nil || isSyncingHigherPriority) {
@@ -1410,5 +1653,15 @@ extension SmartBanner.State {
     var isSyncTimedOut: Bool {
         lastKnownErrorMessage.lowercased().contains("504 gateway timeout")
         || lastKnownErrorMessage.lowercased().contains("tor error: tor: operation timed out at exit")
+    }
+}
+
+extension ReminedMeTimestamp {
+    /// The phase ladder shared by the wallet-backup and shielding reminders: 2 days after the
+    /// first dismissal, 2 weeks after the second, a month after every later one.
+    func isDue(now: TimeInterval) -> Bool {
+        (occurence == 1 && timestamp + SmartBanner.Constants.remindMe2days < now)
+            || (occurence == 2 && timestamp + SmartBanner.Constants.remindMe2weeks < now)
+            || (occurence > 2 && timestamp + SmartBanner.Constants.remindMeMonth < now)
     }
 }
