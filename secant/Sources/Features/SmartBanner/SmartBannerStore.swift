@@ -143,11 +143,11 @@ struct SmartBanner {
         }
 
         var isSyncComplete: Bool {
-            guard case .upToDate = synchronizerStatusSnapshot.syncStatus else {
-                return false
+            if case .upToDate = synchronizerStatusSnapshot.syncStatus {
+                return true
             }
 
-            return !walletStatus.isNotReadyForFullySyncedOperation
+            return false
         }
 
         var feeStr: String {
