@@ -69,7 +69,7 @@ struct RestoreWalletCoordFlow {
         case suggestedWordTapped(String)
         case suggestionsRequested(Int, Bool)
         case updateKeyboardFlag(Bool)
-        #if DEBUG
+        #if !SECANT_DISTRIB
         case debugPasteSeed
         #endif
         
@@ -179,7 +179,7 @@ struct RestoreWalletCoordFlow {
                 state.isKeyboardVisible = value
                 return .none
                 
-#if DEBUG
+#if !SECANT_DISTRIB
             case .debugPasteSeed:
                 do {
                     var testSeed = ""

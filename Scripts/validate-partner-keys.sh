@@ -20,7 +20,8 @@ SRCROOT="${SRCROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PLIST="${SRCROOT}/secant/Resources/PartnerKeys.plist"
 
 # Each key must be present, of type String, and non-empty. testSeed is
-# #if DEBUG-only and intentionally excluded from archive validation.
+# gated to non-AppStore builds (#if !SECANT_DISTRIB) and intentionally
+# excluded from archive validation.
 REQUIRED_KEYS="flexaPublishableKey flexaPublishableTestKey nearKey cmcKey nearFeeDepositAddress nearAPIKey"
 
 errors=()

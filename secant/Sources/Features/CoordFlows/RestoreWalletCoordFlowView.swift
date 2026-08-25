@@ -205,7 +205,7 @@ struct RecoverySeedPhraseEntryView: View {
                             .zFont(.semiBold, size: 24, style: Design.Text.primary)
                             .padding(.top, 20)
                             .onLongPressGesture {
-#if DEBUG
+#if !SECANT_DISTRIB
                                 store.send(.debugPasteSeed)
 #endif
                             }

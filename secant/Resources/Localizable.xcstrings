@@ -2860,6 +2860,23 @@
         }
       }
     },
+    "coinVote.confirmSubmission.progressExplainer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This can take a few minutes. Wallets with more voting weight take longer to process."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto puede tardar unos minutos. Las billeteras con más peso de votación tardan más en procesarse."
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.progressSubmittingVoteCount" : {
       "extractionState" : "manual",
       "localizations" : {

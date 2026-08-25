@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- [MOB-1753] The vote submission screen now explains that submitting can take a few minutes and that wallets with more voting weight take longer to process.
 - [MOB-1466] Advanced Settings now offers "Restart Migration" while a migration is running. It shows how much has already migrated and how much is left, warns that restarting cancels the current plan for good, and asks for a separate confirmation before anything happens. Transfers that already went out are untouched — they stay migrated — and once the plan is cancelled you set up a new one for the remaining balance the same way you did the first time.
 - [MOB-1466] With a privacy migration in progress, keeping the app open now advances the migration automatically — transfers send on schedule without reopening the app.
 - [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
@@ -18,6 +19,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Internal] On the Swap and Pay screens, in internal and testnet builds only, the amount field now has a "Max" button too. On Swap it fills in the largest amount of ZEC you can swap, net of the network fee (or its value in USD when you have switched the field to USD); on Pay it fills in what that amount is worth in the token you are paying with, and updates the accompanying USD value alongside it. The button is unavailable while your balance is still confirming or empty, or while a quote is being fetched, and a toast tells you when the amount could not be fetched or converted.
 
 ### Changed
+- The paste-seed shortcut on the Secret Recovery Phrase screen (long-press the title) now works in internal and testnet builds — including TestFlight — instead of debug builds only. It stays excluded from the App Store build.
 - [MOB-1678] Coinholder Polling now loads its trusted configuration through the resilient voting config gateway, so a GitHub outage no longer blocks configuration loading while the mirrored copy is available.
 - [MOB-1466] Starting a migration now holds you on a "Scheduling…" screen while the schedule is confirmed and the first step is prepared, instead of leaving you on the plan under a spinning button for up to half a minute. The summary fills in with your real numbers the moment it is ready.
 - [MOB-1466] The migration split details sheet now scrolls when a split has more than five steps, so long splits stay readable and the sheet's total and "Got it" button stay reachable. Shorter splits are unchanged.
