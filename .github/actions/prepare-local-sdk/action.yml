@@ -1,0 +1,66 @@
+name: Prepare pinned SDK
+description: Check out the SDK and build its matching Rust FFI for the iOS Simulator.
+
+inputs:
+  sdk-ref:
+    description: Immutable zodl-swift-wallet-sdk commit.
+    required: true
+  slipstream-app-id:
+    description: GitHub App ID with read access to Slipstream.
+    required: false
+    default: ""
+  slipstream-app-private-key:
+    description: Private key for the Slipstream GitHub App.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout SDK
+      uses: actions/checkout@v4
+      with:
+        repository: zodl-inc/zodl-swift-wallet-sdk
+        ref: ${{ inputs.sdk-ref }}
+        path: .ci/zcash-swift-wallet-sdk
+
+    - name: Link SDK at project-relative path
+      shell: bash
+      run: ln -s "$GITHUB_WORKSPACE/.ci/zcash-swift-wallet-sdk" "$GITHUB_WORKSPACE/../zcash-swift-wallet-sdk"
+
+    - name: Restore SDK FFI
+      id: ffi-cache
+      uses: actions/cache@v5
+      with:
+        path: .ci/zcash-swift-wallet-sdk/BuildSupport/products/libzcashlc.xcframework
+        key: ${{ runner.os }}-${{ runner.arch }}-sdk-ios-simulator-ffi-${{ inputs.sdk-ref }}
+
+    - name: Authorize Slipstream checkout
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      uses: ./.ci/zcash-swift-wallet-sdk/.github/actions/authorize-slipstream
+      with:
+        app-id: ${{ inputs.slipstream-app-id }}
+        app-private-key: ${{ inputs.slipstream-app-private-key }}
+
+    - name: Set up Rust
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      with:
+        toolchain: stable
+        targets: x86_64-apple-ios,aarch64-apple-ios-sim
+
+    - name: Build SDK FFI
+      if: steps.ffi-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .ci/zcash-swift-wallet-sdk
+      run: |
+        make -C BuildSupport ios-simulator
+        rm -rf BuildSupport/products/libzcashlc.xcframework
+        xcodebuild -create-xcframework \
+          -framework BuildSupport/products/ios-simulator/frameworks/libzcashlc.framework \
+          -output BuildSupport/products/libzcashlc.xcframework
+
+    - name: Use matching local FFI
+      shell: bash
+      working-directory: .ci/zcash-swift-wallet-sdk
+      run: make configure-local-ffi
