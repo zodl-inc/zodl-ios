@@ -87,9 +87,12 @@ struct SmartBanner {
         var CancelShieldingBalanceFetchId = UUID()
         let CancelMigrationStateStreamId = UUID()
 
-        /// Bumped every time a banner is SEATED. A clean close scheduled before a newer seat
-        /// carries the generation it was aimed at; `.closeBannerIfCurrent` drops it when the
-        /// slot has moved on, so a deferred retraction can never wipe a fresher banner.
+        /// Bumped every time a banner is SEATED, and when a reseat detour begins — the detour
+        /// starts a new seat era even if the reseat never lands (the request can die mid-hop).
+        /// A clean close scheduled before a newer seat carries the generation it was aimed at;
+        /// `.closeBannerIfCurrent` drops it when the slot has moved on, so a deferred retraction
+        /// can never wipe a fresher banner. Only a close ROUTED THROUGH `.closeAndCleanupBanner`
+        /// is guarded this way — a `.closeBanner` sent directly closes immediately, unconditionally.
         var bannerSeatGeneration = 0
         /// The seat generation whose priority7 banner was RETRACTED (terminal shielding outcome
         /// or unshieldable balance) but whose deferred close has not landed yet. While the seat
@@ -1417,11 +1420,14 @@ struct SmartBanner {
         return .send(.triggerPriority(.priority7))
     }
 
-    /// The ONE retraction of the shielding offer, shared by every trigger — processor terminal
-    /// states, the sync tick's unshieldable branch, and the ladder fetch. Clears the
-    /// deferred-offer latch (the offer is answered or impossible), closes a SEATED priority7
-    /// banner, and otherwise clears a merely LATCHED request — closing in that case would tear
-    /// down the unrelated banner actually on screen.
+    /// The ONE retraction of the shielding offer, shared by every trigger that needs it —
+    /// processor terminal states, the sync tick's unshieldable branch, and the ladder fetch's
+    /// NOT-seated case. The ladder fetch's SEATED case does NOT route through here: it closes
+    /// synchronously at the call site instead (`.shieldingBalanceFetched`), because the deferred,
+    /// generation-guarded close this function schedules is the wrong tool on that path — see the
+    /// comment there. Clears the deferred-offer latch (the offer is answered or impossible),
+    /// closes a SEATED priority7 banner, and otherwise clears a merely LATCHED request — closing
+    /// in that case would tear down the unrelated banner actually on screen.
     private func retractShieldingOffer(state: inout State) -> Effect<Action> {
         state.hasDeferredShieldingOffer = false
         if state.priorityContent == .priority7 {
