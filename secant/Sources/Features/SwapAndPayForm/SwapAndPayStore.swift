@@ -24,6 +24,7 @@ struct SwapAndPay {
         var SwapAssetsCancelId = UUID()
         var ABCancelId = UUID()
         var QRCancelId = UUID()
+        var MaxCancelId = UUID()
 
         var address = ""
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
@@ -41,6 +42,7 @@ struct SwapAndPay {
         var isDepositHelpSheetVisible = false
         var isInputInUsd = false
         var isInsufficientBalance = false
+        var isMaxRequestInFlight = false
         var isNotAddressInAddressBook = false
         var isQuoteRequestInFlight = false
         var isQuotePresented = false
@@ -158,7 +160,23 @@ struct SwapAndPay {
         var spendability: Spendability {
             walletBalancesState.spendability
         }
-        
+
+        /// Max chip on the Swap (ZEC -> token) screen. The balance must be spendable and no
+        /// max/quote request may be running.
+        var isSwapMaxButtonEnabled: Bool {
+            spendability != .nothing
+            && !isMaxRequestInFlight
+            && !isQuoteRequestInFlight
+        }
+
+        /// Max chip on the Pay screen. On top of the Swap conditions the max has to be
+        /// convertible into the selected token, which needs a non-zero USD price on both sides.
+        var isPayMaxButtonEnabled: Bool {
+            isSwapMaxButtonEnabled
+            && (selectedAsset?.usdPrice ?? 0) > 0
+            && (zecAsset?.usdPrice ?? 0) > 0
+        }
+
         var amount: Decimal {
             if !_XCTIsTesting {
                 @Dependency(\.numberFormatter) var numberFormatter
@@ -219,6 +237,9 @@ struct SwapAndPay {
         case getQuoteTapped
         case helpSheetRequested(Int)
         case internalBackButtonTapped
+        case maxAmountFailed
+        case maxAmountResolved(Zatoshi)
+        case maxTapped
         case nextTapped
         case onAppear
         case onDisappear
@@ -353,7 +374,8 @@ struct SwapAndPay {
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
-                    .cancel(id: state.QRCancelId)
+                    .cancel(id: state.QRCancelId),
+                    .cancel(id: state.MaxCancelId)
                 )
                 
             case .willEnterForeground:
@@ -397,7 +419,107 @@ struct SwapAndPay {
                 
             case .internalBackButtonTapped:
                 return .none
-                
+
+                // MARK: - Max
+
+            case .maxTapped:
+                // Swapping INTO ZEC spends no ZEC from this wallet, so there is no max to offer
+                // and no chip is rendered in that direction.
+                guard !state.isSwapToZecExperienceEnabled else {
+                    return .none
+                }
+                guard let account = state.selectedWalletAccount else {
+                    return .none
+                }
+                state.isMaxRequestInFlight = true
+                return .run { [accountId = account.id] send in
+                    do {
+                        // The real recipient is the provider's deposit address, which does not exist
+                        // until a quote has been requested. Deposit addresses are transparent, so
+                        // proposing against this account's own transparent receiver lands in the same
+                        // ZIP-317 fee class and yields the same max.
+                        guard let transparentAddress = try await sdkSynchronizer.getTransparentAddress(accountId) else {
+                            await send(.maxAmountFailed)
+                            return
+                        }
+                        let recipient = Recipient.transparent(transparentAddress)
+                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient)
+                        await send(.maxAmountResolved(maxAmount))
+                    } catch {
+                        await send(.maxAmountFailed)
+                    }
+                }
+                .cancellable(id: state.MaxCancelId)
+
+            case .maxAmountFailed:
+                state.isMaxRequestInFlight = false
+                return .none
+
+            case let .maxAmountResolved(maxAmount):
+                state.isMaxRequestInFlight = false
+                guard !state.isSwapToZecExperienceEnabled else {
+                    return .none
+                }
+                // Already net of the ZIP-317 fee.
+                let maxZec = maxAmount.decimalValue.decimalValue
+                if state.isSwapExperienceEnabled {
+                    // Swap ZEC -> token: one input field, holding either ZEC or its USD value.
+                    // `conversionFormatter` is the formatter the field can parse back (no grouping
+                    // separators); every dependent label is a computed property, so nothing else
+                    // has to be recomputed here.
+                    if state.isInputInUsd {
+                        guard let zecAsset = state.zecAsset, zecAsset.usdPrice > 0 else {
+                            return .none
+                        }
+                        // Floored, never rounded: this field is what the insufficient-funds check
+                        // divides back into ZEC, so rounding up would flag a Max the user just
+                        // tapped as over the balance. Floored to CENTS because every other USD
+                        // figure on this screen (the Spendable header, the To side) shows 2 decimals
+                        // and an 8-decimal dollar amount reads as broken next to them. The cost is
+                        // at most a cent of the max, far inside the ZIP-317 fee headroom.
+                        let amountInUsd = (maxZec * zecAsset.usdPrice).roundedDown(scale: 2)
+                        guard let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd)) else {
+                            return .none
+                        }
+                        state.amountText = value
+                    } else {
+                        guard let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: maxZec)) else {
+                            return .none
+                        }
+                        state.amountText = value
+                    }
+                } else {
+                    // Pay: the amount is entered in the target token, so the max goes through USD.
+                    guard let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset else {
+                        return .none
+                    }
+                    guard zecAsset.usdPrice > 0, selectedAsset.usdPrice > 0 else {
+                        return .none
+                    }
+                    // Floored, never rounded, at the 8 digits the field accepts: `amountAssetText` is
+                    // what the insufficient-funds check reads, so the token amount must not creep
+                    // above the max even by a half-ulp.
+                    let amountInToken = (maxZec * zecAsset.usdPrice / selectedAsset.usdPrice).roundedDown(scale: 8)
+                    // Derived from the FLOORED token amount, exactly as `payUsdLabel` derives it from
+                    // `amountAssetText` — so tapping Max and typing the same token amount agree.
+                    let amountInUsd = amountInToken * selectedAsset.usdPrice
+                    guard
+                        let tokenValue = state.conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInToken)),
+                        let usdValue = state.conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInUsd))
+                    else {
+                        return .none
+                    }
+                    // The same trio `.binding(\.amountAssetText)` writes when the user types an amount:
+                    // the token field, its USD counterpart (`payUsdLabel`) and `amountText` in token
+                    // units (`payAssetLabel`, what `amount` / `isInsufficientFunds` read). Computed
+                    // here rather than read back through `payUsdLabel` / `payAssetLabel` because those
+                    // depend on `assetAmount` / `usdAmount`, which are `_XCTIsTesting`-poisoned to 0.
+                    state.amountAssetText = tokenValue
+                    state.amountUsdText = usdValue
+                    state.amountText = tokenValue
+                }
+                return .none
+
             case .helpSheetRequested:
                 return .none
                 

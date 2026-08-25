@@ -42,21 +42,47 @@ extension SwapAndPayForm {
                             addressView()
                             
                             VStack(alignment: .leading) {
+                                // The field's own `title:` is lifted out into this row so the Max
+                                // chip can sit opposite it, the same treatment as the Send screen.
+                                HStack {
+                                    Text(String(localizable: .sendAmount))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .font(.custom(FontFamily.Inter.medium.name, size: 14))
+                                        .zForegroundColor(Design.Inputs.Filled.label)
+
+                                    Spacer()
+
+                                    #if ZODL_INTERNAL || SECANT_TESTNET
+                                    ZashiMaxChip(
+                                        title: String(localizable: .generalMax),
+                                        style: .standard,
+                                        isEnabled: store.isPayMaxButtonEnabled,
+                                        isInFlight: store.isMaxRequestInFlight
+                                    ) {
+                                        store.send(.maxTapped)
+                                    }
+                                    .accessibilityIdentifier(AccessibilityID.CrossPayForm.maxButton)
+                                    #endif
+                                }
+                                .padding(.bottom, 6)
+
                                 HStack(alignment: .top, spacing: 4) {
                                     ZashiTextField(
                                         text: $store.amountAssetText,
                                         placeholder: store.selectedAsset?.tokenName ?? store.zeroPlaceholder,
-                                        title: String(localizable: .sendAmount),
+                                        title: nil,
                                         error: store.isCrossPayInsufficientFunds ? String(localizable: .sendErrorInsufficientFunds) : nil
                                     )
                                     .keyboardType(.decimalPad)
                                     .focused($isAmountFocused)
 
+                                    // No top compensation: with the title lifted out, both fields
+                                    // start at the same y as this icon.
                                     Asset.Assets.Icons.switchHorizontal.image
                                         .zImage(size: 24, style: Design.Btns.Ghost.fg)
                                         .padding(8)
-                                        .padding(.top, 24)
-                                    
+
                                     ZashiTextField(
                                         text: $store.amountUsdText,
                                         placeholder: String(localizable: .sendCurrencyPlaceholder),
@@ -67,7 +93,6 @@ extension SwapAndPayForm {
                                     )
                                     .keyboardType(.decimalPad)
                                     .focused($isUsdFocused)
-                                    .padding(.top, 23)
                                 }
                             }
                             .disabled(store.isQuoteRequestInFlight)
