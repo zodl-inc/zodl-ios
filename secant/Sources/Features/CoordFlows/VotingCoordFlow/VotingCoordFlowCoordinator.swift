@@ -3239,9 +3239,7 @@ extension VotingCoordFlow {
             return nil
         }
         if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash),
-           confirmation.code == 0,
-           let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-           let vanPosition = UInt32(leafValue) {
+            let vanPosition = delegationVanPosition(from: confirmation) {
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             return vanPosition
         }
@@ -3258,10 +3256,7 @@ extension VotingCoordFlow {
                 guard confirmation.code == 0 else {
                     throw VotingFlowError.delegationTxFailed(code: confirmation.code, log: confirmation.log)
                 }
-                guard
-                    let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                    let vanPosition = UInt32(leafValue)
-                else {
+                guard let vanPosition = delegationVanPosition(from: confirmation) else {
                     throw VotingFlowError.delegationTxFailed(code: 0, log: "missing delegate_vote leaf_index")
                 }
                 return vanPosition
@@ -3779,7 +3774,7 @@ extension VotingCoordFlow {
 
         if let accepted,
             let confirmation = accepted.confirmation,
-            let vanPosition = delegationVanPosition(from: confirmation) {
+            delegationVanPosition(from: confirmation) != nil {
             return .acceptedTransaction(accepted)
         }
 
@@ -3999,13 +3994,23 @@ extension VotingCoordFlow {
         return (van: van, voteCommitment: voteCommitment)
     }
 
-    private static func delegationVanPosition(from confirmation: TxConfirmation) -> UInt32? {
+    /// Some deployed `/tx` handlers opportunistically Base64-decode CometBFT
+    /// event text. Re-encoding a resulting non-ASCII value restores a numeric
+    /// leaf position while malformed ASCII values still fail closed.
+    static func delegationVanPosition(from confirmation: TxConfirmation) -> UInt32? {
         guard confirmation.code == 0,
             let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index")
         else {
             return nil
         }
-        return UInt32(leafValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        let normalizedLeafValue = leafValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let position = UInt32(normalizedLeafValue) {
+            return position
+        }
+        guard normalizedLeafValue.unicodeScalars.contains(where: { $0.value > 0x7f }) else {
+            return nil
+        }
+        return UInt32(Data(normalizedLeafValue.utf8).base64EncodedString())
     }
 
     /// If we have a cached vote TX hash for `(roundId, bundleIndex, proposalId)`
@@ -4405,10 +4410,7 @@ extension VotingCoordFlow {
                 guard confirmation.code == 0 else {
                     return .failed(code: confirmation.code, log: confirmation.log)
                 }
-                guard
-                    let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                    let vanPosition = UInt32(leafValue)
-                else {
+                guard let vanPosition = delegationVanPosition(from: confirmation) else {
                     return .failed(code: 0, log: "missing delegate_vote leaf_index")
                 }
                 return .confirmed(vanPosition: vanPosition)

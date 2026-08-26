@@ -1054,6 +1054,38 @@ import Testing
         #expect(await recorder.events().isEmpty)
     }
 
+    @Test func delegationVanPositionRecoversLegacyBase64DecodedLeafIndex() {
+        let decodedLeafIndex = String(decoding: Data([0xdf, 0xbe, 0x77]), as: UTF8.self)
+        #expect(Data(decodedLeafIndex.utf8).base64EncodedString() == "3753")
+        let confirmation = TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [TxEventAttribute(key: "leaf_index", value: decodedLeafIndex)]
+                )
+            ]
+        )
+
+        #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == 3753)
+    }
+
+    @Test func delegationVanPositionRejectsMalformedAsciiLeafIndex() {
+        let confirmation = TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [TxEventAttribute(key: "leaf_index", value: "not-a-position")]
+                )
+            ]
+        )
+
+        #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == nil)
+    }
+
     @Test func commitmentTreeScanFindsVanAcrossPinnedPages() async throws {
         let recorder = RecoveryOrderRecorder()
         let expected = Data(repeating: 0xA5, count: 32)
