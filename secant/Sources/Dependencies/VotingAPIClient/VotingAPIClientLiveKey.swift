@@ -866,24 +866,6 @@ func serviceConfigRetainingRoundsWithValidSignatures(
     )
 }
 
-/// GitHub's raw CDN caches branch paths for ~300 s server-side, ignoring
-/// request cache headers. During a round rollover a wallet failing over to the
-/// GitHub mirror could otherwise read a stale round registry, so branch mirrors
-/// get a unique query token per fetch. Pinned (content-addressed) files are
-/// immutable and never need this; other hosts honor the no-cache headers.
-func cacheBustedDynamicConfigURL(_ url: URL, token: String) -> URL {
-    guard url.host?.lowercased() == "raw.githubusercontent.com" else {
-        return url
-    }
-    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-        return url
-    }
-    var queryItems = components.queryItems ?? []
-    queryItems.append(URLQueryItem(name: "zodl_cache_bust", value: token))
-    components.queryItems = queryItems
-    return components.url ?? url
-}
-
 /// Fetch the dynamic config by walking `urls` in order.
 ///
 /// Publisher semantics (token-holder-voting-config README): fall through to the
@@ -891,10 +873,9 @@ func cacheBustedDynamicConfigURL(_ url: URL, token: String) -> URL {
 /// content. A 4xx, or bytes that later fail to decode or validate, is an
 /// authoritative answer from the config publisher and surfaces immediately.
 /// When every mirror fails, the first (canonical origin's) error is thrown.
-/// Returns the fetched bytes together with the clean (un-busted) origin URL.
+/// Returns the fetched bytes together with the origin URL that served them.
 func fetchDynamicConfigData(
     urls: [URL],
-    token: String = UUID().uuidString,
     fetch: (URLRequest) async throws -> (Data, URLResponse)
 ) async throws -> (data: Data, origin: URL) {
     var firstError: VotingConfigError?
@@ -904,7 +885,7 @@ func fetchDynamicConfigData(
         // otherwise keep an old round binding alive long enough to brick voting
         // on launch.
         var request = URLRequest(
-            url: cacheBustedDynamicConfigURL(url, token: token),
+            url: url,
             cachePolicy: .reloadIgnoringLocalCacheData
         )
         request.timeoutInterval = StaticVotingConfig.configRequestTimeout

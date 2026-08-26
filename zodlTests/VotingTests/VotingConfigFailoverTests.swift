@@ -287,29 +287,5 @@ import Testing
         }
     }
 
-    @Test func cacheBustingIsScopedToGitHubRawMirrors() {
-        let busted = cacheBustedDynamicConfigURL(mirror, token: "TOKEN123")
-        let bustedComponents = URLComponents(url: busted, resolvingAgainstBaseURL: false)!
-        #expect(bustedComponents.queryItems?.contains(URLQueryItem(name: "zodl_cache_bust", value: "TOKEN123")) == true)
-        #expect(bustedComponents.host == "raw.githubusercontent.com")
-
-        #expect(cacheBustedDynamicConfigURL(primary, token: "TOKEN123") == primary)
-    }
-
-    @Test func walkFetchesGitHubRawMirrorWithCacheBustButReportsCleanOrigin() async throws {
-        let requestedURLs = OSAllocatedUnfairLock(initialState: [URL]())
-
-        let (_, origin) = try await fetchDynamicConfigData(urls: [primary, mirror], token: "TOKEN123") { request in
-            requestedURLs.withLock { $0.append(request.url!) }
-            if request.url!.host! == "voting.valargroup.dev" {
-                throw URLError(URLError.Code.cannotFindHost)
-            }
-            return (self.payload, self.okResponse(request))
-        }
-
-        #expect(origin == mirror)
-        let fetched = requestedURLs.withLock { $0 }
-        #expect(fetched.last?.query?.contains("zodl_cache_bust=TOKEN123") == true)
-    }
 }
 #endif
