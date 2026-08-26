@@ -1395,6 +1395,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
         let servedTransferId = await resolveServedTransferId(accountUUID: resolvedAccountUUID, result: result)
         scheduleStorage.recordTransferBroadcast(result, transferId: servedTransferId, for: resolvedAccountUUID, now: Date())
+        // MOB-1749: the broadcast record is a WRITER EDGE — the transaction it records has already
+        // moved the balances (and, for the immediate sweep, flipped `migrationProgress` to the
+        // unmined-window answer), so the published snapshot `bannerVariant` serves is stale the
+        // moment the ledger write above lands. Republish HERE, awaited and bounded, exactly as
+        // `lockMigrationDust` does for the lock: by the time the success chain returns — and so
+        // before the Success screen's Close can fire `flowFinished` — the snapshot already tells
+        // the post-broadcast truth, and the flow-close re-read retires a swept residual banner
+        // instead of re-seating it. Scheduling alone is not enough (a build is seconds of FFI
+        // reads and the user's exit is faster), and `reconcile()`'s own republish is skipped
+        // outright when the advance-step read fails transiently — both pinned in
+        // `MigrationSweepBannerFreshnessTests`. The split-phase early return above keeps its
+        // shape: preparation broadcasts already republish at both edges via the broadcast
+        // session's own pokes.
+        await awaitBounded(nanoseconds: Self.lockRepublishTimeoutNanoseconds) { [weak self] in
+            await self?.republishSnapshotNow(for: resolvedAccountUUID)
+        }
     }
 
     /// MOB-1466 (M2, SDK delegation): the transfer id a landed broadcast belongs to, or `nil` when
@@ -1447,7 +1463,8 @@ final class MigrationManagerImpl: @unchecked Sendable {
         }
     }
 
-    /// Final-review fix: the longest `lockMigrationDust` will WAIT for its awaited republish. The
+    /// Final-review fix: the longest a writer edge (`lockMigrationDust`, `recordTransferBroadcast`)
+    /// will WAIT for its awaited republish. The
     /// bound exists for the pathological case only (a wedged SDK read behind a server switch or a
     /// broadcast): past it the build keeps running detached — cancelling it would leak the
     /// coalescer's claimed `inFlight` — and the SmartBanner snapshot subscription delivers the
