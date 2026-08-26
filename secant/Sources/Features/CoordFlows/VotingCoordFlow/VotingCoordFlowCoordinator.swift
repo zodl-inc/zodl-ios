@@ -933,9 +933,10 @@ extension VotingCoordFlow {
                         }
                         await send(.earlyEligibilityConfirmed(roundId: roundId))
                         let witnesses: [WitnessData]
-                        if delegationReady {
-                            witnesses = []
-                        } else {
+                        if Self.shouldCompleteDeterministicRoundSetup(
+                            existingBundleCount: existingBundleCount,
+                            recoveredBundleCount: recoveredBundleCount
+                        ) {
                             witnesses = try await Self.completeDeterministicRoundSetup(
                                 roundId: roundId,
                                 snapshotHeight: snapshotHeight,
@@ -946,6 +947,8 @@ extension VotingCoordFlow {
                                 votingCrypto: votingCrypto,
                                 sdkSynchronizer: sdkSynchronizer
                             )
+                        } else {
+                            witnesses = []
                         }
                         await send(.votingWeightLoaded(
                             roundId: roundId,
@@ -3362,6 +3365,15 @@ extension VotingCoordFlow {
     /// delegation material. Restart recovery must preserve the entire round.
     static func shouldResumePersistedRound(existingBundleCount: UInt32) -> Bool {
         existingBundleCount > 0
+    }
+
+    /// A recovered bundle proves the persisted round completed tree-state and
+    /// witness setup before delegation submission began.
+    static func shouldCompleteDeterministicRoundSetup(
+        existingBundleCount: UInt32,
+        recoveredBundleCount: UInt32
+    ) -> Bool {
+        existingBundleCount > 0 && recoveredBundleCount == 0
     }
 
     /// Distinguish an absent round from a failed database read. A read failure
