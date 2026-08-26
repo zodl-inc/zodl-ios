@@ -191,8 +191,22 @@ struct DelegationSigningView: View {
                 if let pczt = store.roundCache[roundId]?.pendingUnsignedDelegationPczt,
                    let encoder = sdkSynchronizer.urEncoderForPCZT(pczt),
                    !isQRCodeEnlarged {
-                    AnimatedQRCode(urEncoder: encoder, size: 216)
+                    // CIQRCodeGenerator emits only a 1-module quiet zone, so the QR is
+                    // scannable only on a light surround. Match SignWithKeystoneView's
+                    // proven composition: 250pt code on a bone (always-white) plate —
+                    // bgPrimary is midnight in dark mode and Keystone cameras cannot
+                    // lock onto the code without the white margin.
+                    AnimatedQRCode(urEncoder: encoder, size: 250)
                         .frame(width: 216, height: 216)
+                        .padding(24)
+                        .background {
+                            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                .fill(Asset.Colors.ZDesign.Base.bone.color)
+                                .background {
+                                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                                }
+                        }
                         .onTapGesture {
                             withAnimation(.easeInOut) {
                                 isQRCodeEnlarged = true
@@ -221,7 +235,7 @@ struct DelegationSigningView: View {
                     .padding(24)
                 }
         }
-        .frame(width: 248, height: 248)
+        .frame(width: 264, height: 264)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._3xl)
                 .fill(Design.Surfaces.bgPrimary.color(colorScheme))

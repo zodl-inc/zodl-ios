@@ -117,6 +117,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
 - The Confirm button on a migration transfer plan now keeps its loading indicator up until your transfers are prepared and presigned (the first delivery kicked off), then opens the Migration Scheduled screen — one tap, no dead first tap, and the Home banner reflects the committed run when you return. The Confirm button still can no longer be tapped again after a successful commit.
 - [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
+- [MOB-1802] Keystone voting signing QR is now drawn on a white plate like the send-flow QR, so Keystone devices can scan it in dark mode.
 
 ## 3.7.3 build 1 (20026-07-12)
 
