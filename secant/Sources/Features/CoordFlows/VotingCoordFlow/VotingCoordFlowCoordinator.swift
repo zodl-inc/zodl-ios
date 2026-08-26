@@ -930,7 +930,7 @@ extension VotingCoordFlow {
                         // able to tell us about it right now.
                         var anyLocalDelegationTxHash = false
                         for bundleIndex: UInt32 in 0..<existingBundleCount {
-                            if case .present = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) {
+                            if case .present? = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) {
                                 anyLocalDelegationTxHash = true
                                 break
                             }
@@ -946,9 +946,14 @@ extension VotingCoordFlow {
                                 retryDelay: .zero
                             )
                         }
-                        let savedSignatures = isKeystoneUser
-                            ? ((try? await votingCrypto.loadKeystoneBundleSignatures(roundId)) ?? [])
-                            : []
+                        // A failed read is not evidence of "no signatures": swallowing it would
+                        // report zero, route a Keystone round to `.freshRound`, and destroy rows
+                        // that may back an on-chain registration. Let it throw into `catch:`
+                        // instead — `.pipelineFailed` is non-destructive and the user can retry.
+                        var savedSignatures: [KeystoneBundleSignatureInfo] = []
+                        if isKeystoneUser {
+                            savedSignatures = try await votingCrypto.loadKeystoneBundleSignatures(roundId)
+                        }
 
                         switch Self.roundResumeDecision(
                             probes: probes,
@@ -956,6 +961,9 @@ extension VotingCoordFlow {
                             anyLocalDelegationTxHash: anyLocalDelegationTxHash
                         ) {
                         case let .reuseRecovered(recoveredIndices):
+                            LoggerProxy.debug(
+                                "Recovered delegation bundle VAN positions for bundles \(recoveredIndices.sorted())"
+                            )
                             let delegationReady = recoveredIndices.count >= Int(existingBundleCount)
                             if delegationReady {
                                 try await votingCrypto.clearRecoveryState(roundId)
