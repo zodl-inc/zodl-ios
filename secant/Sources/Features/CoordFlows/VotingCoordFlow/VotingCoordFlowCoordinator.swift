@@ -868,8 +868,10 @@ extension VotingCoordFlow {
                     }
 
                     let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
-                    let existingState = try? await votingCrypto.getRoundState(roundId)
-                    let existingBundleCount = (try? await votingCrypto.getBundleCount(roundId)) ?? 0
+                    let (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
+                        roundId: roundId,
+                        votingCrypto: votingCrypto
+                    )
                     var preClearKeystoneSignatures: [KeystoneBundleSignatureInfo] = []
                     var resolvedBundleCount: UInt32 = 0
                     var shouldRestoreKeystoneSignatures = isKeystoneUser
@@ -953,7 +955,7 @@ extension VotingCoordFlow {
                             send: send
                         ) else { return }
                         didPrepareFreshRound = true
-                        resolvedBundleCount = (try? await votingCrypto.getBundleCount(roundId)) ?? 0
+                        resolvedBundleCount = try await votingCrypto.getBundleCount(roundId)
                     }
 
                     // 3. Hotkey: load or generate the per-account hotkey
@@ -3344,6 +3346,23 @@ extension VotingCoordFlow {
     /// exist, restart recovery must resume them instead of clearing the round.
     static func shouldResumePersistedRound(existingBundleCount: UInt32) -> Bool {
         existingBundleCount > 0
+    }
+
+    /// Distinguish an absent round from a failed database read. A read failure
+    /// must propagate so the caller cannot mistake it for an empty round and
+    /// authorize `prepareFreshRound` to clear persisted recovery material.
+    static func loadExistingRoundSetup(
+        roundId: String,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> (state: RoundStateInfo?, bundleCount: UInt32) {
+        let rounds = try await votingCrypto.listRounds()
+        guard rounds.contains(where: { $0.roundId == roundId }) else {
+            return (nil, 0)
+        }
+
+        let state = try await votingCrypto.getRoundState(roundId)
+        let bundleCount = try await votingCrypto.getBundleCount(roundId)
+        return (state, bundleCount)
     }
 
     private static func votingWeight(for notes: [NoteInfo], bundleCount: UInt32) -> UInt64 {

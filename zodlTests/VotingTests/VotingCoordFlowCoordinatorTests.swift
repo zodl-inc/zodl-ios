@@ -731,6 +731,108 @@ import Testing
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
     }
 
+    @Test func absentRoundLoadsAsFreshSetup() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return []
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            throw TestError.votingDatabaseReadFailed
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            throw TestError.votingDatabaseReadFailed
+        }
+
+        let setup = try await VotingCoordFlow.loadExistingRoundSetup(
+            roundId: roundId,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.state == nil)
+        #expect(setup.bundleCount == 0)
+        #expect(await recorder.events() == ["list"])
+    }
+
+    @Test func existingRoundLoadsStateAndBundleCount() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let state = RoundStateInfo(
+            roundId: roundId,
+            phase: .delegationProved,
+            snapshotHeight: 100,
+            hotkeyAddress: nil,
+            delegatedWeight: nil,
+            proofGenerated: false
+        )
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return [RoundSummaryInfo(
+                roundId: roundId,
+                phase: .delegationProved,
+                snapshotHeight: 100,
+                createdAt: 1
+            )]
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            return state
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            return 2
+        }
+
+        let setup = try await VotingCoordFlow.loadExistingRoundSetup(
+            roundId: roundId,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.state == state)
+        #expect(setup.bundleCount == 2)
+        #expect(await recorder.events() == ["list", "state", "count"])
+    }
+
+    @Test func existingRoundDatabaseFailureDoesNotBecomeFreshSetup() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return [RoundSummaryInfo(
+                roundId: roundId,
+                phase: .delegationConstructed,
+                snapshotHeight: 100,
+                createdAt: 1
+            )]
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            return RoundStateInfo(
+                roundId: roundId,
+                phase: .delegationConstructed,
+                snapshotHeight: 100,
+                hotkeyAddress: nil,
+                delegatedWeight: nil,
+                proofGenerated: false
+            )
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            throw TestError.votingDatabaseReadFailed
+        }
+
+        await #expect(throws: TestError.self) {
+            _ = try await VotingCoordFlow.loadExistingRoundSetup(
+                roundId: roundId,
+                votingCrypto: votingCrypto
+            )
+        }
+        #expect(await recorder.events() == ["list", "state", "count"])
+    }
+
     @Test func acceptedVotingTransactionDoesNotQueryRecovery() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
@@ -1786,6 +1888,7 @@ private enum TestError: LocalizedError {
     case shareRecordWriteFailed
     case delegationSetupMissing
     case delegationProofMissing
+    case votingDatabaseReadFailed
 
     var errorDescription: String? {
         switch self {
@@ -1799,6 +1902,8 @@ private enum TestError: LocalizedError {
             return "simulated missing persisted delegation setup"
         case .delegationProofMissing:
             return "simulated missing persisted delegation proof"
+        case .votingDatabaseReadFailed:
+            return "simulated voting database read failure"
         }
     }
 }
