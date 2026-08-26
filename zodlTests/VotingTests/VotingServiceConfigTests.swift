@@ -280,6 +280,152 @@ import Testing
         #expect(component == "tally")
     }
 
+    @Test func staticConfigDecodesV1SingularURL() throws {
+        let json = """
+        {
+          "static_config_version": 1,
+          "dynamic_config_url": "https://voting.valargroup.dev/prod/dynamic-voting-config.json",
+          "trusted_keys": [
+            {"key_id": "valargroup", "alg": "ed25519", "pubkey": "\(Data(repeating: 0x01, count: 32).base64EncodedString())"}
+          ]
+        }
+        """
+        let config = try JSONDecoder().decode(StaticVotingConfig.self, from: Data(json.utf8))
+
+        #expect(config.staticConfigVersion == 1)
+        #expect(config.dynamicConfigURLs.map(\.absoluteString) == ["https://voting.valargroup.dev/prod/dynamic-voting-config.json"])
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func staticConfigDecodesV2MirrorList() throws {
+        let json = """
+        {
+          "static_config_version": 2,
+          "dynamic_config_urls": [
+            "https://voting.valargroup.dev/prod/dynamic-voting-config.json",
+            "https://raw.githubusercontent.com/valargroup/token-holder-voting-config/main/prod/dynamic-voting-config.json"
+          ],
+          "trusted_keys": [
+            {"key_id": "valargroup", "alg": "ed25519", "pubkey": "\(Data(repeating: 0x01, count: 32).base64EncodedString())"}
+          ]
+        }
+        """
+        let config = try JSONDecoder().decode(StaticVotingConfig.self, from: Data(json.utf8))
+
+        #expect(config.staticConfigVersion == 2)
+        #expect(config.dynamicConfigURLs.count == 2)
+        #expect(config.dynamicConfigURLs.first?.host == "voting.valargroup.dev")
+        #expect(config.dynamicConfigURLs.last?.host == "raw.githubusercontent.com")
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func staticConfigV2RejectsEmptyMirrorList() throws {
+        let config = StaticVotingConfig(
+            staticConfigVersion: 2,
+            dynamicConfigURLs: [],
+            trustedKeys: [
+                StaticVotingConfig.TrustedKey(keyId: "test", alg: "ed25519", pubkey: Data(repeating: 0x01, count: 32), notes: nil)
+            ]
+        )
+
+        #expect(throws: VotingConfigError.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func staticConfigV2RejectsSingularOnlyDocument() {
+        let json = """
+        {
+          "static_config_version": 2,
+          "dynamic_config_url": "https://voting.valargroup.dev/prod/dynamic-voting-config.json",
+          "trusted_keys": []
+        }
+        """
+
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(StaticVotingConfig.self, from: Data(json.utf8))
+        }
+    }
+
+    @Test func staticConfigV1RejectsPluralOnlyDocument() {
+        let json = """
+        {
+          "static_config_version": 1,
+          "dynamic_config_urls": ["https://voting.valargroup.dev/prod/dynamic-voting-config.json"],
+          "trusted_keys": []
+        }
+        """
+
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(StaticVotingConfig.self, from: Data(json.utf8))
+        }
+    }
+
+    @Test func staticConfigRejectsUnsupportedVersionWithClearMessage() throws {
+        let json = """
+        {
+          "static_config_version": 3,
+          "trusted_keys": [
+            {"key_id": "valargroup", "alg": "ed25519", "pubkey": "\(Data(repeating: 0x01, count: 32).base64EncodedString())"}
+          ]
+        }
+        """
+        let config = try JSONDecoder().decode(StaticVotingConfig.self, from: Data(json.utf8))
+
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
+        }
+        guard case .decodeFailed(let detail)? = error else {
+            Issue.record("expected decodeFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(detail.contains("unsupported static_config_version 3"))
+    }
+
+    @Test func staticConfigRejectsNonHTTPSMirrorEntry() throws {
+        let config = StaticVotingConfig(
+            staticConfigVersion: 2,
+            dynamicConfigURLs: [
+                URL(string: "https://voting.valargroup.dev/prod/dynamic-voting-config.json")!,
+                URL(string: "http://mirror.example.com/dynamic-voting-config.json")!
+            ],
+            trustedKeys: [
+                StaticVotingConfig.TrustedKey(keyId: "test", alg: "ed25519", pubkey: Data(repeating: 0x01, count: 32), notes: nil)
+            ]
+        )
+
+        #expect(throws: VotingConfigError.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func staticConfigEncodeDecodeRoundTripsBothVersions() throws {
+        let v1 = makeStaticConfig()
+        let v2 = StaticVotingConfig(
+            staticConfigVersion: 2,
+            dynamicConfigURLs: [
+                URL(string: "https://a.example/dynamic.json")!,
+                URL(string: "https://b.example/dynamic.json")!
+            ],
+            trustedKeys: v1.trustedKeys
+        )
+
+        for config in [v1, v2] {
+            let data = try JSONEncoder().encode(config)
+            let decoded = try JSONDecoder().decode(StaticVotingConfig.self, from: data)
+            #expect(decoded == config)
+        }
+
+        // The v1 wire shape must keep the singular key so encoded v1 fixtures stay spec-shaped.
+        let v1Object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(v1)) as? [String: Any])
+        #expect(v1Object["dynamic_config_url"] != nil)
+        #expect(v1Object["dynamic_config_urls"] == nil)
+    }
+
     private func makeConfig(supportedVersions: VotingServiceConfig.SupportedVersions) -> VotingServiceConfig {
         VotingServiceConfig(
             configVersion: 1,
@@ -296,9 +442,9 @@ import Testing
     ) -> StaticVotingConfig {
         StaticVotingConfig(
             staticConfigVersion: 1,
-            dynamicConfigURL: URL(string: "https://example.com/dynamic-voting-config.json")!,
+            dynamicConfigURLs: [URL(string: "https://example.com/dynamic-voting-config.json")!],
             trustedKeys: [
-                .init(keyId: "test", alg: "ed25519", pubkey: trustedKeyBytes, notes: nil)
+                StaticVotingConfig.TrustedKey(keyId: "test", alg: "ed25519", pubkey: trustedKeyBytes, notes: nil)
             ]
         )
     }

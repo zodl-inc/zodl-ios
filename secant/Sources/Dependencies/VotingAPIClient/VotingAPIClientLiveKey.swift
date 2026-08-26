@@ -885,7 +885,9 @@ extension VotingAPIClient: DependencyKey {
 
                 // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
                 // or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let configURL = staticConfig.dynamicConfigURL
+                guard let configURL = staticConfig.dynamicConfigURLs.first else {
+                    throw VotingConfigError.decodeFailed("static config named no dynamic config URLs")
+                }
                 let data: Data
                 let response: URLResponse
                 do {

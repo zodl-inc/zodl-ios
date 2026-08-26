@@ -6,24 +6,58 @@ import Foundation
 /// The signed wallet binary pins the URL and SHA-256 of a published static
 /// config. The fetched bytes are trusted only after the hash matches.
 struct StaticVotingConfig: Codable, Equatable, Sendable {
-    static let supportedVersion = 1
+    static let supportedVersions: Set<Int> = [1, 2]
     static let algEd25519 = "ed25519"
     private static let bundledSHA256 = "fb62a56fae28debfdaa092f163cda0dab13295f87d25bbc4d0064d6ccdeb6943"
     static let bundledPinnedSource =
         "https://voting.valargroup.dev/pins/prod/\(bundledSHA256)/static-voting-config.json?checksum=sha256:\(bundledSHA256)"
 
     let staticConfigVersion: Int
-    let dynamicConfigURL: URL
+    /// Ordered dynamic-config mirror list, canonical origin first.
+    /// v1 documents carry a single `dynamic_config_url`, normalized here to a
+    /// one-element list; v2 documents carry `dynamic_config_urls` verbatim.
+    let dynamicConfigURLs: [URL]
     let trustedKeys: [TrustedKey]
 
     init(
         staticConfigVersion: Int,
-        dynamicConfigURL: URL,
+        dynamicConfigURLs: [URL],
         trustedKeys: [TrustedKey]
     ) {
         self.staticConfigVersion = staticConfigVersion
-        self.dynamicConfigURL = dynamicConfigURL
+        self.dynamicConfigURLs = dynamicConfigURLs
         self.trustedKeys = trustedKeys
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        staticConfigVersion = try container.decode(Int.self, forKey: .staticConfigVersion)
+        trustedKeys = try container.decode([TrustedKey].self, forKey: .trustedKeys)
+        switch staticConfigVersion {
+        case 1:
+            let url = try container.decode(URL.self, forKey: .dynamicConfigURL)
+            dynamicConfigURLs = [url]
+        case 2:
+            dynamicConfigURLs = try container.decode([URL].self, forKey: .dynamicConfigURLs)
+        default:
+            // Unknown version: defer to validate() so the caller sees a precise
+            // "unsupported static_config_version N" instead of a decode error.
+            dynamicConfigURLs = []
+        }
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(staticConfigVersion, forKey: .staticConfigVersion)
+        try container.encode(trustedKeys, forKey: .trustedKeys)
+        switch staticConfigVersion {
+        case 1:
+            if let url = dynamicConfigURLs.first {
+                try container.encode(url, forKey: .dynamicConfigURL)
+            }
+        default:
+            try container.encode(dynamicConfigURLs, forKey: .dynamicConfigURLs)
+        }
     }
 
     /// Admin key trusted to sign per-round dynamic config entries.
@@ -48,6 +82,7 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case staticConfigVersion = "static_config_version"
         case dynamicConfigURL = "dynamic_config_url"
+        case dynamicConfigURLs = "dynamic_config_urls"
         case trustedKeys = "trusted_keys"
     }
 
@@ -105,8 +140,11 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
     /// Dynamic endpoint reachability and round signatures are checked later when
     /// the dynamic config is fetched and a chain round is selected.
     func validate() throws {
-        guard staticConfigVersion == Self.supportedVersion else {
+        guard Self.supportedVersions.contains(staticConfigVersion) else {
             throw VotingConfigError.decodeFailed("unsupported static_config_version \(staticConfigVersion)")
+        }
+        guard !dynamicConfigURLs.isEmpty else {
+            throw VotingConfigError.decodeFailed("dynamic_config_urls must contain at least one entry")
         }
         guard !trustedKeys.isEmpty else {
             throw VotingConfigError.decodeFailed("trusted_keys must contain at least one entry")
@@ -121,16 +159,18 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
             }
         }
 
-        // The dynamic config URL must be HTTPS. iOS App Transport Security
+        // Every dynamic config mirror must be HTTPS. iOS App Transport Security
         // already blocks plaintext HTTP for this app, and the user-pasted
         // custom-chain path enforces https in `PinnedConfigSource.parse`.
-        // Enforce the same here so a future static-config rotation (the only
-        // place where this URL is decided) can't silently downgrade voting to
-        // an unauthenticated transport.
-        guard dynamicConfigURL.scheme?.lowercased() == "https" else {
-            throw VotingConfigError.decodeFailed(
-                "dynamic_config_url must use https; got \(dynamicConfigURL.scheme ?? "<none>")"
-            )
+        // Enforce the same here so a static-config rotation (the only place
+        // where these URLs are decided) can't silently downgrade voting to an
+        // unauthenticated transport.
+        for url in dynamicConfigURLs {
+            guard url.scheme?.lowercased() == "https" else {
+                throw VotingConfigError.decodeFailed(
+                    "dynamic_config_urls must use https; got \(url.absoluteString)"
+                )
+            }
         }
     }
 }
