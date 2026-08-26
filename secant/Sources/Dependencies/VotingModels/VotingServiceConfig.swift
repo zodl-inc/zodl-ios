@@ -144,6 +144,7 @@ enum VotingConfigError: Error, Equatable, LocalizedError {
     case unsupportedVersion(component: String, advertised: String)
     case staticConfigSourceMalformed(String)
     case staticConfigFetchFailed(String)
+    case dynamicConfigFetchFailed(String, statusCode: Int?)
     case staticConfigHashMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
@@ -155,7 +156,9 @@ enum VotingConfigError: Error, Equatable, LocalizedError {
         case .staticConfigSourceMalformed(let detail):
             return String(localizable: .coinVoteConfigErrorDecodeFailed("static config source malformed: \(detail)"))
         case .staticConfigFetchFailed(let detail):
-            return String(localizable: .coinVoteConfigErrorDecodeFailed("static config fetch failed: \(detail)"))
+            return String(localizable: .coinVoteConfigErrorFetchFailed("static config: \(detail)"))
+        case .dynamicConfigFetchFailed(let detail, _):
+            return String(localizable: .coinVoteConfigErrorFetchFailed(detail))
         case .staticConfigHashMismatch(let expected, let actual):
             return String(
                 localizable: .coinVoteConfigErrorDecodeFailed(

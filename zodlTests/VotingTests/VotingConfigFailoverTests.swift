@@ -210,7 +210,7 @@ import Testing
     @Test func walkUsesFirstHealthyURLAndStampsTimeout() async throws {
         let requested = OSAllocatedUnfairLock(initialState: [URLRequest]())
 
-        let (data, origin) = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+        let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, mirror]) { request in
             requested.withLock { $0.append(request) }
             return (self.payload, self.okResponse(request))
         }
@@ -227,7 +227,7 @@ import Testing
         let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
         let third = URL(string: "https://third.example/dynamic-voting-config.json")!
 
-        let (_, origin) = try await fetchDynamicConfigData(urls: [primary, third, mirror]) { request in
+        let (_, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, third, mirror]) { request in
             let host = request.url!.host!
             requestedHosts.withLock { $0.append(host) }
             switch host {
@@ -244,27 +244,46 @@ import Testing
         #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev", "third.example", "raw.githubusercontent.com"])
     }
 
-    @Test func walkTreats4xxAsAuthoritative() async throws {
+    @Test func walkTreatsPlain4xxAsAuthoritative() async throws {
         let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
 
         let error = await #expect(throws: VotingConfigError.self) {
-            _ = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+            _ = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, mirror]) { request in
                 requestedHosts.withLock { $0.append(request.url!.host!) }
                 return (Data(), self.okResponse(request, status: 404))
             }
         }
 
         #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev"])
-        guard case .decodeFailed(let detail)? = error else {
-            Issue.record("expected decodeFailed, got \(String(describing: error))")
+        guard case .dynamicConfigFetchFailed(let detail, let statusCode)? = error else {
+            Issue.record("expected dynamicConfigFetchFailed, got \(String(describing: error))")
             return
         }
         #expect(detail.contains("404"))
+        #expect(statusCode == 404)
+    }
+
+    @Test(arguments: [403, 407, 429, 451])
+    func walkFallsThroughOnMiddleboxStatus(status: Int) async throws {
+        let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
+
+        let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, mirror]) { request in
+            let host = request.url!.host!
+            requestedHosts.withLock { $0.append(host) }
+            if host == "voting.valargroup.dev" {
+                return (Data(), self.okResponse(request, status: status))
+            }
+            return (self.payload, self.okResponse(request))
+        }
+
+        #expect(data == payload)
+        #expect(origin == mirror)
+        #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev", "raw.githubusercontent.com"])
     }
 
     @Test func walkReportsFirstErrorWhenAllURLsFail() async throws {
         let error = await #expect(throws: VotingConfigError.self) {
-            _ = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+            _ = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, mirror]) { request in
                 if request.url!.host! == "voting.valargroup.dev" {
                     throw URLError(URLError.Code.cannotConnectToHost)
                 }
@@ -272,16 +291,17 @@ import Testing
             }
         }
 
-        guard case .decodeFailed(let detail)? = error else {
-            Issue.record("expected decodeFailed, got \(String(describing: error))")
+        guard case .dynamicConfigFetchFailed(let detail, let statusCode)? = error else {
+            Issue.record("expected dynamicConfigFetchFailed, got \(String(describing: error))")
             return
         }
         #expect(detail.contains("CDN fetch failed"))
+        #expect(statusCode == nil)
     }
 
     @Test func walkRejectsEmptyURLList() async throws {
         await #expect(throws: VotingConfigError.self) {
-            _ = try await fetchDynamicConfigData(urls: []) { request in
+            _ = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: []) { request in
                 (self.payload, self.okResponse(request))
             }
         }

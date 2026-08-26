@@ -139,38 +139,25 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
     /// broken mirror, never a trust decision). A decode or validation failure
     /// *after* the hash matched is authoritative for every mirror — the pin
     /// guarantees identical bytes everywhere — so it surfaces immediately.
-    /// When every mirror fails, the first (canonical origin's) error is thrown.
     static func loadFromNetworkWithFailover(
         sources: [PinnedConfigSource],
         fetch: (URLRequest) async throws -> (Data, URLResponse)
     ) async throws -> StaticVotingConfig {
-        guard !sources.isEmpty else {
-            throw VotingConfigError.staticConfigSourceMalformed("no static config sources configured")
-        }
-
-        var firstError: VotingConfigError?
-        for source in sources {
-            do {
-                return try await loadFromNetwork(source: source, fetch: fetch)
-            } catch let error as VotingConfigError {
+        try await VotingConfigMirrorWalk.run(
+            mirrors: sources,
+            walkLabel: "Static config",
+            mirrorLabel: { source in source.url.host ?? "<unknown>" },
+            emptyError: VotingConfigError.staticConfigSourceMalformed("no static config sources configured"),
+            shouldTryNext: { error in
                 switch error {
                 case .staticConfigFetchFailed, .staticConfigHashMismatch:
-                    if firstError == nil {
-                        firstError = error
-                    }
-                    LoggerProxy.warn(
-                        "Static config mirror \(source.url.host ?? "<unknown>") failed, trying next: \(error)"
-                    )
+                    return true
                 default:
-                    throw error
+                    return false
                 }
-            }
-        }
-
-        if let firstError {
-            throw firstError
-        }
-        throw VotingConfigError.staticConfigSourceMalformed("no static config sources configured")
+            },
+            attempt: { source in try await loadFromNetwork(source: source, fetch: fetch) }
+        )
     }
 
     /// Verify the raw bytes before decoding when a pin is provided.

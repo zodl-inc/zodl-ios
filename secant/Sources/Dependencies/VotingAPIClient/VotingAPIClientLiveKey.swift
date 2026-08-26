@@ -866,63 +866,6 @@ func serviceConfigRetainingRoundsWithValidSignatures(
     )
 }
 
-/// Fetch the dynamic config by walking `urls` in order.
-///
-/// Publisher semantics (token-holder-voting-config README): fall through to the
-/// next mirror only on a transport failure or a 5xx response — never because of
-/// content. A 4xx, or bytes that later fail to decode or validate, is an
-/// authoritative answer from the config publisher and surfaces immediately.
-/// When every mirror fails, the first (canonical origin's) error is thrown.
-/// Returns the fetched bytes together with the origin URL that served them.
-func fetchDynamicConfigData(
-    urls: [URL],
-    fetch: (URLRequest) async throws -> (Data, URLResponse)
-) async throws -> (data: Data, origin: URL) {
-    var firstError: VotingConfigError?
-    for url in urls {
-        // Always re-fetch the config from the network instead of trusting a
-        // persisted URLCache entry. Mobile restarts during a round rollover can
-        // otherwise keep an old round binding alive long enough to brick voting
-        // on launch.
-        var request = URLRequest(
-            url: url,
-            cachePolicy: .reloadIgnoringLocalCacheData
-        )
-        request.timeoutInterval = StaticVotingConfig.configRequestTimeout
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await fetch(request)
-        } catch {
-            if firstError == nil {
-                firstError = VotingConfigError.decodeFailed("CDN fetch failed: \(error.localizedDescription)")
-            }
-            LoggerProxy.warn("Dynamic config mirror \(url.host ?? "<unknown>") unreachable, trying next: \(error)")
-            continue
-        }
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            let statusError = VotingConfigError.decodeFailed("CDN returned HTTP \(http.statusCode)")
-            guard http.statusCode >= 500 else {
-                throw statusError
-            }
-            if firstError == nil {
-                firstError = statusError
-            }
-            LoggerProxy.warn("Dynamic config mirror \(url.host ?? "<unknown>") returned HTTP \(http.statusCode), trying next")
-            continue
-        }
-        return (data, url)
-    }
-
-    if let firstError {
-        throw firstError
-    }
-    throw VotingConfigError.decodeFailed("static config named no dynamic config URLs")
-}
-
 // MARK: - Live Implementation
 
 extension VotingAPIClient: DependencyKey {
@@ -945,7 +888,7 @@ extension VotingAPIClient: DependencyKey {
 
                 // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
                 // or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let (data, origin) = try await fetchDynamicConfigData(
+                let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(
                     urls: staticConfig.dynamicConfigURLs,
                     fetch: { request in try await performVotingRequest(request) }
                 )

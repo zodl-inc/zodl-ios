@@ -1857,6 +1857,23 @@
         }
       }
     },
+    "coinVote.configError.fetchFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting config fetch failed: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting config fetch failed: %@"
+          }
+        }
+      }
+    },
     "coinVote.configError.invalidConfig" : {
       "extractionState" : "manual",
       "localizations" : {

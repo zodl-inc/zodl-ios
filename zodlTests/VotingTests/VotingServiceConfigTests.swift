@@ -430,6 +430,16 @@ import Testing
         #expect(v1Object["dynamic_config_urls"] == nil)
     }
 
+    @Test func fetchFailuresRenderAsFetchFailedNotDecodeFailed() {
+        let dynamicMessage = VotingConfigError.dynamicConfigFetchFailed("CDN returned HTTP 403", statusCode: 403).errorDescription ?? ""
+        let staticMessage = VotingConfigError.staticConfigFetchFailed("HTTP 503").errorDescription ?? ""
+
+        #expect(dynamicMessage.contains("fetch failed"))
+        #expect(staticMessage.contains("fetch failed"))
+        #expect(!dynamicMessage.contains("decode"))
+        #expect(!staticMessage.contains("decode"))
+    }
+
     private func makeConfig(supportedVersions: VotingServiceConfig.SupportedVersions) -> VotingServiceConfig {
         VotingServiceConfig(
             configVersion: 1,
