@@ -131,18 +131,42 @@ import Testing
             try pinnedSource(host: "mirror.example", for: bytes)
         ]
 
+        // Both mirrors fail with the same VotingConfigError case (staticConfigFetchFailed),
+        // but with distinguishable payloads (HTTP 503 vs. HTTP 502) so this test can tell
+        // first-error retention apart from last-error retention: a regression that
+        // unconditionally overwrote firstError would surface the mirror's "HTTP 502" here
+        // instead of the primary's "HTTP 503". URLError.localizedDescription is avoided
+        // since it is locale-dependent and would not give a deterministic assertion.
         let error = await #expect(throws: VotingConfigError.self) {
             _ = try await StaticVotingConfig.loadFromNetworkWithFailover(sources: sources) { request in
                 if request.url!.host! == "primary.example" {
-                    throw URLError(URLError.Code.timedOut)
+                    return (Data(), self.okResponse(request, status: 503))
                 }
                 return (Data(), self.okResponse(request, status: 502))
             }
         }
-        guard case .staticConfigFetchFailed? = error else {
+        guard case .staticConfigFetchFailed(let detail)? = error else {
             Issue.record("expected the primary's fetch failure, got \(String(describing: error))")
             return
         }
+        #expect(detail == "HTTP 503")
+        #expect(!detail.contains("502"))
+    }
+
+    @Test func walkRejectsEmptySourceList() async throws {
+        let fetchInvoked = OSAllocatedUnfairLock(initialState: false)
+
+        let error = await #expect(throws: VotingConfigError.self) {
+            _ = try await StaticVotingConfig.loadFromNetworkWithFailover(sources: []) { request in
+                fetchInvoked.withLock { $0 = true }
+                return (Data(), self.okResponse(request))
+            }
+        }
+        guard case .staticConfigSourceMalformed? = error else {
+            Issue.record("expected staticConfigSourceMalformed for an empty source list, got \(String(describing: error))")
+            return
+        }
+        #expect(!fetchInvoked.withLock { $0 })
     }
 
     @Test func walkStampsPerAttemptTimeout() async throws {
