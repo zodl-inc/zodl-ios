@@ -121,6 +121,37 @@ import Foundation
             == Data(contentsOf: scratch.databaseURL))
     }
 
+    /// A process can stop after sidecars were published or while the main
+    /// database was still being copied under its temporary name. With no final
+    /// main database, the next launch must discard those leftovers and retry.
+    @Test func retriesAfterAnInterruptedStagedCopy() throws {
+        let scratch = try Scratch()
+        let recoveredDatabaseURL = scratch.destination
+            .appendingPathComponent("voting.sqlite3")
+        let recoveredWalURL = URL(fileURLWithPath: recoveredDatabaseURL.path + "-wal")
+        let recoveredShmURL = URL(fileURLWithPath: recoveredDatabaseURL.path + "-shm")
+        let stagedDatabaseURL = scratch.destination
+            .appendingPathComponent(".voting.sqlite3.copying")
+
+        try Data("partial-main".utf8).write(to: stagedDatabaseURL)
+        try Data("partial-wal".utf8).write(to: recoveredWalURL)
+        try Data("partial-shm".utf8).write(to: recoveredShmURL)
+
+        let snapshot = try #require(
+            VotingDatabaseSnapshot.captureThrowing(
+                databasePath: scratch.databaseURL.path,
+                now: Date(),
+                root: scratch.destination
+            )
+        )
+
+        #expect(try Data(contentsOf: snapshot.databaseURL)
+            == Data(contentsOf: scratch.databaseURL))
+        #expect(try Data(contentsOf: snapshot.walURL) == Data(contentsOf: scratch.walURL))
+        #expect(try Data(contentsOf: snapshot.shmURL) == Data(contentsOf: scratch.shmURL))
+        #expect(FileManager.default.fileExists(atPath: stagedDatabaseURL.path) == false)
+    }
+
     @Test func holdsDataDistinguishesMissingEmptyAndPopulated() throws {
         let scratch = try Scratch()
         let missing = scratch.destination.appendingPathComponent("absent.sqlite3")

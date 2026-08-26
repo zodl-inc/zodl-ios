@@ -90,29 +90,61 @@ enum VotingDatabaseSnapshot {
 
         guard !holdsData(at: destination.databaseURL) else { return nil }
 
-        // Replace any empty or half-written leftover from an interrupted run.
-        for url in [destination.databaseURL, destination.walURL, destination.shmURL] {
+        let stagedDatabaseURL = stagingURL(for: destination.databaseURL)
+        let stagedWalURL = stagingURL(for: destination.walURL)
+        let stagedShmURL = stagingURL(for: destination.shmURL)
+        let finalURLs = [destination.databaseURL, destination.walURL, destination.shmURL]
+        let stagedURLs = [stagedDatabaseURL, stagedWalURL, stagedShmURL]
+
+        // An interrupted attempt can leave staged files or sidecars without a
+        // final main database. None of those form a published snapshot, so a
+        // retry replaces them.
+        for url in finalURLs + stagedURLs {
             try? fileManager.removeItem(at: url)
         }
+        defer {
+            for url in stagedURLs {
+                try? fileManager.removeItem(at: url)
+            }
+        }
 
-        // The WAL first: it is the volatile, high-value artifact, and the one
-        // the next open would checkpoint away. The database file only loses its
-        // old page images once that checkpoint runs.
+        // Copy into temporary names first. `copyItem` returning means the OS
+        // finished each copy; publishing below is then only an atomic rename.
+        // The WAL goes first because it is the volatile, high-value artifact.
         if fileManager.fileExists(atPath: wal.path) {
-            try fileManager.copyItem(at: wal, to: destination.walURL)
+            try fileManager.copyItem(at: wal, to: stagedWalURL)
         }
         if fileManager.fileExists(atPath: shm.path) {
-            try? fileManager.copyItem(at: shm, to: destination.shmURL)
+            try fileManager.copyItem(at: shm, to: stagedShmURL)
         }
-        try fileManager.copyItem(at: source, to: destination.databaseURL)
-        try? Data(timestamp(now).utf8).write(to: destination.markerURL)
+        try fileManager.copyItem(at: source, to: stagedDatabaseURL)
 
         for url in [
-            destination.walURL, destination.shmURL, destination.databaseURL, destination.markerURL
+            stagedWalURL, stagedShmURL, stagedDatabaseURL
         ] where fileManager.fileExists(atPath: url.path) {
             try? fileManager.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                 ofItemAtPath: url.path
+            )
+        }
+
+        if fileManager.fileExists(atPath: stagedWalURL.path) {
+            try fileManager.moveItem(at: stagedWalURL, to: destination.walURL)
+        }
+        if fileManager.fileExists(atPath: stagedShmURL.path) {
+            try fileManager.moveItem(at: stagedShmURL, to: destination.shmURL)
+        }
+
+        // Publish the main database last. Moving within one directory is an
+        // atomic rename, so interruption leaves either no completion marker
+        // (and the next launch retries) or the complete captured database.
+        try fileManager.moveItem(at: stagedDatabaseURL, to: destination.databaseURL)
+
+        try? Data(timestamp(now).utf8).write(to: destination.markerURL)
+        if fileManager.fileExists(atPath: destination.markerURL.path) {
+            try? fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: destination.markerURL.path
             )
         }
 
@@ -135,6 +167,12 @@ enum VotingDatabaseSnapshot {
             return false
         }
         return size.intValue > 0
+    }
+
+    private static func stagingURL(for destinationURL: URL) -> URL {
+        destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(destinationURL.lastPathComponent).copying")
     }
 
     /// Removes the preserved set. Wallet-reset scope only.
