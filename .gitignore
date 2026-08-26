@@ -96,3 +96,7 @@ PartnerKeys.plist
 # Design docs, implementation plans, and other working notes. These are
 # conversation artifacts rather than repository history.
 .plans/
+
+# Generated voting recovery fixtures - never commit database binaries
+zodlTests/VotingTests/Fixtures/post-clear/
+zodlTests/VotingTests/Fixtures/pre-clear/

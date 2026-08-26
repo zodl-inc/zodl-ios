@@ -187,6 +187,7 @@ extension VotingCryptoClient: DependencyKey {
             },
             // swiftlint:disable:next line_length
             buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
+                @Dependency(\.delegationEscrow) var delegationEscrow
                 let backend = try await dbActor.backend()
                 let inputs: VotingDelegationInputs
                 let actualFvkBytes: [UInt8]
@@ -245,6 +246,34 @@ extension VotingCryptoClient: DependencyKey {
                 let rseedSigned: Data = Data(result.rseedSigned)
                 let rseedOutput: Data = Data(result.rseedOutput)
                 let actionBytes: Data = Data(result.actionBytes)
+
+                // Escrow the blinding factor before anything else can touch the
+                // round. This is the only moment it exists outside
+                // `voting.sqlite3`: it is sampled from `OsRng` in the Rust core,
+                // never derived from the seed, and the FFI has no setter that
+                // could put it back once `clear_round` cascades `bundles` away.
+                //
+                // A failed escrow write must not abort a delegation the user has
+                // already paid for, so this logs and continues; the guard in
+                // `prepareFreshRound` is the other half of the protection and
+                // does not depend on the escrow succeeding.
+                do {
+                    try await delegationEscrow.record(
+                        DelegationEscrowEntry(
+                            roundId: roundId,
+                            bundleIndex: bundleIndex,
+                            vanCommRand: vanCommRand,
+                            van: van,
+                            totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value },
+                            createdAt: Date()
+                        )
+                    )
+                } catch {
+                    LoggerProxy.error(
+                        "Delegation escrow write failed for round \(roundId) bundle \(bundleIndex): \(error)"
+                    )
+                }
+
                 return VotingPcztResult(
                     pcztBytes: pcztBytes,
                     pcztSighash: pcztSighash,

@@ -745,6 +745,12 @@ extension Root {
             .first {
             let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
             try? FileManager.default.removeItem(at: votingDbURL)
+            // The delegation escrow holds VAN blinding factors for this
+            // wallet's rounds. It is as wallet-scoped as the database it
+            // shadows, so it must not survive the reset boundary either.
+            try? FileManager.default.removeItem(
+                at: documents.appendingPathComponent(DelegationEscrowFile.name)
+            )
         }
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which
