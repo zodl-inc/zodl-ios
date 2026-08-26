@@ -1994,6 +1994,97 @@ import Testing
         #expect(decision == RoundResumeDecision.freshRound)
     }
 
+    // MARK: - Stored Keystone signature validation (MOB-1802 Fix C)
+
+    // A stored signature covers one specific ZIP-244 sighash; when the provider echoes back
+    // exactly that sighash for the signature's bundle, the signature is still trustworthy.
+    @Test func validatedStoredSignaturesKeepsMatchingSighash() async {
+        let sighash = Data(repeating: 0xAA, count: 32)
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: sighash,
+            rk: Data(repeating: 0x02, count: 32)
+        )
+
+        let result = await VotingCoordFlow.validatedStoredSignatures([signature]) { _ in sighash }
+
+        #expect(result == [signature])
+    }
+
+    // The bundle's delegation setup was rebuilt (or never matched) since the signature was
+    // captured — the provider's current sighash disagrees with what the signature covers, so
+    // trusting it would feed a stale signature into `build_and_prove_delegation`. Drop it; the
+    // bundle re-enters the signing queue via `firstIncompleteKeystoneBundleIndex`.
+    @Test func validatedStoredSignaturesDropsMismatchedSighash() async {
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+
+        let result = await VotingCoordFlow.validatedStoredSignatures([signature]) { _ in
+            Data(repeating: 0xBB, count: 32)
+        }
+
+        #expect(result.isEmpty)
+    }
+
+    // A thrown lookup means the bundle's delegation setup is incomplete or missing — exactly
+    // the "Invalid column type Null … alpha" shape from the field report. That is never
+    // evidence the signature is valid, so it must drop, not propagate or default to trusting it.
+    @Test func validatedStoredSignaturesDropsWhenProviderThrows() async {
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+
+        let result = await VotingCoordFlow.validatedStoredSignatures([signature]) { _ in
+            throw URLError(URLError.Code.badServerResponse)
+        }
+
+        #expect(result.isEmpty)
+    }
+
+    // Mixed bundle set: the middle signature's sighash no longer matches while its neighbors
+    // still do. Survivors must be exactly the matches, in their original relative order — a
+    // dropped middle bundle must not shift or reorder the ones that still validate.
+    @Test func validatedStoredSignaturesKeepsOnlyMatchesInOrder() async {
+        let matchingSighashes: [UInt32: Data] = [
+            0: Data(repeating: 0xAA, count: 32),
+            2: Data(repeating: 0xCC, count: 32)
+        ]
+        let signature0 = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let signature1 = KeystoneBundleSignatureInfo(
+            bundleIndex: 1,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xBB, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let signature2 = KeystoneBundleSignatureInfo(
+            bundleIndex: 2,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xCC, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+
+        let result = await VotingCoordFlow.validatedStoredSignatures(
+            [signature0, signature1, signature2]
+        ) { bundleIndex in
+            matchingSighashes[bundleIndex] ?? Data(repeating: 0xFF, count: 32)
+        }
+
+        #expect(result == [signature0, signature2])
+    }
+
     private let roundId = "round-1"
     private let activeRoundId = String(repeating: "aa", count: 32)
 

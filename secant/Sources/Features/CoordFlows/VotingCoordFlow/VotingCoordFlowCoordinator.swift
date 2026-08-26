@@ -1098,8 +1098,27 @@ extension VotingCoordFlow {
                     // proof-generated shortcut has nothing left to restore.
                     if isKeystoneUser && !didPrepareFreshRound && existingState?.proofGenerated != true {
                         let storedSignatures = (try? await votingCrypto.loadKeystoneBundleSignatures(roundId)) ?? []
+                        // A stored signature is only usable if the bundle row still holds the
+                        // delegation data (alpha/pczt_sighash) it was created against — the
+                        // signature covers that exact sighash. Trusting a stale one routes
+                        // straight into `build_and_prove_delegation`, which dies on the missing
+                        // data. Validate against the stored sighash before the shape check below
+                        // ever sees these signatures, so a mismatch or an incomplete setup drops
+                        // the signature instead of being trusted.
+                        var verifiedSignatures: [KeystoneBundleSignatureInfo] = []
+                        if !storedSignatures.isEmpty {
+                            verifiedSignatures = await Self.validatedStoredSignatures(storedSignatures) { bundleIndex in
+                                try await votingCrypto.getStoredDelegationSighash(roundId, bundleIndex)
+                            }
+                            if verifiedSignatures.count < storedSignatures.count {
+                                let droppedCount = storedSignatures.count - verifiedSignatures.count
+                                LoggerProxy.warn(
+                                    "Dropped \(droppedCount) stored Keystone signature(s) that no longer match their bundle's delegation data"
+                                )
+                            }
+                        }
                         if let validSignatures = Self.validKeystoneSignatures(
-                            storedSignatures,
+                            verifiedSignatures,
                             bundleCount: resolvedBundleCount
                         ), !validSignatures.isEmpty {
                             await send(.keystoneSignaturesRestored(
@@ -3198,6 +3217,28 @@ extension VotingCoordFlow {
             }
         }
         return sorted
+    }
+
+    /// Keeps a stored Keystone signature only when `storedSighash` still reports the exact
+    /// ZIP-244 sighash the signature was produced against. A signature covers one specific
+    /// sighash; if the bundle's delegation setup was rebuilt (or never completed) since the
+    /// signature was captured, trusting it routes straight into `build_and_prove_delegation`
+    /// with missing alpha/pczt_sighash data. A thrown lookup (delegation setup incomplete) and
+    /// a mismatch are both dropped — never kept by default — because dropping is always the
+    /// fail-safe outcome: the bundle simply re-enters the signing queue via
+    /// `firstIncompleteKeystoneBundleIndex`. Survivors keep their relative order.
+    static func validatedStoredSignatures(
+        _ signatures: [KeystoneBundleSignatureInfo],
+        storedSighash: (UInt32) async throws -> Data
+    ) async -> [KeystoneBundleSignatureInfo] {
+        var validated: [KeystoneBundleSignatureInfo] = []
+        for signature in signatures {
+            guard let sighash = try? await storedSighash(signature.bundleIndex), sighash == signature.sighash else {
+                continue
+            }
+            validated.append(signature)
+        }
+        return validated
     }
 
     private static func allKeystoneBundlesResolved(_ session: RoundSession) -> Bool {
