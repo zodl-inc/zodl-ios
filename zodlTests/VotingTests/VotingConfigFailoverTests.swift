@@ -131,12 +131,9 @@ import Testing
             try pinnedSource(host: "mirror.example", for: bytes)
         ]
 
-        // Both mirrors fail with the same VotingConfigError case (staticConfigFetchFailed),
-        // but with distinguishable payloads (HTTP 503 vs. HTTP 502) so this test can tell
-        // first-error retention apart from last-error retention: a regression that
-        // unconditionally overwrote firstError would surface the mirror's "HTTP 502" here
-        // instead of the primary's "HTTP 503". URLError.localizedDescription is avoided
-        // since it is locale-dependent and would not give a deterministic assertion.
+        // Both mirrors fail with the same case but distinguishable payloads
+        // (HTTP 503 vs 502), so asserting the exact detail proves first-error
+        // retention rather than last-error retention.
         let error = await #expect(throws: VotingConfigError.self) {
             _ = try await StaticVotingConfig.loadFromNetworkWithFailover(sources: sources) { request in
                 if request.url!.host! == "primary.example" {
@@ -150,7 +147,6 @@ import Testing
             return
         }
         #expect(detail == "HTTP 503")
-        #expect(!detail.contains("502"))
     }
 
     @Test func walkRejectsEmptySourceList() async throws {

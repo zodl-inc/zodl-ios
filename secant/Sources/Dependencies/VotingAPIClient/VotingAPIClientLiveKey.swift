@@ -193,12 +193,13 @@ private let fastHttpSession: URLSession = {
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
 /// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs. With the standard URLSession that timeout comes from the session
-/// config (`fastHttpSession.timeoutIntervalForRequest = 5`). With Tor we
-/// can't pick a session, so we stamp the same value on
-/// `URLRequest.timeoutInterval` — `httpRequestOverTor` ultimately runs on
-/// URLSession too and honors per-request timeouts, which keeps the fast
-/// failover behaviour identical across Tor on/off.
+/// POSTs. A per-request `URLRequest.timeoutInterval` takes precedence over
+/// the session configuration's `timeoutIntervalForRequest` (measured: a
+/// request-level 3 s fails at 3.0 s on a session configured for 120 s), so
+/// stamping the value on the request governs both transports —
+/// `httpRequestOverTor` runs on URLSession too and honors per-request
+/// timeouts, which keeps the fast failover behaviour identical across Tor
+/// on/off.
 private let fastRequestTimeout: TimeInterval = 5
 
 @Sendable

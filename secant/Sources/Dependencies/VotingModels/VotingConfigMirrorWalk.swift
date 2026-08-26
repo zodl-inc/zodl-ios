@@ -30,6 +30,8 @@ enum VotingConfigMirrorWalk {
     /// thrown; an empty list throws `emptyError`.
     ///
     /// Cancellation — a thrown CancellationError or URLError(.cancelled), or task cancellation between attempts — propagates immediately and is never treated as a mirror failure.
+    /// Six parameters: the walk is the one place both mirror policies plug into, and splitting it would scatter them again.
+    // swiftlint:disable:next function_parameter_count
     static func run<Mirror, Success>(
         mirrors: [Mirror],
         walkLabel: String,

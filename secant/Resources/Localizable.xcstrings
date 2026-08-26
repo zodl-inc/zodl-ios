@@ -2027,6 +2027,23 @@
         }
       }
     },
+    "coinVote.configSettings.bundledMirrorLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirror: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirror: %@"
+          }
+        }
+      }
+    },
     "coinVote.configSettings.bundledName" : {
       "extractionState" : "manual",
       "localizations" : {
