@@ -1131,7 +1131,7 @@ extension VotingCoordFlow {
                     }
                 } catch: { error, send in
                     LoggerProxy.error("Active round pipeline failed: \(error)")
-                    await send(.pipelineFailed(roundId: roundId, message: error.localizedDescription))
+                    await send(.pipelineFailed(roundId: roundId, message: VotingErrorMapper.userFriendlyMessage(from: error)))
                 }
                 .cancellable(id: cancelPipelineId, cancelInFlight: true)
 
@@ -4157,6 +4157,9 @@ extension VotingCoordFlow {
             case .failed:
                 // code == 0 (e.g. "missing delegate_vote leaf_index"): the chain call
                 // succeeded but the response was unusable — the TX may well have landed.
+                LoggerProxy.debug(
+                    "Cached delegation TX \(txHash) for bundle \(bundleIndex) confirmation is unusable: missing leaf index"
+                )
                 return .unknown
 
             case .notFound:
