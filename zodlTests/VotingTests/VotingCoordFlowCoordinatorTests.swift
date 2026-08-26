@@ -731,6 +731,72 @@ import Testing
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
     }
 
+    @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let cachedNotes = [note(value: ballotDivisor, position: 0)]
+        let treeState = Data([0xAA])
+        let expectedWitness = WitnessData(
+            noteCommitment: cachedNotes[0].commitment,
+            position: cachedNotes[0].position,
+            root: Data([0xBB]),
+            authPath: []
+        )
+
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.storeTreeState = { storedRoundId, data in
+            await recorder.record("store-tree:\(storedRoundId):\(data == treeState)")
+        }
+        votingCrypto.generateNoteWitnesses = { storedRoundId, bundleIndex, walletDbPath, notes, networkId in
+            let attempt = await recorder.recordAndCount(
+                "witness:\(storedRoundId):\(bundleIndex):\(walletDbPath):\(notes.count):\(networkId)"
+            )
+            if attempt == 1 {
+                throw TestError.proofFailed
+            }
+            return [expectedWitness]
+        }
+
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.getTreeState = { height in
+            await recorder.record("get-tree:\(height)")
+            return treeState
+        }
+
+        await #expect(throws: TestError.self) {
+            _ = try await VotingCoordFlow.completeDeterministicRoundSetup(
+                roundId: roundId,
+                snapshotHeight: 123,
+                walletDbPath: "/wallet.db",
+                networkId: 1,
+                notes: cachedNotes,
+                bundleCount: 1,
+                votingCrypto: votingCrypto,
+                sdkSynchronizer: sdkSynchronizer
+            )
+        }
+
+        let witnesses = try await VotingCoordFlow.completeDeterministicRoundSetup(
+            roundId: roundId,
+            snapshotHeight: 123,
+            walletDbPath: "/wallet.db",
+            networkId: 1,
+            notes: cachedNotes,
+            bundleCount: 1,
+            votingCrypto: votingCrypto,
+            sdkSynchronizer: sdkSynchronizer
+        )
+
+        #expect(witnesses == [expectedWitness])
+        #expect(await recorder.events() == [
+            "get-tree:123",
+            "store-tree:round-1:true",
+            "witness:round-1:0:/wallet.db:1:1",
+            "get-tree:123",
+            "store-tree:round-1:true",
+            "witness:round-1:0:/wallet.db:1:1"
+        ])
+    }
+
     @Test func absentRoundLoadsAsFreshSetup() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()

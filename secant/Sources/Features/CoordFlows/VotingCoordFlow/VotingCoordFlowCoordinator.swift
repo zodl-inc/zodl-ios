@@ -915,7 +915,8 @@ extension VotingCoordFlow {
                             }
                         }
 
-                        if recoveredBundleCount >= existingBundleCount {
+                        let delegationReady = recoveredBundleCount >= existingBundleCount
+                        if delegationReady {
                             try await votingCrypto.clearRecoveryState(roundId)
                         }
 
@@ -931,13 +932,28 @@ extension VotingCoordFlow {
                             return
                         }
                         await send(.earlyEligibilityConfirmed(roundId: roundId))
+                        let witnesses: [WitnessData]
+                        if delegationReady {
+                            witnesses = []
+                        } else {
+                            witnesses = try await Self.completeDeterministicRoundSetup(
+                                roundId: roundId,
+                                snapshotHeight: snapshotHeight,
+                                walletDbPath: walletDbPath,
+                                networkId: networkId,
+                                notes: notes,
+                                bundleCount: existingBundleCount,
+                                votingCrypto: votingCrypto,
+                                sdkSynchronizer: sdkSynchronizer
+                            )
+                        }
                         await send(.votingWeightLoaded(
                             roundId: roundId,
                             weight: eligibleWeight,
                             notes: notes,
-                            witnesses: [],
+                            witnesses: witnesses,
                             bundleCount: existingBundleCount,
-                            delegationReady: recoveredBundleCount >= existingBundleCount
+                            delegationReady: delegationReady
                         ))
                     } else {
                         if isKeystoneUser {
@@ -3342,8 +3358,8 @@ extension VotingCoordFlow {
         return (bundleResult.eligibleWeight, UInt32(bundleResult.bundles.count))
     }
 
-    /// Bundle rows contain non-reproducible delegation randomness. Once any
-    /// exist, restart recovery must resume them instead of clearing the round.
+    /// Once bundle rows exist, the round may contain non-reproducible
+    /// delegation material. Restart recovery must preserve the entire round.
     static func shouldResumePersistedRound(existingBundleCount: UInt32) -> Bool {
         existingBundleCount > 0
     }
@@ -3415,6 +3431,40 @@ extension VotingCoordFlow {
         // (the slow part of the pipeline) completes.
         await send(.earlyEligibilityConfirmed(roundId: roundId))
 
+        let allWitnesses = try await completeDeterministicRoundSetup(
+            roundId: roundId,
+            snapshotHeight: snapshotHeight,
+            walletDbPath: walletDbPath,
+            networkId: networkId,
+            notes: notes,
+            bundleCount: bundleCount,
+            votingCrypto: votingCrypto,
+            sdkSynchronizer: sdkSynchronizer
+        )
+
+        await send(.votingWeightLoaded(
+            roundId: roundId,
+            weight: eligibleWeight,
+            notes: notes,
+            witnesses: allWitnesses,
+            bundleCount: bundleCount,
+            delegationReady: false
+        ))
+        return true
+    }
+
+    /// Completes only deterministic tree-state and witness work for a persisted
+    /// round. This must not clear the round or rebuild delegation authorization.
+    static func completeDeterministicRoundSetup(
+        roundId: String,
+        snapshotHeight: UInt64,
+        walletDbPath: String,
+        networkId: UInt32,
+        notes: [NoteInfo],
+        bundleCount: UInt32,
+        votingCrypto: VotingCryptoClient,
+        sdkSynchronizer: SDKSynchronizerClient
+    ) async throws -> [WitnessData] {
         let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
         try await votingCrypto.storeTreeState(roundId, treeStateBytes)
 
@@ -3437,16 +3487,7 @@ extension VotingCoordFlow {
             )
             allWitnesses.append(contentsOf: witnesses)
         }
-
-        await send(.votingWeightLoaded(
-            roundId: roundId,
-            weight: eligibleWeight,
-            notes: notes,
-            witnesses: allWitnesses,
-            bundleCount: bundleCount,
-            delegationReady: false
-        ))
-        return true
+        return allWitnesses
     }
 
     /// Look up the live `VotingSession` for a round id by scoping into
