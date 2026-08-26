@@ -179,9 +179,9 @@ struct RoundSession: Equatable {
 
 /// Top-level state for the batch submission flow.
 ///
-/// The successful path is `.idle` → `.authorizing` → `.submitting` →
-/// `.completed`. Two terminal failure states exist because they require
-/// different recovery UX:
+/// The successful path is `.idle` → `.requested` → `.authorizing` →
+/// `.submitting` → `.completed`. Two terminal failure states exist because
+/// they require different recovery UX:
 /// - `.authorizationFailed` — delegation (ZKP #1) failed before any vote
 ///   was committed. All drafts are still in `draftVotes`; a single retry
 ///   re-runs delegation + all votes.
@@ -190,6 +190,10 @@ struct RoundSession: Equatable {
 ///   `draftVotes`; a retry naturally resumes with only the remaining drafts.
 enum BatchSubmissionStatus: Equatable {
     case idle
+    /// Confirm was tapped; local auth (and any remaining prep) has not
+    /// finished. No work has started. UI shows the Confirm CTA disabled
+    /// with a spinner.
+    case requested
     case authorizing
     case submitting(currentIndex: Int, totalCount: Int, currentProposalId: UInt32)
     case completed(successCount: Int)
@@ -203,7 +207,7 @@ enum BatchSubmissionStatus: Equatable {
         switch self {
         case .authorizationFailed, .submissionFailed:
             return true
-        case .idle, .authorizing, .submitting, .completed:
+        case .idle, .requested, .authorizing, .submitting, .completed:
             return false
         }
     }
