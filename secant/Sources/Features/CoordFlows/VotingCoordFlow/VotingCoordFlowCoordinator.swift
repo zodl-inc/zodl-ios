@@ -1726,8 +1726,42 @@ extension VotingCoordFlow {
             .compactMap { proposalId -> (key: UInt32, value: VoteChoice)? in
                 session.votes[proposalId].map { (key: proposalId, value: $0) }
             }
-        let drafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
-        guard !drafts.isEmpty else { return .none }
+        let requestedDrafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
+        guard !requestedDrafts.isEmpty else { return .none }
+        let proposals = activeSession.proposals
+        let requestedIntents = requestedDrafts.reduce(
+            into: [UInt32: Voting.VoteSubmissionIntent]()
+        ) { intents, draft in
+            let numOptions = UInt32(proposals.first { $0.id == draft.key }?.options.count ?? 3)
+            intents[draft.key] = Voting.VoteSubmissionIntent(
+                choice: draft.value,
+                numOptions: numOptions
+            )
+        }
+        let lockedSubmission: Voting.LockedVoteSubmission
+        do {
+            lockedSubmission = try Voting.lockVoteSubmission(
+                intents: requestedIntents,
+                submittedProposalIds: Set(session.votes.keys),
+                proposedSingleShare: activeSession.isLastMoment,
+                roundId: roundId,
+                account: state.selectedWalletAccount?.account
+            )
+        } catch {
+            return .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: error)
+            ))
+        }
+        let drafts = requestedDrafts.compactMap { draft -> (key: UInt32, value: VoteChoice)? in
+            lockedSubmission.intents[draft.key].map { (key: draft.key, value: $0.choice) }
+        }
+        guard drafts.count == requestedDrafts.count else {
+            return .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
+            ))
+        }
         let totalCount = drafts.count
         let delegationDone = isDelegationReady(session)
         let delegationPrepared = session.delegationPrecomputeStatus == .ready
@@ -1759,8 +1793,7 @@ extension VotingCoordFlow {
         }
         let expectedSnapshotHeight = activeSession.snapshotHeight
         let bundleCount = session.bundleCount
-        let singleShare = activeSession.isLastMoment
-        let proposals = activeSession.proposals
+        let singleShare = lockedSubmission.singleShare
         let cachedNotes = session.walletNotes
         let roundName = activeSession.title
 
@@ -1816,6 +1849,7 @@ extension VotingCoordFlow {
                         tier0Layers: pirLayout.tier0Layers,
                         tier1Layers: pirLayout.tier1Layers,
                         polyLen: polyLen,
+                        voteChainStartHeight: activeSession.createdAtHeight,
                         delegationPrepared: delegationPrepared,
                         seedFingerprint: seedFingerprint,
                         votingCrypto: votingCrypto,
@@ -1848,7 +1882,9 @@ extension VotingCoordFlow {
                 let proposalId = draft.key
                 let choice = draft.value
                 let proposal = proposals.first { $0.id == proposalId }
-                let numOptions = UInt32(proposal?.options.count ?? 3)
+                guard let numOptions = lockedSubmission.intents[proposalId]?.numOptions else {
+                    throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
+                }
 
                 await send(.batchSubmissionProgress(
                     roundId: roundId,
@@ -1921,18 +1957,42 @@ extension VotingCoordFlow {
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
                         let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
-                        guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
+                        guard let acceptedTransaction = try await Self.acceptedVotingTransaction(
+                            txResult,
+                            votingAPI: votingAPI
+                        ) else {
                             throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
                         }
-                        try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
+                        if let recoveredConfirmation = acceptedTransaction.confirmation {
+                            try await Self.requireRecoveredCastVoteMatchesCommitment(
+                                roundId: roundId,
+                                startHeight: activeSession.createdAtHeight,
+                                bundleIndex: bundleIndex,
+                                proposalId: proposalId,
+                                expectedVoteAuthorityNote: builtBundle.voteAuthorityNoteNew,
+                                expectedVoteCommitment: builtBundle.voteCommitment,
+                                confirmation: recoveredConfirmation,
+                                votingAPI: votingAPI
+                            )
+                        }
+                        try await votingCrypto.storeVoteTxHash(
+                            roundId,
+                            bundleIndex,
+                            proposalId,
+                            acceptedTransaction.txHash
+                        )
 
                         let voteDeadline = Date().addingTimeInterval(90)
-                        var voteConfirmation: TxConfirmation?
-                        repeat {
-                            voteConfirmation = try? await votingAPI.fetchTxConfirmation(txResult.txHash)
-                            if voteConfirmation != nil { break }
-                            try await Task.sleep(for: .seconds(2))
-                        } while Date() < voteDeadline
+                        var voteConfirmation = acceptedTransaction.confirmation
+                        if voteConfirmation == nil {
+                            repeat {
+                                voteConfirmation = try? await votingAPI.fetchTxConfirmation(
+                                    acceptedTransaction.txHash
+                                )
+                                if voteConfirmation != nil { break }
+                                try await Task.sleep(for: .seconds(2))
+                            } while Date() < voteDeadline
+                        }
 
                         guard let voteConfirmation, voteConfirmation.code == 0 else {
                             throw VotingFlowError.voteCommitmentTxFailed(
@@ -1941,7 +2001,12 @@ extension VotingCoordFlow {
                             )
                         }
 
-                        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
+                        try await votingCrypto.markVoteSubmitted(
+                            roundId,
+                            bundleIndex,
+                            proposalId,
+                            acceptedTransaction.txHash
+                        )
 
                         let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
                             [
@@ -1955,7 +2020,7 @@ extension VotingCoordFlow {
                         let eventsJson = String(decoding: eventsData, as: UTF8.self)
 
                         let confirmation = try await votingCrypto.confirmVoteSubmission(
-                            roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
+                            roundId, bundleIndex, proposalId, acceptedTransaction.txHash, eventsJson
                         )
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
@@ -2832,7 +2897,7 @@ extension VotingCoordFlow {
         }
     }
 
-    // swiftlint:disable:next function_body_length
+    // swiftlint:disable:next function_body_length cyclomatic_complexity
     func reduceKeystoneAllBundlesSigned(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
         guard let activeSession = state.allRounds.first(where: { $0.id == roundId })?.session else {
@@ -2869,6 +2934,7 @@ extension VotingCoordFlow {
         }
         let bundleCount = session.bundleCount
         let roundName = activeSession.title
+        let voteChainStartHeight = activeSession.createdAtHeight
         let storedSignatures = session.keystoneBundleSignatures.sorted { $0.bundleIndex < $1.bundleIndex }
         let initiallyCompletedBundles = session.completedKeystoneDelegationBundleIndices
         let noteChunks = cachedNotes.smartBundles().bundles
@@ -2963,15 +3029,69 @@ extension VotingCoordFlow {
                         registration.sighash != sig.sighash {
                         throw VotingFlowError.invalidDelegationSignature
                     }
-                    let delegTxResult = try await votingAPI.submitDelegation(registration)
-                    guard try await Self.isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
+                    let delegTxResult: TxResult
+                    do {
+                        delegTxResult = try await votingAPI.submitDelegation(registration)
+                    } catch let submissionError {
+                        if submissionError is CancellationError || Task.isCancelled {
+                            throw submissionError
+                        }
+                        do {
+                            if let vanPosition = try await Self.findVanCommitmentPosition(
+                                roundId: roundId,
+                                startHeight: voteChainStartHeight,
+                                expectedVanCmxBase64: registration.vanCmx,
+                                votingAPI: votingAPI
+                            ) {
+                                try await votingCrypto.storeVanPosition(roundId, bundleIdx, vanPosition)
+                                completedBundles.insert(bundleIdx)
+                                await send(.delegationBundlesRecovered(
+                                    roundId: roundId,
+                                    bundleIndices: completedBundles
+                                ))
+                                continue
+                            }
+                        } catch let cancellation as CancellationError {
+                            throw cancellation
+                        } catch {
+                            LoggerProxy.warn(
+                                "Unable to reconcile Keystone VAN after broadcast error: \(error.localizedDescription)"
+                            )
+                        }
+                        throw submissionError
+                    }
+
+                    guard let resolution = try await Self.resolveDelegationSubmission(
+                        delegTxResult,
+                        roundId: roundId,
+                        voteChainStartHeight: voteChainStartHeight,
+                        expectedVanCmxBase64: registration.vanCmx,
+                        votingAPI: votingAPI
+                    ) else {
                         throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
                     }
-                    try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
-                    let vanPosition = try await Self.requireKeystoneDelegationVanPosition(
-                        txHash: delegTxResult.txHash,
-                        votingAPI: votingAPI
-                    )
+
+                    let vanPosition: UInt32
+                    switch resolution {
+                    case let .acceptedTransaction(accepted):
+                        try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, accepted.txHash)
+                        if let confirmation = accepted.confirmation,
+                            let confirmedPosition = Self.delegationVanPosition(from: confirmation) {
+                            vanPosition = confirmedPosition
+                        } else {
+                            vanPosition = try await Self.requireKeystoneDelegationVanPosition(
+                                txHash: accepted.txHash,
+                                votingAPI: votingAPI
+                            )
+                        }
+
+                    case let .confirmedVan(position, txHash):
+                        if let txHash {
+                            try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, txHash)
+                        }
+                        vanPosition = position
+                    }
+
                     try await votingCrypto.storeVanPosition(roundId, bundleIdx, vanPosition)
                     completedBundles.insert(bundleIdx)
                     await send(.delegationBundlesRecovered(
@@ -3217,8 +3337,12 @@ extension VotingCoordFlow {
     private func hydratePersistedRoundChoices(_ state: inout State, roundId: String) {
         var submittedVotes = state.roundCache[roundId]?.votes ?? [:]
         submittedVotes.merge(Voting.loadSubmittedVotes(roundId: roundId)) { current, _ in current }
-        let drafts = Voting.loadDrafts(roundId: roundId).filter {
+        var drafts = Voting.loadDrafts(roundId: roundId).filter {
             submittedVotes[$0.key] == nil
+        }
+        for (proposalId, intent) in Voting.loadSubmissionIntents(roundId: roundId)
+            where submittedVotes[proposalId] == nil {
+            drafts[proposalId] = intent.choice
         }
         let account = state.selectedWalletAccount?.account
         let voteRecord = state.voteRecords[roundId]
@@ -3573,26 +3697,315 @@ extension VotingCoordFlow {
         maxRecoveryAttempts: Int = 3,
         retryDelay: Duration = .seconds(1)
     ) async throws -> Bool {
+        try await acceptedVotingTransaction(
+            result,
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: maxRecoveryAttempts,
+            retryDelay: retryDelay
+        ) != nil
+    }
+
+    /// Returns the accepted transaction and, for exact-hash recovery, the
+    /// confirmation that proved the rejected bytes had already landed.
+    static func acceptedVotingTransaction(
+        _ result: TxResult,
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1)
+    ) async throws -> AcceptedVotingTransaction? {
         let txHash = result.txHash.trimmingCharacters(in: .whitespacesAndNewlines)
         if result.code == 0 {
-            return !txHash.isEmpty
+            return txHash.isEmpty
+                ? nil
+                : AcceptedVotingTransaction(txHash: txHash, confirmation: nil)
         }
         guard maxRecoveryAttempts > 0,
-              !txHash.isEmpty,
-              VotingErrorMapper.isNullifierAlreadySpent(result.log)
+            !txHash.isEmpty,
+            VotingErrorMapper.isNullifierAlreadySpent(result.log)
         else {
-            return false
+            return nil
         }
 
         for attempt in 0..<maxRecoveryAttempts {
             if let confirmation = try await votingAPI.fetchTxConfirmation(txHash) {
                 return confirmation.code == 0
+                    ? AcceptedVotingTransaction(txHash: txHash, confirmation: confirmation)
+                    : nil
             }
             if attempt + 1 < maxRecoveryAttempts {
                 try await Task.sleep(for: retryDelay)
             }
         }
-        return false
+        return nil
+    }
+
+    /// Resolves an ambiguous delegation broadcast. Exact hash remains the
+    /// fast path; a spent-nullifier response may fall back to the persisted
+    /// VAN commitment because software-wallet signing can change the literal
+    /// transaction bytes on retry.
+    static func resolveDelegationSubmission(
+        _ result: TxResult,
+        roundId: String,
+        voteChainStartHeight: UInt64,
+        expectedVanCmxBase64: String,
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1)
+    ) async throws -> DelegationSubmissionResolution? {
+        guard VotingErrorMapper.isNullifierAlreadySpent(result.log) else {
+            return try await acceptedVotingTransaction(
+                result,
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: maxRecoveryAttempts,
+                retryDelay: retryDelay
+            ).map(DelegationSubmissionResolution.acceptedTransaction)
+        }
+
+        let accepted: AcceptedVotingTransaction?
+        do {
+            accepted = try await acceptedVotingTransaction(
+                result,
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: maxRecoveryAttempts,
+                retryDelay: retryDelay
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            LoggerProxy.warn("Exact-hash delegation recovery failed: \(error.localizedDescription)")
+            accepted = nil
+        }
+
+        if let accepted,
+            let confirmation = accepted.confirmation,
+            let vanPosition = delegationVanPosition(from: confirmation) {
+            return .acceptedTransaction(accepted)
+        }
+
+        if let position = try await findVanCommitmentPosition(
+            roundId: roundId,
+            startHeight: voteChainStartHeight,
+            expectedVanCmxBase64: expectedVanCmxBase64,
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: maxRecoveryAttempts,
+            retryDelay: retryDelay
+        ) {
+            return .confirmedVan(position: position, txHash: accepted?.txHash)
+        }
+        return nil
+    }
+
+    /// Finds the unique position of a persisted VAN commitment in a pinned
+    /// snapshot of the round tree.
+    static func findVanCommitmentPosition(
+        roundId: String,
+        startHeight: UInt64,
+        expectedVanCmxBase64: String,
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1),
+        maxPagesPerAttempt: Int = 128
+    ) async throws -> UInt32? {
+        guard let expectedVanCmx = Data(base64Encoded: expectedVanCmxBase64),
+            expectedVanCmx.count == 32 else {
+            throw SvAPIError.invalidResponse("persisted VAN commitment must be 32 bytes")
+        }
+        let positions = try await findCommitmentPositions(
+            roundId: roundId,
+            startHeight: startHeight,
+            expectedCommitments: [expectedVanCmx],
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: maxRecoveryAttempts,
+            retryDelay: retryDelay,
+            maxPagesPerAttempt: maxPagesPerAttempt
+        )
+        guard let position = positions[expectedVanCmx] else { return nil }
+        guard position <= UInt64(UInt32.max) else {
+            throw SvAPIError.invalidResponse("VAN position exceeds supported range")
+        }
+        return UInt32(position)
+    }
+
+    /// Scans one pinned tree head per attempt and rejects malformed,
+    /// discontinuous, incomplete, or ambiguous leaf streams.
+    // swiftlint:disable:next cyclomatic_complexity
+    static func findCommitmentPositions(
+        roundId: String,
+        startHeight: UInt64,
+        expectedCommitments: Set<Data>,
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1),
+        maxPagesPerAttempt: Int = 128
+    ) async throws -> [Data: UInt64] {
+        guard !roundId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SvAPIError.invalidResponse("round id must not be empty")
+        }
+        guard !expectedCommitments.isEmpty,
+            expectedCommitments.allSatisfy({ $0.count == 32 }) else {
+            throw SvAPIError.invalidResponse("expected commitments must be 32 bytes")
+        }
+        guard maxRecoveryAttempts > 0, maxPagesPerAttempt > 0 else {
+            throw SvAPIError.invalidResponse("commitment-tree recovery limits must be positive")
+        }
+
+        for attempt in 0..<maxRecoveryAttempts {
+            let latest = try await votingAPI.fetchCommitmentTreeLatest(roundId)
+            let scanStartHeight = startHeight <= latest.height ? startHeight : 0
+            var matches: [Data: Set<UInt64>] = [:]
+            var previousNextIndex: UInt64?
+            var previousBlockHeight: UInt64?
+            var pageStart = scanStartHeight
+            var pageCount = 0
+
+            while true {
+                guard pageCount < maxPagesPerAttempt else {
+                    throw SvAPIError.invalidResponse("commitment-tree pagination limit exceeded")
+                }
+                pageCount += 1
+                let page = try await votingAPI.fetchCommitmentTreeLeafPage(
+                    roundId,
+                    pageStart,
+                    latest.height
+                )
+
+                for block in page.blocks {
+                    guard block.height >= pageStart, block.height <= latest.height else {
+                        throw SvAPIError.invalidResponse("commitment-tree block is outside the requested range")
+                    }
+                    guard previousBlockHeight.map({ block.height > $0 }) ?? true else {
+                        throw SvAPIError.invalidResponse("commitment-tree block heights are not strictly increasing")
+                    }
+                    if let previousNextIndex {
+                        guard block.startIndex == previousNextIndex else {
+                            throw SvAPIError.invalidResponse("commitment-tree leaf indices are not contiguous")
+                        }
+                    } else if block.startIndex != 0 {
+                        throw SvAPIError.invalidResponse("commitment-tree first leaf index is not zero")
+                    }
+
+                    for (offset, encodedLeaf) in block.leavesBase64.enumerated() {
+                        guard let leaf = Data(base64Encoded: encodedLeaf), leaf.count == 32 else {
+                            throw SvAPIError.invalidResponse("commitment-tree leaf must be 32 bytes")
+                        }
+                        let (position, overflow) = block.startIndex.addingReportingOverflow(UInt64(offset))
+                        guard !overflow else {
+                            throw SvAPIError.invalidResponse("commitment-tree leaf position overflowed")
+                        }
+                        if expectedCommitments.contains(leaf) {
+                            matches[leaf, default: []].insert(position)
+                        }
+                    }
+
+                    let (nextIndex, overflow) = block.startIndex.addingReportingOverflow(
+                        UInt64(block.leavesBase64.count)
+                    )
+                    guard !overflow else {
+                        throw SvAPIError.invalidResponse("commitment-tree next index overflowed")
+                    }
+                    previousNextIndex = nextIndex
+                    previousBlockHeight = block.height
+                }
+
+                let nextFromHeight = page.nextFromHeight
+                if nextFromHeight == 0 {
+                    break
+                }
+                guard nextFromHeight > pageStart, nextFromHeight <= latest.height else {
+                    throw SvAPIError.invalidResponse("commitment-tree page cursor did not advance")
+                }
+                if let lastHeight = page.blocks.last?.height,
+                    nextFromHeight <= lastHeight {
+                    throw SvAPIError.invalidResponse("commitment-tree page cursor overlaps returned blocks")
+                }
+                pageStart = nextFromHeight
+            }
+
+            guard previousNextIndex ?? 0 == latest.nextIndex else {
+                throw SvAPIError.invalidResponse("commitment-tree scan did not reach the pinned next index")
+            }
+            guard matches.values.allSatisfy({ $0.count <= 1 }) else {
+                throw SvAPIError.invalidResponse("commitment appears more than once in the round tree")
+            }
+            let resolved = matches.compactMapValues(\.first)
+            if !resolved.isEmpty {
+                return resolved
+            }
+            if attempt + 1 < maxRecoveryAttempts {
+                try await Task.sleep(for: retryDelay)
+            }
+        }
+        return [:]
+    }
+
+    /// A spent-nullifier response can only resume a cast-vote transaction if
+    /// both event positions contain the exact commitments built for this
+    /// bundle.
+    // swiftlint:disable:next function_parameter_count
+    static func requireRecoveredCastVoteMatchesCommitment(
+        roundId: String,
+        startHeight: UInt64,
+        bundleIndex: UInt32,
+        proposalId: UInt32,
+        expectedVoteAuthorityNote: Data,
+        expectedVoteCommitment: Data,
+        confirmation: TxConfirmation,
+        votingAPI: VotingAPIClient
+    ) async throws {
+        guard let eventPositions = castVoteLeafPositions(from: confirmation) else {
+            throw VotingFlowError.recoveredVoteCommitmentMismatch(
+                proposalId: proposalId,
+                bundleIndex: bundleIndex
+            )
+        }
+        let expected = Set([expectedVoteAuthorityNote, expectedVoteCommitment])
+        guard expected.count == 2 else {
+            throw VotingFlowError.recoveredVoteCommitmentMismatch(
+                proposalId: proposalId,
+                bundleIndex: bundleIndex
+            )
+        }
+        let actualPositions = try await findCommitmentPositions(
+            roundId: roundId,
+            startHeight: startHeight,
+            expectedCommitments: expected,
+            votingAPI: votingAPI
+        )
+        guard actualPositions[expectedVoteAuthorityNote] == eventPositions.van,
+            actualPositions[expectedVoteCommitment] == eventPositions.voteCommitment else {
+            throw VotingFlowError.recoveredVoteCommitmentMismatch(
+                proposalId: proposalId,
+                bundleIndex: bundleIndex
+            )
+        }
+    }
+
+    private static func castVoteLeafPositions(
+        from confirmation: TxConfirmation
+    ) -> (van: UInt64, voteCommitment: UInt64)? {
+        guard confirmation.code == 0,
+            let raw = confirmation.event(ofType: "cast_vote")?.attribute(forKey: "leaf_index")
+        else {
+            return nil
+        }
+        let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+            let van = UInt64(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+            let voteCommitment = UInt64(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
+        else {
+            return nil
+        }
+        return (van: van, voteCommitment: voteCommitment)
+    }
+
+    private static func delegationVanPosition(from confirmation: TxConfirmation) -> UInt32? {
+        guard confirmation.code == 0,
+            let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index")
+        else {
+            return nil
+        }
+        return UInt32(leafValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// If we have a cached vote TX hash for `(roundId, bundleIndex, proposalId)`
@@ -3725,7 +4138,7 @@ extension VotingCoordFlow {
     /// Mirrors `Voting.runDelegationPipeline` but sends back to
     /// `VotingCoordFlow.Action`. The legacy version targets `Voting.Action`,
     /// so cross-type dispatching is the only reason we duplicate this here.
-    // swiftlint:disable:next function_body_length function_parameter_count
+    // swiftlint:disable:next cyclomatic_complexity function_parameter_count
     static func runDelegationPipeline(
         roundId: String,
         cachedNotes: [NoteInfo],
@@ -3740,6 +4153,7 @@ extension VotingCoordFlow {
         tier0Layers: UInt32,
         tier1Layers: UInt32,
         polyLen: UInt32,
+        voteChainStartHeight: UInt64 = 0,
         delegationPrepared: Bool = false,
         seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
@@ -3849,20 +4263,71 @@ extension VotingCoordFlow {
                     roundId, bundleIndex, signed.signature, signed.sighash
                 )
             }
-            let delegTxResult = try await votingAPI.submitDelegation(registration)
-            guard try await isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
+            let delegTxResult: TxResult
+            do {
+                delegTxResult = try await votingAPI.submitDelegation(registration)
+            } catch let submissionError {
+                if submissionError is CancellationError || Task.isCancelled {
+                    throw submissionError
+                }
+                do {
+                    if let vanPosition = try await findVanCommitmentPosition(
+                        roundId: roundId,
+                        startHeight: voteChainStartHeight,
+                        expectedVanCmxBase64: registration.vanCmx,
+                        votingAPI: votingAPI
+                    ) {
+                        try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
+                        LoggerProxy.info(
+                            "Recovered delegation bundle \(bundleIndex) by persisted VAN after a broadcast error"
+                        )
+                        continue
+                    }
+                } catch let cancellation as CancellationError {
+                    throw cancellation
+                } catch {
+                    LoggerProxy.warn(
+                        "Unable to reconcile delegation VAN after broadcast error: \(error.localizedDescription)"
+                    )
+                }
+                throw submissionError
+            }
+
+            guard let resolution = try await resolveDelegationSubmission(
+                delegTxResult,
+                roundId: roundId,
+                voteChainStartHeight: voteChainStartHeight,
+                expectedVanCmxBase64: registration.vanCmx,
+                votingAPI: votingAPI
+            ) else {
                 throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
             }
-            LoggerProxy.info("Delegation TX \(bundleIndex) submitted: \(delegTxResult.txHash)")
 
-            try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)
+            let vanPosition: UInt32
+            switch resolution {
+            case let .acceptedTransaction(accepted):
+                LoggerProxy.info("Delegation TX \(bundleIndex) submitted: \(accepted.txHash)")
+                try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, accepted.txHash)
+                if let confirmation = accepted.confirmation,
+                    let confirmedPosition = delegationVanPosition(from: confirmation) {
+                    vanPosition = confirmedPosition
+                } else {
+                    vanPosition = try await requireDelegationVanPosition(
+                        txHash: accepted.txHash,
+                        votingAPI: votingAPI,
+                        confirmationTimeout: delegationConfirmationTimeout,
+                        retryDelay: delegationConfirmationRetryDelay
+                    )
+                }
 
-            let vanPosition = try await requireDelegationVanPosition(
-                txHash: delegTxResult.txHash,
-                votingAPI: votingAPI,
-                confirmationTimeout: delegationConfirmationTimeout,
-                retryDelay: delegationConfirmationRetryDelay
-            )
+            case let .confirmedVan(position, txHash):
+                if let txHash {
+                    try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, txHash)
+                }
+                vanPosition = position
+                LoggerProxy.info("Recovered delegation bundle \(bundleIndex) by persisted VAN")
+            }
+
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             LoggerProxy.debug("VAN position stored for bundle \(bundleIndex): \(vanPosition)")
         }
@@ -4022,5 +4487,15 @@ private enum DelegationTxConfirmationStatus: Sendable {
     case confirmed(vanPosition: UInt32)
     case failed(code: UInt32, log: String)
     case notFound
+}
+
+struct AcceptedVotingTransaction: Equatable, Sendable {
+    let txHash: String
+    let confirmation: TxConfirmation?
+}
+
+enum DelegationSubmissionResolution: Equatable, Sendable {
+    case acceptedTransaction(AcceptedVotingTransaction)
+    case confirmedVan(position: UInt32, txHash: String?)
 }
 #endif

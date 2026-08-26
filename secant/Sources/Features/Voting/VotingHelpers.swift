@@ -34,6 +34,16 @@ func votingAccountIndex(for account: WalletAccount?) -> UInt32 {
 // MARK: - Voting namespace (helpers only — no reducer)
 
 enum Voting {
+    struct VoteSubmissionIntent: Equatable, Sendable {
+        let choice: VoteChoice
+        let numOptions: UInt32
+    }
+
+    struct LockedVoteSubmission: Equatable, Sendable {
+        let intents: [UInt32: VoteSubmissionIntent]
+        let singleShare: Bool
+    }
+
     // MARK: - Vote record
 
     /// Persisted record of when a round's selected votes completed submission,
@@ -205,6 +215,63 @@ enum Voting {
         }
     }
 
+    // MARK: - Submission-intent persistence
+
+    /// Locks the cryptographic vote inputs before any commitment is built.
+    /// A retry may reuse the lock, but it may not replace a pending choice.
+    static func lockVoteSubmission(
+        intents requestedIntents: [UInt32: VoteSubmissionIntent],
+        submittedProposalIds: Set<UInt32>,
+        proposedSingleShare: Bool,
+        roundId: String,
+        account: Account?
+    ) throws -> LockedVoteSubmission {
+        @Dependency(\.votingMetadata) var votingMetadata
+        let previousIntents = votingMetadata.loadSubmissionIntents(roundId)
+        let previousSingleShare = votingMetadata.singleShareMode(roundId)
+        let lockedIntents = decodedSubmissionIntents(previousIntents)
+
+        for (proposalId, lockedIntent) in lockedIntents {
+            let requestedIntent = requestedIntents[proposalId]
+            let conflicts = submittedProposalIds.contains(proposalId)
+                ? requestedIntent.map { $0 != lockedIntent } ?? false
+                : requestedIntent != lockedIntent
+            if conflicts {
+                throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
+            }
+        }
+
+        var mergedIntents = lockedIntents
+        for (proposalId, requestedIntent) in requestedIntents {
+            if let lockedIntent = mergedIntents[proposalId], lockedIntent != requestedIntent {
+                throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
+            }
+            mergedIntents[proposalId] = requestedIntent
+        }
+        let singleShare = previousSingleShare ?? proposedSingleShare
+
+        votingMetadata.setSubmissionIntents(encodedSubmissionIntents(mergedIntents), roundId)
+        votingMetadata.setSingleShareMode(singleShare, roundId)
+        do {
+            try storeVotingMetadata(account)
+        } catch {
+            votingMetadata.setSubmissionIntents(previousIntents, roundId)
+            if let previousSingleShare {
+                votingMetadata.setSingleShareMode(previousSingleShare, roundId)
+            } else {
+                votingMetadata.clearSingleShareMode(roundId)
+            }
+            throw error
+        }
+
+        return LockedVoteSubmission(intents: mergedIntents, singleShare: singleShare)
+    }
+
+    static func loadSubmissionIntents(roundId: String) -> [UInt32: VoteSubmissionIntent] {
+        @Dependency(\.votingMetadata) var votingMetadata
+        return decodedSubmissionIntents(votingMetadata.loadSubmissionIntents(roundId))
+    }
+
     static func persistRoundChoices(
         drafts: [UInt32: VoteChoice],
         submittedVotes: [UInt32: VoteChoice],
@@ -233,14 +300,22 @@ enum Voting {
     ) throws {
         @Dependency(\.votingMetadata) var votingMetadata
         let previousDrafts = votingMetadata.loadDrafts(roundId)
+        let previousIntents = votingMetadata.loadSubmissionIntents(roundId)
+        let previousSingleShare = votingMetadata.singleShareMode(roundId)
         let previousRecord = votingMetadata.record(roundId)
 
         votingMetadata.clearDrafts(roundId)
+        votingMetadata.clearSubmissionIntents(roundId)
+        votingMetadata.clearSingleShareMode(roundId)
         votingMetadata.setRecord(record.persisted, roundId)
         do {
             try storeVotingMetadata(account)
         } catch {
             votingMetadata.setDrafts(previousDrafts, roundId)
+            votingMetadata.setSubmissionIntents(previousIntents, roundId)
+            if let previousSingleShare {
+                votingMetadata.setSingleShareMode(previousSingleShare, roundId)
+            }
             restoreVoteRecord(previousRecord, roundId: roundId)
             throw error
         }
@@ -273,6 +348,29 @@ enum Voting {
             if let proposalId = UInt32(entry.key) {
                 dict[proposalId] = .option(entry.value)
             }
+        }
+    }
+
+    private static func encodedSubmissionIntents(
+        _ intents: [UInt32: VoteSubmissionIntent]
+    ) -> [String: PersistedVoteSubmissionIntent] {
+        intents.reduce(into: [String: PersistedVoteSubmissionIntent]()) { result, entry in
+            result[String(entry.key)] = PersistedVoteSubmissionIntent(
+                choice: entry.value.choice.index,
+                numOptions: entry.value.numOptions
+            )
+        }
+    }
+
+    private static func decodedSubmissionIntents(
+        _ intents: [String: PersistedVoteSubmissionIntent]
+    ) -> [UInt32: VoteSubmissionIntent] {
+        intents.reduce(into: [UInt32: VoteSubmissionIntent]()) { result, entry in
+            guard let proposalId = UInt32(entry.key) else { return }
+            result[proposalId] = VoteSubmissionIntent(
+                choice: .option(entry.value.choice),
+                numOptions: entry.value.numOptions
+            )
         }
     }
 
@@ -371,6 +469,8 @@ enum VotingFlowError: LocalizedError {
     case missingKeystoneBundleSignature
     case missingVoteCommitmentBundle
     case inconsistentBundleSetup(bundleCount: UInt32, noteChunkCount: Int)
+    case conflictingVoteSubmissionIntent(proposalId: UInt32)
+    case recoveredVoteCommitmentMismatch(proposalId: UInt32, bundleIndex: UInt32)
     case delegationTxFailed(code: UInt32, log: String)
     case voteCommitmentTxFailed(code: UInt32, log: String)
 
@@ -394,6 +494,13 @@ enum VotingFlowError: LocalizedError {
             return """
             Voting bundle setup returned \(bundleCount) bundle(s) for \
             \(noteChunkCount) local note chunk(s).
+            """
+        case let .conflictingVoteSubmissionIntent(proposalId):
+            return "Vote selection for proposal \(proposalId) cannot change after submission starts."
+        case let .recoveredVoteCommitmentMismatch(proposalId, bundleIndex):
+            return """
+            Recovered vote transaction does not match proposal \(proposalId), \
+            bundle \(bundleIndex).
             """
         case .delegationTxFailed(let code, let log):
             let suffix = log.isEmpty ? "" : ": \(log)"

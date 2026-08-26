@@ -676,6 +676,19 @@ private func parseUInt32(_ value: Any?) -> UInt32 {
     return 0
 }
 
+/// Commitment-tree cursors are security-sensitive recovery inputs. Unlike
+/// the tolerant protobuf parsers above, reject negative or malformed values.
+private func parseCommitmentTreeUInt64(_ value: Any?, field: String) throws -> UInt64 {
+    guard let value else { return 0 }
+    if let string = value as? String, let parsed = UInt64(string) {
+        return parsed
+    }
+    if let number = value as? NSNumber, let parsed = UInt64(number.stringValue) {
+        return parsed
+    }
+    throw SvAPIError.invalidResponse("commitment-tree \(field) must be a non-negative integer")
+}
+
 /// Decode base64-encoded bytes, returning empty Data on failure.
 private func parseBase64(_ value: Any?) -> Data {
     guard let str = value as? String, let data = Data(base64Encoded: str) else { return Data() }
@@ -1154,6 +1167,41 @@ extension VotingAPIClient: DependencyKey {
                         )
                     }
                 return TallyResult(entries: entries)
+            },
+            fetchCommitmentTreeLatest: { roundIdHex in
+                let path = "/shielded-vote/v1/commitment-tree/\(roundIdHex)/latest"
+                let json = try await getJSON(path)
+                guard let tree = json["tree"] as? [String: Any] else {
+                    throw SvAPIError.invalidResponse("commitment-tree latest response is missing tree")
+                }
+                return CommitmentTreeLatest(
+                    height: try parseCommitmentTreeUInt64(tree["height"], field: "height"),
+                    nextIndex: try parseCommitmentTreeUInt64(tree["next_index"], field: "next_index")
+                )
+            },
+            fetchCommitmentTreeLeafPage: { roundIdHex, fromHeight, toHeight in
+                guard toHeight >= fromHeight else {
+                    throw SvAPIError.invalidResponse("commitment-tree height range is reversed")
+                }
+                let path = """
+                    /shielded-vote/v1/commitment-tree/\(roundIdHex)/leaves\
+                    ?from_height=\(fromHeight)&to_height=\(toHeight)
+                    """
+                let json = try await getJSON(path)
+                let blocks = try (json["blocks"] as? [[String: Any]] ?? []).map { block in
+                    CommitmentTreeLeafBlock(
+                        height: try parseCommitmentTreeUInt64(block["height"], field: "block height"),
+                        startIndex: try parseCommitmentTreeUInt64(block["start_index"], field: "start_index"),
+                        leavesBase64: block["leaves"] as? [String] ?? []
+                    )
+                }
+                return CommitmentTreeLeafPage(
+                    blocks: blocks,
+                    nextFromHeight: try parseCommitmentTreeUInt64(
+                        json["next_from_height"],
+                        field: "next_from_height"
+                    )
+                )
             },
             fetchTxConfirmation: { txHash in
                 let serverURLs: [String]
