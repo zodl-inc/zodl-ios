@@ -197,4 +197,119 @@ import Testing
         }
     }
 }
+
+@Suite struct DynamicConfigMirrorWalkTests {
+    private let primary = URL(string: "https://voting.valargroup.dev/prod/dynamic-voting-config.json")!
+    private let mirror = URL(string: "https://raw.githubusercontent.com/valargroup/token-holder-voting-config/main/prod/dynamic-voting-config.json")!
+    private let payload = Data("{\"config_version\": 1}".utf8)
+
+    private func okResponse(_ request: URLRequest, status: Int = 200) -> HTTPURLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    }
+
+    @Test func walkUsesFirstHealthyURLAndStampsTimeout() async throws {
+        let requested = OSAllocatedUnfairLock(initialState: [URLRequest]())
+
+        let (data, origin) = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+            requested.withLock { $0.append(request) }
+            return (self.payload, self.okResponse(request))
+        }
+
+        #expect(data == payload)
+        #expect(origin == primary)
+        let requests = requested.withLock { $0 }
+        #expect(requests.map(\.url) == [primary])
+        #expect(requests.first?.timeoutInterval == StaticVotingConfig.configRequestTimeout)
+        #expect(requests.first?.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
+    }
+
+    @Test func walkFallsThroughOnTransportErrorAnd5xx() async throws {
+        let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
+        let third = URL(string: "https://third.example/dynamic-voting-config.json")!
+
+        let (_, origin) = try await fetchDynamicConfigData(urls: [primary, third, mirror]) { request in
+            let host = request.url!.host!
+            requestedHosts.withLock { $0.append(host) }
+            switch host {
+            case "voting.valargroup.dev":
+                throw URLError(URLError.Code.timedOut)
+            case "third.example":
+                return (Data(), self.okResponse(request, status: 503))
+            default:
+                return (self.payload, self.okResponse(request))
+            }
+        }
+
+        #expect(origin == mirror)
+        #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev", "third.example", "raw.githubusercontent.com"])
+    }
+
+    @Test func walkTreats4xxAsAuthoritative() async throws {
+        let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
+
+        let error = await #expect(throws: VotingConfigError.self) {
+            _ = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+                requestedHosts.withLock { $0.append(request.url!.host!) }
+                return (Data(), self.okResponse(request, status: 404))
+            }
+        }
+
+        #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev"])
+        guard case .decodeFailed(let detail)? = error else {
+            Issue.record("expected decodeFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(detail.contains("404"))
+    }
+
+    @Test func walkReportsFirstErrorWhenAllURLsFail() async throws {
+        let error = await #expect(throws: VotingConfigError.self) {
+            _ = try await fetchDynamicConfigData(urls: [primary, mirror]) { request in
+                if request.url!.host! == "voting.valargroup.dev" {
+                    throw URLError(URLError.Code.cannotConnectToHost)
+                }
+                return (Data(), self.okResponse(request, status: 500))
+            }
+        }
+
+        guard case .decodeFailed(let detail)? = error else {
+            Issue.record("expected decodeFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(detail.contains("CDN fetch failed"))
+    }
+
+    @Test func walkRejectsEmptyURLList() async throws {
+        await #expect(throws: VotingConfigError.self) {
+            _ = try await fetchDynamicConfigData(urls: []) { request in
+                (self.payload, self.okResponse(request))
+            }
+        }
+    }
+
+    @Test func cacheBustingIsScopedToGitHubRawMirrors() {
+        let busted = cacheBustedDynamicConfigURL(mirror, token: "TOKEN123")
+        let bustedComponents = URLComponents(url: busted, resolvingAgainstBaseURL: false)!
+        #expect(bustedComponents.queryItems?.contains(URLQueryItem(name: "zodl_cache_bust", value: "TOKEN123")) == true)
+        #expect(bustedComponents.host == "raw.githubusercontent.com")
+
+        #expect(cacheBustedDynamicConfigURL(primary, token: "TOKEN123") == primary)
+    }
+
+    @Test func walkFetchesGitHubRawMirrorWithCacheBustButReportsCleanOrigin() async throws {
+        let requestedURLs = OSAllocatedUnfairLock(initialState: [URL]())
+
+        let (_, origin) = try await fetchDynamicConfigData(urls: [primary, mirror], token: "TOKEN123") { request in
+            requestedURLs.withLock { $0.append(request.url!) }
+            if request.url!.host! == "voting.valargroup.dev" {
+                throw URLError(URLError.Code.cannotFindHost)
+            }
+            return (self.payload, self.okResponse(request))
+        }
+
+        #expect(origin == mirror)
+        let fetched = requestedURLs.withLock { $0 }
+        #expect(fetched.last?.query?.contains("zodl_cache_bust=TOKEN123") == true)
+    }
+}
 #endif
