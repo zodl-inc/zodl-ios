@@ -578,6 +578,14 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.clearRecoveryState(roundId: roundId)
             },
+            resetSessionState: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetSessionState(roundId: roundId)
+            },
+            getStoredDelegationSighash: { roundId, bundleIndex in
+                let backend = try await dbActor.backend()
+                return Data(try backend.getStoredPcztSighash(roundId: roundId, bundleIndex: bundleIndex))
+            },
             computeShareNullifier: { voteCommitment, shareIndex, primaryBlind in
                 try VotingRustBackend.computeShareNullifier(
                     voteCommitment: voteCommitment,

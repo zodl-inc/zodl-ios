@@ -306,6 +306,18 @@ struct VotingCryptoClient {
     var clearRecoveryState: @Sendable (
         _ roundId: String
     ) async throws -> Void
+    /// Clear per-session voting state for a round without touching signed or
+    /// registered bundles — the safe "resume in place" cleanup. Unlike
+    /// `clearRound`, this can never destroy delegation material an on-chain
+    /// registration may already depend on.
+    var resetSessionState: @Sendable (_ roundId: String) async throws -> Void
+    /// Stored ZIP-244 sighash of the bundle's persisted delegation PCZT.
+    /// Throws when the bundle has no completed delegation setup (e.g. the PCZT
+    /// build never stored its signing fields, or they were cleared).
+    var getStoredDelegationSighash: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32
+    ) async throws -> Data
 
     // --- Share delegation tracking ---
 
