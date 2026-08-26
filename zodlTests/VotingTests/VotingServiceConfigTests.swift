@@ -152,19 +152,23 @@ import Testing
     /// accepts whatever the host returns, turning the anchor into plain trust in
     /// the transport. Nothing else in the suite pins the bundled constant itself.
     @Test func bundledPinnedSourceCarriesAChecksumSoVerificationCannotSilentlyNoOp() throws {
-        let source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
+        #expect(StaticVotingConfig.bundledPinnedSources.first == StaticVotingConfig.bundledPinnedSource)
 
-        #expect(source.url.scheme == "https")
-        let digest = try #require(
-            source.sha256,
-            "bundled pin carries no checksum — decodeAndVerify would accept any bytes the host serves"
-        )
-        #expect(digest.count == 32)
+        for raw in StaticVotingConfig.bundledPinnedSources {
+            let source = try PinnedConfigSource.parse(raw)
 
-        // The digest is the pin; it must not also travel to the server as a query
-        // the host could key behaviour off.
-        let sentQuery = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        #expect(!sentQuery.contains { $0.name == "checksum" })
+            #expect(source.url.scheme == "https")
+            let digest = try #require(
+                source.sha256,
+                "bundled pin carries no checksum — decodeAndVerify would accept any bytes the host serves"
+            )
+            #expect(digest.count == 32)
+
+            // The digest is the pin; it must not also travel to the server as a query
+            // the host could key behaviour off.
+            let sentQuery = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(!sentQuery.contains { $0.name == "checksum" })
+        }
     }
 
     @Test func staticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {

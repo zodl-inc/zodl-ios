@@ -872,14 +872,17 @@ extension VotingAPIClient: DependencyKey {
     static var liveValue: Self {
         Self(
             fetchServiceConfig: { override in
-                let source: PinnedConfigSource
-                if let override {
-                    source = override
+                // A user-selected custom chain is a single source — unless it is
+                // one of the bundled mirrors, in which case the full bundled
+                // walk applies so a saved copy of the default keeps its fallback.
+                let sources: [PinnedConfigSource]
+                if let override, !StaticVotingConfig.bundledParsedSources.contains(override) {
+                    sources = [override]
                 } else {
-                    source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
+                    sources = StaticVotingConfig.bundledParsedSources
                 }
-                let staticConfig = try await StaticVotingConfig.loadFromNetwork(
-                    source: source,
+                let staticConfig = try await StaticVotingConfig.loadFromNetworkWithFailover(
+                    sources: sources,
                     fetch: { request in try await performVotingRequest(request) }
                 )
 

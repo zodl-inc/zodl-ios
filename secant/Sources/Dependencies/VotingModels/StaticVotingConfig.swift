@@ -8,9 +8,25 @@ import Foundation
 struct StaticVotingConfig: Codable, Equatable, Sendable {
     static let supportedVersions: Set<Int> = [1, 2]
     static let algEd25519 = "ed25519"
-    private static let bundledSHA256 = "fb62a56fae28debfdaa092f163cda0dab13295f87d25bbc4d0064d6ccdeb6943"
+    static let configRequestTimeout: TimeInterval = 15
+    private static let bundledSHA256 = "28fc9b631091ae8bc2f8635d8930489238ce144174cbd15a03efb0530b301ebe"
+    /// Primary bundled pin — the canonical voting gateway origin. Shown in
+    /// Settings as the Default source and kept first in the mirror walk.
     static let bundledPinnedSource =
-        "https://voting.valargroup.dev/pins/prod/\(bundledSHA256)/static-voting-config.json?checksum=sha256:\(bundledSHA256)"
+        "https://voting.valargroup.dev/pins/prod/\(bundledSHA256)/v2-static-voting-config.json?checksum=sha256:\(bundledSHA256)"
+    /// GitHub-hosted copy of the byte-identical pinned file. Trust is carried by
+    /// the checksum, not the origin, so any mirror serving the pinned bytes is
+    /// equally trustworthy — this one exists for networks where the gateway
+    /// domain is blocked or broken.
+    static let bundledPinnedSourceMirror =
+        "https://raw.githubusercontent.com/valargroup/token-holder-voting-config/main/pins/prod/\(bundledSHA256)/v2-static-voting-config.json?checksum=sha256:\(bundledSHA256)"
+    /// Ordered mirror walk for the bundled trust anchor, canonical origin first.
+    static let bundledPinnedSources = [bundledPinnedSource, bundledPinnedSourceMirror]
+    /// Parsed counterparts; `bundledSourcesPinTheSameV2Hash` pins the invariant
+    /// that parsing never silently drops an entry.
+    static let bundledParsedSources: [PinnedConfigSource] = bundledPinnedSources.compactMap { raw in
+        try? PinnedConfigSource.parse(raw)
+    }
 
     let staticConfigVersion: Int
     /// Ordered dynamic-config mirror list, canonical origin first.
@@ -101,6 +117,7 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
         let response: URLResponse
         do {
             var request = URLRequest(url: source.url, cachePolicy: .reloadIgnoringLocalCacheData)
+            request.timeoutInterval = Self.configRequestTimeout
             request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             request.setValue("no-cache", forHTTPHeaderField: "Pragma")
             (data, response) = try await fetch(request)
@@ -111,6 +128,49 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
             throw VotingConfigError.staticConfigFetchFailed("HTTP \(http.statusCode)")
         }
         return try decodeAndVerify(data: data, expectedSHA256: source.sha256)
+    }
+
+    /// Walk `sources` in order and return the first mirror that yields a valid,
+    /// hash-verified static config.
+    ///
+    /// Fall-through is availability-only: a transport failure, a non-200
+    /// response, or a hash mismatch moves on to the next mirror (each mirror is
+    /// independently hash-gated, so a mirror serving the wrong bytes is just a
+    /// broken mirror, never a trust decision). A decode or validation failure
+    /// *after* the hash matched is authoritative for every mirror — the pin
+    /// guarantees identical bytes everywhere — so it surfaces immediately.
+    /// When every mirror fails, the first (canonical origin's) error is thrown.
+    static func loadFromNetworkWithFailover(
+        sources: [PinnedConfigSource],
+        fetch: (URLRequest) async throws -> (Data, URLResponse)
+    ) async throws -> StaticVotingConfig {
+        guard !sources.isEmpty else {
+            throw VotingConfigError.staticConfigSourceMalformed("no static config sources configured")
+        }
+
+        var firstError: VotingConfigError?
+        for source in sources {
+            do {
+                return try await loadFromNetwork(source: source, fetch: fetch)
+            } catch let error as VotingConfigError {
+                switch error {
+                case .staticConfigFetchFailed, .staticConfigHashMismatch:
+                    if firstError == nil {
+                        firstError = error
+                    }
+                    LoggerProxy.warn(
+                        "Static config mirror \(source.url.host ?? "<unknown>") failed, trying next: \(error)"
+                    )
+                default:
+                    throw error
+                }
+            }
+        }
+
+        if let firstError {
+            throw firstError
+        }
+        throw VotingConfigError.staticConfigSourceMalformed("no static config sources configured")
     }
 
     /// Verify the raw bytes before decoding when a pin is provided.
