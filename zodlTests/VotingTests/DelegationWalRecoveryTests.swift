@@ -84,20 +84,21 @@ struct DelegationWalRecoveryTests {
             #expect(replacement.original.van.hexString == Expected.originalGovComm[index])
             #expect(replacement.original.totalNoteValue == Expected.weights[index])
             // The rebuild is what SQL would return today; it is not what we restore.
-            #expect(replacement.current.vanCommRand.hexString == Expected.rebuiltVanCommRand[index])
+            #expect(replacement.current?.vanCommRand.hexString == Expected.rebuiltVanCommRand[index])
         }
     }
 
-    /// The recovered value must come from a frame written before the wipe, not
-    /// from the newest image — that is the whole point of reading the WAL.
-    @Test func restoresTheOlderFrameNotTheRebuiltOne() throws {
+    /// The recovered value must come from an image written before the wipe, not
+    /// the newest one — that is the whole point of reading superseded state.
+    @Test func restoresTheOlderImageNotTheRebuiltOne() throws {
         let injected = try InjectedDatabase(.postClear)
 
         let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
 
         for replacement in plan.replacements {
-            #expect(replacement.original.frame < replacement.current.frame)
-            #expect(replacement.original.vanCommRand != replacement.current.vanCommRand)
+            let current = try #require(replacement.current)
+            #expect(replacement.original.origin < current.origin)
+            #expect(replacement.original.vanCommRand != current.vanCommRand)
         }
     }
 
@@ -216,6 +217,115 @@ struct DelegationWalRecoveryTests {
         for (index, entry) in stored.enumerated() {
             #expect(entry.vanCommRand.hexString == Expected.originalVanCommRand[index])
         }
+    }
+
+    // MARK: - Database-file carving
+
+    /// The database file covers what the WAL cannot: a clean close checkpoints
+    /// and unlinks the WAL, and from then on the only surviving copies are the
+    /// deleted cells left in the database itself.
+    @Test func carvesTheDatabaseFileWhenTheLogIsGone() throws {
+        let injected = try InjectedDatabase(.postClear)
+        try FileManager.default.removeItem(at: injected.walURL)
+
+        let rows = try DelegationWalRecovery.recover(
+            databaseURL: injected.databaseURL,
+            roundId: Expected.roundId
+        )
+
+        // Whatever it finds must be well-formed; the point of this test is that
+        // the database path runs at all and never invents rows.
+        for row in rows {
+            #expect(row.vanCommRand.count == 32)
+            #expect(row.roundId == Expected.roundId)
+            #expect(row.origin == .databaseLive || row.origin == .databaseFreeSpace)
+        }
+    }
+
+    /// Reading both files must never lose what reading the log alone found.
+    @Test func combiningBothFilesIsASupersetOfTheLogAlone() throws {
+        let injected = try InjectedDatabase(.postClear)
+
+        let logOnly = try DelegationWalRecovery.recover(
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+        let both = try DelegationWalRecovery.recover(
+            databaseURL: injected.databaseURL,
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+
+        for row in logOnly {
+            #expect(
+                both.contains { $0.bundleIndex == row.bundleIndex && $0.vanCommRand == row.vanCommRand },
+                "combining the two files dropped bundle \(row.bundleIndex)"
+            )
+        }
+    }
+
+    /// The combined plan must reach the same verdict as the log-only plan on a
+    /// round the log fully covers — adding a source must not change the answer.
+    @Test func combinedPlanAgreesWithTheLogOnlyPlan() throws {
+        let injected = try InjectedDatabase(.postClear)
+
+        let logOnly = try DelegationWalRecovery.plan(
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+        let both = try DelegationWalRecovery.plan(
+            databaseURL: injected.databaseURL,
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+
+        #expect(both.needsRecovery == logOnly.needsRecovery)
+        #expect(
+            both.replacements.map(\.original.vanCommRand)
+                == logOnly.replacements.map(\.original.vanCommRand)
+        )
+    }
+
+    /// Idempotence must survive the extra source: an untouched round stays a
+    /// no-op when the database file is carved as well.
+    @Test func combinedPlanStillDoesNothingForAnUntouchedRound() throws {
+        let injected = try InjectedDatabase(.preClear)
+
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: injected.databaseURL,
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+
+        #expect(plan.needsRecovery == false)
+    }
+
+    /// A missing log is the normal state after a clean close, not an error.
+    @Test func toleratesAnAbsentWriteAheadLog() throws {
+        let injected = try InjectedDatabase(.preClear)
+        try FileManager.default.removeItem(at: injected.walURL)
+
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: injected.databaseURL,
+            walURL: injected.walURL,
+            roundId: Expected.roundId
+        )
+
+        #expect(plan.needsRecovery == false)
+    }
+
+    /// Origin ordering is what lets `plan` pick the original without a clock:
+    /// released space predates live rows, and both predate the log.
+    @Test func originOrdersOldestToNewest() {
+        #expect(DelegationWalRecovery.Origin.databaseFreeSpace < .databaseLive)
+        #expect(DelegationWalRecovery.Origin.databaseLive < .walFrame(0))
+        #expect(DelegationWalRecovery.Origin.walFrame(0) < .walFrame(1))
+    }
+
+    @Test func rejectsBytesThatAreNotADatabase() {
+        let rows = DelegationWalRecovery.recover(databaseBytes: [UInt8](repeating: 0x41, count: 8_192))
+
+        #expect(rows.isEmpty)
     }
 }
 
