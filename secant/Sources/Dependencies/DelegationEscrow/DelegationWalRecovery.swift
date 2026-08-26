@@ -36,23 +36,40 @@ enum DelegationWalRecovery {
 
     static let walMagic: [UInt32] = [0x377F_0682, 0x377F_0683]
 
+    /// Where a carved row came from, ordered oldest to newest.
+    ///
+    /// The main database file holds the last checkpointed state, so anything
+    /// still in the WAL is newer than anything in it; and within the database,
+    /// a row sitting in freed space was superseded by whatever is live. That
+    /// total order is what lets `plan` pick the original without a clock.
+    enum Origin: Comparable, Hashable, Sendable {
+        /// A deleted cell in the database file: freed pages, freeblocks, or
+        /// the unallocated gap. Oldest.
+        case databaseFreeSpace
+        /// A row still reachable through the database file's b-tree.
+        case databaseLive
+        /// A page image in the write-ahead log, by zero-based frame index.
+        /// Newest, since the WAL holds commits made after the last checkpoint.
+        case walFrame(Int)
+    }
+
     struct RecoveredBundle: Equatable, Sendable {
         let roundId: String
         let bundleIndex: UInt32
         let vanCommRand: Data
         let van: Data
         let totalNoteValue: UInt64
-        /// Zero-based WAL frame the row came from. Lower is older.
-        let frame: Int
+        let origin: Origin
     }
 
-    /// One bundle whose secrets `prepareFreshRound` replaced.
+    /// One bundle whose secrets a wipe destroyed.
     struct Replacement: Equatable, Sendable {
-        /// The delegation the user actually broadcast, from the older frame.
+        /// The delegation the user actually broadcast, from the oldest origin.
         let original: RecoveredBundle
-        /// What the rebuild put in its place, from the newest frame. Matches
-        /// the row currently in `bundles`.
-        let current: RecoveredBundle
+        /// What the rebuild put in its place, from the newest origin — matching
+        /// the row currently in `bundles`. `nil` when the round was cleared and
+        /// never rebuilt, so nothing stands in the original's place.
+        let current: RecoveredBundle?
     }
 
     /// What recovery would restore, if anything.
@@ -79,6 +96,17 @@ enum DelegationWalRecovery {
         plan(bundles: try recover(walURL: walURL, roundId: roundId))
     }
 
+    /// Same decision, over both files. Use this when the database is available:
+    /// it adds the rows the WAL cannot supply once a clean close checkpointed
+    /// and unlinked it.
+    static func plan(
+        databaseURL: URL,
+        walURL: URL? = nil,
+        roundId: String? = nil
+    ) throws -> Plan {
+        plan(bundles: try recover(databaseURL: databaseURL, walURL: walURL, roundId: roundId))
+    }
+
     static func plan(bundles: [RecoveredBundle]) -> Plan {
         var byBundle: [String: [RecoveredBundle]] = [:]
         for bundle in bundles {
@@ -88,18 +116,62 @@ enum DelegationWalRecovery {
         var replacements: [Replacement] = []
         for key in byBundle.keys.sorted() {
             guard let versions = byBundle[key] else { continue }
-            let distinct = Set(versions.map(\.vanCommRand))
-            // One value means nothing was replaced: leave this bundle alone.
-            guard distinct.count > 1 else { continue }
-            guard let original = versions.min(by: { $0.frame < $1.frame }),
-                  let current = versions.max(by: { $0.frame < $1.frame })
+            guard let original = versions.min(by: { $0.origin < $1.origin }),
+                  let newest = versions.max(by: { $0.origin < $1.origin })
             else {
                 continue
             }
-            replacements.append(Replacement(original: original, current: current))
+
+            // Two signals mean the bundle lost its secrets, and only these two.
+            //
+            // More than one distinct value: something replaced them, which is
+            // the rebuild `prepareFreshRound` performs. And every surviving
+            // copy sitting in released space with nothing live above it: the
+            // row was deleted and never rebuilt, so it is gone from the
+            // database entirely.
+            //
+            // Neither fires for an untouched round. Its bundles are live, so
+            // they always have a live or WAL origin, and a page rewritten any
+            // number of times still yields exactly one `van_comm_rand`.
+            let distinct = Set(versions.map(\.vanCommRand))
+            let allReleased = versions.allSatisfy { $0.origin == .databaseFreeSpace }
+            guard distinct.count > 1 || allReleased else { continue }
+
+            replacements.append(
+                Replacement(original: original, current: allReleased ? nil : newest)
+            )
         }
 
         return Plan(replacements: replacements)
+    }
+
+    /// Carves every recoverable `bundles` row from both files.
+    ///
+    /// The WAL holds the newest page images and is where a freshly cleared
+    /// round is usually still intact. The database file covers the case the WAL
+    /// cannot: it was checkpointed and unlinked by a clean close, but the
+    /// deleted cells were never overwritten, so they survive in freed pages,
+    /// in freeblocks inside live pages, and in the unallocated gap. `bundles`
+    /// rows are only zeroed on delete if SQLite was built with
+    /// `SQLITE_SECURE_DELETE`, and the bundled build is not.
+    ///
+    /// A missing WAL is normal, not an error.
+    static func recover(
+        databaseURL: URL,
+        walURL: URL? = nil,
+        roundId: String? = nil
+    ) throws -> [RecoveredBundle] {
+        var rows: [RecoveredBundle] = []
+
+        let database = try Data(contentsOf: databaseURL, options: .mappedIfSafe)
+        rows += recover(databaseBytes: [UInt8](database), roundId: roundId)
+
+        if let walURL, FileManager.default.fileExists(atPath: walURL.path) {
+            let wal = try Data(contentsOf: walURL, options: .mappedIfSafe)
+            rows += recover(walBytes: [UInt8](wal), roundId: roundId)
+        }
+
+        return deduplicated(rows)
     }
 
     /// Carves every recoverable `bundles` row from `walURL`.
@@ -110,6 +182,55 @@ enum DelegationWalRecovery {
     static func recover(walURL: URL, roundId: String? = nil) throws -> [RecoveredBundle] {
         let blob = try Data(contentsOf: walURL, options: .mappedIfSafe)
         return recover(walBytes: [UInt8](blob), roundId: roundId)
+    }
+
+    /// Carves the main database file: live b-tree rows, plus deleted cells that
+    /// no cell-pointer array references any more.
+    static func recover(databaseBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
+        guard databaseBytes.count > 100 else { return [] }
+        guard Array(databaseBytes[0..<16]) == Array("SQLite format 3\u{0}".utf8) else { return [] }
+
+        // Page size lives at offset 16; the value 1 means 65536, which does not
+        // fit the 16-bit field. Byte 20 is the per-page reserved region, which
+        // is not part of the usable payload area.
+        let declared = Int(readUInt16(databaseBytes, 16))
+        let pageSize = declared == 1 ? 65_536 : declared
+        guard pageSize >= 512, pageSize <= 65_536, pageSize % 512 == 0 else { return [] }
+        let usable = pageSize - Int(databaseBytes[20])
+        guard usable > 35 else { return [] }
+
+        var rows: [RecoveredBundle] = []
+        let pageCount = databaseBytes.count / pageSize
+        for index in 0..<pageCount {
+            let page = Array(databaseBytes[(index * pageSize)..<((index + 1) * pageSize)])
+            // Page 1 carries the 100-byte file header before its b-tree header.
+            let headerOffset = index == 0 ? 100 : 0
+            for (columns, isLive) in bundleRecords(
+                inPage: page, usable: usable, headerOffset: headerOffset
+            ) {
+                let origin: Origin = isLive ? .databaseLive : .databaseFreeSpace
+                guard let bundle = makeBundle(columns: columns, origin: origin) else { continue }
+                if let roundId, bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
+                    continue
+                }
+                rows.append(bundle)
+            }
+        }
+        return rows
+    }
+
+    /// Keeps one row per `(roundId, bundleIndex, vanCommRand)`, preferring the
+    /// oldest origin so `plan` sees the earliest surviving copy of a value.
+    private static func deduplicated(_ rows: [RecoveredBundle]) -> [RecoveredBundle] {
+        var best: [String: RecoveredBundle] = [:]
+        for row in rows {
+            let key = "\(row.roundId)/\(row.bundleIndex)/\(row.vanCommRand.hexString)"
+            if let existing = best[key], existing.origin <= row.origin { continue }
+            best[key] = row
+        }
+        return best.values.sorted {
+            ($0.bundleIndex, $0.origin) < ($1.bundleIndex, $1.origin)
+        }
     }
 
     static func recover(walBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
@@ -132,8 +253,9 @@ enum DelegationWalRecovery {
         var frame = 0
         while offset + 24 + pageSize <= walBytes.count {
             let page = Array(walBytes[(offset + 24)..<(offset + 24 + pageSize)])
-            for columns in bundleRecords(inPage: page, usable: pageSize) {
-                guard let bundle = makeBundle(columns: columns, frame: frame) else { continue }
+            for (columns, _) in bundleRecords(inPage: page, usable: pageSize) {
+                guard let bundle = makeBundle(columns: columns, origin: .walFrame(frame))
+                else { continue }
                 if let roundId, bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
                     continue
                 }
@@ -160,7 +282,7 @@ enum DelegationWalRecovery {
 
     // MARK: - SQLite b-tree pages
 
-    private static func makeBundle(columns: [RecordValue], frame: Int) -> RecoveredBundle? {
+    private static func makeBundle(columns: [RecordValue], origin: Origin) -> RecoveredBundle? {
         guard columns.count >= bundleColumnCount,
               case let .text(roundId) = columns[BundleColumn.roundId.rawValue],
               roundId.count == 64,
@@ -191,7 +313,7 @@ enum DelegationWalRecovery {
             vanCommRand: rand,
             van: van,
             totalNoteValue: weight,
-            frame: frame
+            origin: origin
         )
     }
 
@@ -203,25 +325,51 @@ enum DelegationWalRecovery {
     /// 64-character hex `round_id` (TEXT of length 64 -> 2 * 64 + 13 = 141,
     /// encoded as the varint `0x81 0x0D`), with the single-byte header-length
     /// varint immediately before it.
-    private static func bundleRecords(inPage page: [UInt8], usable: Int) -> [[RecordValue]] {
-        var records: [[RecordValue]] = []
+    /// Returns each decoded record with whether it is still live, i.e. still
+    /// referenced by the page's cell-pointer array. A record found only by the
+    /// signature sweep sits in space the b-tree has released — a freed page, a
+    /// freeblock inside a page that still holds other rows, or the unallocated
+    /// gap — and is therefore an older version than anything live.
+    ///
+    /// `headerOffset` is 100 for page 1 of a database file, which carries the
+    /// file header before its b-tree header, and 0 everywhere else.
+    private static func bundleRecords(
+        inPage page: [UInt8],
+        usable: Int,
+        headerOffset: Int = 0
+    ) -> [(columns: [RecordValue], isLive: Bool)] {
+        var records: [(columns: [RecordValue], isLive: Bool)] = []
+        var liveRanges: [Range<Int>] = []
 
-        if page.first == 0x0D {
-            for payload in tableLeafPayloads(page: page, usable: usable) {
-                if let columns = decodeRecord(payload) { records.append(columns) }
+        if page.count > headerOffset, page[headerOffset] == 0x0D {
+            for payload in tableLeafPayloads(
+                page: page, usable: usable, headerOffset: headerOffset
+            ) {
+                liveRanges.append(payload.range)
+                if let columns = decodeRecord(payload.bytes) {
+                    records.append((columns, true))
+                }
             }
         }
 
-        var index = 1
+        // Sweep for the record signature. A `bundles` record opens with the
+        // serial type for its 64-character hex `round_id` (TEXT of length 64 ->
+        // 2 * 64 + 13 = 141, the varint `0x81 0x0D`), with the single-byte
+        // header-length varint immediately before it.
+        var index = max(1, headerOffset)
         while index + 1 < page.count {
             guard page[index] == 0x81, page[index + 1] == 0x0D else {
                 index += 1
                 continue
             }
             let start = index - 1
-            let end = min(start + usable, page.count)
-            if let columns = decodeRecord(Array(page[start..<end])) {
-                records.append(columns)
+            // Anything the cell-pointer walk already returned is live and has
+            // been recorded; re-decoding it here would double count it.
+            if !liveRanges.contains(where: { $0.contains(start) }) {
+                let end = min(start + usable, page.count)
+                if let columns = decodeRecord(Array(page[start..<end])) {
+                    records.append((columns, false))
+                }
             }
             index += 1
         }
@@ -229,13 +377,18 @@ enum DelegationWalRecovery {
         return records
     }
 
-    private static func tableLeafPayloads(page: [UInt8], usable: Int) -> [[UInt8]] {
-        let cellCount = Int(readUInt16(page, 3))
-        guard cellCount > 0, 8 + 2 * cellCount <= page.count else { return [] }
+    private static func tableLeafPayloads(
+        page: [UInt8],
+        usable: Int,
+        headerOffset: Int = 0
+    ) -> [(bytes: [UInt8], range: Range<Int>)] {
+        let cellCount = Int(readUInt16(page, headerOffset + 3))
+        let arrayEnd = headerOffset + 8 + 2 * cellCount
+        guard cellCount > 0, arrayEnd <= page.count else { return [] }
 
-        var payloads: [[UInt8]] = []
+        var payloads: [(bytes: [UInt8], range: Range<Int>)] = []
         for cell in 0..<cellCount {
-            let cellOffset = Int(readUInt16(page, 8 + 2 * cell))
+            let cellOffset = Int(readUInt16(page, headerOffset + 8 + 2 * cell))
             guard cellOffset > 0, cellOffset < page.count else { continue }
             guard let (payloadLength, lengthBytes) = varint(page, cellOffset) else { continue }
             guard let (_, rowidBytes) = varint(page, cellOffset + lengthBytes) else { continue }
@@ -244,7 +397,7 @@ enum DelegationWalRecovery {
             let local = localPayloadSize(payloadLength: Int(payloadLength), usable: usable)
             let end = min(body + local, page.count)
             guard body < end else { continue }
-            payloads.append(Array(page[body..<end]))
+            payloads.append((Array(page[body..<end]), body..<end))
         }
         return payloads
     }
