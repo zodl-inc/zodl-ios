@@ -726,6 +726,324 @@ import Testing
         #expect(!isDelegationSigningTop(state))
     }
 
+    @Test func persistedBundlesResumeInsteadOfPreparingFreshRound() {
+        #expect(VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 1))
+        #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
+    }
+
+    @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let cachedNotes = [note(value: ballotDivisor, position: 0)]
+        let treeState = Data([0xAA])
+        let expectedWitness = WitnessData(
+            noteCommitment: cachedNotes[0].commitment,
+            position: cachedNotes[0].position,
+            root: Data([0xBB]),
+            authPath: []
+        )
+
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.storeTreeState = { storedRoundId, data in
+            await recorder.record("store-tree:\(storedRoundId):\(data == treeState)")
+        }
+        votingCrypto.generateNoteWitnesses = { storedRoundId, bundleIndex, walletDbPath, notes, networkId in
+            let attempt = await recorder.recordAndCount(
+                "witness:\(storedRoundId):\(bundleIndex):\(walletDbPath):\(notes.count):\(networkId)"
+            )
+            if attempt == 1 {
+                throw TestError.proofFailed
+            }
+            return [expectedWitness]
+        }
+
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.getTreeState = { height in
+            await recorder.record("get-tree:\(height)")
+            return treeState
+        }
+
+        await #expect(throws: TestError.self) {
+            _ = try await VotingCoordFlow.completeDeterministicRoundSetup(
+                roundId: roundId,
+                snapshotHeight: 123,
+                walletDbPath: "/wallet.db",
+                networkId: 1,
+                notes: cachedNotes,
+                bundleCount: 1,
+                votingCrypto: votingCrypto,
+                sdkSynchronizer: sdkSynchronizer
+            )
+        }
+
+        let witnesses = try await VotingCoordFlow.completeDeterministicRoundSetup(
+            roundId: roundId,
+            snapshotHeight: 123,
+            walletDbPath: "/wallet.db",
+            networkId: 1,
+            notes: cachedNotes,
+            bundleCount: 1,
+            votingCrypto: votingCrypto,
+            sdkSynchronizer: sdkSynchronizer
+        )
+
+        #expect(witnesses == [expectedWitness])
+        #expect(await recorder.events() == [
+            "get-tree:123",
+            "store-tree:round-1:true",
+            "witness:round-1:0:/wallet.db:1:1",
+            "get-tree:123",
+            "store-tree:round-1:true",
+            "witness:round-1:0:/wallet.db:1:1"
+        ])
+    }
+
+    @Test func absentRoundLoadsAsFreshSetup() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return []
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            throw TestError.votingDatabaseReadFailed
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            throw TestError.votingDatabaseReadFailed
+        }
+
+        let setup = try await VotingCoordFlow.loadExistingRoundSetup(
+            roundId: roundId,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.state == nil)
+        #expect(setup.bundleCount == 0)
+        #expect(await recorder.events() == ["list"])
+    }
+
+    @Test func existingRoundLoadsStateAndBundleCount() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let state = RoundStateInfo(
+            roundId: roundId,
+            phase: .delegationProved,
+            snapshotHeight: 100,
+            hotkeyAddress: nil,
+            delegatedWeight: nil,
+            proofGenerated: false
+        )
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return [RoundSummaryInfo(
+                roundId: roundId,
+                phase: .delegationProved,
+                snapshotHeight: 100,
+                createdAt: 1
+            )]
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            return state
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            return 2
+        }
+
+        let setup = try await VotingCoordFlow.loadExistingRoundSetup(
+            roundId: roundId,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.state == state)
+        #expect(setup.bundleCount == 2)
+        #expect(await recorder.events() == ["list", "state", "count"])
+    }
+
+    @Test func existingRoundDatabaseFailureDoesNotBecomeFreshSetup() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.listRounds = {
+            await recorder.record("list")
+            return [RoundSummaryInfo(
+                roundId: roundId,
+                phase: .delegationConstructed,
+                snapshotHeight: 100,
+                createdAt: 1
+            )]
+        }
+        votingCrypto.getRoundState = { _ in
+            await recorder.record("state")
+            return RoundStateInfo(
+                roundId: roundId,
+                phase: .delegationConstructed,
+                snapshotHeight: 100,
+                hotkeyAddress: nil,
+                delegatedWeight: nil,
+                proofGenerated: false
+            )
+        }
+        votingCrypto.getBundleCount = { _ in
+            await recorder.record("count")
+            throw TestError.votingDatabaseReadFailed
+        }
+
+        await #expect(throws: TestError.self) {
+            _ = try await VotingCoordFlow.loadExistingRoundSetup(
+                roundId: roundId,
+                votingCrypto: votingCrypto
+            )
+        }
+        #expect(await recorder.events() == ["list", "state", "count"])
+    }
+
+    @Test func acceptedVotingTransactionDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "accepted-tx", code: 0),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func spentNullifierRecoversWhenExactTransactionIsConfirmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "duplicate-tx",
+                code: 1,
+                log: "nullifier already spent: abc123"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events() == ["fetch:duplicate-tx"])
+    }
+
+    @Test func spentNullifierFailsWhenExactTransactionIsNotConfirmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "missing-tx",
+                code: 1,
+                log: "Nullifier was already spent"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events() == ["fetch:missing-tx"])
+    }
+
+    @Test func spentNullifierFailsWhenExactTransactionHasNonzeroCode() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 7, log: "execution failed")
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "rejected-tx",
+                code: 1,
+                log: "nullifier already spent"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events() == ["fetch:rejected-tx"])
+    }
+
+    @Test func spentNullifierWithoutHashDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "", code: 1, log: "nullifier already spent"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func spentNullifierRetriesWhileExactTransactionIsBeingIndexed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            let attempt = await recorder.recordAndCount("fetch:\(txHash)")
+            return attempt == 2 ? TxConfirmation(height: 12, code: 0) : nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "indexing-tx", code: 1, log: "nullifier already spent"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 3,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events() == ["fetch:indexing-tx", "fetch:indexing-tx"])
+    }
+
+    @Test func unrelatedTransactionRejectionDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "failed-tx", code: 1, log: "invalid proof"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
     @Test func delegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
@@ -1594,6 +1912,11 @@ private actor RecoveryOrderRecorder {
         recordedEvents.append(event)
     }
 
+    func recordAndCount(_ event: String) -> Int {
+        recordedEvents.append(event)
+        return recordedEvents.filter { $0 == event }.count
+    }
+
     func events() -> [String] {
         recordedEvents
     }
@@ -1631,6 +1954,7 @@ private enum TestError: LocalizedError {
     case shareRecordWriteFailed
     case delegationSetupMissing
     case delegationProofMissing
+    case votingDatabaseReadFailed
 
     var errorDescription: String? {
         switch self {
@@ -1644,6 +1968,8 @@ private enum TestError: LocalizedError {
             return "simulated missing persisted delegation setup"
         case .delegationProofMissing:
             return "simulated missing persisted delegation proof"
+        case .votingDatabaseReadFailed:
+            return "simulated voting database read failure"
         }
     }
 }

@@ -42,6 +42,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "Updating…" label and the "Balances as of ~N min ago" line have been removed from the Migration Progress screen. Both described how fresh ZODL's own reads were rather than anything you can act on, and neither was part of the design.
 
 ### Fixed
+- Coinholder Polling now recovers an ambiguously submitted delegation or vote by checking its exact transaction hash, and reopening a poll no longer discards persisted delegation setup needed to retry safely.
 - [MOB-1630] The migration banner no longer offers a migration when the account's Orchard balance is below 0.01 ZEC/TAZ — the smallest amount a migration can move. Such an offer could never be fulfilled: tapping it always ended on a failure screen, and the "Migration Required" banner never went away.
 - [MOB-1581] A sent transaction no longer stays stuck showing "Sending…" after it has confirmed. ZODL no longer misses the confirmation signal when it arrives alongside other synchronizer events, keeps refreshing the transaction list after the app returns from the background (previously a single background/foreground cycle silently stopped the automatic refresh until the app was relaunched), and additionally re-checks pending transactions every 30 seconds as a safety net.
 - [MOB-1670] "Split Balance" rows in the migration plan and Migration Progress timelines now always show the coins-swap icon instead of sometimes borrowing a transfer's step number. A split row could previously appear as "1" — while its transaction was confirming, once its window had passed, or for the second and later rows of a balance that splits in several steps — which read as though it were the first transfer rather than the preparation step that comes before them.
@@ -1113,4 +1114,3 @@ issue for more details.
 --------
 - Added SwiftGen templates for generating asset helper files.
 - Added Code Review Guides, Changelog, pull request and issue templates, SwiftLint Rules
-

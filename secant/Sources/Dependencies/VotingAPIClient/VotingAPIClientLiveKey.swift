@@ -44,7 +44,6 @@ enum SvAPIError: LocalizedError {
     case httpError(statusCode: Int, message: String)
     case invalidResponse(String)
     case noActiveVotingSession
-    case txFailed(code: UInt32, log: String)
 
     var errorDescription: String? {
         switch self {
@@ -54,8 +53,6 @@ enum SvAPIError: LocalizedError {
             return "Invalid API response: \(detail)"
         case .noActiveVotingSession:
             return "No active voting round"
-        case .txFailed(let code, let log):
-            return "Transaction failed (code \(code)): \(log)"
         }
     }
 }
@@ -100,8 +97,8 @@ enum SvAPIResponseParser {
                 (candidate["error"] as? String) ??
                 ""
 
-            if code != 0 {
-                throw SvAPIError.txFailed(code: code, log: log)
+            if code == 0, txHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw SvAPIError.invalidResponse("successful tx response is missing tx_hash")
             }
             return TxResult(txHash: txHash, code: code, log: log)
         }
@@ -333,15 +330,20 @@ private func postJSON(_ path: String, body: [String: Any], baseURL base: String)
         throw SvAPIError.invalidResponse("not an HTTP response")
     }
     guard http.statusCode == 200 else {
-        // 422 = chain processed the request but rejected the TX (non-zero CheckTx code).
-        // Parse the structured body for code/log instead of returning a raw HTTP error.
-        if http.statusCode == 422,
-           let json = try? SvAPIResponseParser.parseJSONObject(data, response: http, context: "POST \(path)") {
-            let code = (json["code"] as? NSNumber)?.uint32Value ?? 0
-            let log = json["log"] as? String ?? ""
-            if code != 0 {
-                throw SvAPIError.txFailed(code: code, log: log)
+        // A deterministic CheckTx rejection still carries the hash of the
+        // submitted bytes. Preserve it so the caller can verify whether that
+        // exact transaction was accepted by an earlier broadcast attempt.
+        if http.statusCode == 422 {
+            let json = try SvAPIResponseParser.parseJSONObject(
+                data,
+                response: http,
+                context: "POST \(path)"
+            )
+            let result = try SvAPIResponseParser.parseTxResult(json)
+            guard result.code != 0 else {
+                throw SvAPIError.invalidResponse("HTTP 422 tx response has code 0")
             }
+            return json
         }
         let body = String(data: data, encoding: .utf8) ?? ""
         throw SvAPIError.httpError(statusCode: http.statusCode, message: body)
@@ -606,7 +608,7 @@ func resubmitSharePayload(
     return []
 }
 
-/// Parse a broadcast TX response into TxResult. Throws on non-zero code.
+/// Parse a broadcast TX response into TxResult, preserving deterministic rejections.
 private func parseTxResult(_ json: [String: Any]) throws -> TxResult {
     try SvAPIResponseParser.parseTxResult(json)
 }
