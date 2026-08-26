@@ -172,17 +172,16 @@ import Testing
     }
 
     @Test func staticConfigDecodeAndVerifyAcceptsMatchingSHA256() throws {
-        let config = makeStaticConfig()
-        let data = try JSONEncoder().encode(config)
+        let data = Data(decodeAndVerifyFixtureJSON.utf8)
         let sha256 = Data(SHA256.hash(data: data))
 
         let decoded = try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: sha256)
 
-        #expect(decoded == config)
+        #expect(decoded == makeStaticConfig())
     }
 
     @Test func staticConfigDecodeAndVerifyRejectsHashMismatch() throws {
-        let data = try JSONEncoder().encode(makeStaticConfig())
+        let data = Data(decodeAndVerifyFixtureJSON.utf8)
 
         let error = #expect(throws: VotingConfigError.self) {
             try StaticVotingConfig.decodeAndVerify(data: data, expectedSHA256: Data(repeating: 0, count: 32))
@@ -194,8 +193,18 @@ import Testing
     }
 
     @Test func staticConfigDecodeAndVerifyStillValidatesDecodedConfig() throws {
-        let config = makeStaticConfig(trustedKeyBytes: Data(repeating: 0x01, count: 31))
-        let data = try JSONEncoder().encode(config)
+        // 31-byte trusted key: the hash matches and decode succeeds, so the
+        // rejection can only come from validate().
+        let json = """
+        {
+          "static_config_version": 1,
+          "dynamic_config_url": "https://example.com/dynamic-voting-config.json",
+          "trusted_keys": [
+            {"key_id": "test", "alg": "ed25519", "pubkey": "\(Data(repeating: 0x01, count: 31).base64EncodedString())"}
+          ]
+        }
+        """
+        let data = Data(json.utf8)
         let sha256 = Data(SHA256.hash(data: data))
 
         #expect(throws: (any Error).self) {
@@ -407,29 +416,6 @@ import Testing
         }
     }
 
-    @Test func staticConfigEncodeDecodeRoundTripsBothVersions() throws {
-        let v1 = makeStaticConfig()
-        let v2 = StaticVotingConfig(
-            staticConfigVersion: 2,
-            dynamicConfigURLs: [
-                URL(string: "https://a.example/dynamic.json")!,
-                URL(string: "https://b.example/dynamic.json")!
-            ],
-            trustedKeys: v1.trustedKeys
-        )
-
-        for config in [v1, v2] {
-            let data = try JSONEncoder().encode(config)
-            let decoded = try JSONDecoder().decode(StaticVotingConfig.self, from: data)
-            #expect(decoded == config)
-        }
-
-        // The v1 wire shape must keep the singular key so encoded v1 fixtures stay spec-shaped.
-        let v1Object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(v1)) as? [String: Any])
-        #expect(v1Object["dynamic_config_url"] != nil)
-        #expect(v1Object["dynamic_config_urls"] == nil)
-    }
-
     @Test func fetchFailuresRenderAsFetchFailedNotDecodeFailed() {
         let dynamicMessage = VotingConfigError.dynamicConfigFetchFailed("CDN returned HTTP 403", statusCode: 403).errorDescription ?? ""
         let staticMessage = VotingConfigError.staticConfigFetchFailed("HTTP 503").errorDescription ?? ""
@@ -438,6 +424,22 @@ import Testing
         #expect(staticMessage.contains("fetch failed"))
         #expect(!dynamicMessage.contains("decode"))
         #expect(!staticMessage.contains("decode"))
+    }
+
+    @Test func resolveConfigSourcesUsesBundledWalkForNilOverride() {
+        #expect(StaticVotingConfig.resolveConfigSources(override: nil) == StaticVotingConfig.bundledParsedSources)
+    }
+
+    @Test func resolveConfigSourcesKeepsBundledWalkForSavedBundledMirror() throws {
+        for raw in StaticVotingConfig.bundledPinnedSources {
+            let source = try PinnedConfigSource.parse(raw)
+            #expect(StaticVotingConfig.resolveConfigSources(override: source) == StaticVotingConfig.bundledParsedSources)
+        }
+    }
+
+    @Test func resolveConfigSourcesIsolatesCustomOverride() throws {
+        let custom = try PinnedConfigSource.parse("https://example.com/static-voting-config.json")
+        #expect(StaticVotingConfig.resolveConfigSources(override: custom) == [custom])
     }
 
     private func makeConfig(supportedVersions: VotingServiceConfig.SupportedVersions) -> VotingServiceConfig {
@@ -450,6 +452,16 @@ import Testing
             pirLayout: .init(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
         )
     }
+
+    private let decodeAndVerifyFixtureJSON = """
+    {
+      "static_config_version": 1,
+      "dynamic_config_url": "https://example.com/dynamic-voting-config.json",
+      "trusted_keys": [
+        {"key_id": "test", "alg": "ed25519", "pubkey": "\(Data(repeating: 0x01, count: 32).base64EncodedString())"}
+      ]
+    }
+    """
 
     private func makeStaticConfig(
         trustedKeyBytes: Data = Data(repeating: 0x01, count: 32)

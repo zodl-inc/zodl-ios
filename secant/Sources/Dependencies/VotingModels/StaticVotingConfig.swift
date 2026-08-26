@@ -5,8 +5,16 @@ import Foundation
 ///
 /// The signed wallet binary pins the URL and SHA-256 of a published static
 /// config. The fetched bytes are trusted only after the hash matches.
-struct StaticVotingConfig: Codable, Equatable, Sendable {
-    static let supportedVersions: Set<Int> = [1, 2]
+struct StaticVotingConfig: Decodable, Equatable, Sendable {
+    /// The static-config schema versions this wallet decodes. Owning both the
+    /// membership test (`validate()`) and the decoder dispatch in one type
+    /// means a future v3 cannot be "supported" without the compiler forcing a
+    /// decode case for it.
+    enum Version: Int, CaseIterable, Sendable {
+        case v1 = 1
+        case v2 = 2
+    }
+
     static let algEd25519 = "ed25519"
     static let configRequestTimeout: TimeInterval = 15
     private static let bundledSHA256 = "28fc9b631091ae8bc2f8635d8930489238ce144174cbd15a03efb0530b301ebe"
@@ -22,10 +30,27 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
         "https://raw.githubusercontent.com/valargroup/token-holder-voting-config/main/pins/prod/\(bundledSHA256)/v2-static-voting-config.json?checksum=sha256:\(bundledSHA256)"
     /// Ordered mirror walk for the bundled trust anchor, canonical origin first.
     static let bundledPinnedSources = [bundledPinnedSource, bundledPinnedSourceMirror]
-    /// Parsed counterparts; `bundledSourcesPinTheSameV2Hash` pins the invariant
-    /// that parsing never silently drops an entry.
-    static let bundledParsedSources: [PinnedConfigSource] = bundledPinnedSources.compactMap { raw in
-        try? PinnedConfigSource.parse(raw)
+    /// Parsed counterparts of `bundledPinnedSources`. A bundled pin that fails
+    /// to parse is a programmer error in a compile-time constant — crash loudly
+    /// here rather than silently narrowing the trust-anchor walk or breaking
+    /// Settings' Default detection. `bundledSourcesPinTheSameV2Hash` catches a
+    /// typo in CI long before any release reaches this precondition.
+    static let bundledParsedSources: [PinnedConfigSource] = {
+        do {
+            return try bundledPinnedSources.map { raw in try PinnedConfigSource.parse(raw) }
+        } catch {
+            preconditionFailure("bundled static config pin failed to parse: \(error)")
+        }
+    }()
+
+    /// A user-selected custom chain is a single source — unless it is one of
+    /// the bundled mirrors, in which case the full bundled walk applies so a
+    /// saved copy of the default keeps its fallback.
+    static func resolveConfigSources(override: PinnedConfigSource?) -> [PinnedConfigSource] {
+        if let override, !bundledParsedSources.contains(override) {
+            return [override]
+        }
+        return bundledParsedSources
     }
 
     let staticConfigVersion: Int
@@ -49,30 +74,16 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         staticConfigVersion = try container.decode(Int.self, forKey: .staticConfigVersion)
         trustedKeys = try container.decode([TrustedKey].self, forKey: .trustedKeys)
-        switch staticConfigVersion {
-        case 1:
+        switch Version(rawValue: staticConfigVersion) {
+        case .v1:
             let url = try container.decode(URL.self, forKey: .dynamicConfigURL)
             dynamicConfigURLs = [url]
-        case 2:
+        case .v2:
             dynamicConfigURLs = try container.decode([URL].self, forKey: .dynamicConfigURLs)
-        default:
+        case nil:
             // Unknown version: defer to validate() so the caller sees a precise
             // "unsupported static_config_version N" instead of a decode error.
             dynamicConfigURLs = []
-        }
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(staticConfigVersion, forKey: .staticConfigVersion)
-        try container.encode(trustedKeys, forKey: .trustedKeys)
-        switch staticConfigVersion {
-        case 1:
-            if let url = dynamicConfigURLs.first {
-                try container.encode(url, forKey: .dynamicConfigURL)
-            }
-        default:
-            try container.encode(dynamicConfigURLs, forKey: .dynamicConfigURLs)
         }
     }
 
@@ -190,7 +201,7 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
     /// Dynamic endpoint reachability and round signatures are checked later when
     /// the dynamic config is fetched and a chain round is selected.
     func validate() throws {
-        guard Self.supportedVersions.contains(staticConfigVersion) else {
+        guard Version(rawValue: staticConfigVersion) != nil else {
             throw VotingConfigError.decodeFailed("unsupported static_config_version \(staticConfigVersion)")
         }
         guard !dynamicConfigURLs.isEmpty else {
