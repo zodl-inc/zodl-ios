@@ -7,6 +7,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## [Unreleased]
 
 ### Added
+- [Ironwood] Before opening the voting database, ZODL now preserves a copy of it under `voting_recovery`. If an earlier version already discarded a poll's delegation, that copy keeps what is needed to restore it later — even if you upgrade long after the poll was affected. It is taken only once, so the earliest and most complete copy is the one kept; it is included in device backups so it survives a migration, and is removed when the wallet is reset.
 - [MOB-1466] Advanced Settings now offers "Restart Migration" while a migration is running. It shows how much has already migrated and how much is left, warns that restarting cancels the current plan for good, and asks for a separate confirmation before anything happens. Transfers that already went out are untouched — they stay migrated — and once the plan is cancelled you set up a new one for the remaining balance the same way you did the first time.
 - [MOB-1466] With a privacy migration in progress, keeping the app open now advances the migration automatically — transfers send on schedule without reopening the app.
 - [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.

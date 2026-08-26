@@ -664,6 +664,13 @@ private actor DatabaseActor {
     private var _backend: VotingRustBackend?
 
     func open(path: String, networkId: UInt32) throws {
+        // Before anything touches the database. Closing the previous backend
+        // below drops the last connection, which makes SQLite checkpoint and
+        // unlink the WAL — and the WAL is the only place a cleared round's
+        // original secrets still exist. Once this line has run, the evidence
+        // is safe whatever the rest of the flow does.
+        VotingDatabaseSnapshot.capture(databasePath: path)
+
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).
         if let old = _backend {

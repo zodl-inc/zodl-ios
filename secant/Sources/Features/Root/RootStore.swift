@@ -751,6 +751,10 @@ extension Root {
             try? FileManager.default.removeItem(
                 at: documents.appendingPathComponent(DelegationEscrowFile.name)
             )
+            // Preserved copies of the previous wallet's voting database are
+            // the same wallet-scoped material, and must not cross the reset
+            // boundary either.
+            VotingDatabaseSnapshot.reset()
         }
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which
