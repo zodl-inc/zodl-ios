@@ -904,14 +904,11 @@ extension VotingCoordFlow {
                         roundId: roundId,
                         votingCrypto: votingCrypto
                     )
-                    var preClearKeystoneSignatures: [KeystoneBundleSignatureInfo] = []
                     var resolvedBundleCount: UInt32 = 0
-                    var shouldRestoreKeystoneSignatures = isKeystoneUser
                     var didPrepareFreshRound = false
                     if existingState?.proofGenerated == true {
                         let bundleCount = existingBundleCount
                         resolvedBundleCount = bundleCount
-                        shouldRestoreKeystoneSignatures = false
                         let eligibleWeight = Self.votingWeight(for: notes, bundleCount: bundleCount)
                         guard bundleCount > 0, eligibleWeight > 0 else {
                             await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
@@ -928,47 +925,98 @@ extension VotingCoordFlow {
                         ))
                     } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
                         resolvedBundleCount = existingBundleCount
-                        var recoveredBundleCount: UInt32 = 0
-                        var recoveredBundleIndices: Set<UInt32> = []
+                        // A delegation TX hash cached locally means this device already
+                        // broadcast a registration for the round, whatever the chain is
+                        // able to tell us about it right now.
+                        var anyLocalDelegationTxHash = false
                         for bundleIndex: UInt32 in 0..<existingBundleCount {
-                            if let vanPosition = try? await Self.recoverDelegationVanPosition(
+                            if case .present = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) {
+                                anyLocalDelegationTxHash = true
+                                break
+                            }
+                        }
+                        var probes: [UInt32: DelegationRegistrationProbe] = [:]
+                        for bundleIndex: UInt32 in 0..<existingBundleCount {
+                            probes[bundleIndex] = await Self.probeDelegationRegistration(
                                 roundId: roundId,
                                 bundleIndex: bundleIndex,
                                 votingCrypto: votingCrypto,
                                 votingAPI: votingAPI,
                                 confirmationTimeout: 0,
                                 retryDelay: .zero
-                            ) {
-                                LoggerProxy.debug(
-                                    "Recovered delegation bundle \(bundleIndex) VAN position: \(vanPosition)"
-                                )
-                                recoveredBundleCount += 1
-                                recoveredBundleIndices.insert(bundleIndex)
+                            )
+                        }
+                        let savedSignatures = isKeystoneUser
+                            ? ((try? await votingCrypto.loadKeystoneBundleSignatures(roundId)) ?? [])
+                            : []
+
+                        switch Self.roundResumeDecision(
+                            probes: probes,
+                            savedSignatureCount: savedSignatures.count,
+                            anyLocalDelegationTxHash: anyLocalDelegationTxHash
+                        ) {
+                        case let .reuseRecovered(recoveredIndices):
+                            let delegationReady = recoveredIndices.count >= Int(existingBundleCount)
+                            if delegationReady {
+                                try await votingCrypto.clearRecoveryState(roundId)
+                            } else {
+                                // Partially registered: clear the per-session leftovers of
+                                // the bundles that never made it, without touching the
+                                // delegation material the registered ones depend on.
+                                try await votingCrypto.resetSessionState(roundId)
                             }
-                        }
-
-                        let delegationReady = recoveredBundleCount >= existingBundleCount
-                        if delegationReady {
-                            try await votingCrypto.clearRecoveryState(roundId)
-                        }
-
-                        if isKeystoneUser, !recoveredBundleIndices.isEmpty {
-                            await send(.delegationBundlesRecovered(
+                            if isKeystoneUser, !recoveredIndices.isEmpty {
+                                await send(.delegationBundlesRecovered(
+                                    roundId: roundId,
+                                    bundleIndices: recoveredIndices
+                                ))
+                            }
+                            let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
+                            guard eligibleWeight > 0 else {
+                                await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
+                                return
+                            }
+                            await send(.earlyEligibilityConfirmed(roundId: roundId))
+                            let witnesses: [WitnessData]
+                            if delegationReady {
+                                witnesses = []
+                            } else {
+                                witnesses = try await Self.completeDeterministicRoundSetup(
+                                    roundId: roundId,
+                                    snapshotHeight: snapshotHeight,
+                                    walletDbPath: walletDbPath,
+                                    networkId: networkId,
+                                    notes: notes,
+                                    bundleCount: existingBundleCount,
+                                    votingCrypto: votingCrypto,
+                                    sdkSynchronizer: sdkSynchronizer
+                                )
+                            }
+                            await send(.votingWeightLoaded(
                                 roundId: roundId,
-                                bundleIndices: recoveredBundleIndices
+                                weight: eligibleWeight,
+                                notes: notes,
+                                witnesses: witnesses,
+                                bundleCount: existingBundleCount,
+                                delegationReady: delegationReady
                             ))
-                        }
-                        let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
-                        guard eligibleWeight > 0 else {
-                            await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-                            return
-                        }
-                        await send(.earlyEligibilityConfirmed(roundId: roundId))
-                        let witnesses: [WitnessData]
-                        if delegationReady {
-                            witnesses = []
-                        } else {
-                            witnesses = try await Self.completeDeterministicRoundSetup(
+
+                        case .resumeInPlace:
+                            // Nothing conclusive says this round is dead, and there is local
+                            // material worth keeping. Resume on the existing rows: alpha, rk
+                            // and the stored PCZT sighash stay exactly as the interrupted run
+                            // left them, and only the per-session leftovers go.
+                            try await votingCrypto.resetSessionState(roundId)
+                            let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
+                            guard eligibleWeight > 0 else {
+                                await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
+                                return
+                            }
+                            await send(.earlyEligibilityConfirmed(roundId: roundId))
+                            // `resetSessionState` dropped the round's cached vote tree and the
+                            // unsigned setup, so the witnesses have to be rebuilt before the
+                            // interrupted signing run can continue.
+                            let witnesses = try await Self.completeDeterministicRoundSetup(
                                 roundId: roundId,
                                 snapshotHeight: snapshotHeight,
                                 walletDbPath: walletDbPath,
@@ -978,19 +1026,32 @@ extension VotingCoordFlow {
                                 votingCrypto: votingCrypto,
                                 sdkSynchronizer: sdkSynchronizer
                             )
+                            await send(.votingWeightLoaded(
+                                roundId: roundId,
+                                weight: eligibleWeight,
+                                notes: notes,
+                                witnesses: witnesses,
+                                bundleCount: existingBundleCount,
+                                delegationReady: false
+                            ))
+
+                        case .freshRound:
+                            guard try await Self.prepareFreshRound(
+                                roundId: roundId,
+                                existingState: existingState,
+                                session: session,
+                                snapshotHeight: snapshotHeight,
+                                walletDbPath: walletDbPath,
+                                networkId: networkId,
+                                notes: notes,
+                                votingCrypto: votingCrypto,
+                                sdkSynchronizer: sdkSynchronizer,
+                                send: send
+                            ) else { return }
+                            didPrepareFreshRound = true
+                            resolvedBundleCount = try await votingCrypto.getBundleCount(roundId)
                         }
-                        await send(.votingWeightLoaded(
-                            roundId: roundId,
-                            weight: eligibleWeight,
-                            notes: notes,
-                            witnesses: witnesses,
-                            bundleCount: existingBundleCount,
-                            delegationReady: delegationReady
-                        ))
                     } else {
-                        if isKeystoneUser {
-                            preClearKeystoneSignatures = try await votingCrypto.loadKeystoneBundleSignatures(roundId)
-                        }
                         guard try await Self.prepareFreshRound(
                             roundId: roundId,
                             existingState: existingState,
@@ -1023,27 +1084,22 @@ extension VotingCoordFlow {
                     }
                     await send(.hotkeyLoaded(roundId: roundId, address: ""))
 
-                    if shouldRestoreKeystoneSignatures {
-                        let savedSignatures = didPrepareFreshRound
-                            ? preClearKeystoneSignatures
-                            : try await votingCrypto.loadKeystoneBundleSignatures(roundId)
-                        guard let validSignatures = Self.validKeystoneSignatures(
-                            savedSignatures,
+                    // Every path that reaches here with `didPrepareFreshRound == false` left
+                    // the round's signature rows intact, so the DB is the only source: we
+                    // never re-store signatures the pipeline itself just wiped. The
+                    // proof-generated shortcut has nothing left to restore.
+                    if isKeystoneUser && !didPrepareFreshRound && existingState?.proofGenerated != true {
+                        let storedSignatures = (try? await votingCrypto.loadKeystoneBundleSignatures(roundId)) ?? []
+                        if let validSignatures = Self.validKeystoneSignatures(
+                            storedSignatures,
                             bundleCount: resolvedBundleCount
-                        ) else {
-                            LoggerProxy.warn("Ignoring inconsistent Keystone signing recovery state")
-                            return
-                        }
-                        if !validSignatures.isEmpty {
-                            if didPrepareFreshRound {
-                                for signature in validSignatures {
-                                    try await votingCrypto.storeKeystoneBundleSignature(roundId, signature)
-                                }
-                            }
+                        ), !validSignatures.isEmpty {
                             await send(.keystoneSignaturesRestored(
                                 roundId: roundId,
                                 signatures: validSignatures
                             ))
+                        } else if !storedSignatures.isEmpty {
+                            LoggerProxy.warn("Ignoring inconsistent Keystone signing recovery state")
                         }
                     }
                 } catch: { error, send in
