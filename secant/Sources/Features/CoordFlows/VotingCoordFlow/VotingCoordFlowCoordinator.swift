@@ -892,7 +892,7 @@ extension VotingCoordFlow {
                             bundleCount: bundleCount,
                             delegationReady: true
                         ))
-                    } else if existingBundleCount > 0 {
+                    } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
                         resolvedBundleCount = existingBundleCount
                         var recoveredBundleCount: UInt32 = 0
                         var recoveredBundleIndices: Set<UInt32> = []
@@ -917,45 +917,26 @@ extension VotingCoordFlow {
                             try await votingCrypto.clearRecoveryState(roundId)
                         }
 
-                        if recoveredBundleCount > 0 {
-                            if isKeystoneUser {
-                                await send(.delegationBundlesRecovered(
-                                    roundId: roundId,
-                                    bundleIndices: recoveredBundleIndices
-                                ))
-                            }
-                            let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
-                            guard eligibleWeight > 0 else {
-                                await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-                                return
-                            }
-                            await send(.earlyEligibilityConfirmed(roundId: roundId))
-                            await send(.votingWeightLoaded(
+                        if isKeystoneUser, !recoveredBundleIndices.isEmpty {
+                            await send(.delegationBundlesRecovered(
                                 roundId: roundId,
-                                weight: eligibleWeight,
-                                notes: notes,
-                                witnesses: [],
-                                bundleCount: existingBundleCount,
-                                delegationReady: recoveredBundleCount >= existingBundleCount
+                                bundleIndices: recoveredBundleIndices
                             ))
-                        } else {
-                            if isKeystoneUser {
-                                preClearKeystoneSignatures = try await votingCrypto.loadKeystoneBundleSignatures(roundId)
-                            }
-                            guard try await Self.prepareFreshRound(
-                                roundId: roundId,
-                                session: session,
-                                snapshotHeight: snapshotHeight,
-                                walletDbPath: walletDbPath,
-                                networkId: networkId,
-                                notes: notes,
-                                votingCrypto: votingCrypto,
-                                sdkSynchronizer: sdkSynchronizer,
-                                send: send
-                            ) else { return }
-                            didPrepareFreshRound = true
-                            resolvedBundleCount = (try? await votingCrypto.getBundleCount(roundId)) ?? 0
                         }
+                        let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
+                        guard eligibleWeight > 0 else {
+                            await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
+                            return
+                        }
+                        await send(.earlyEligibilityConfirmed(roundId: roundId))
+                        await send(.votingWeightLoaded(
+                            roundId: roundId,
+                            weight: eligibleWeight,
+                            notes: notes,
+                            witnesses: [],
+                            bundleCount: existingBundleCount,
+                            delegationReady: recoveredBundleCount >= existingBundleCount
+                        ))
                     } else {
                         if isKeystoneUser {
                             preClearKeystoneSignatures = try await votingCrypto.loadKeystoneBundleSignatures(roundId)
@@ -1922,6 +1903,9 @@ extension VotingCoordFlow {
 
                         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
                         let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
+                        guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
+                            throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
+                        }
                         try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
 
                         let voteDeadline = Date().addingTimeInterval(90)
@@ -2962,6 +2946,9 @@ extension VotingCoordFlow {
                         throw VotingFlowError.invalidDelegationSignature
                     }
                     let delegTxResult = try await votingAPI.submitDelegation(registration)
+                    guard try await Self.isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
+                        throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
+                    }
                     try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
                     let vanPosition = try await Self.requireKeystoneDelegationVanPosition(
                         txHash: delegTxResult.txHash,
@@ -3353,6 +3340,12 @@ extension VotingCoordFlow {
         return (bundleResult.eligibleWeight, UInt32(bundleResult.bundles.count))
     }
 
+    /// Bundle rows contain non-reproducible delegation randomness. Once any
+    /// exist, restart recovery must resume them instead of clearing the round.
+    static func shouldResumePersistedRound(existingBundleCount: UInt32) -> Bool {
+        existingBundleCount > 0
+    }
+
     private static func votingWeight(for notes: [NoteInfo], bundleCount: UInt32) -> UInt64 {
         let allBundles = notes.smartBundles().bundles
         guard bundleCount > 0, Int(bundleCount) < allBundles.count else {
@@ -3511,6 +3504,36 @@ extension VotingCoordFlow {
     }
 
     // MARK: - Crash recovery for in-flight votes
+
+    /// Accept a successful broadcast directly. A spent-nullifier rejection is
+    /// accepted only when its exact transaction hash resolves on-chain with code 0.
+    static func isAcceptedVotingTransaction(
+        _ result: TxResult,
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1)
+    ) async throws -> Bool {
+        let txHash = result.txHash.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.code == 0 {
+            return !txHash.isEmpty
+        }
+        guard maxRecoveryAttempts > 0,
+              !txHash.isEmpty,
+              VotingErrorMapper.isNullifierAlreadySpent(result.log)
+        else {
+            return false
+        }
+
+        for attempt in 0..<maxRecoveryAttempts {
+            if let confirmation = try await votingAPI.fetchTxConfirmation(txHash) {
+                return confirmation.code == 0
+            }
+            if attempt + 1 < maxRecoveryAttempts {
+                try await Task.sleep(for: retryDelay)
+            }
+        }
+        return false
+    }
 
     /// If we have a cached vote TX hash for `(roundId, bundleIndex, proposalId)`
     /// that confirmed on-chain, finish the share delegation step without
@@ -3767,6 +3790,9 @@ extension VotingCoordFlow {
                 )
             }
             let delegTxResult = try await votingAPI.submitDelegation(registration)
+            guard try await isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
+                throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
+            }
             LoggerProxy.info("Delegation TX \(bundleIndex) submitted: \(delegTxResult.txHash)")
 
             try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)

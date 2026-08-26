@@ -726,6 +726,156 @@ import Testing
         #expect(!isDelegationSigningTop(state))
     }
 
+    @Test func persistedBundlesResumeInsteadOfPreparingFreshRound() {
+        #expect(VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 1))
+        #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
+    }
+
+    @Test func acceptedVotingTransactionDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "accepted-tx", code: 0),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func spentNullifierRecoversWhenExactTransactionIsConfirmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "duplicate-tx",
+                code: 1,
+                log: "nullifier already spent: abc123"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events() == ["fetch:duplicate-tx"])
+    }
+
+    @Test func spentNullifierFailsWhenExactTransactionIsNotConfirmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "missing-tx",
+                code: 1,
+                log: "Nullifier was already spent"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events() == ["fetch:missing-tx"])
+    }
+
+    @Test func spentNullifierFailsWhenExactTransactionHasNonzeroCode() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 7, log: "execution failed")
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(
+                txHash: "rejected-tx",
+                code: 1,
+                log: "nullifier already spent"
+            ),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events() == ["fetch:rejected-tx"])
+    }
+
+    @Test func spentNullifierWithoutHashDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "", code: 1, log: "nullifier already spent"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func spentNullifierRetriesWhileExactTransactionIsBeingIndexed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            let attempt = await recorder.recordAndCount("fetch:\(txHash)")
+            return attempt == 2 ? TxConfirmation(height: 12, code: 0) : nil
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "indexing-tx", code: 1, log: "nullifier already spent"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 3,
+            retryDelay: .zero
+        )
+
+        #expect(accepted)
+        #expect(await recorder.events() == ["fetch:indexing-tx", "fetch:indexing-tx"])
+    }
+
+    @Test func unrelatedTransactionRejectionDoesNotQueryRecovery() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return TxConfirmation(height: 12, code: 0)
+        }
+
+        let accepted = try await VotingCoordFlow.isAcceptedVotingTransaction(
+            TxResult(txHash: "failed-tx", code: 1, log: "invalid proof"),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(!accepted)
+        #expect(await recorder.events().isEmpty)
+    }
+
     @Test func delegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
@@ -1592,6 +1742,11 @@ private actor RecoveryOrderRecorder {
 
     func record(_ event: String) {
         recordedEvents.append(event)
+    }
+
+    func recordAndCount(_ event: String) -> Int {
+        recordedEvents.append(event)
+        return recordedEvents.filter { $0 == event }.count
     }
 
     func events() -> [String] {

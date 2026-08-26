@@ -423,8 +423,7 @@ enum VotingErrorMapper {
         // Mirrors Android (`VotingErrorMapper.kt`): both substrings,
         // case-insensitive — robust to wording variants like
         // "Nullifier was already spent" vs "nullifier already spent".
-        if rawError.localizedCaseInsensitiveContains("nullifier")
-            && rawError.localizedCaseInsensitiveContains("spent") {
+        if isNullifierAlreadySpent(rawError) {
             return String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent)
         }
         if rawError.contains("vote round is not active") {
@@ -512,6 +511,11 @@ enum VotingErrorMapper {
             return String(localizable: .coinVoteStoreUserErrorLightwalletdUnavailable)
         }
         return rawError
+    }
+
+    static func isNullifierAlreadySpent(_ rawError: String) -> Bool {
+        rawError.localizedCaseInsensitiveContains("nullifier")
+            && rawError.localizedCaseInsensitiveContains("spent")
     }
 }
 
