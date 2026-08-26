@@ -1804,6 +1804,143 @@ import Testing
         #expect(events == ["record:0", "record:1", "mark"])
     }
 
+    // Fix A (MOB-1802): no locally cached delegation TX hash is NOT evidence the bundle
+    // failed to register — the hash write may simply have been lost — so the probe must
+    // report `.unknown` rather than `.notRegistered`, and it must not even attempt a chain
+    // lookup for a hash it doesn't have.
+    @Test func probeReturnsUnknownWhenNoLocalTxHash() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            return Self.makeDelegationConfirmation(position: 1)
+        }
+
+        let result = await VotingCoordFlow.probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: 0,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: 0,
+            retryDelay: .zero
+        )
+
+        #expect(result == .unknown)
+        let events = await recorder.events()
+        #expect(events.isEmpty)
+    }
+
+    // A network failure while asking the chain is exactly as inconclusive as never having
+    // asked — `confirmationTimeout: 0` bounds `delegationTxConfirmationStatus` to a single
+    // attempt, so this also pins that one network error is enough to conclude `.unknown`
+    // without retrying past the deadline.
+    @Test func probeReturnsUnknownWhenConfirmationFetchThrows() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            await recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+
+        let result = await VotingCoordFlow.probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: 0,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: 0,
+            retryDelay: .zero
+        )
+
+        #expect(result == .unknown)
+        let events = await recorder.events()
+        #expect(events.isEmpty)
+    }
+
+    // The chain answered and said the TX failed (non-zero code) — that's conclusive
+    // evidence the bundle is not registered, unlike every other inconclusive path above.
+    @Test func probeReturnsNotRegisteredOnFailedTx() async {
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            TxConfirmation(height: 1, code: 5, log: "tx failed")
+        }
+
+        let result = await VotingCoordFlow.probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: 0,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: 0,
+            retryDelay: .zero
+        )
+
+        #expect(result == .notRegistered)
+    }
+
+    // The happy path: a confirmed TX with a usable leaf_index reports `.registered` and
+    // persists the VAN position locally under the same (roundId, bundleIndex) it was asked
+    // about, so a later run can find it cached.
+    @Test func probeReturnsRegisteredAndStoresVanPosition() async {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+        votingCrypto.storeVanPosition = { roundId, bundleIndex, position in
+            await recorder.record("van:\(roundId):\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            Self.makeDelegationConfirmation(position: 42)
+        }
+
+        let result = await VotingCoordFlow.probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: 0,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: 0,
+            retryDelay: .zero
+        )
+
+        #expect(result == .registered(vanPosition: 42))
+        let events = await recorder.events()
+        #expect(events == ["van:\(roundId):0:42"])
+    }
+
+    // A `code == 0` "success" with no usable `delegate_vote` leaf_index (e.g. the response
+    // shape the live parser can't extract from) is a wire hiccup, not a chain verdict — the
+    // TX may well have succeeded, so this must land on `.unknown`, never `.notRegistered`.
+    @Test func probeReturnsUnknownWhenLeafIndexMissing() async {
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            TxConfirmation(height: 1, code: 0)
+        }
+
+        let result = await VotingCoordFlow.probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: 0,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            confirmationTimeout: 0,
+            retryDelay: .zero
+        )
+
+        #expect(result == .unknown)
+    }
+
     private let roundId = "round-1"
     private let activeRoundId = String(repeating: "aa", count: 32)
 

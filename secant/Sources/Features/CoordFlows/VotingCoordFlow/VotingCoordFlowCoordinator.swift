@@ -4008,6 +4008,61 @@ extension VotingCoordFlow {
         await send(.delegationProofCompleted(roundId: roundId))
     }
 
+    /// Three-valued probe over a bundle's on-chain delegation-registration state.
+    ///
+    /// `.unknown` covers every inconclusive path — no locally cached TX hash, a network
+    /// failure while asking, or a chain answer that arrived but couldn't be parsed — so
+    /// that callers gate destructive recovery decisions on `.registered` / `.notRegistered`
+    /// alone and never mistake "we couldn't tell" for "it isn't registered".
+    static func probeDelegationRegistration(
+        roundId: String,
+        bundleIndex: UInt32,
+        votingCrypto: VotingCryptoClient,
+        votingAPI: VotingAPIClient,
+        confirmationTimeout: TimeInterval,
+        retryDelay: Duration
+    ) async -> DelegationRegistrationProbe {
+        guard case let .present(txHash) = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) else {
+            return .unknown
+        }
+
+        do {
+            switch try await delegationTxConfirmationStatus(
+                txHash: txHash,
+                votingAPI: votingAPI,
+                confirmationTimeout: confirmationTimeout,
+                retryDelay: retryDelay
+            ) {
+            case let .confirmed(vanPosition):
+                do {
+                    try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
+                    return .registered(vanPosition: vanPosition)
+                } catch {
+                    // Registered on-chain but the local write failed — same net effect as an
+                    // inconclusive check, since neither outcome can be trusted as conclusive.
+                    return .unknown
+                }
+
+            case let .failed(code, log) where code != 0:
+                LoggerProxy.warn(
+                    "Cached delegation TX \(txHash) for bundle \(bundleIndex) is not reusable: code=\(code) log=\(log)"
+                )
+                return .notRegistered
+
+            case .failed:
+                // code == 0 (e.g. "missing delegate_vote leaf_index"): the chain call
+                // succeeded but the response was unusable — the TX may well have landed.
+                return .unknown
+
+            case .notFound:
+                LoggerProxy.debug("Cached delegation TX \(txHash) for bundle \(bundleIndex) is not confirmed yet")
+                return .unknown
+            }
+        } catch {
+            return .unknown
+        }
+    }
+
     private static func recoverDelegationVanPosition(
         roundId: String,
         bundleIndex: UInt32,
@@ -4016,28 +4071,18 @@ extension VotingCoordFlow {
         confirmationTimeout: TimeInterval = 90,
         retryDelay: Duration = .seconds(2)
     ) async throws -> UInt32? {
-        guard case let .present(txHash) = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) else {
-            return nil
-        }
-
-        switch try await delegationTxConfirmationStatus(
-            txHash: txHash,
+        switch await probeDelegationRegistration(
+            roundId: roundId,
+            bundleIndex: bundleIndex,
+            votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             confirmationTimeout: confirmationTimeout,
             retryDelay: retryDelay
         ) {
-        case let .confirmed(vanPosition):
-            try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
+        case let .registered(vanPosition):
             return vanPosition
 
-        case let .failed(code, log):
-            LoggerProxy.warn(
-                "Cached delegation TX \(txHash) for bundle \(bundleIndex) is not reusable: code=\(code) log=\(log)"
-            )
-            return nil
-
-        case .notFound:
-            LoggerProxy.debug("Cached delegation TX \(txHash) for bundle \(bundleIndex) is not confirmed yet")
+        case .notRegistered, .unknown:
             return nil
         }
     }
@@ -4145,6 +4190,17 @@ private extension Array where Element == String {
     var nonEmpty: [String]? {
         isEmpty ? nil : self
     }
+}
+
+// MARK: - Delegation registration probe
+
+/// Outcome of `VotingCoordFlow.probeDelegationRegistration`. `.unknown` means the check
+/// was inconclusive — no locally cached TX hash, a network failure, or an unusable chain
+/// answer — and must never be treated as evidence that the bundle is not registered.
+enum DelegationRegistrationProbe: Equatable, Sendable {
+    case registered(vanPosition: UInt32)
+    case notRegistered
+    case unknown
 }
 
 // MARK: - Delegation TX confirmation status
