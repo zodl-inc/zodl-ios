@@ -2,7 +2,7 @@
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
-/// Preserves the voting database's three files before anything opens them.
+/// Preserves the voting database files before anything opens them.
 ///
 /// A cleared round's original secrets survive only in superseded write-ahead
 /// log frames, and those frames are destroyed by the next checkpoint — which
@@ -11,11 +11,11 @@ import Foundation
 /// first, on bytes, with no connection involved.
 ///
 /// The logic is deliberately simple: **if `voting_recovery/voting.sqlite3`
-/// holds no data, copy `voting.sqlite3`, `voting.sqlite3-wal` and
-/// `voting.sqlite3-shm` into it.** That makes the capture idempotent — once a
-/// copy exists it is never replaced — and keeps the first capture, which is
-/// the one taken closest to the incident and before any launch checkpointed
-/// the WAL.
+/// holds no data, copy `voting.sqlite3` and any existing `voting.sqlite3-wal`
+/// and `voting.sqlite3-shm` sidecars into it.** That makes the capture
+/// idempotent — once a copy exists it is never replaced — and keeps the first
+/// capture, which is the one taken closest to the incident and before any
+/// launch checkpointed the WAL.
 ///
 /// This ships ahead of any restore path on purpose: a build that only takes
 /// the copy already makes recovery possible later, even for users who upgrade
@@ -46,12 +46,12 @@ enum VotingDatabaseSnapshot {
         let markerURL: URL
     }
 
-    /// Copies the voting database trio into `voting_recovery/` if that
+    /// Copies the voting database files into `voting_recovery/` if that
     /// directory does not already hold data.
     ///
-    /// Returns `nil` when a copy already exists, when the source database is
-    /// missing, or when there is no WAL to preserve — in that last case the
-    /// superseded frames are already gone and a copy would only cost space.
+    /// Returns `nil` when a copy already exists or the source database is
+    /// missing. A main database without a WAL is still captured because
+    /// deleted records can remain recoverable in its freed pages.
     ///
     /// Never throws into the caller's path: preserving evidence must not be
     /// able to stop the voting flow from opening. Failures are logged.
@@ -79,10 +79,6 @@ enum VotingDatabaseSnapshot {
 
         guard fileManager.fileExists(atPath: source.path) else { return nil }
 
-        // No WAL means a clean close already checkpointed and unlinked it, so
-        // there are no superseded frames left to rescue.
-        guard fileManager.fileExists(atPath: wal.path) else { return nil }
-
         let root = try overrideRoot ?? recoveryDirectory()
         let destination = Snapshot(
             directory: root,
@@ -102,7 +98,9 @@ enum VotingDatabaseSnapshot {
         // The WAL first: it is the volatile, high-value artifact, and the one
         // the next open would checkpoint away. The database file only loses its
         // old page images once that checkpoint runs.
-        try fileManager.copyItem(at: wal, to: destination.walURL)
+        if fileManager.fileExists(atPath: wal.path) {
+            try fileManager.copyItem(at: wal, to: destination.walURL)
+        }
         if fileManager.fileExists(atPath: shm.path) {
             try? fileManager.copyItem(at: shm, to: destination.shmURL)
         }

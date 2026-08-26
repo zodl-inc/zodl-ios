@@ -132,19 +132,24 @@ import Foundation
         #expect(VotingDatabaseSnapshot.holdsData(at: scratch.databaseURL))
     }
 
-    /// No WAL means a clean close already checkpointed and unlinked it, so
-    /// there are no superseded frames left worth the disk space.
-    @Test func skipsWhenThereIsNoWriteAheadLogToPreserve() throws {
+    /// A checkpoint can unlink the WAL while leaving deleted record bytes in
+    /// freed main-database pages, so the main database remains evidence.
+    @Test func capturesTheMainDatabaseWhenThereIsNoWriteAheadLog() throws {
         let scratch = try Scratch()
         try FileManager.default.removeItem(at: scratch.walURL)
 
-        let snapshot = try VotingDatabaseSnapshot.captureThrowing(
-            databasePath: scratch.databaseURL.path,
-            now: Date(),
-            root: scratch.destination
+        let snapshot = try #require(
+            VotingDatabaseSnapshot.captureThrowing(
+                databasePath: scratch.databaseURL.path,
+                now: Date(),
+                root: scratch.destination
+            )
         )
 
-        #expect(snapshot == nil)
+        #expect(try Data(contentsOf: snapshot.databaseURL)
+            == Data(contentsOf: scratch.databaseURL))
+        #expect(FileManager.default.fileExists(atPath: snapshot.walURL.path) == false)
+        #expect(try Data(contentsOf: snapshot.shmURL) == Data(contentsOf: scratch.shmURL))
     }
 
     @Test func skipsWhenTheDatabaseDoesNotExist() throws {
