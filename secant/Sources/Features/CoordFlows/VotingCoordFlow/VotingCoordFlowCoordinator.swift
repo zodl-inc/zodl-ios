@@ -4063,6 +4063,39 @@ extension VotingCoordFlow {
         }
     }
 
+    /// Decides what an interrupted round's local delegation state is worth on resume.
+    ///
+    /// Rows (in order): a confirmed on-chain registration wins outright and names exactly
+    /// the bundles that are reusable; failing that, any local material — a saved Keystone
+    /// signature or a delegation TX this device already broadcast — keeps the round's rows
+    /// alive; only when neither holds is the round genuinely disposable.
+    ///
+    /// `.unknown` probes deliberately count for nothing on either side: they are "we
+    /// couldn't tell", never "it isn't registered", so they can never be the reason
+    /// alpha/rk/sighash rows are destroyed under a registration that may already exist.
+    static func roundResumeDecision(
+        probes: [UInt32: DelegationRegistrationProbe],
+        savedSignatureCount: Int,
+        anyLocalDelegationTxHash: Bool
+    ) -> RoundResumeDecision {
+        var recoveredIndices: Set<UInt32> = []
+        for (bundleIndex, probe) in probes {
+            if case .registered = probe {
+                recoveredIndices.insert(bundleIndex)
+            }
+        }
+
+        if !recoveredIndices.isEmpty {
+            return .reuseRecovered(recoveredIndices: recoveredIndices)
+        }
+
+        if savedSignatureCount > 0 || anyLocalDelegationTxHash {
+            return .resumeInPlace
+        }
+
+        return .freshRound
+    }
+
     private static func recoverDelegationVanPosition(
         roundId: String,
         bundleIndex: UInt32,
@@ -4201,6 +4234,21 @@ enum DelegationRegistrationProbe: Equatable, Sendable {
     case registered(vanPosition: UInt32)
     case notRegistered
     case unknown
+}
+
+// MARK: - Round resume decision
+
+/// What an interrupted round's local delegation state is worth when the pipeline re-enters
+/// it. `.freshRound` is the only outcome that destroys local rows, and it is reached only
+/// when no probe found a registration and nothing local hints that one might exist.
+enum RoundResumeDecision: Equatable, Sendable {
+    /// At least one bundle is confirmed registered on-chain — reuse exactly those.
+    case reuseRecovered(recoveredIndices: Set<UInt32>)
+    /// Nothing conclusive either way, but there is local material worth keeping: stay on
+    /// the existing rows and clear only the per-session leftovers.
+    case resumeInPlace
+    /// Nothing recoverable — safe to rebuild the round from scratch.
+    case freshRound
 }
 
 // MARK: - Delegation TX confirmation status

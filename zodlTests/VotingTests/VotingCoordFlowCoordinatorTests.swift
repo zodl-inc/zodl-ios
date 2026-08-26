@@ -1941,6 +1941,59 @@ import Testing
         #expect(result == .unknown)
     }
 
+    // MARK: - Round resume decision (MOB-1802)
+
+    // Row 1 of the decision table: one conclusive `.registered` probe wins outright, even
+    // next to inconclusive ones — and the reused set is exactly the registered bundles, so
+    // the bundles we couldn't confirm are never silently treated as ready.
+    @Test func resumeDecisionPrefersRegisteredBundles() {
+        let decision = VotingCoordFlow.roundResumeDecision(
+            probes: [0: DelegationRegistrationProbe.registered(vanPosition: 7), 1: DelegationRegistrationProbe.unknown],
+            savedSignatureCount: 0,
+            anyLocalDelegationTxHash: false
+        )
+
+        #expect(decision == RoundResumeDecision.reuseRecovered(recoveredIndices: [0]))
+    }
+
+    // Row 2: probes that all came back inconclusive are not evidence of anything, so saved
+    // Keystone signatures alone keep the round's rows alive — wiping them here is exactly
+    // the wedge (alpha/rk gone, signatures restored, "Invalid column type Null … alpha").
+    @Test func resumeDecisionResumesInPlaceWithSignaturesAndUnknownProbes() {
+        let decision = VotingCoordFlow.roundResumeDecision(
+            probes: [0: DelegationRegistrationProbe.unknown, 1: DelegationRegistrationProbe.unknown],
+            savedSignatureCount: 2,
+            anyLocalDelegationTxHash: false
+        )
+
+        #expect(decision == RoundResumeDecision.resumeInPlace)
+    }
+
+    // Row 2 again, from the other side: a locally cached delegation TX hash means this
+    // device already broadcast a registration. Even a conclusive `.notRegistered` for that
+    // bundle only rules out *reuse* — it never licenses destroying the local rows.
+    @Test func resumeDecisionResumesInPlaceWithLocalTxHashEvenWhenChainSaysFailed() {
+        let decision = VotingCoordFlow.roundResumeDecision(
+            probes: [0: DelegationRegistrationProbe.notRegistered],
+            savedSignatureCount: 0,
+            anyLocalDelegationTxHash: true
+        )
+
+        #expect(decision == RoundResumeDecision.resumeInPlace)
+    }
+
+    // Row 3: nothing registered, nothing signed, nothing broadcast — there is genuinely
+    // nothing to lose, so the old destructive path stays available for real fresh starts.
+    @Test func resumeDecisionFreshRoundWhenNothingRecoverable() {
+        let decision = VotingCoordFlow.roundResumeDecision(
+            probes: [0: DelegationRegistrationProbe.unknown, 1: DelegationRegistrationProbe.notRegistered],
+            savedSignatureCount: 0,
+            anyLocalDelegationTxHash: false
+        )
+
+        #expect(decision == RoundResumeDecision.freshRound)
+    }
+
     private let roundId = "round-1"
     private let activeRoundId = String(repeating: "aa", count: 32)
 
