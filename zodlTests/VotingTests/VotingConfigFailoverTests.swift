@@ -196,6 +196,23 @@ import Testing
             #expect(source.url.path.contains("v2-static-voting-config.json"))
         }
     }
+
+    @Test func walkPropagatesCancellationWithoutTryingNextMirror() async throws {
+        let bytes = Data(validConfigJSON.utf8)
+        let sources = [
+            try pinnedSource(host: "primary.example", for: bytes),
+            try pinnedSource(host: "mirror.example", for: bytes)
+        ]
+        let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await StaticVotingConfig.loadFromNetworkWithFailover(sources: sources) { request in
+                requestedHosts.withLock { $0.append(request.url!.host!) }
+                throw CancellationError()
+            }
+        }
+        #expect(requestedHosts.withLock { $0 } == ["primary.example"])
+    }
 }
 
 @Suite struct DynamicConfigMirrorWalkTests {
@@ -305,6 +322,18 @@ import Testing
                 (self.payload, self.okResponse(request))
             }
         }
+    }
+
+    @Test func walkPropagatesCancelledURLErrorWithoutTryingNextMirror() async throws {
+        let requestedHosts = OSAllocatedUnfairLock(initialState: [String]())
+
+        await #expect(throws: URLError.self) {
+            _ = try await VotingConfigMirrorWalk.fetchDynamicConfig(urls: [primary, mirror]) { request in
+                requestedHosts.withLock { $0.append(request.url!.host!) }
+                throw URLError(URLError.Code.cancelled)
+            }
+        }
+        #expect(requestedHosts.withLock { $0 } == ["voting.valargroup.dev"])
     }
 
 }

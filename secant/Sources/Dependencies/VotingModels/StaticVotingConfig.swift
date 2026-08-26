@@ -122,6 +122,9 @@ struct StaticVotingConfig: Codable, Equatable, Sendable {
             request.setValue("no-cache", forHTTPHeaderField: "Pragma")
             (data, response) = try await fetch(request)
         } catch {
+            if error is CancellationError || (error as? URLError)?.code == URLError.Code.cancelled {
+                throw error
+            }
             throw VotingConfigError.staticConfigFetchFailed(error.localizedDescription)
         }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {

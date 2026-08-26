@@ -28,6 +28,8 @@ enum VotingConfigMirrorWalk {
     /// walk continues; any other error is authoritative and propagates
     /// immediately. When every mirror fails, the first mirror's error is
     /// thrown; an empty list throws `emptyError`.
+    ///
+    /// Cancellation — a thrown CancellationError or URLError(.cancelled), or task cancellation between attempts — propagates immediately and is never treated as a mirror failure.
     static func run<Mirror, Success>(
         mirrors: [Mirror],
         walkLabel: String,
@@ -38,6 +40,7 @@ enum VotingConfigMirrorWalk {
     ) async throws -> Success {
         var firstError: VotingConfigError?
         for mirror in mirrors {
+            try Task.checkCancellation()
             do {
                 return try await attempt(mirror)
             } catch let error as VotingConfigError where shouldTryNext(error) {
@@ -97,6 +100,9 @@ enum VotingConfigMirrorWalk {
                 do {
                     (data, response) = try await fetch(request)
                 } catch {
+                    if error is CancellationError || (error as? URLError)?.code == URLError.Code.cancelled {
+                        throw error
+                    }
                     throw VotingConfigError.dynamicConfigFetchFailed(
                         "CDN fetch failed: \(error.localizedDescription)",
                         statusCode: nil
