@@ -83,6 +83,14 @@ struct VotingAPIClient {
     /// Returns the list of server URLs that accepted the share (empty if all failed).
     var resubmitShare: @Sendable (_ payload: SharePayload, _ excludeURLs: [String]) async throws -> [String]
     var fetchProposalTally: @Sendable (_ roundId: Data, _ proposalId: UInt32) async throws -> TallyResult
+    /// Fetch a pinned head for one round's vote commitment tree.
+    var fetchCommitmentTreeLatest: @Sendable (_ roundIdHex: String) async throws -> CommitmentTreeLatest
+    /// Fetch one page of commitment-tree leaves within an inclusive vote-chain height range.
+    var fetchCommitmentTreeLeafPage: @Sendable (
+        _ roundIdHex: String,
+        _ fromHeight: UInt64,
+        _ toHeight: UInt64
+    ) async throws -> CommitmentTreeLeafPage
     /// Query the Cosmos SDK TX endpoint for a confirmed transaction and its ABCI events.
     /// Returns nil if the TX is not yet in a block (404 or network error).
     var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?

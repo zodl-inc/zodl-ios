@@ -11,8 +11,9 @@ import ComposableArchitecture
 import os
 
 /// Encrypted, per-account, local-only storage for the voting flow's drafts,
-/// submitted choices, and per-round vote records. Mirrors `UserMetadataStorage`
-/// but writes a separate file (`<prefix>-voting-<hkdf>`) and skips the
+/// submitted choices, locked submission inputs, and per-round vote records.
+/// Mirrors `UserMetadataStorage` but writes a separate file
+/// (`<prefix>-voting-<hkdf>`) and skips the
 /// remote-storage path because voting history is intentionally per-device
 /// with no iCloud sync.
 final class VotingMetadataStorage: Sendable {
@@ -35,6 +36,8 @@ final class VotingMetadataStorage: Sendable {
     struct MutableState: Sendable {
         var drafts: [String: [String: UInt32]] = [:]
         var submittedVotes: [String: [String: UInt32]] = [:]
+        var submissionIntents: [String: [String: PersistedVoteSubmissionIntent]] = [:]
+        var singleShareModes: [String: Bool] = [:]
         var records: [String: PersistedVotingRecord] = [:]
     }
 
@@ -63,6 +66,8 @@ final class VotingMetadataStorage: Sendable {
         state.withLock { state in
             state.drafts.removeAll()
             state.submittedVotes.removeAll()
+            state.submissionIntents.removeAll()
+            state.singleShareModes.removeAll()
             state.records.removeAll()
         }
     }
@@ -142,6 +147,8 @@ final class VotingMetadataStorage: Sendable {
         state.withLock { state in
             state.drafts = metadata.drafts
             state.submittedVotes = metadata.submittedVotes
+            state.submissionIntents = metadata.submissionIntents
+            state.singleShareModes = metadata.singleShareModes
             state.records = metadata.records
         }
     }
@@ -151,6 +158,8 @@ final class VotingMetadataStorage: Sendable {
             VotingMetadata(
                 drafts: state.drafts,
                 submittedVotes: state.submittedVotes,
+                submissionIntents: state.submissionIntents,
+                singleShareModes: state.singleShareModes,
                 records: state.records
             )
         }
@@ -194,6 +203,41 @@ final class VotingMetadataStorage: Sendable {
 
     func clearSubmittedVotes(roundId: String) {
         state.withLock { _ = $0.submittedVotes.removeValue(forKey: roundId) }
+    }
+
+    // MARK: - Submission intent
+
+    func loadSubmissionIntents(roundId: String) -> [String: PersistedVoteSubmissionIntent] {
+        state.withLock { $0.submissionIntents[roundId] ?? [:] }
+    }
+
+    func setSubmissionIntents(
+        _ intents: [String: PersistedVoteSubmissionIntent],
+        roundId: String
+    ) {
+        state.withLock { state in
+            if intents.isEmpty {
+                state.submissionIntents.removeValue(forKey: roundId)
+            } else {
+                state.submissionIntents[roundId] = intents
+            }
+        }
+    }
+
+    func clearSubmissionIntents(roundId: String) {
+        state.withLock { _ = $0.submissionIntents.removeValue(forKey: roundId) }
+    }
+
+    func singleShareMode(roundId: String) -> Bool? {
+        state.withLock { $0.singleShareModes[roundId] }
+    }
+
+    func setSingleShareMode(_ singleShare: Bool, roundId: String) {
+        state.withLock { $0.singleShareModes[roundId] = singleShare }
+    }
+
+    func clearSingleShareMode(roundId: String) {
+        state.withLock { _ = $0.singleShareModes.removeValue(forKey: roundId) }
     }
 
     // MARK: - Records

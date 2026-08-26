@@ -30,6 +30,12 @@ struct VotingMetadata: Codable, Equatable, Sendable {
     /// per-proposal choices after they move out of drafts.
     var submittedVotes: [String: [String: UInt32]]
 
+    /// Cryptographic inputs locked before the first cast-vote build.
+    var submissionIntents: [String: [String: PersistedVoteSubmissionIntent]]
+
+    /// The share mode locked before the first cast-vote build for each round.
+    var singleShareModes: [String: Bool]
+
     /// `[roundIdHex: VoteRecord]`. One record per round the user has fully
     /// submitted.
     var records: [String: PersistedVotingRecord]
@@ -40,11 +46,15 @@ struct VotingMetadata: Codable, Equatable, Sendable {
     init(
         drafts: [String: [String: UInt32]] = [:],
         submittedVotes: [String: [String: UInt32]] = [:],
+        submissionIntents: [String: [String: PersistedVoteSubmissionIntent]] = [:],
+        singleShareModes: [String: Bool] = [:],
         records: [String: PersistedVotingRecord] = [:],
         schemaVersion: Int = Constants.version
     ) {
         self.drafts = drafts
         self.submittedVotes = submittedVotes
+        self.submissionIntents = submissionIntents
+        self.singleShareModes = singleShareModes
         self.records = records
         self.schemaVersion = schemaVersion
     }
@@ -52,6 +62,8 @@ struct VotingMetadata: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case drafts
         case submittedVotes
+        case submissionIntents
+        case singleShareModes
         case records
         case schemaVersion
     }
@@ -66,6 +78,14 @@ struct VotingMetadata: Codable, Equatable, Sendable {
             [String: [String: UInt32]].self,
             forKey: .submittedVotes
         ) ?? [:]
+        self.submissionIntents = try container.decodeIfPresent(
+            [String: [String: PersistedVoteSubmissionIntent]].self,
+            forKey: .submissionIntents
+        ) ?? [:]
+        self.singleShareModes = try container.decodeIfPresent(
+            [String: Bool].self,
+            forKey: .singleShareModes
+        ) ?? [:]
         self.records = try container.decodeIfPresent(
             [String: PersistedVotingRecord].self,
             forKey: .records
@@ -75,6 +95,11 @@ struct VotingMetadata: Codable, Equatable, Sendable {
             forKey: .schemaVersion
         ) ?? Constants.version
     }
+}
+
+struct PersistedVoteSubmissionIntent: Codable, Equatable, Sendable {
+    let choice: UInt32
+    let numOptions: UInt32
 }
 
 /// Persisted shape of `Voting.VoteRecord`. Kept as a separate Codable type so

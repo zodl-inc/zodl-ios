@@ -636,6 +636,42 @@ struct TxResult: Equatable, Sendable {
     }
 }
 
+/// Pinned head of a round's vote commitment tree.
+struct CommitmentTreeLatest: Equatable, Sendable {
+    let height: UInt64
+    let nextIndex: UInt64
+
+    init(height: UInt64, nextIndex: UInt64) {
+        self.height = height
+        self.nextIndex = nextIndex
+    }
+}
+
+/// Leaves appended to a round's vote commitment tree in one vote-chain block.
+struct CommitmentTreeLeafBlock: Equatable, Sendable {
+    let height: UInt64
+    let startIndex: UInt64
+    let leavesBase64: [String]
+
+    init(height: UInt64, startIndex: UInt64, leavesBase64: [String]) {
+        self.height = height
+        self.startIndex = startIndex
+        self.leavesBase64 = leavesBase64
+    }
+}
+
+/// One paginated response from the vote commitment-tree leaves endpoint.
+struct CommitmentTreeLeafPage: Equatable, Sendable {
+    let blocks: [CommitmentTreeLeafBlock]
+    /// Zero marks the final page.
+    let nextFromHeight: UInt64
+
+    init(blocks: [CommitmentTreeLeafBlock], nextFromHeight: UInt64) {
+        self.blocks = blocks
+        self.nextFromHeight = nextFromHeight
+    }
+}
+
 /// Maps to QueryProposalTallyResponse (zvote/v1/query.proto).
 /// Chain returns map<uint32, uint64> (vote_decision → accumulated amount).
 struct TallyResult: Equatable, Sendable {
