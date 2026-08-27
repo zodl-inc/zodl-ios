@@ -233,8 +233,7 @@ jobs:
             -skipMacroValidation \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGN_STYLE=Manual \
-            CODE_SIGNING_REQUIRED=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=16.0
+            CODE_SIGNING_REQUIRED=NO
 
       # Inject the real PartnerKeys.plist DIRECTLY into the built .app
       # bundle, replacing the empty `<dict/>` dummy that the Xcode build
