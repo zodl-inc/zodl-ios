@@ -1044,6 +1044,57 @@ import Testing
         #expect(await recorder.events().isEmpty)
     }
 
+    @Test func delegationVanPositionRecoversLegacyBase64DecodedLeafIndex() {
+        let decodedLeafIndex = String(decoding: Data([0xdf, 0xbe, 0x77]), as: UTF8.self)
+        #expect(Data(decodedLeafIndex.utf8).base64EncodedString() == "3753")
+        let confirmation = TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [TxEventAttribute(key: "leaf_index", value: decodedLeafIndex)]
+                )
+            ]
+        )
+
+        #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == 3753)
+    }
+
+    @Test func delegationVanPositionRejectsNonCanonicalBase64DecodedLeafIndex() {
+        // The server formats positions with %d, so a leading-zero re-encode
+        // such as "0400" cannot be a genuine mangle and must fail closed.
+        let decodedLeafIndex = String(decoding: Data([0xd3, 0x8d, 0x34]), as: UTF8.self)
+        #expect(Data(decodedLeafIndex.utf8).base64EncodedString() == "0400")
+        let confirmation = TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [TxEventAttribute(key: "leaf_index", value: decodedLeafIndex)]
+                )
+            ]
+        )
+
+        #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == nil)
+    }
+
+    @Test func delegationVanPositionRejectsMalformedAsciiLeafIndex() {
+        let confirmation = TxConfirmation(
+            height: 1,
+            code: 0,
+            events: [
+                TxEvent(
+                    type: "delegate_vote",
+                    attributes: [TxEventAttribute(key: "leaf_index", value: "not-a-position")]
+                )
+            ]
+        )
+
+        #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == nil)
+    }
+
     @Test func delegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
