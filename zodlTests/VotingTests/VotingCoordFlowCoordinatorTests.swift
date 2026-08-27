@@ -750,6 +750,15 @@ import Testing
         ))
     }
 
+    @Test func persistedRoundRejectsMoreBundlesThanCurrentNotes() throws {
+        let cachedNotes = [note(value: ballotDivisor, position: 0)]
+
+        #expect(throws: VotingFlowError.self) {
+            try VotingCoordFlow.validateBundleSetup(bundleCount: 2, notes: cachedNotes)
+        }
+        try VotingCoordFlow.validateBundleSetup(bundleCount: 1, notes: cachedNotes)
+    }
+
     @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {
         let recorder = RecoveryOrderRecorder()
         let cachedNotes = [note(value: ballotDivisor, position: 0)]
@@ -1170,6 +1179,125 @@ import Testing
             "fetch:new-tx",
             "van:0:9"
         ])
+    }
+
+    // The cached-tx recovery probe must be a single fetch: a hash from an
+    // earlier attempt that never propagated must fall through to a fresh
+    // delegation immediately instead of holding the per-bundle confirmation
+    // budget before resubmission can even start.
+    @Test func delegationPipelineProbesCachedUnconfirmedTxOnce() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            Self.makeDelegationRegistration()
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, txHash in
+            await recorder.record("store-tx:\(txHash)")
+        }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            await recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            if txHash == "cached-tx" {
+                return nil
+            }
+            return Self.makeDelegationConfirmation(position: 9)
+        }
+        votingAPI.submitDelegation = { _ in
+            TxResult(txHash: "new-tx", code: 0)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            polyLen: 4096,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 2,
+            delegationConfirmationRetryDelay: .milliseconds(10)
+        )
+
+        let events = await recorder.events()
+        #expect(events.filter { $0 == "fetch:cached-tx" }.count == 1)
+        #expect(events.last == "van:0:9")
+    }
+
+    @Test func delegationPipelineFreshSubmissionWaitStillRetries() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in .notFound }
+        votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
+            Self.makeVotingPcztResult()
+        }
+        votingCrypto.signDelegationRequest = { _, _, _, _, _, _, _ in
+            (signature: Data(repeating: 0x09, count: 64), sighash: Data(repeating: 0x0A, count: 32))
+        }
+        votingCrypto.getDelegationSubmission = { _, _, _, _ in
+            Self.makeDelegationRegistration()
+        }
+        votingCrypto.storeDelegationTxHash = { _, _, _ in }
+        votingCrypto.storeVanPosition = { _, bundleIndex, position in
+            await recorder.record("van:\(bundleIndex):\(position)")
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { txHash in
+            await recorder.record("fetch:\(txHash)")
+            let fetches = await recorder.events().filter { $0 == "fetch:\(txHash)" }.count
+            if fetches < 2 {
+                return nil
+            }
+            return Self.makeDelegationConfirmation(position: 9)
+        }
+        votingAPI.submitDelegation = { _ in
+            TxResult(txHash: "new-tx", code: 0)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            polyLen: 4096,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 2,
+            delegationConfirmationRetryDelay: .milliseconds(10)
+        )
+
+        let events = await recorder.events()
+        #expect(events.filter { $0 == "fetch:new-tx" }.count == 2)
+        #expect(events.last == "van:0:9")
     }
 
     // Finding #10 (CHP.md 2026-08-13): `zcash_voting` stores `pczt_sighash` write-once per

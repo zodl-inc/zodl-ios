@@ -20,7 +20,8 @@ struct SendForm {
     @ObservableState
     struct State: Equatable {
         var cancelId = UUID()
-        
+        var maxCancelId = UUID()
+
         var addMemoState: Bool
         var address: RedactableString = .empty
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
@@ -35,6 +36,7 @@ struct SendForm {
         var selectedCurrency: CurrencyISO4217 = .usd
         var isInsufficientBalance = false
         var isLatestInputFiat = false
+        var isMaxRequestInFlight = false
         var isNotAddressInAddressBook = false
         var isSheetTexAddressVisible = false
         var isValidAddress = false
@@ -43,6 +45,7 @@ struct SendForm {
         var memoState: MessageEditor.State
         var proposal: Proposal?
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.toast)) var toast: Toast.Edge? = nil
         var shieldedBalance: Zatoshi
         var walletBalancesState: WalletBalances.State
         var requestsAddressFocus = false
@@ -126,6 +129,14 @@ struct SendForm {
             } else {
                 return true
             }
+        }
+
+        var isMaxButtonEnabled: Bool {
+            isValidAddress
+            && selectedWalletAccount != nil
+            && walletBalancesState.spendability != .nothing
+            && shieldedBalance.amount > 0
+            && !isMaxRequestInFlight
         }
 
         var isValidForm: Bool {
@@ -213,6 +224,9 @@ struct SendForm {
         case currencyUpdated(RedactableString)
         case dismissAddressBookHint
         case exchangeRateSetupChanged
+        case maxAmountFailed
+        case maxAmountResolved(RedactableString, Zatoshi)
+        case maxTapped
         case memo(MessageEditor.Action)
         case onAppear
         case onDisapear
@@ -239,7 +253,25 @@ struct SendForm {
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
-    
+
+    /// Derives the memo for a proposal — shared by `.getProposal` and `.maxTapped` so the
+    /// Max amount is always computed for the exact proposal Review will build. Memos ride
+    /// only in shielded outputs, so transparent and TEX recipients never carry one.
+    static func proposalMemo(
+        isValidTransparentAddress: Bool,
+        isValidTexAddress: Bool,
+        addMemoState: Bool,
+        memoText: String
+    ) throws -> Memo? {
+        if isValidTransparentAddress || isValidTexAddress {
+            return nil
+        }
+        guard addMemoState, !memoText.isEmpty else {
+            return nil
+        }
+        return try Memo(string: memoText)
+    }
+
     var body: some Reducer<State, Action> {
         BindingReducer()
         
@@ -263,7 +295,12 @@ struct SendForm {
                 return .send(.exchangeRateSetupChanged)
 
             case .onDisapear:
-                return .cancel(id: state.cancelId)
+                state.isMaxRequestInFlight = false
+                state.isAddressBookHintVisible = false
+                return .merge(
+                    .cancel(id: state.cancelId),
+                    .cancel(id: state.maxCancelId)
+                )
                 
             case .alert(.presented(let action)):
                 return .send(action)
@@ -362,14 +399,12 @@ struct SendForm {
                     do {
                         let recipient = try Recipient(address.data, network: zcashSDKEnvironment.network().networkType)
 
-                        let memo: Memo?
-                        if isValidTransparentAddress || isValidTexAddress {
-                            memo = nil
-                        } else if let candidate = addMemoState ? memoText : nil {
-                            memo = candidate.isEmpty ? nil : try Memo(string: candidate)
-                        } else {
-                            memo = nil
-                        }
+                        let memo = try SendForm.proposalMemo(
+                            isValidTransparentAddress: isValidTransparentAddress,
+                            isValidTexAddress: isValidTexAddress,
+                            addMemoState: addMemoState,
+                            memoText: memoText
+                        )
 
                         let proposal = try await sdkSynchronizer.proposeTransfer(account.id, recipient, amount, memo)
 
@@ -391,6 +426,55 @@ struct SendForm {
                 return .none
 
             case .confirmationRequired:
+                return .none
+
+            case .maxTapped:
+                guard state.isValidAddress else {
+                    return .none
+                }
+                guard let account = state.selectedWalletAccount else {
+                    return .none
+                }
+                state.isMaxRequestInFlight = true
+                return .run { [
+                    address = state.address,
+                    isValidTransparentAddress = state.isValidTransparentAddress,
+                    isValidTexAddress = state.isValidTexAddress,
+                    addMemoState = state.addMemoState,
+                    memoText = state.memoState.text
+                ] send in
+                    do {
+                        let network = zcashSDKEnvironment.network().networkType
+                        let recipient = try Recipient(address.data, network: network)
+
+                        let memo = try SendForm.proposalMemo(
+                            isValidTransparentAddress: isValidTransparentAddress,
+                            isValidTexAddress: isValidTexAddress,
+                            addMemoState: addMemoState,
+                            memoText: memoText
+                        )
+
+                        let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
+                        await send(.maxAmountResolved(address, amount))
+                    } catch {
+                        await send(.maxAmountFailed)
+                    }
+                }
+                .cancellable(id: state.maxCancelId)
+
+            case let .maxAmountResolved(resolvedFor, amount):
+                state.isMaxRequestInFlight = false
+                // The user may have edited the address while the request ran; a max
+                // computed for another recipient (e.g. a cheaper fee class than a TEX
+                // send) must not be applied.
+                guard state.address == resolvedFor else {
+                    return .none
+                }
+                return .send(.zecAmountUpdated(amount.decimalString().redacted))
+
+            case .maxAmountFailed:
+                state.isMaxRequestInFlight = false
+                state.$toast.withLock { $0 = .top(String(localizable: .generalMaxFailed)) }
                 return .none
 
             case .resetForm:

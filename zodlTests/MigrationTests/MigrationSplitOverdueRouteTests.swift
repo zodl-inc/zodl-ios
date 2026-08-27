@@ -54,7 +54,9 @@ import Testing
             hasInvalid: hasInvalid,
             hasOverdue: hasOverdue,
             isCompleteAcknowledged: false,
-            progress: progress()
+            isMigrationRemainderPending: false,
+            progress: progress(),
+            residual: nil
         )
     }
 
@@ -77,6 +79,7 @@ import Testing
             isIronwoodActivated: true,
             state: state,
             orchardBalance: Zatoshi(10_000_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: []
@@ -185,6 +188,7 @@ import Testing
             isIronwoodActivated: true,
             state: .inProgress(Self.progress()),
             orchardBalance: Zatoshi(10_000_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: []

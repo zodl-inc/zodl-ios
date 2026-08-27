@@ -98,12 +98,25 @@ struct SendFormView: View {
                                                 value: .bounds
                                             ) { $0 }
                                             
-                                            VStack(alignment: .leading) {
+                                            VStack(alignment: .leading, spacing: 0) {
+                                                ZashiTextFieldTitle(String(localizable: .sendAmount)) {
+                                                    ZashiMaxChip(
+                                                        title: String(localizable: .generalMax),
+                                                        style: .standard,
+                                                        isEnabled: store.isMaxButtonEnabled,
+                                                        isInFlight: store.isMaxRequestInFlight
+                                                    ) {
+                                                        store.send(.maxTapped)
+                                                    }
+                                                    .accessibilityIdentifier(AccessibilityID.SendForm.maxButton)
+                                                }
+                                                .padding(.bottom, 6)
+
                                                 HStack(alignment: .top, spacing: 4) {
                                                     ZashiTextField(
                                                         text: store.bindingForZecAmount,
                                                         placeholder: tokenName.uppercased(),
-                                                        title: String(localizable: .sendAmount),
+                                                        title: nil,
                                                         error: store.invalidZecAmountErrorText,
                                                         prefixView:
                                                             Asset.Assets.Icons.currencyZec.image
@@ -111,13 +124,14 @@ struct SendFormView: View {
                                                     )
                                                     .keyboardType(.decimalPad)
                                                     .focused($isAmountFocused)
-                                                    
+
                                                     if store.isCurrencyConversionEnabled {
+                                                        // No top compensation: the "Amount" title now lives in the label row
+                                                        // above, so both fields start at the same y as this icon.
                                                         Asset.Assets.Icons.switchHorizontal.image
                                                             .zImage(size: 24, style: Design.Btns.Ghost.fg)
                                                             .padding(8)
-                                                            .padding(.top, 24)
-                                                        
+
                                                         ZashiTextField(
                                                             text: store.bindingForCurrency,
                                                             placeholder: store.currencyCode,
@@ -132,7 +146,6 @@ struct SendFormView: View {
                                                         )
                                                         .keyboardType(.decimalPad)
                                                         .focused($isCurrencyFocused)
-                                                        .padding(.top, 23)
                                                         .disabled(store.currencyConversion == nil)
                                                         .opacity(store.currencyConversion == nil ? 0.5 : 1.0)
                                                     }
@@ -207,6 +220,9 @@ struct SendFormView: View {
                                 isAddressFocused = true
                                 store.send(.requestsAddressFocusResolved)
                             }
+                        }
+                        .onDisappear {
+                            store.send(.onDisapear)
                         }
                         .applyScreenBackground()
                     }

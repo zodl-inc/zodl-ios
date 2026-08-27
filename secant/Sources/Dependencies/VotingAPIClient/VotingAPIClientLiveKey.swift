@@ -193,12 +193,13 @@ private let fastHttpSession: URLSession = {
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
 /// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs. With the standard URLSession that timeout comes from the session
-/// config (`fastHttpSession.timeoutIntervalForRequest = 5`). With Tor we
-/// can't pick a session, so we stamp the same value on
-/// `URLRequest.timeoutInterval` — `httpRequestOverTor` ultimately runs on
-/// URLSession too and honors per-request timeouts, which keeps the fast
-/// failover behaviour identical across Tor on/off.
+/// POSTs. A per-request `URLRequest.timeoutInterval` takes precedence over
+/// the session configuration's `timeoutIntervalForRequest` (measured: a
+/// request-level 3 s fails at 3.0 s on a session configured for 120 s), so
+/// stamping the value on the request governs both transports —
+/// `httpRequestOverTor` runs on URLSession too and honors per-request
+/// timeouts, which keeps the fast failover behaviour identical across Tor
+/// on/off.
 private let fastRequestTimeout: TimeInterval = 5
 
 @Sendable
@@ -872,40 +873,17 @@ extension VotingAPIClient: DependencyKey {
     static var liveValue: Self {
         Self(
             fetchServiceConfig: { override in
-                let source: PinnedConfigSource
-                if let override {
-                    source = override
-                } else {
-                    source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
-                }
-                let staticConfig = try await StaticVotingConfig.loadFromNetwork(
-                    source: source,
+                let staticConfig = try await StaticVotingConfig.loadFromNetworkWithFailover(
+                    sources: StaticVotingConfig.resolveConfigSources(override: override),
                     fetch: { request in try await performVotingRequest(request) }
                 )
 
                 // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
                 // or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let configURL = staticConfig.dynamicConfigURL
-                let data: Data
-                let response: URLResponse
-                do {
-                    // Always re-fetch the config from the network instead of trusting
-                    // a persisted URLCache entry. GitHub Pages serves a short TTL, but
-                    // mobile restarts during a round rollover can otherwise keep an old
-                    // round binding alive long enough to brick voting on launch.
-                    var request = URLRequest(
-                        url: configURL,
-                        cachePolicy: .reloadIgnoringLocalCacheData
-                    )
-                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-                    request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-                    (data, response) = try await performVotingRequest(request)
-                } catch {
-                    throw VotingConfigError.decodeFailed("CDN fetch failed: \(error.localizedDescription)")
-                }
-                if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                    throw VotingConfigError.decodeFailed("CDN returned HTTP \(http.statusCode)")
-                }
+                let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(
+                    urls: staticConfig.dynamicConfigURLs,
+                    fetch: { request in try await performVotingRequest(request) }
+                )
                 let config: VotingServiceConfig
                 do {
                     config = try JSONDecoder().decode(VotingServiceConfig.self, from: data)
@@ -924,7 +902,7 @@ extension VotingAPIClient: DependencyKey {
                 )
                 LoggerProxy.info(
                     """
-                    Loaded config from CDN: \(authenticatedConfig.voteServers.count) vote servers, \
+                    Loaded config from \(origin.host ?? "<unknown origin>"): \(authenticatedConfig.voteServers.count) vote servers, \
                     \(authenticatedConfig.rounds.count) authenticated rounds, \(droppedRounds) dropped rounds
                     """
                 )

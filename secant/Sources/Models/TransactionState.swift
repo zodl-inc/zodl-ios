@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 /// Representation of the transaction on the SDK side, used as a bridge to the TCA wallet side. 
@@ -658,5 +659,17 @@ struct TransactionStateMockHelper {
         self.shielded = shielded
         self.status = status
         self.uuid = uuid
+    }
+}
+
+extension IdentifiedArrayOf<TransactionState> {
+    func isAnythingPending() -> Bool {
+        return contains(where: \.isPending)
+    }
+
+    /// True while a shielding transaction is still in flight — the guard callers use to avoid
+    /// re-offering funds that are already on their way to being shielded.
+    func isAnyShieldingPending() -> Bool {
+        contains { $0.isShieldingTransaction && $0.isPending }
     }
 }

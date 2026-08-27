@@ -480,6 +480,16 @@ extension VotingCoordFlow {
             case let .authenticationSucceeded(roundId):
                 return reduceAuthenticationSucceeded(&state, roundId: roundId)
 
+            case let .batchAuthenticationDeclined(roundId):
+                // Only unwind the pre-auth CTA state; a stray decline landing
+                // after work has started must not disturb the pipeline.
+                mutateSession(&state, roundId: roundId) { roundSession in
+                    if case .requested = roundSession.batchSubmissionStatus {
+                        roundSession.batchSubmissionStatus = .idle
+                    }
+                }
+                return .none
+
             case let .startDelegationProof(roundId):
                 return reduceStartDelegationProof(&state, roundId: roundId)
 
@@ -501,10 +511,9 @@ extension VotingCoordFlow {
                     roundSession.isDelegationPrecomputeInFlight = false
                 }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
-                    state.pendingBatchSubmission = false
-                    mutateSession(&state, roundId: roundId) {
-                        $0.batchSubmissionStatus = .idle
-                    }
+                    // Resume the pending submission. The ticket is consumed by
+                    // `.authenticationSucceeded` itself; resetting the status
+                    // here would flash `.idle` for one action-cycle.
                     return .send(.authenticationSucceeded(roundId: roundId))
                 }
                 return .none
@@ -516,10 +525,8 @@ extension VotingCoordFlow {
                     roundSession.isDelegationPrecomputeInFlight = false
                 }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
-                    state.pendingBatchSubmission = false
-                    mutateSession(&state, roundId: roundId) {
-                        $0.batchSubmissionStatus = .idle
-                    }
+                    // Same resume/no-reset rule as `.delegationPrecomputeCompleted`;
+                    // the batch effect re-runs delegation inline from cold.
                     return .send(.authenticationSucceeded(roundId: roundId))
                 }
                 return .none
@@ -896,6 +903,10 @@ extension VotingCoordFlow {
                         ))
                     } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
                         resolvedBundleCount = existingBundleCount
+                        try Self.validateBundleSetup(
+                            bundleCount: existingBundleCount,
+                            notes: notes
+                        )
                         var recoveredBundleCount: UInt32 = 0
                         var recoveredBundleIndices: Set<UInt32> = []
                         for bundleIndex: UInt32 in 0..<existingBundleCount {
@@ -1665,9 +1676,20 @@ extension VotingCoordFlow {
         // therefore never iterated by the submission loop, never marked as
         // abstain, never auto-filled.
 
+        // Flip the CTA into its disabled/spinner state before the local-auth
+        // round-trip so the tap registers instantly; `.requested` also makes
+        // re-taps no-ops (`canStartSubmission`), so only one auth effect can
+        // ever be in flight.
+        mutateSession(&state, roundId: roundId) {
+            $0.batchSubmissionStatus = .requested
+        }
+
         if !state.isKeystoneUser && !state.pendingBatchSubmission {
             return .run { [localAuthentication] send in
-                guard await localAuthentication.authenticate() else { return }
+                guard await localAuthentication.authenticate() else {
+                    await send(.batchAuthenticationDeclined(roundId: roundId))
+                    return
+                }
                 await send(.authenticationSucceeded(roundId: roundId))
             }
         }
@@ -1680,7 +1702,18 @@ extension VotingCoordFlow {
     // swiftlint:disable:next function_body_length cyclomatic_complexity
     func reduceAuthenticationSucceeded(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
-        guard canStartSubmission(session) || isBatchSubmitting(session) else { return .none }
+        // Idempotent entry: a fresh `.requested` tap (or a retryable status)
+        // may start the pipeline, and an in-flight status may only be
+        // re-entered by a resume holding the `pendingBatchSubmission` ticket.
+        // A stray duplicate — a stale auth effect, a double dispatch — falls
+        // through to `.none` instead of restarting (and thereby cancelling)
+        // the in-flight batch effect.
+        let isResume = state.pendingBatchSubmission
+        guard session.batchSubmissionStatus == .requested
+            || canStartSubmission(session)
+            || (isResume && isBatchSubmitting(session))
+        else { return .none }
+        state.pendingBatchSubmission = false
         guard let activeSession = activeSession(in: state, roundId: roundId) else { return .none }
         // Partial ballots are intentional — see `reduceSubmitAllDraftsTapped`.
 
@@ -3177,9 +3210,9 @@ extension VotingCoordFlow {
             }
         }
         // If the user tapped Submit while delegation was still in flight,
-        // resume the batch now that authorization is done.
+        // resume the batch now that authorization is done. The ticket is
+        // consumed by `.authenticationSucceeded`'s entry guard, not here.
         if state.pendingBatchSubmission {
-            state.pendingBatchSubmission = false
             return .send(.authenticationSucceeded(roundId: roundId))
         }
         return .none
@@ -3301,7 +3334,7 @@ extension VotingCoordFlow {
         switch session.batchSubmissionStatus {
         case .idle, .authorizationFailed, .submissionFailed:
             return true
-        case .authorizing, .submitting, .completed:
+        case .requested, .authorizing, .submitting, .completed:
             return false
         }
     }
@@ -3374,6 +3407,18 @@ extension VotingCoordFlow {
         recoveredBundleCount: UInt32
     ) -> Bool {
         existingBundleCount > 0 && recoveredBundleCount == 0
+    }
+
+    /// Rejects persisted rounds whose bundle rows no longer fit the wallet's
+    /// notes so recovery fails before delegation or vote submission can begin.
+    static func validateBundleSetup(bundleCount: UInt32, notes: [NoteInfo]) throws {
+        let noteChunkCount = notes.smartBundles().bundles.count
+        guard Int(bundleCount) <= noteChunkCount else {
+            throw VotingFlowError.inconsistentBundleSetup(
+                bundleCount: bundleCount,
+                noteChunkCount: noteChunkCount
+            )
+        }
     }
 
     /// Distinguish an absent round from a failed database read. A read failure
@@ -3480,13 +3525,8 @@ extension VotingCoordFlow {
         let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
         try await votingCrypto.storeTreeState(roundId, treeStateBytes)
 
+        try validateBundleSetup(bundleCount: bundleCount, notes: notes)
         let noteChunks = notes.smartBundles().bundles
-        guard Int(bundleCount) <= noteChunks.count else {
-            throw VotingFlowError.inconsistentBundleSetup(
-                bundleCount: bundleCount,
-                noteChunkCount: noteChunks.count
-            )
-        }
 
         var allWitnesses: [WitnessData] = []
         for bundleIndex: UInt32 in 0..<bundleCount {
@@ -3764,12 +3804,17 @@ extension VotingCoordFlow {
         let bundleCount = UInt32(noteChunks.count)
         var completedBundles = Set<UInt32>()
         for idx: UInt32 in 0..<bundleCount {
+            // Single probe (timeout 0): a cached hash that never propagated —
+            // an earlier attempt died before confirmation — must fall through
+            // to a fresh delegation immediately instead of holding this
+            // bundle's full confirmation budget. The fresh submission below
+            // keeps the full `delegationConfirmationTimeout` wait.
             if let vanPosition = try await recoverDelegationVanPosition(
                 roundId: roundId,
                 bundleIndex: idx,
                 votingCrypto: votingCrypto,
                 votingAPI: votingAPI,
-                confirmationTimeout: delegationConfirmationTimeout,
+                confirmationTimeout: 0,
                 retryDelay: delegationConfirmationRetryDelay
             ) {
                 LoggerProxy.debug("Recovered delegation bundle \(idx) VAN position: \(vanPosition)")

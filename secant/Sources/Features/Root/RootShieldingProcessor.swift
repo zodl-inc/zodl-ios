@@ -1,5 +1,5 @@
 //
-//  RootTransactions.swift
+//  RootShieldingProcessor.swift
 //  Zashi
 //
 //  Created by Lukáš Korba on 29.01.2025.
@@ -30,6 +30,8 @@ extension Root {
                     state.alert = AlertState.shieldFundsFailure(error)
                 case .grpc:
                     state.alert = AlertState.shieldFundsGrpc()
+                case .nothingToShield:
+                    state.alert = AlertState.shieldFundsNothingToShield()
                 case .proposal(let proposal):
                     state.signWithKeystoneCoordFlowState = .initial
                     state.signWithKeystoneCoordFlowState.sendConfirmationState.proposal = proposal

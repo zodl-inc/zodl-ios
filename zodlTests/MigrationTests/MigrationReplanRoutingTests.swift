@@ -179,7 +179,9 @@ import Testing
                 hasInvalid: false,
                 hasOverdue: false,
                 isCompleteAcknowledged: false,
-                progress: Self.progress
+                isMigrationRemainderPending: false,
+                progress: Self.progress,
+                residual: nil
             ) == MigrationReentryRoute.recovery(isExpired: false)
         )
     }
@@ -196,7 +198,9 @@ import Testing
                 hasInvalid: false,
                 hasOverdue: false,
                 isCompleteAcknowledged: false,
-                progress: Self.progress
+                isMigrationRemainderPending: false,
+                progress: Self.progress,
+                residual: nil
             ) == MigrationReentryRoute.recovery(isExpired: false)
         )
     }
@@ -210,7 +214,9 @@ import Testing
             hasInvalid: false,
             hasOverdue: false,
             isCompleteAcknowledged: false,
-            progress: Self.progress
+            isMigrationRemainderPending: false,
+            progress: Self.progress,
+            residual: nil
         )
 
         if case MigrationReentryRoute.recovery = route {

@@ -8,6 +8,11 @@
 //  as the only live control and the residual already unlocked on chain. `.onAppear` now re-arms
 //  the button on every arrival, mirroring `MigrationRecovery`'s reset of its twin flag.
 //
+//  MOB-1749 review fix: the flag and its re-arm live in the shared `MigrationLockDecision` child
+//  now (covered directly by `MigrationLockDecisionTests`); this suite stays because the arrival it
+//  guards is THIS screen's — Complete's own `.onAppear` has to reach the child for the fix to hold
+//  on the path this audit finding was actually found on.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -17,15 +22,15 @@ import Testing
 @Suite @MainActor struct MigrationCompleteReArmTests {
     @Test func onAppearReArmsTheMigrateAnywayButton() async {
         var initialState = MigrationComplete.State()
-        initialState.isMigratingAnyway = true
+        initialState.lock.isMigratingAnyway = true
 
         let store = TestStore(initialState: initialState) {
             MigrationComplete()
         }
         store.exhaustivity = .off
 
-        await store.send(.onAppear) { state in
-            state.isMigratingAnyway = false
+        await store.send(.lock(.onAppear)) { state in
+            state.lock.isMigratingAnyway = false
         }
     }
 }
