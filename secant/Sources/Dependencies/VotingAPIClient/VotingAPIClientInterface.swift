@@ -86,5 +86,11 @@ struct VotingAPIClient {
     /// Query the Cosmos SDK TX endpoint for a confirmed transaction and its ABCI events.
     /// Returns nil if the TX is not yet in a block (404 or network error).
     var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?
+    /// Kick off a one-shot background health sweep of the configured vote
+    /// servers. Returns as soon as the sweep is spawned; never waits for probe
+    /// results. Benign no-op default so unrelated tests exercising submission
+    /// effects don't have to stub it; tests asserting on it override it with a
+    /// recording closure.
+    var startHealthProbeSweep: @Sendable () async -> Void = { }
 }
 #endif

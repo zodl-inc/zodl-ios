@@ -193,13 +193,15 @@ private let fastHttpSession: URLSession = {
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
 /// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs. A per-request `URLRequest.timeoutInterval` takes precedence over
-/// the session configuration's `timeoutIntervalForRequest` (measured: a
-/// request-level 3 s fails at 3.0 s on a session configured for 120 s), so
-/// stamping the value on the request governs both transports —
-/// `httpRequestOverTor` runs on URLSession too and honors per-request
-/// timeouts, which keeps the fast failover behaviour identical across Tor
-/// on/off.
+/// POSTs — on the non-Tor transports only. A per-request
+/// `URLRequest.timeoutInterval` takes precedence over the session
+/// configuration's `timeoutIntervalForRequest` (measured: a request-level
+/// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
+/// different: `TorClient.httpRequest` hands the URL, headers, and body to
+/// the Rust FFI and ignores `timeoutInterval` entirely, and the app-side
+/// `httpRequestOverTor` wrapper pins `retryLimit: 3` — so over Tor a dead
+/// server costs up to three of arti's internal connection timeouts. That is
+/// why nothing may block user-visible work on these requests (MOB-1810).
 private let fastRequestTimeout: TimeInterval = 5
 
 @Sendable
@@ -910,7 +912,7 @@ extension VotingAPIClient: DependencyKey {
             },
             configureURLs: { config in
                 await SvAPIConfigStore.shared.configure(from: config)
-                await ServerHealthTracker.shared.initialize(
+                await ServerHealthTracker.shared.configure(
                     serverURLs: config.voteServers.map(\.url),
                     fetcher: { request in
                         try await performVotingRequest(request, fast: true)
@@ -1218,6 +1220,9 @@ extension VotingAPIClient: DependencyKey {
                 }
 
                 return nil
+            },
+            startHealthProbeSweep: {
+                await ServerHealthTracker.shared.startProbeSweep()
             }
         )
     }
