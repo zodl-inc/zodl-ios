@@ -1755,40 +1755,21 @@ extension VotingCoordFlow {
             .compactMap { proposalId -> (key: UInt32, value: VoteChoice)? in
                 session.votes[proposalId].map { (key: proposalId, value: $0) }
             }
-        let requestedDrafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
-        guard !requestedDrafts.isEmpty else { return .none }
+        let drafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
+        guard !drafts.isEmpty else { return .none }
         let proposals = activeSession.proposals
-        let requestedIntents = requestedDrafts.reduce(
-            into: [UInt32: Voting.VoteSubmissionIntent]()
-        ) { intents, draft in
-            let numOptions = UInt32(proposals.first { $0.id == draft.key }?.options.count ?? 3)
-            intents[draft.key] = Voting.VoteSubmissionIntent(
-                choice: draft.value,
-                numOptions: numOptions
-            )
-        }
-        let lockedSubmission: Voting.LockedVoteSubmission
+        let submissionAccount = state.selectedWalletAccount?.account
+        let singleShare: Bool
         do {
-            lockedSubmission = try Voting.lockVoteSubmission(
-                intents: requestedIntents,
-                submittedProposalIds: Set(session.votes.keys),
+            singleShare = try Voting.lockSingleShareMode(
                 proposedSingleShare: activeSession.isLastMoment,
                 roundId: roundId,
-                account: state.selectedWalletAccount?.account
+                account: submissionAccount
             )
         } catch {
             return .send(.batchAuthorizationFailed(
                 roundId: roundId,
                 error: VotingErrorMapper.userFriendlyMessage(from: error)
-            ))
-        }
-        let drafts = requestedDrafts.compactMap { draft -> (key: UInt32, value: VoteChoice)? in
-            lockedSubmission.intents[draft.key].map { (key: draft.key, value: $0.choice) }
-        }
-        guard drafts.count == requestedDrafts.count else {
-            return .send(.batchAuthorizationFailed(
-                roundId: roundId,
-                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
             ))
         }
         let totalCount = drafts.count
@@ -1822,7 +1803,6 @@ extension VotingCoordFlow {
         }
         let expectedSnapshotHeight = activeSession.snapshotHeight
         let bundleCount = session.bundleCount
-        let singleShare = lockedSubmission.singleShare
         let cachedNotes = session.walletNotes
         let roundName = activeSession.title
 
@@ -1911,9 +1891,11 @@ extension VotingCoordFlow {
                 let proposalId = draft.key
                 let choice = draft.value
                 let proposal = proposals.first { $0.id == proposalId }
-                guard let numOptions = lockedSubmission.intents[proposalId]?.numOptions else {
-                    throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
-                }
+                let numOptions = UInt32(proposal?.options.count ?? 3)
+                let submissionIntent = Voting.VoteSubmissionIntent(
+                    choice: choice,
+                    numOptions: numOptions
+                )
 
                 await send(.batchSubmissionProgress(
                     roundId: roundId,
@@ -1965,7 +1947,8 @@ extension VotingCoordFlow {
                             roundId: roundId,
                             bundleIndex: bundleIndex,
                             proposalId: proposalId,
-                            choice: choice,
+                            intent: submissionIntent,
+                            account: submissionAccount,
                             submitAtDeadline: submitAtDeadline,
                             shareServerURLs: &shareServerURLs,
                             votingCrypto: votingCrypto,
@@ -1979,6 +1962,12 @@ extension VotingCoordFlow {
                         let anchorHeight = try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
                         let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
 
+                        try Voting.lockVoteSubmissionIntent(
+                            submissionIntent,
+                            proposalId: proposalId,
+                            roundId: roundId,
+                            account: submissionAccount
+                        )
                         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
                             roundId, bundleIndex, hotkeySeed, proposalId, choice,
                             numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
@@ -2111,6 +2100,12 @@ extension VotingCoordFlow {
                         }
                     }
 
+                    try Voting.lockVoteSubmissionIntent(
+                        submissionIntent,
+                        proposalId: proposalId,
+                        roundId: roundId,
+                        account: submissionAccount
+                    )
                     successCount += 1
                     await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
                 } catch {
@@ -4033,15 +4028,30 @@ extension VotingCoordFlow {
                 bundleIndex: bundleIndex
             )
         }
-        let actualPositions = try await findCommitmentPositions(
-            roundId: roundId,
-            startHeight: startHeight,
-            expectedCommitments: expected,
-            votingAPI: votingAPI,
-            minimumHeight: confirmation.height,
-            maxRecoveryAttempts: maxRecoveryAttempts,
-            retryDelay: retryDelay
-        )
+        let actualPositions: [Data: UInt64]
+        do {
+            actualPositions = try await findCommitmentPositions(
+                roundId: roundId,
+                startHeight: startHeight,
+                expectedCommitments: expected,
+                votingAPI: votingAPI,
+                minimumHeight: confirmation.height,
+                maxRecoveryAttempts: maxRecoveryAttempts,
+                retryDelay: retryDelay
+            )
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            LoggerProxy.warn(
+                "Recovered vote verification unavailable for proposal \(proposalId), " +
+                "bundle \(bundleIndex): \(error.localizedDescription)"
+            )
+            throw VotingFlowError.recoveredVoteVerificationUnavailable(
+                proposalId: proposalId,
+                bundleIndex: bundleIndex
+            )
+        }
         guard actualPositions[expectedVoteAuthorityNote] == eventPositions.van,
             actualPositions[expectedVoteCommitment] == eventPositions.voteCommitment else {
             throw VotingFlowError.recoveredVoteCommitmentMismatch(
@@ -4078,7 +4088,8 @@ extension VotingCoordFlow {
         roundId: String,
         bundleIndex: UInt32,
         proposalId: UInt32,
-        choice: VoteChoice,
+        intent: Voting.VoteSubmissionIntent,
+        account: Account?,
         submitAtDeadline: Double?,
         shareServerURLs: inout [String],
         votingCrypto: VotingCryptoClient,
@@ -4093,6 +4104,12 @@ extension VotingCoordFlow {
               confirmation.code == 0 else {
             return false
         }
+        try Voting.lockVoteSubmissionIntent(
+            intent,
+            proposalId: proposalId,
+            roundId: roundId,
+            account: account
+        )
 
         let eventsPayload: [[String: Any]] = confirmation.events.map { event in
             [

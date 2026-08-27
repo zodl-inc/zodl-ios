@@ -58,6 +58,18 @@ import Testing
         #expect(message == String(localizable: .coinVoteStoreUserErrorCommitmentTreeNotGrown))
     }
 
+    @Test func votingErrorMapperMapsTypedRecoveryErrors() {
+        #expect(VotingErrorMapper.userFriendlyMessage(
+            from: VotingFlowError.conflictingVoteSubmissionIntent(proposalId: 1)
+        ) == String(localizable: .coinVoteStoreUserErrorConflictingSelection))
+        #expect(VotingErrorMapper.userFriendlyMessage(
+            from: VotingFlowError.recoveredVoteCommitmentMismatch(proposalId: 1, bundleIndex: 0)
+        ) == String(localizable: .coinVoteStoreUserErrorRecoveredVoteMismatch))
+        #expect(VotingErrorMapper.userFriendlyMessage(
+            from: VotingFlowError.recoveredVoteVerificationUnavailable(proposalId: 1, bundleIndex: 0)
+        ) == String(localizable: .coinVoteStoreUserErrorRecoveredVoteUnverified))
+    }
+
     @Test func smartBundlesUsesRustOrderingAndPerBundleQuantization() {
         let notes = [
             note(value: 31_568_000, position: 0),
@@ -213,31 +225,53 @@ import Testing
         #expect(!completeRecord.hasSkippedKeystoneBundles)
     }
 
-    @Test func voteSubmissionLockReusesOriginalModeAndChoice() throws {
+    @Test func singleShareLockReusesOriginalMode() throws {
         let metadata = VotingHelpersMetadataBox()
-        let firstIntent = Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3)
 
         try withDependencies {
             $0.votingMetadata = votingMetadataClient(metadata)
         } operation: {
-            let first = try Voting.lockVoteSubmission(
-                intents: [7: firstIntent],
-                submittedProposalIds: [],
+            let first = try Voting.lockSingleShareMode(
                 proposedSingleShare: false,
                 roundId: "round-1",
                 account: nil
             )
-            let retry = try Voting.lockVoteSubmission(
-                intents: [7: firstIntent],
-                submittedProposalIds: [],
+            let retry = try Voting.lockSingleShareMode(
                 proposedSingleShare: true,
                 roundId: "round-1",
                 account: nil
             )
 
-            #expect(!first.singleShare)
-            #expect(!retry.singleShare)
-            #expect(retry.intents[7] == firstIntent)
+            #expect(!first)
+            #expect(!retry)
+        }
+    }
+
+    @Test func voteSubmissionIntentLockAllowsOtherLockedProposalToBeOmitted() throws {
+        let metadata = VotingHelpersMetadataBox()
+        let firstIntent = Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3)
+        let secondIntent = Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 5)
+
+        try withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            try Voting.lockVoteSubmissionIntent(
+                firstIntent,
+                proposalId: 7,
+                roundId: "round-1",
+                account: nil
+            )
+            try Voting.lockVoteSubmissionIntent(
+                secondIntent,
+                proposalId: 8,
+                roundId: "round-1",
+                account: nil
+            )
+
+            #expect(Voting.loadSubmissionIntents(roundId: "round-1") == [
+                7: firstIntent,
+                8: secondIntent
+            ])
         }
     }
 
@@ -247,19 +281,17 @@ import Testing
         try withDependencies {
             $0.votingMetadata = votingMetadataClient(metadata)
         } operation: {
-            _ = try Voting.lockVoteSubmission(
-                intents: [7: Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3)],
-                submittedProposalIds: [],
-                proposedSingleShare: false,
+            try Voting.lockVoteSubmissionIntent(
+                Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3),
+                proposalId: 7,
                 roundId: "round-1",
                 account: nil
             )
 
             #expect(throws: VotingFlowError.self) {
-                _ = try Voting.lockVoteSubmission(
-                    intents: [7: Voting.VoteSubmissionIntent(choice: .option(2), numOptions: 3)],
-                    submittedProposalIds: [],
-                    proposedSingleShare: false,
+                try Voting.lockVoteSubmissionIntent(
+                    Voting.VoteSubmissionIntent(choice: .option(2), numOptions: 3),
+                    proposalId: 7,
                     roundId: "round-1",
                     account: nil
                 )
@@ -293,7 +325,7 @@ import Testing
         #expect(decoded == metadata)
     }
 
-    @Test func voteSubmissionLockRollsBackWhenMetadataStoreFails() {
+    @Test func voteSubmissionIntentLockRollsBackWhenMetadataStoreFails() {
         let roundId = "round-1"
         let metadata = VotingHelpersMetadataBox()
         let previousIntent = PersistedVoteSubmissionIntent(choice: 1, numOptions: 3)
@@ -305,13 +337,9 @@ import Testing
             $0.votingMetadata = client
         } operation: {
             #expect(throws: VotingMetadataTestError.self) {
-                _ = try Voting.lockVoteSubmission(
-                    intents: [
-                        7: Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3),
-                        8: Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 5)
-                    ],
-                    submittedProposalIds: [],
-                    proposedSingleShare: true,
+                try Voting.lockVoteSubmissionIntent(
+                    Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 5),
+                    proposalId: 8,
                     roundId: roundId,
                     account: account()
                 )
@@ -319,6 +347,26 @@ import Testing
         }
 
         #expect(metadata.submissionIntents[roundId] == ["7": previousIntent])
+    }
+
+    @Test func singleShareLockRollsBackWhenMetadataStoreFails() {
+        let roundId = "round-1"
+        let metadata = VotingHelpersMetadataBox()
+        var client = votingMetadataClient(metadata)
+        client.store = { _ in throw VotingMetadataTestError.storeFailed }
+
+        withDependencies {
+            $0.votingMetadata = client
+        } operation: {
+            #expect(throws: VotingMetadataTestError.self) {
+                _ = try Voting.lockSingleShareMode(
+                    proposedSingleShare: true,
+                    roundId: roundId,
+                    account: account()
+                )
+            }
+        }
+
         #expect(metadata.singleShareModes[roundId] == nil)
     }
 

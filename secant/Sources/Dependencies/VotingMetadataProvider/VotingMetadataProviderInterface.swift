@@ -40,7 +40,7 @@ struct VotingMetadataProviderClient {
     var setSubmittedVotes: @Sendable (_ votes: [String: UInt32], _ roundId: String) -> Void
     var clearSubmittedVotes: @Sendable (_ roundId: String) -> Void
 
-    /// Cast-vote inputs locked once submission starts for a round.
+    /// Cast-vote inputs locked per proposal when commitment construction begins.
     var loadSubmissionIntents: @Sendable (
         _ roundId: String
     ) -> [String: PersistedVoteSubmissionIntent] = { _ in [:] }
