@@ -903,6 +903,10 @@ extension VotingCoordFlow {
                         ))
                     } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
                         resolvedBundleCount = existingBundleCount
+                        try Self.validateBundleSetup(
+                            bundleCount: existingBundleCount,
+                            notes: notes
+                        )
                         var recoveredBundleCount: UInt32 = 0
                         var recoveredBundleIndices: Set<UInt32> = []
                         for bundleIndex: UInt32 in 0..<existingBundleCount {
@@ -940,9 +944,10 @@ extension VotingCoordFlow {
                         }
                         await send(.earlyEligibilityConfirmed(roundId: roundId))
                         let witnesses: [WitnessData]
-                        if delegationReady {
-                            witnesses = []
-                        } else {
+                        if Self.shouldCompleteDeterministicRoundSetup(
+                            existingBundleCount: existingBundleCount,
+                            recoveredBundleCount: recoveredBundleCount
+                        ) {
                             witnesses = try await Self.completeDeterministicRoundSetup(
                                 roundId: roundId,
                                 snapshotHeight: snapshotHeight,
@@ -953,6 +958,8 @@ extension VotingCoordFlow {
                                 votingCrypto: votingCrypto,
                                 sdkSynchronizer: sdkSynchronizer
                             )
+                        } else {
+                            witnesses = []
                         }
                         await send(.votingWeightLoaded(
                             roundId: roundId,
@@ -3393,6 +3400,27 @@ extension VotingCoordFlow {
         existingBundleCount > 0
     }
 
+    /// A recovered bundle proves the persisted round completed tree-state and
+    /// witness setup before delegation submission began.
+    static func shouldCompleteDeterministicRoundSetup(
+        existingBundleCount: UInt32,
+        recoveredBundleCount: UInt32
+    ) -> Bool {
+        existingBundleCount > 0 && recoveredBundleCount == 0
+    }
+
+    /// Rejects persisted rounds whose bundle rows no longer fit the wallet's
+    /// notes so recovery fails before delegation or vote submission can begin.
+    static func validateBundleSetup(bundleCount: UInt32, notes: [NoteInfo]) throws {
+        let noteChunkCount = notes.smartBundles().bundles.count
+        guard Int(bundleCount) <= noteChunkCount else {
+            throw VotingFlowError.inconsistentBundleSetup(
+                bundleCount: bundleCount,
+                noteChunkCount: noteChunkCount
+            )
+        }
+    }
+
     /// Distinguish an absent round from a failed database read. A read failure
     /// must propagate so the caller cannot mistake it for an empty round and
     /// authorize `prepareFreshRound` to clear persisted recovery material.
@@ -3497,13 +3525,8 @@ extension VotingCoordFlow {
         let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
         try await votingCrypto.storeTreeState(roundId, treeStateBytes)
 
+        try validateBundleSetup(bundleCount: bundleCount, notes: notes)
         let noteChunks = notes.smartBundles().bundles
-        guard Int(bundleCount) <= noteChunks.count else {
-            throw VotingFlowError.inconsistentBundleSetup(
-                bundleCount: bundleCount,
-                noteChunkCount: noteChunks.count
-            )
-        }
 
         var allWitnesses: [WitnessData] = []
         for bundleIndex: UInt32 in 0..<bundleCount {

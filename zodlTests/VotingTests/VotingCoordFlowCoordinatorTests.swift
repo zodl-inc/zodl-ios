@@ -731,6 +731,34 @@ import Testing
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
     }
 
+    @Test func persistedRoundCompletesDeterministicSetupOnlyBeforeBundleRecovery() {
+        #expect(VotingCoordFlow.shouldCompleteDeterministicRoundSetup(
+            existingBundleCount: 2,
+            recoveredBundleCount: 0
+        ))
+        #expect(!VotingCoordFlow.shouldCompleteDeterministicRoundSetup(
+            existingBundleCount: 2,
+            recoveredBundleCount: 1
+        ))
+        #expect(!VotingCoordFlow.shouldCompleteDeterministicRoundSetup(
+            existingBundleCount: 2,
+            recoveredBundleCount: 2
+        ))
+        #expect(!VotingCoordFlow.shouldCompleteDeterministicRoundSetup(
+            existingBundleCount: 0,
+            recoveredBundleCount: 0
+        ))
+    }
+
+    @Test func persistedRoundRejectsMoreBundlesThanCurrentNotes() throws {
+        let cachedNotes = [note(value: ballotDivisor, position: 0)]
+
+        #expect(throws: VotingFlowError.self) {
+            try VotingCoordFlow.validateBundleSetup(bundleCount: 2, notes: cachedNotes)
+        }
+        try VotingCoordFlow.validateBundleSetup(bundleCount: 1, notes: cachedNotes)
+    }
+
     @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {
         let recorder = RecoveryOrderRecorder()
         let cachedNotes = [note(value: ballotDivisor, position: 0)]
