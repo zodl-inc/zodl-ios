@@ -1,6 +1,34 @@
 {
     "releases": [
         {
+            "version": "3.10.3",
+            "date": "27-08-2026",
+            "timestamp": 1787859192,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos un banner en la pantalla de inicio y una pantalla de seguimiento para un pequeño monto de ZEC que puede quedar en Orchard después de migrar a Ironwood, para que decidas si bloquearlo o moverlo."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Mejoramos la velocidad y fiabilidad al enviar tu voto, con menos errores de red y una alternativa para cuando un servidor presenta problemas.",
+                        "Mejoramos el rendimiento de la pantalla de Recibir mientras tu billetera se sincroniza."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema de firma con la billetera de hardware Keystone que podía alcanzar un límite de acciones en rondas de firma más grandes.",
+                        "Corregimos un problema que podía mostrarte un aviso para proteger un saldo en cero.",
+                        "Corregimos un problema al escanear un código QR de Keystone en modo oscuro."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.2",
             "date": "26-08-2026",
             "timestamp": 1787778739,

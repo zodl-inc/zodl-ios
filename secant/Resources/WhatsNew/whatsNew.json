@@ -1,6 +1,34 @@
 {
     "releases": [
         {
+            "version": "3.10.3",
+            "date": "27-08-2026",
+            "timestamp": 1787859192,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added a home screen banner and follow-up screen for a small amount of ZEC that can be left in Orchard after migrating to Ironwood, so you can choose whether to lock it or move it."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved the speed and reliability of submitting your vote, including fewer network errors and a fallback for when a server has issues.",
+                        "We improved performance on the Receive screen while your wallet is syncing."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a Keystone hardware wallet signing issue that could hit an action-count limit during larger signing rounds.",
+                        "We fixed an issue where you could be prompted to shield a zero balance.",
+                        "We fixed an issue scanning a Keystone QR code while using dark mode."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.2",
             "date": "26-08-2026",
             "timestamp": 1787778739,
