@@ -898,9 +898,13 @@ extension VotingCoordFlow {
                         ))
                     } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
                         resolvedBundleCount = existingBundleCount
-                        var recoveredBundleCount: UInt32 = 0
-                        var recoveredBundleIndices: Set<UInt32> = []
-                        for bundleIndex: UInt32 in 0..<existingBundleCount {
+                        var recoveredBundleIndices = Set(
+                            try await votingCrypto.getConfirmedDelegationBundleIndices(roundId)
+                                .filter { $0 < existingBundleCount }
+                        )
+                        var recoveredBundleCount = UInt32(recoveredBundleIndices.count)
+                        for bundleIndex: UInt32 in 0..<existingBundleCount
+                        where !recoveredBundleIndices.contains(bundleIndex) {
                             if let vanPosition = try? await Self.recoverDelegationVanPosition(
                                 roundId: roundId,
                                 bundleIndex: bundleIndex,
@@ -3832,6 +3836,10 @@ extension VotingCoordFlow {
         // but the pre-3.10.2 database no longer has its original transaction hash. Carry
         // those proven indices forward so normal delegation only submits missing bundles.
         var completedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
+        completedBundles.formUnion(
+            try await votingCrypto.getConfirmedDelegationBundleIndices(roundId)
+                .filter { $0 < bundleCount }
+        )
         for idx: UInt32 in 0..<bundleCount where !completedBundles.contains(idx) {
             if let vanPosition = try await recoverDelegationVanPosition(
                 roundId: roundId,

@@ -239,6 +239,11 @@ struct VotingCryptoClient {
         _ roundId: String,
         _ bundleIndex: UInt32
     ) async throws -> VotingTxHashLookup
+    /// Load delegation bundles whose confirmed VAN position is durable in the voting DB.
+    /// Forensic recoveries can appear here even though their original TX hash was lost.
+    var getConfirmedDelegationBundleIndices: @Sendable (
+        _ roundId: String
+    ) async throws -> Set<UInt32> = { _ in [] }
     /// Attempt the narrow repair for pre-3.10.2 rounds whose confirmed VAN
     /// randomness was lost. No unambiguous on-chain subset is a normal
     /// `.notFound` result and leaves the current database untouched.

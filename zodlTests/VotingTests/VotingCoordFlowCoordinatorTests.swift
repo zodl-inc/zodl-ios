@@ -1169,6 +1169,7 @@ import Testing
     @Test func delegationPipelineSkipsHistoricallyRecoveredBundleWithoutTxHash() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
+        votingCrypto.getConfirmedDelegationBundleIndices = { _ in [0] }
         votingCrypto.getDelegationTxHash = { _, _ in
             await recorder.record("load-tx")
             return .notFound
@@ -1194,7 +1195,6 @@ import Testing
             tier0Layers: 1,
             tier1Layers: 1,
             polyLen: 4096,
-            initiallyCompletedBundles: [0],
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),

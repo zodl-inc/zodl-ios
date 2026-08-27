@@ -492,6 +492,10 @@ extension VotingCryptoClient: DependencyKey {
                 }
                 return .notFound
             },
+            getConfirmedDelegationBundleIndices: { roundId in
+                let backend = try await dbActor.backend()
+                return Set(try backend.getConfirmedDelegationBundleIndices(roundId: roundId))
+            },
             recoverHistoricalDelegation: { request in
                 guard let sdkRequest = try VotingHistoricalDelegationRecovery.prepareRequest(request) else {
                     return .notFound
