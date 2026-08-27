@@ -501,7 +501,7 @@ extension VotingCryptoClient: DependencyKey {
                 publishState(backend: backend, roundId: request.roundId)
                 return .recovered(
                     anchorHeight: recovery.anchorHeight,
-                    bundleCount: recovery.bundleCount,
+                    bundleIndices: recovery.recoveredBundleIndices,
                     alreadyRecovered: recovery.alreadyRecovered
                 )
             },

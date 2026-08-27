@@ -6,7 +6,7 @@ import Foundation
 /// seam. This exists only for the small set of pre-3.10.2 stranded rounds.
 enum VotingHistoricalDelegationRecovery {
     /// Build a secret-bearing SDK request only when the preserved files yield
-    /// one complete and unambiguous candidate for every current bundle.
+    /// at least one unambiguous on-chain candidate for the current batch.
     static func prepareRequest(
         _ request: HistoricalVotingDelegationRecoveryRequest
     ) throws -> VotingForensicDelegationRecoveryRequest? {
@@ -60,7 +60,7 @@ enum VotingHistoricalDelegationRecovery {
             roundId: request.roundId,
             walletId: request.walletId
         )
-        guard let bundles = completeBatch(
+        guard let bundles = recoverableSubset(
             reports: reports,
             snapshot: snapshot,
             expectedBundleCount: request.expectedBundleCount
@@ -83,8 +83,8 @@ enum VotingHistoricalDelegationRecovery {
     }
 
     /// Collapse duplicate provenance, but never collapse conflicting recovery
-    /// material. Any ambiguity or missing bundle fails closed without a write.
-    static func completeBatch(
+    /// material. Missing bundles are left to the ordinary delegation pipeline.
+    static func recoverableSubset(
         reports: [VotingDatabaseRecovery.Report],
         snapshot: VotingVerifiedVoteTreeSnapshot,
         expectedBundleCount: UInt32
@@ -128,7 +128,7 @@ enum VotingHistoricalDelegationRecovery {
         }
 
         var result: [VotingForensicDelegationBundle] = []
-        for bundleIndex in 0..<expectedBundleCount {
+        for bundleIndex in materialsByIndex.keys.sorted() {
             guard let materials = materialsByIndex[bundleIndex],
                   materials.count == 1,
                   let material = materials.first
@@ -139,7 +139,7 @@ enum VotingHistoricalDelegationRecovery {
             guard hashes.count <= 1 else { return nil }
             result.append(material.sdkBundle(delegationTxHash: hashes.first))
         }
-        return result
+        return result.isEmpty ? nil : result
     }
 
     /// Only the fields consumed by the validating Rust API participate in

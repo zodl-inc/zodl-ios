@@ -34,17 +34,17 @@ Every returned candidate has `gov_comm == van_cmx`, a canonical 32-byte Pallas
 An exact target occurrence that cannot be decoded safely is reported only as a
 raw hit, not as recovered state.
 
-The application sends candidates to the SDK only when they form one complete,
-contiguous, unambiguous batch for the current wallet and round. The SDK then
-re-fetches the public tree, recomputes its advertised root, recomputes every VAN
-from the recovered randomness, voting hotkey, round, and weight, and checks the
-active database under a write transaction. It restores only the minimal rows
-needed to resume voting, and either restores the whole batch or writes nothing.
+The application sends each unambiguous on-chain candidate to the SDK with its
+original bundle index. The SDK then re-fetches the public tree, recomputes its
+advertised root, recomputes every supplied VAN from the recovered randomness,
+voting hotkey, round, and weight, and checks the active database under a write
+transaction. It restores the validated subset atomically and leaves missing
+bundle rows in place for the ordinary delegation path.
 
 The automatic attempt is limited to an existing incomplete round for which the
-ordinary exact-transaction recovery found no bundle. Missing, partial,
-ambiguous, conflicting, already-voted, or ordinary current state is left
-untouched so the normal delegation path can continue.
+ordinary exact-transaction recovery found no bundle. Missing bundles continue
+through normal delegation. Ambiguous, conflicting, already-voted, or ordinary
+current state is left untouched.
 
 Recovered values contain sensitive wallet and proof material. Do not log them,
 include them in analytics, or place them in ordinary support exports.

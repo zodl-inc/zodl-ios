@@ -89,7 +89,7 @@ import Testing
         #expect(Set(report.candidates.map(\.totalNoteValue)) == [130_000_000, 140_000_000])
     }
 
-    @Test func completeBatchUsesTheValidatedTreePosition() throws {
+    @Test func recoverableSubsetUsesTheValidatedTreePosition() throws {
         let report = try VotingDatabaseRecovery.recover(
             databaseBytes: databasePage(
                 liveRecord: bundleRecord(van: acceptedVan, rand: originalRand)
@@ -104,10 +104,10 @@ import Testing
             leaves: [VotingVerifiedVoteTreeLeaf(position: 7, commitment: [UInt8](acceptedVan))]
         )
 
-        let bundles = try #require(VotingHistoricalDelegationRecovery.completeBatch(
+        let bundles = try #require(VotingHistoricalDelegationRecovery.recoverableSubset(
             reports: [report],
             snapshot: snapshot,
-            expectedBundleCount: 1
+            expectedBundleCount: 3
         ))
 
         #expect(bundles.count == 1)
@@ -116,7 +116,7 @@ import Testing
         #expect(bundles[0].vanLeafPosition == 7)
     }
 
-    @Test func completeBatchRejectsConflictingCandidates() throws {
+    @Test func recoverableSubsetRejectsConflictingCandidates() throws {
         let report = try VotingDatabaseRecovery.recover(
             databaseBytes: databasePage(
                 liveRecord: bundleRecord(
@@ -140,14 +140,14 @@ import Testing
             leaves: [VotingVerifiedVoteTreeLeaf(position: 7, commitment: [UInt8](acceptedVan))]
         )
 
-        #expect(VotingHistoricalDelegationRecovery.completeBatch(
+        #expect(VotingHistoricalDelegationRecovery.recoverableSubset(
             reports: [report],
             snapshot: snapshot,
             expectedBundleCount: 1
         ) == nil)
     }
 
-    @Test func completeBatchRejectsConflictingTransactionHashes() throws {
+    @Test func recoverableSubsetRejectsConflictingTransactionHashes() throws {
         let report = try VotingDatabaseRecovery.recover(
             databaseBytes: databasePage(
                 liveRecord: bundleRecord(
@@ -172,10 +172,10 @@ import Testing
         )
 
         #expect(report.candidates.count == 2)
-        #expect(VotingHistoricalDelegationRecovery.completeBatch(
+        #expect(VotingHistoricalDelegationRecovery.recoverableSubset(
             reports: [report],
             snapshot: snapshot,
-            expectedBundleCount: 1
+            expectedBundleCount: 3
         ) == nil)
     }
 
@@ -239,7 +239,7 @@ import Testing
             ),
             nodeURL: "http://127.0.0.1:1",
             hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
-            expectedBundleCount: 1
+            expectedBundleCount: 3
         )
 
         let sdkRequest = try #require(try VotingHistoricalDelegationRecovery.prepareRequest(

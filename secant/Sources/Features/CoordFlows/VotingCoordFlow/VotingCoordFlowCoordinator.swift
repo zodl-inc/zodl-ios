@@ -924,7 +924,7 @@ extension VotingCoordFlow {
                            let chainNodeURL,
                            let hotkey = try? walletStorage.exportVotingHotkey(accountId) {
                             do {
-                                if let recovery = try await Self.recoverHistoricalDelegationBatch(
+                                if let recovery = try await Self.recoverHistoricalDelegationSubset(
                                     roundId: roundId,
                                     walletId: walletId,
                                     roundParams: VotingRoundParams(
@@ -940,13 +940,13 @@ extension VotingCoordFlow {
                                     votingCrypto: votingCrypto
                                 ) {
                                     // The SDK has independently re-fetched the tree and restored
-                                    // the complete batch atomically. From here the ordinary vote
-                                    // path can use the recovered VAN witnesses.
-                                    delegationReady = true
-                                    recoveredBundleCount = recovery.bundleCount
-                                    recoveredBundleIndices = Set(0..<recovery.bundleCount)
+                                    // only the proven on-chain subset. The ordinary delegation
+                                    // path can now finish the missing indices without replacing it.
+                                    recoveredBundleIndices.formUnion(recovery.bundleIndices)
+                                    recoveredBundleCount = UInt32(recoveredBundleIndices.count)
+                                    delegationReady = recoveredBundleCount >= existingBundleCount
                                     LoggerProxy.info(
-                                        "Recovered historical delegation for round \(roundId); "
+                                        "Recovered historical delegation subset for round \(roundId); "
                                             + "alreadyRecovered=\(recovery.alreadyRecovered)"
                                     )
                                 }
@@ -3424,9 +3424,10 @@ extension VotingCoordFlow {
         return (state, bundleCount)
     }
 
-    /// Submit one complete historical batch and accept only an exact-count SDK
-    /// receipt. A partial or absent result cannot mark delegation as ready.
-    static func recoverHistoricalDelegationBatch(
+    /// Submit one historical subset and accept only unique in-range indices.
+    /// The caller merges them with ordinary per-bundle recovery before deciding
+    /// whether delegation is complete.
+    static func recoverHistoricalDelegationSubset(
         roundId: String,
         walletId: String,
         roundParams: VotingRoundParams,
@@ -3434,7 +3435,7 @@ extension VotingCoordFlow {
         hotkeyStoredSecret: Data,
         expectedBundleCount: UInt32,
         votingCrypto: VotingCryptoClient
-    ) async throws -> (bundleCount: UInt32, alreadyRecovered: Bool)? {
+    ) async throws -> (bundleIndices: Set<UInt32>, alreadyRecovered: Bool)? {
         let request = HistoricalVotingDelegationRecoveryRequest(
             roundId: roundId,
             walletId: walletId,
@@ -3443,13 +3444,16 @@ extension VotingCoordFlow {
             hotkeyStoredSecret: hotkeyStoredSecret,
             expectedBundleCount: expectedBundleCount
         )
-        guard case let .recovered(_, bundleCount, alreadyRecovered) =
+        guard case let .recovered(_, bundleIndices, alreadyRecovered) =
             try await votingCrypto.recoverHistoricalDelegation(request),
-            bundleCount == expectedBundleCount
+            !bundleIndices.isEmpty,
+            bundleIndices.allSatisfy({ $0 < expectedBundleCount })
         else {
             return nil
         }
-        return (bundleCount, alreadyRecovered)
+        let uniqueIndices = Set(bundleIndices)
+        guard uniqueIndices.count == bundleIndices.count else { return nil }
+        return (uniqueIndices, alreadyRecovered)
     }
 
     private static func votingWeight(for notes: [NoteInfo], bundleCount: UInt32) -> UInt64 {

@@ -731,7 +731,7 @@ import Testing
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
     }
 
-    @Test func historicalRecoveryOnlyUnblocksOnExactSDKReceipt() async throws {
+    @Test func historicalRecoveryReturnsOnlyValidatedSubsetIndices() async throws {
         let params = VotingRoundParams(
             voteRoundId: Data(repeating: 0x01, count: 32),
             snapshotHeight: 100,
@@ -743,10 +743,10 @@ import Testing
         var votingCrypto = VotingCryptoClient()
         votingCrypto.recoverHistoricalDelegation = { request in
             capturedRequest.setValue(request)
-            return .recovered(anchorHeight: 5, bundleCount: 2, alreadyRecovered: false)
+            return .recovered(anchorHeight: 5, bundleIndices: [0], alreadyRecovered: false)
         }
 
-        let result = try await VotingCoordFlow.recoverHistoricalDelegationBatch(
+        let result = try await VotingCoordFlow.recoverHistoricalDelegationSubset(
             roundId: roundId,
             walletId: "wallet-1",
             roundParams: params,
@@ -757,7 +757,7 @@ import Testing
         )
 
         let recovery = try #require(result)
-        #expect(recovery.bundleCount == 2)
+        #expect(recovery.bundleIndices == [0])
         #expect(!recovery.alreadyRecovered)
         let request = try #require(capturedRequest.value)
         #expect(request.roundId == roundId)
@@ -768,9 +768,9 @@ import Testing
         #expect(request.expectedBundleCount == 2)
 
         votingCrypto.recoverHistoricalDelegation = { _ in
-            .recovered(anchorHeight: 5, bundleCount: 1, alreadyRecovered: false)
+            .recovered(anchorHeight: 5, bundleIndices: [0, 0], alreadyRecovered: false)
         }
-        let incompleteResult = try await VotingCoordFlow.recoverHistoricalDelegationBatch(
+        let duplicateResult = try await VotingCoordFlow.recoverHistoricalDelegationSubset(
             roundId: roundId,
             walletId: "wallet-1",
             roundParams: params,
@@ -779,7 +779,35 @@ import Testing
             expectedBundleCount: 2,
             votingCrypto: votingCrypto
         )
-        #expect(incompleteResult == nil)
+        #expect(duplicateResult == nil)
+
+        votingCrypto.recoverHistoricalDelegation = { _ in
+            .recovered(anchorHeight: 5, bundleIndices: [2], alreadyRecovered: false)
+        }
+        let outOfRangeResult = try await VotingCoordFlow.recoverHistoricalDelegationSubset(
+            roundId: roundId,
+            walletId: "wallet-1",
+            roundParams: params,
+            nodeURL: "http://127.0.0.1:26657",
+            hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
+            expectedBundleCount: 2,
+            votingCrypto: votingCrypto
+        )
+        #expect(outOfRangeResult == nil)
+
+        votingCrypto.recoverHistoricalDelegation = { _ in
+            .recovered(anchorHeight: 5, bundleIndices: [], alreadyRecovered: false)
+        }
+        let emptyResult = try await VotingCoordFlow.recoverHistoricalDelegationSubset(
+            roundId: roundId,
+            walletId: "wallet-1",
+            roundParams: params,
+            nodeURL: "http://127.0.0.1:26657",
+            hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
+            expectedBundleCount: 2,
+            votingCrypto: votingCrypto
+        )
+        #expect(emptyResult == nil)
     }
 
     @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {

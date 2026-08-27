@@ -29,7 +29,7 @@ struct HistoricalVotingDelegationRecoveryRequest: Sendable, Undescribable {
 
 enum HistoricalVotingDelegationRecoveryOutcome: Equatable, Sendable {
     case notFound
-    case recovered(anchorHeight: UInt32, bundleCount: UInt32, alreadyRecovered: Bool)
+    case recovered(anchorHeight: UInt32, bundleIndices: [UInt32], alreadyRecovered: Bool)
 }
 
 @DependencyClient
@@ -240,8 +240,8 @@ struct VotingCryptoClient {
         _ bundleIndex: UInt32
     ) async throws -> VotingTxHashLookup
     /// Attempt the narrow repair for pre-3.10.2 rounds whose confirmed VAN
-    /// randomness was lost. No complete, unambiguous forensic batch is a
-    /// normal `.notFound` result and leaves the current database untouched.
+    /// randomness was lost. No unambiguous on-chain subset is a normal
+    /// `.notFound` result and leaves the current database untouched.
     var recoverHistoricalDelegation: @Sendable (
         _ request: HistoricalVotingDelegationRecoveryRequest
     ) async throws -> HistoricalVotingDelegationRecoveryOutcome = { _ in .notFound }
