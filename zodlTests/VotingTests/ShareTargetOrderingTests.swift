@@ -22,6 +22,16 @@ private func makeSharePayload(index: UInt32 = 0) -> SharePayload {
     )
 }
 
+private func distinctShareCounts(_ shares: [DelegatedShareInfo]) -> [String: Int] {
+    var counts: [String: Int] = [:]
+    for share in shares {
+        for server in Set(share.acceptedByServers) {
+            counts[server, default: 0] += 1
+        }
+    }
+    return counts
+}
+
 struct ShareTargetOrderingTests {
     @Test func orderCandidatesByHealthPartitionsHealthyFirst() {
         let candidates = ["a", "b", "c", "d"]
@@ -55,80 +65,96 @@ struct ShareTargetOrderingTests {
         #expect(ordered == ["b", "a"])
     }
 
-    @Test func delegateSharePayloadsPrefersHealthyTargets() async throws {
-        let recorder = PostRecorder()
-        let servers = [
-            "https://s1.example.com",
-            "https://s2.example.com",
-            "https://s3.example.com",
-            "https://s4.example.com"
-        ]
-        let healthy: Set<String> = ["https://s1.example.com", "https://s2.example.com"]
+    // Deterministic guard exercise: with the prefix selector, the old code's
+    // backfill for A's omission share reached A first (A precedes D in the
+    // candidate order once B is tried and C is pruned) — the exact re-admission
+    // the every-round omission filter now forbids.
+    @Test func omissionGuardExcludesOmittedHelperFromBackfill() async throws {
+        let helperB = "https://helper-b.example.com"
+        let helperC = "https://helper-c.example.com"
+        let helperA = "https://helper-a.example.com"
+        let helperD = "https://helper-d.example.com"
+        let servers = [helperB, helperC, helperA, helperD]
 
         let result = try await delegateSharePayloads(
-            [makeSharePayload()],
+            (0..<16).map { makeSharePayload(index: UInt32($0)) },
             proposalId: 7,
             initialServerURLs: servers,
-            postShare: { server, _ in await recorder.record(server) },
-            selectTargets: { candidates, needed in
-                Array(orderCandidatesByHealth(candidates, healthy: healthy).prefix(needed))
-            }
-        )
-
-        let posted = await recorder.servers()
-        #expect(Set(posted) == healthy)
-        let share = try #require(result.delegatedShares.first)
-        #expect(Set(share.acceptedByServers) == healthy)
-        #expect(result.remainingServerURLs == servers)
-    }
-
-    @Test func delegateSharePayloadsBackfillsUnhealthyAfterHealthyFailure() async throws {
-        let recorder = PostRecorder()
-        let servers = [
-            "https://s1.example.com",
-            "https://s2.example.com",
-            "https://s3.example.com",
-            "https://s4.example.com"
-        ]
-        let healthy: Set<String> = ["https://s1.example.com", "https://s2.example.com"]
-        let unhealthy: Set<String> = ["https://s3.example.com", "https://s4.example.com"]
-
-        let result = try await delegateSharePayloads(
-            [makeSharePayload()],
-            proposalId: 7,
-            initialServerURLs: servers,
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://s1.example.com" {
+            postShare: { server, body in
+                if server == helperC && body["share_index"] as? Int == 2 {
                     throw URLError(URLError.Code.cannotConnectToHost)
                 }
             },
-            selectTargets: { candidates, needed in
-                Array(orderCandidatesByHealth(candidates, healthy: healthy).prefix(needed))
+            selectTargets: { candidates, needed in Array(candidates.prefix(needed)) }
+        )
+
+        // A sits at configured position 2, so share 2 is A's omitted share. Its
+        // round-1 targets are [B, C]; C fails and is pruned; the backfill
+        // candidates are [A, D] and the filter must hand the share to D.
+        let shareTwo = try #require(result.delegatedShares.first { $0.shareIndex == 2 })
+        #expect(!shareTwo.acceptedByServers.contains(helperA))
+        #expect(Set(shareTwo.acceptedByServers) == Set([helperB, helperD]))
+
+        #expect(result.delegatedShares.count == 16)
+        for (server, count) in distinctShareCounts(result.delegatedShares) {
+            #expect(count < 16, "\(server) accumulated every share of the commitment")
+        }
+    }
+
+    // Default-selector sanity net: assertions hold on every random draw; the
+    // guard itself is exercised in the draws whose round-1 targets include the
+    // failing helper (the deterministic test above carries guaranteed coverage).
+    @Test func productionSpreadNeverHandsAHelperItsOmittedShare() async throws {
+        let helperA = "https://helper-a.example.com"
+        let helperB = "https://helper-b.example.com"
+        let helperC = "https://helper-c.example.com"
+        let helperD = "https://helper-d.example.com"
+        let servers = [helperA, helperB, helperC, helperD]
+
+        let result = try await delegateSharePayloads(
+            (0..<16).map { makeSharePayload(index: UInt32($0)) },
+            proposalId: 7,
+            initialServerURLs: servers,
+            postShare: { server, body in
+                if server == helperC && body["share_index"] as? Int == 0 {
+                    throw URLError(URLError.Code.cannotConnectToHost)
+                }
             }
         )
 
-        // s1 (healthy but unreachable) is pruned after its initial failure; the
-        // backfill tops the target count back up to 2 from the only candidates
-        // left once s2 (the other initial target) has already succeeded — the
-        // never-veto property from `orderCandidatesByHealth`'s doc comment,
-        // exercised dynamically instead of via a static candidate list.
-        #expect(result.delegatedShares.count == 1)
-        let share = try #require(result.delegatedShares.first)
-        #expect(share.acceptedByServers.count == 2)
-        #expect(share.acceptedByServers.contains("https://s2.example.com"))
-        let backfilled = Set(share.acceptedByServers).subtracting(["https://s2.example.com"])
-        #expect(backfilled.count == 1)
-        #expect(backfilled.isSubset(of: unhealthy))
+        let shareZero = try #require(result.delegatedShares.first { $0.shareIndex == 0 })
+        #expect(!shareZero.acceptedByServers.contains(helperA))
+        #expect(result.delegatedShares.count == 16)
+        for (server, count) in distinctShareCounts(result.delegatedShares) {
+            #expect(count < 16, "\(server) accumulated every share of the commitment")
+        }
+    }
 
-        let expectedRemaining = Set(servers).subtracting(["https://s1.example.com"])
-        #expect(Set(result.remainingServerURLs) == expectedRemaining)
+    // The guard must not turn into a veto: when pruning leaves only the omitted
+    // helper untried, the share still goes out (the crate weighs a lost share
+    // as worse than a completed set).
+    @Test func omissionGuardFailsOpenWhenOnlyOmittedHelperRemains() async throws {
+        let helperA = "https://helper-a.example.com"
+        let helperB = "https://helper-b.example.com"
+        let helperC = "https://helper-c.example.com"
 
-        let attempts = await recorder.servers()
-        #expect(attempts.contains("https://s1.example.com"))
-        #expect(attempts.contains("https://s2.example.com"))
-        let unhealthyAttempts = Set(attempts).intersection(unhealthy)
-        #expect(unhealthyAttempts.count == 1)
+        let result = try await delegateSharePayloads(
+            (0..<16).map { makeSharePayload(index: UInt32($0)) },
+            proposalId: 7,
+            initialServerURLs: [helperA, helperB, helperC],
+            postShare: { server, body in
+                if server == helperC && body["share_index"] as? Int == 0 {
+                    throw URLError(URLError.Code.cannotConnectToHost)
+                }
+            }
+        )
+
+        // Share 0 omits A; its round-1 targets are therefore exactly {B, C}.
+        // C fails and is pruned, leaving A as the only untried helper — the
+        // filter empties and the fail-open must deliver the share to A.
+        let shareZero = try #require(result.delegatedShares.first { $0.shareIndex == 0 })
+        #expect(shareZero.acceptedByServers.contains(helperA))
+        #expect(result.delegatedShares.count == 16)
     }
 
     @Test func resubmitOrdersHealthyUntriedFirstAndSentLast() async {
@@ -149,7 +175,7 @@ struct ShareTargetOrderingTests {
                 await recorder.record(server)
                 throw URLError(URLError.Code.cannotConnectToHost)
             },
-            orderServers: { orderCandidatesByHealth($0, healthy: healthy) }
+            orderServers: healthOrderedWalk(healthy: healthy)
         )
 
         #expect(accepted.isEmpty)

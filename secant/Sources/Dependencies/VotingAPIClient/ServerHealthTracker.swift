@@ -219,18 +219,24 @@ actor ServerHealthTracker {
 
 // MARK: - Advisory Ordering
 
-/// Health-first advisory ordering for share submission (MOB-1810): candidates
-/// present in `healthy` come first, the rest after, each group shuffled so
-/// share distribution across equally-ranked helpers stays uniform. Ordering
-/// only — every candidate is preserved and none is filtered, so a stale health
-/// view can deprioritize a server but never veto it. When the healthy subset
-/// stays stable across a whole commitment, those helpers end up receiving
-/// most of its shares — each still short the one share `delegateSharePayloads`
-/// omits from its initial spread — a deliberate tradeoff of availability over
-/// uniform spread that leaves the ≥1-omitted-share privacy invariant unaffected.
+/// Health-first advisory ordering for the sequential share-resubmission walk
+/// (MOB-1810): candidates present in `healthy` come first, the rest after,
+/// each group shuffled so distribution across equally-ranked helpers stays
+/// uniform. Ordering only — every candidate is preserved and none is filtered.
+/// Deliberately NOT used for `delegateSharePayloads` target selection: there,
+/// health-first choice concentrates a commitment's shares onto the healthy
+/// subset and once let a single failed POST hand a helper its own omitted
+/// share, so the parallel spread stays uniformly random.
 func orderCandidatesByHealth(_ candidates: [String], healthy: Set<String>) -> [String] {
     let healthyFirst = candidates.filter { healthy.contains($0) }.shuffled()
     let rest = candidates.filter { !healthy.contains($0) }.shuffled()
     return healthyFirst + rest
+}
+
+/// The production ordering closure for `resubmitSharePayload`'s sequential
+/// walk. Kept as a named factory so the live wiring and the tests exercise
+/// the same closure instead of byte-copied duplicates.
+func healthOrderedWalk(healthy: Set<String>) -> @Sendable ([String]) -> [String] {
+    { orderCandidatesByHealth($0, healthy: healthy) }
 }
 #endif

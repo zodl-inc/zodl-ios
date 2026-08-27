@@ -477,25 +477,23 @@ func delegateSharePayloads(
     // `share_index % 16` from that share's initial targets, which leaves every helper
     // provably short of at least one share. ZODL drives its own fan-out rather than
     // calling that planner, so the same rule is applied here, under the crate's own
-    // gate: a complete 16-share commitment across more than one helper. Single-share
-    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
-    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
-    // excludes them upstream.
-    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+    // gate: a complete 16-share commitment across more than one helper.
+    // The omission is enforced on EVERY selection round — initial and backfill
+    // alike — with a per-round fail-open (below), so a failed co-target can no
+    // longer route a helper its own omitted share (MOB-1810 review). Single-
+    // share (last-moment) sends and partial recovery resubmits carry fewer
+    // payloads and are excluded, exactly as `!single_share && share_count ==
+    // VOTE_COMMITMENT_SHARE_COUNT` excludes them upstream.
+    let spreadTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
 
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
-        // The guarantee is scoped to initial submission only. Once a target has failed
-        // and we are backfilling, the omitted helper becomes eligible again — losing a
-        // share entirely is worse than one helper holding a complete set, and the crate
-        // scopes its own guarantee the same way.
-        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
             var candidates = availableServers.filter { !triedServers.contains($0) }
-            if isInitialAttempt && spreadInitialTargets {
+            if spreadTargets {
                 let spread = candidates.filter { candidate in
                     // Indexed against the CONFIGURED list, never `availableServers`:
                     // failed helpers are pruned from the working set mid-commitment, and
@@ -507,14 +505,15 @@ func delegateSharePayloads(
                     guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
                     return position % voteCommitmentShareCount != Int(payload.shareIndex)
                 }
-                // Never let the omission starve a share: ceil(n/2) targets are always
-                // available after dropping at most one helper, but fail open rather
-                // than drop the share if that ever stops holding.
+                // Fail open rather than drop the share: if pruning has left
+                // only the omitted helper untried, losing the share entirely
+                // is worse than that helper completing its set — the crate
+                // weighs it the same way. In every other case the omission
+                // holds across backfill rounds too.
                 if !spread.isEmpty {
                     candidates = spread
                 }
             }
-            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
@@ -1049,14 +1048,15 @@ extension VotingAPIClient: DependencyKey {
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
                     // Active foreground delivery uses the submission-local server
-                    // set. POST failures prune that local set immediately; cached
-                    // health is consulted only as ORDERING (healthy targets
-                    // first) — it never filters, so every configured server stays
-                    // eligible and delivery can never be vetoed by a stale
-                    // circuit view (MOB-1810). Successful/failed foreground POSTs
-                    // still update the tracker.
+                    // set with uniformly random target selection — cached health
+                    // is deliberately NOT consulted here: health-first selection
+                    // measurably concentrates a commitment's shares onto the
+                    // healthy subset and, combined with backfill, once let a
+                    // single failed POST hand a helper its own omitted share
+                    // (MOB-1810 review). POST failures prune the local set;
+                    // successful/failed POSTs still feed the tracker, which the
+                    // background resubmission walk consumes.
                     let tracker = ServerHealthTracker.shared
-                    let healthy = Set(await tracker.healthyServers())
                     return try await delegateSharePayloads(
                         payloads,
                         proposalId: proposalId,
@@ -1069,9 +1069,6 @@ extension VotingAPIClient: DependencyKey {
                                 await tracker.recordFailure(for: server)
                                 throw error
                             }
-                        },
-                        selectTargets: { candidates, needed in
-                            Array(orderCandidatesByHealth(candidates, healthy: healthy).prefix(needed))
                         }
                     )
                 }
@@ -1127,7 +1124,7 @@ extension VotingAPIClient: DependencyKey {
                             throw error
                         }
                     },
-                    orderServers: { orderCandidatesByHealth($0, healthy: healthy) }
+                    orderServers: healthOrderedWalk(healthy: healthy)
                 )
             },
             fetchProposalTally: { roundId, proposalId in
