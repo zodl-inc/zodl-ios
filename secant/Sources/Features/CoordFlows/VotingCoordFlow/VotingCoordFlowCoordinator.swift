@@ -4016,7 +4016,7 @@ extension VotingCoordFlow {
         retryDelay: Duration = .seconds(1)
     ) async throws {
         guard let eventPositions = castVoteLeafPositions(from: confirmation) else {
-            throw VotingFlowError.recoveredVoteCommitmentMismatch(
+            throw VotingFlowError.recoveredVoteVerificationUnavailable(
                 proposalId: proposalId,
                 bundleIndex: bundleIndex
             )

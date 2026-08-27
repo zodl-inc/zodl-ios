@@ -1477,6 +1477,44 @@ import Testing
         #expect(await recorder.events() == ["latest", "latest"])
     }
 
+    @Test(arguments: [Optional<String>.none, "0"])
+    func recoveredCastVoteReportsMissingOrMalformedEventAsVerificationUnavailable(
+        leafIndex: String?
+    ) async {
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        let events = leafIndex.map {
+            [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: $0)]
+            )]
+        } ?? []
+        let confirmation = TxConfirmation(height: 124, code: 0, events: events)
+
+        do {
+            try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+                roundId: "aabb",
+                startHeight: 123,
+                bundleIndex: 0,
+                proposalId: 1,
+                expectedVoteAuthorityNote: voteAuthorityNote,
+                expectedVoteCommitment: voteCommitment,
+                confirmation: confirmation,
+                votingAPI: VotingAPIClient()
+            )
+            Issue.record("expected recovered vote verification to be unavailable")
+        } catch let error as VotingFlowError {
+            guard case let .recoveredVoteVerificationUnavailable(proposalId, bundleIndex) = error else {
+                Issue.record("expected verification unavailable, got \(error.localizedDescription)")
+                return
+            }
+            #expect(proposalId == 1)
+            #expect(bundleIndex == 0)
+        } catch {
+            Issue.record("expected VotingFlowError, got \(error.localizedDescription)")
+        }
+    }
+
     @Test func recoveredCastVoteRejectsWrongCommitmentTreePosition() async {
         let voteAuthorityNote = Data(repeating: 0x11, count: 32)
         let voteCommitment = Data(repeating: 0x22, count: 32)
