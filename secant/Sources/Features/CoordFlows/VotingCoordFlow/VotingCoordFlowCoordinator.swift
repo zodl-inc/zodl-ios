@@ -2159,9 +2159,16 @@ extension VotingCoordFlow {
                 )
             }
 
+            // Historical recovery restores a confirmed bundle's original VAN randomness.
+            // Rebuilding that bundle would replace the restored commitment even though the
+            // submission pipeline correctly skips broadcasting it again.
+            let confirmedBundles = Set(
+                try await votingCrypto.getConfirmedDelegationBundleIndices(roundId)
+                    .filter { $0 < bundleCount }
+            )
             var totalCached: UInt32 = 0
             var totalFetched: UInt32 = 0
-            for bundleIndex: UInt32 in 0..<bundleCount {
+            for bundleIndex: UInt32 in 0..<bundleCount where !confirmedBundles.contains(bundleIndex) {
                 try Task.checkCancellation()
                 if case .present? = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) {
                     continue

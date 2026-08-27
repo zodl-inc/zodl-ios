@@ -1205,6 +1205,41 @@ import Testing
         #expect(await recorder.events().isEmpty)
     }
 
+    @MainActor
+    @Test func delegationPrecomputeDoesNotOverwriteHistoricallyRecoveredBundle() async {
+        let recorder = EventRecorder()
+        let store = Store(initialState: precomputeState()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.mnemonic = .noOp
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getConfirmedDelegationBundleIndices = { _ in
+                recorder.record("confirmed")
+                return [0]
+            }
+            $0.votingCrypto.getDelegationTxHash = { _, bundleIndex in
+                recorder.record("tx:\(bundleIndex)")
+                return .notFound
+            }
+            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                recorder.record("pczt:\(bundleIndex)")
+                return Self.makeVotingPcztResult()
+            }
+            $0.votingCrypto.precomputeDelegationPir = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                recorder.record("pir:\(bundleIndex)")
+                return DelegationPirPrecomputeResult(cachedCount: 1, fetchedCount: 0)
+            }
+        }
+
+        store.send(.maybeStartDelegationPrecompute(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.delegationPrecomputeStatus == .ready
+        }
+
+        #expect(recorder.events() == ["confirmed", "tx:1", "pczt:1", "pir:1"])
+    }
+
     @Test func delegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
@@ -1846,6 +1881,39 @@ import Testing
         return state
     }
 
+    private func precomputeState() -> VotingCoordFlow.State {
+        var session = roundSession(
+            roundId: activeRoundId,
+            notes: notes(count: 10, value: 10_000_000)
+        )
+        session.bundleCount = 2
+        session.hotkeyAddress = "zs-test-hotkey"
+
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+        state.serviceConfig = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(
+                pir: ["v0"],
+                voteProtocol: "v0",
+                tally: "v0",
+                voteServer: "v1"
+            ),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(
+                pirDepth: 1,
+                tier0Layers: 1,
+                tier1Layers: 1,
+                polyLen: 4096
+            )
+        )
+        state.$selectedWalletAccount.withLock { $0 = softwareWalletAccount() }
+        return state
+    }
+
     private static func makeVotingPcztResult(
         pcztSighash: Data = Data(repeating: 0x0C, count: 32)
     ) -> VotingPcztResult {
@@ -1934,6 +2002,18 @@ import Testing
             name: "Keystone",
             keySource: String(localizable: .accountsKeystone).lowercased(),
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
+    private func softwareWalletAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Zcash",
+            keySource: "zcash",
+            seedFingerprint: [UInt8](repeating: 0x04, count: 32),
             hdAccountIndex: Zip32AccountIndex(0),
             ufvk: nil,
             uivk: nil
