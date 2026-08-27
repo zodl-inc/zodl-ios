@@ -44,6 +44,10 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
     let vendor: Vendor
     var defaultUA: UnifiedAddress?
     var privateUA: UnifiedAddress?
+    /// The pre-generated rotation stash — a fresh UA allocated ahead of time and never displayed.
+    /// A Receive/Swap tap promotes it into `privateUA` synchronously and refills this slot in the
+    /// background, so a visit never waits on the wallet-DB write nor re-shows an address (MOB-1803).
+    var nextPrivateUA: UnifiedAddress?
     var seedFingerprint: [UInt8]?
     var zip32AccountIndex: Zip32AccountIndex?
     let account: Account
