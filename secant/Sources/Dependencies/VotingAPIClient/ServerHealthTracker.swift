@@ -179,6 +179,7 @@ actor ServerHealthTracker {
     /// is what keeps probes routed through Tor whenever the user has it
     /// enabled, never the system URLSession.
     func probeAll() async {
+        guard !Task.isCancelled else { return }
         let urls = Array(servers.keys)
         guard !urls.isEmpty, let fetcher = probeFetcher else { return }
 
