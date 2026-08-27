@@ -292,4 +292,71 @@ private enum MaxButtonTestError: Error {
         state.isMaxRequestInFlight = true
         #expect(!state.isMaxButtonEnabled)
     }
+
+    // The stale-tip mask ([#1591]) zeroes spendable across every pool until the SDK confirms a
+    // fresh chain tip, so the chip must present the same "still working it out" state the balance
+    // row already shows via `AvailableBalanceView(showIndicator:)` — not a dimmed chip that claims
+    // sending is unavailable. Both read `isProcessingZeroAvailableBalance`, so this pins the chip
+    // to that one condition; if they ever diverge the two controls contradict each other on screen.
+    @Test func isSpendabilityBeingDeterminedMatchesTheBalanceSpinnerCondition() {
+        var state = SendForm.State.initial
+        // Threshold above the transparent balance, so the shieldable early-return in
+        // `isProcessingZeroAvailableBalance` cannot fire and mask what is under test.
+        state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
+        state.walletBalancesState.transparentBalance = .zero
+
+        // Masked: spendable is zero while the wallet still holds funds.
+        state.walletBalancesState.shieldedBalance = .zero
+        state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
+        #expect(state.isSpendabilityBeingDetermined)
+        #expect(state.walletBalancesState.isProcessingZeroAvailableBalance)
+
+        // Tip refreshed: spendable is known, so the chip must stop spinning.
+        state.walletBalancesState.shieldedBalance = Zatoshi(1_000_000)
+        #expect(!state.isSpendabilityBeingDetermined)
+
+        // Genuinely empty wallet — nothing to determine, so no spinner. This is the case the
+        // `totalBalance != shieldedBalance` half of the condition exists to exclude.
+        state.walletBalancesState.shieldedBalance = .zero
+        state.walletBalancesState.totalBalance = .zero
+        #expect(!state.isSpendabilityBeingDetermined)
+    }
+
+    // While masked the chip is BOTH disabled and in-flight: `isMaxButtonEnabled` is false because
+    // spendable is zero, and `isSpendabilityBeingDetermined` is true. ZashiMaxChip renders the
+    // spinner and refuses taps on either, so the chip stays untappable — it just stops claiming to
+    // be unavailable. Asserting the pair together is the regression guard: re-enabling the chip
+    // while the value is unknown would let a tap compute a max against a masked (zero) balance.
+    @Test func maskedStateLeavesTheChipUntappableButShowingProgress() {
+        var state = SendForm.State.initial
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        state.isValidAddress = true
+        state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
+        state.walletBalancesState.transparentBalance = .zero
+        state.walletBalancesState.shieldedBalance = .zero
+        state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
+        state.walletBalancesState.spendability = .nothing
+        state.shieldedBalance = .zero
+
+        #expect(state.isSpendabilityBeingDetermined)
+        #expect(!state.isMaxButtonEnabled)
+    }
+
+    // Documents a PRE-EXISTING hole inherited from `isProcessingZeroAvailableBalance`, not
+    // introduced here: when the transparent balance is at or above the auto-shielding threshold,
+    // the early return makes the flag false even though spendable is zero. Under the mask that
+    // means NEITHER the balance row nor the chip shows progress — the wallet simply looks
+    // unavailable. Pinned so the behaviour is visible and a future fix has to update this test.
+    @Test func shieldableTransparentBalanceSuppressesTheProgressState() {
+        var state = SendForm.State.initial
+        state.walletBalancesState.autoShieldingThreshold = .zero
+        state.walletBalancesState.transparentBalance = Zatoshi(800_000)
+        state.walletBalancesState.shieldedBalance = .zero
+        state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
+
+        #expect(!state.isSpendabilityBeingDetermined)
+    }
 }
