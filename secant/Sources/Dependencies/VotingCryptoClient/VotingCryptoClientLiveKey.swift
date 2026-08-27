@@ -90,10 +90,6 @@ extension VotingCryptoClient: DependencyKey {
                     )
                 }
             },
-            clearRound: { roundId in
-                let backend = try await dbActor.backend()
-                try backend.clearRound(roundId: roundId)
-            },
             deleteSkippedBundles: { roundId, keepCount in
                 let backend = try await dbActor.backend()
                 _ = try backend.deleteSkippedBundles(roundId: roundId, keepCount: keepCount)
