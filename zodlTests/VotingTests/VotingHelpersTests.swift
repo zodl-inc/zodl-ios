@@ -3,6 +3,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable @preconcurrency import ZcashLightClientKit
 
 @Suite struct VotingHelpersTests {
     @Test func votingErrorMapperMapsPirProofRootMismatchToSnapshotMismatch() {
@@ -275,6 +276,52 @@ import Testing
         #expect(metadata.singleShareModes.isEmpty)
     }
 
+    @Test func votingMetadataRoundTripsNonemptySubmissionLocks() throws {
+        let metadata = VotingMetadata(
+            submissionIntents: [
+                "round-1": [
+                    "7": PersistedVoteSubmissionIntent(choice: 1, numOptions: 3),
+                    "8": PersistedVoteSubmissionIntent(choice: 0, numOptions: 5)
+                ]
+            ],
+            singleShareModes: ["round-1": false]
+        )
+
+        let encoded = try JSONEncoder().encode(metadata)
+        let decoded = try JSONDecoder().decode(VotingMetadata.self, from: encoded)
+
+        #expect(decoded == metadata)
+    }
+
+    @Test func voteSubmissionLockRollsBackWhenMetadataStoreFails() {
+        let roundId = "round-1"
+        let metadata = VotingHelpersMetadataBox()
+        let previousIntent = PersistedVoteSubmissionIntent(choice: 1, numOptions: 3)
+        metadata.submissionIntents[roundId] = ["7": previousIntent]
+        var client = votingMetadataClient(metadata)
+        client.store = { _ in throw VotingMetadataTestError.storeFailed }
+
+        withDependencies {
+            $0.votingMetadata = client
+        } operation: {
+            #expect(throws: VotingMetadataTestError.self) {
+                _ = try Voting.lockVoteSubmission(
+                    intents: [
+                        7: Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3),
+                        8: Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 5)
+                    ],
+                    submittedProposalIds: [],
+                    proposedSingleShare: true,
+                    roundId: roundId,
+                    account: account()
+                )
+            }
+        }
+
+        #expect(metadata.submissionIntents[roundId] == ["7": previousIntent])
+        #expect(metadata.singleShareModes[roundId] == nil)
+    }
+
     private static func total(_ notes: [NoteInfo]) -> UInt64 {
         notes.reduce(UInt64(0)) { $0 + $1.value }
     }
@@ -291,6 +338,18 @@ import Testing
             rseed: Data(repeating: byte, count: 32),
             scope: 0,
             ufvkStr: "ufvk-\(position)"
+        )
+    }
+
+    private func account() -> Account {
+        Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x01, count: 16)),
+            name: "Zodl",
+            keySource: "zodl",
+            seedFingerprint: [UInt8](repeating: 0x02, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
         )
     }
 
@@ -334,5 +393,9 @@ private final class VotingHelpersMetadataBox: @unchecked Sendable {
     var submissionIntents: [String: [String: PersistedVoteSubmissionIntent]] = [:]
     var singleShareModes: [String: Bool] = [:]
     var records: [String: PersistedVotingRecord] = [:]
+}
+
+private enum VotingMetadataTestError: Error {
+    case storeFailed
 }
 #endif

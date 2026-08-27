@@ -3803,7 +3803,8 @@ extension VotingCoordFlow {
         maxRecoveryAttempts: Int = 3,
         retryDelay: Duration = .seconds(1)
     ) async throws -> DelegationSubmissionResolution? {
-        guard VotingErrorMapper.isNullifierAlreadySpent(result.log) else {
+        guard result.code != 0,
+            VotingErrorMapper.isNullifierAlreadySpent(result.log) else {
             return try await acceptedVotingTransaction(
                 result,
                 votingAPI: votingAPI,
@@ -3830,7 +3831,7 @@ extension VotingCoordFlow {
 
         if let accepted,
             let confirmation = accepted.confirmation,
-            let vanPosition = delegationVanPosition(from: confirmation) {
+            delegationVanPosition(from: confirmation) != nil {
             return .acceptedTransaction(accepted)
         }
 
@@ -3886,6 +3887,7 @@ extension VotingCoordFlow {
         startHeight: UInt64,
         expectedCommitments: Set<Data>,
         votingAPI: VotingAPIClient,
+        minimumHeight: UInt64? = nil,
         maxRecoveryAttempts: Int = 3,
         retryDelay: Duration = .seconds(1),
         maxPagesPerAttempt: Int = 128
@@ -3903,6 +3905,18 @@ extension VotingCoordFlow {
 
         for attempt in 0..<maxRecoveryAttempts {
             let latest = try await votingAPI.fetchCommitmentTreeLatest(roundId)
+            if let minimumHeight, latest.height < minimumHeight {
+                if attempt + 1 < maxRecoveryAttempts {
+                    try await Task.sleep(for: retryDelay)
+                    continue
+                }
+                throw SvAPIError.invalidResponse(
+                    """
+                    commitment-tree head \(latest.height) has not reached \
+                    confirmed transaction height \(minimumHeight)
+                    """
+                )
+            }
             let scanStartHeight = startHeight <= latest.height ? startHeight : 0
             var matches: [Data: Set<UInt64>] = [:]
             var previousNextIndex: UInt64?
@@ -4002,7 +4016,9 @@ extension VotingCoordFlow {
         expectedVoteAuthorityNote: Data,
         expectedVoteCommitment: Data,
         confirmation: TxConfirmation,
-        votingAPI: VotingAPIClient
+        votingAPI: VotingAPIClient,
+        maxRecoveryAttempts: Int = 3,
+        retryDelay: Duration = .seconds(1)
     ) async throws {
         guard let eventPositions = castVoteLeafPositions(from: confirmation) else {
             throw VotingFlowError.recoveredVoteCommitmentMismatch(
@@ -4021,7 +4037,10 @@ extension VotingCoordFlow {
             roundId: roundId,
             startHeight: startHeight,
             expectedCommitments: expected,
-            votingAPI: votingAPI
+            votingAPI: votingAPI,
+            minimumHeight: confirmation.height,
+            maxRecoveryAttempts: maxRecoveryAttempts,
+            retryDelay: retryDelay
         )
         guard actualPositions[expectedVoteAuthorityNote] == eventPositions.van,
             actualPositions[expectedVoteCommitment] == eventPositions.voteCommitment else {

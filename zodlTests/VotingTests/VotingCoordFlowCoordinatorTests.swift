@@ -1216,6 +1216,40 @@ import Testing
         #expect(resolution == .confirmedVan(position: 1, txHash: nil))
     }
 
+    @Test func successfulDelegationIgnoresSpentTextInLog() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let expected = Data(repeating: 0x05, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            await recorder.record("tx")
+            return nil
+        }
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            await recorder.record("tree")
+            return CommitmentTreeLatest(height: 125, nextIndex: 0)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(blocks: [], nextFromHeight: 0)
+        }
+
+        let resolution = try await VotingCoordFlow.resolveDelegationSubmission(
+            TxResult(txHash: "accepted-tx", code: 0, log: "nullifier already spent"),
+            roundId: "aabb",
+            voteChainStartHeight: 123,
+            expectedVanCmxBase64: expected.base64EncodedString(),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(resolution == .acceptedTransaction(AcceptedVotingTransaction(
+            txHash: "accepted-tx",
+            confirmation: nil
+        )))
+        #expect(await recorder.events().isEmpty)
+    }
+
     @Test func spentDelegationCancellationDoesNotFallBackToPersistedVan() async {
         let recorder = RecoveryOrderRecorder()
         let expected = Data(repeating: 0x05, count: 32)
@@ -1279,6 +1313,96 @@ import Testing
             confirmation: confirmation,
             votingAPI: votingAPI
         )
+    }
+
+    @Test func recoveredCastVoteWaitsForCommitmentTreeToReachConfirmationHeight() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            let attempt = await recorder.recordAndCount("latest")
+            return attempt == 1
+                ? CommitmentTreeLatest(height: 123, nextIndex: 0)
+                : CommitmentTreeLatest(height: 124, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 124,
+                    startIndex: 0,
+                    leavesBase64: [
+                        voteAuthorityNote.base64EncodedString(),
+                        voteCommitment.base64EncodedString()
+                    ]
+                )],
+                nextFromHeight: 0
+            )
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,1")]
+            )]
+        )
+
+        try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+            roundId: "aabb",
+            startHeight: 123,
+            bundleIndex: 0,
+            proposalId: 1,
+            expectedVoteAuthorityNote: voteAuthorityNote,
+            expectedVoteCommitment: voteCommitment,
+            confirmation: confirmation,
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 2,
+            retryDelay: .zero
+        )
+
+        #expect(await recorder.events() == ["latest", "latest", "leaves"])
+    }
+
+    @Test func recoveredCastVoteReportsTreeLagWithoutCommitmentMismatch() async {
+        let recorder = RecoveryOrderRecorder()
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            await recorder.record("latest")
+            return CommitmentTreeLatest(height: 123, nextIndex: 0)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(blocks: [], nextFromHeight: 0)
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,1")]
+            )]
+        )
+
+        await #expect(throws: SvAPIError.self) {
+            try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+                roundId: "aabb",
+                startHeight: 123,
+                bundleIndex: 0,
+                proposalId: 1,
+                expectedVoteAuthorityNote: voteAuthorityNote,
+                expectedVoteCommitment: voteCommitment,
+                confirmation: confirmation,
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: 2,
+                retryDelay: .zero
+            )
+        }
+
+        #expect(await recorder.events() == ["latest", "latest"])
     }
 
     @Test func recoveredCastVoteRejectsWrongCommitmentTreePosition() async {
