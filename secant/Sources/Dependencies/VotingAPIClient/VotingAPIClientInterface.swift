@@ -88,9 +88,10 @@ struct VotingAPIClient {
     var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?
     /// Kick off a one-shot background health sweep of the configured vote
     /// servers. Returns as soon as the sweep is spawned; never waits for probe
-    /// results. Benign no-op default so unrelated tests exercising submission
-    /// effects don't have to stub it; tests asserting on it override it with a
-    /// recording closure.
-    var startHealthProbeSweep: @Sendable () async -> Void = { }
+    /// results. Submission effects fire this unconditionally as an advisory
+    /// hint, so `testValue` overrides it to a silent no-op in
+    /// VotingAPIClientTestKey — unimplemented-endpoint reporting would flag
+    /// every test that merely passes through those effects.
+    var startHealthProbeSweep: @Sendable () async -> Void
 }
 #endif
