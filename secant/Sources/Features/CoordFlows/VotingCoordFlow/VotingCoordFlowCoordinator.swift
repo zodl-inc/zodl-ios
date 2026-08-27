@@ -353,11 +353,20 @@ extension VotingCoordFlow {
                 case .active:
                     hydratePersistedRoundChoices(&state, roundId: roundId)
 
+                    // MOB-1810: operator health checks start here — in the
+                    // background, at poll entry — instead of blocking the polls
+                    // list load. Their results are advisory ordering input for
+                    // the share-resubmission walk; nothing awaits them.
+                    let startHealthSweep: Effect<Action> = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+
                     if state.voteRecords[roundId] != nil {
                         // Already submitted — review-mode read-only, no
                         // pipeline needed.
                         state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -372,6 +381,7 @@ extension VotingCoordFlow {
                        cached.bundleCount > 0 {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -385,6 +395,7 @@ extension VotingCoordFlow {
                     // the sheet via `.ineligibleForRound`.
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
+                        startHealthSweep,
                         cancelShareTracking,
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
@@ -427,9 +438,23 @@ extension VotingCoordFlow {
                 } else {
                     statusPolling = .none
                 }
+                // MOB-1810: this entry point lands on the same active-round
+                // review screen as `.roundTapped`'s voted branch, so it needs
+                // the same background health sweep at poll entry — advisory
+                // ordering input for the share-resubmission walk; nothing
+                // awaits it.
+                let startHealthSweep: Effect<Action>
+                if state.allRounds.first(where: { $0.id == roundId })?.session.status == .active {
+                    startHealthSweep = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+                } else {
+                    startHealthSweep = .none
+                }
                 return .merge(
                     cancelShareTracking,
                     statusPolling,
+                    startHealthSweep,
                     loadSubmittedVotesFromDb(roundId: roundId)
                 )
 
@@ -968,6 +993,7 @@ extension VotingCoordFlow {
                         }
                         guard try await Self.prepareFreshRound(
                             roundId: roundId,
+                            existingState: existingState,
                             session: session,
                             snapshotHeight: snapshotHeight,
                             walletDbPath: walletDbPath,
@@ -1803,6 +1829,12 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
+            // MOB-1810: refresh operator health in the background so the
+            // share-resubmission walk's ordering reflects the present rather
+            // than poll entry. Fire-and-forget — it overlaps the delegation
+            // proof; nothing in this effect awaits probe results.
+            await votingAPI.startHealthProbeSweep()
+
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",
@@ -3137,6 +3169,33 @@ extension VotingCoordFlow {
         return nil
     }
 
+    /// Some deployed `/tx` handlers opportunistically Base64-decode CometBFT
+    /// event text. A non-ASCII value is recovered only when it re-encodes to
+    /// the canonical decimal the server emits; all other values fail closed.
+    static func delegationVanPosition(from confirmation: TxConfirmation) -> UInt32? {
+        guard confirmation.code == 0,
+            let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index")
+        else {
+            return nil
+        }
+        let normalizedLeafValue = leafValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let position = UInt32(normalizedLeafValue) {
+            return position
+        }
+        guard normalizedLeafValue.unicodeScalars.contains(where: { $0.value > 0x7f }) else {
+            return nil
+        }
+        // Check that the reencoding produces the same value, to verify the precondition
+        // asserted in the method documentation, to ensure valuex from other
+        // sources of corruption don't get interpreted as the encoding issue this
+        // method is intended to protect against.
+        let reencodedLeafValue = Data(normalizedLeafValue.utf8).base64EncodedString()
+        guard let position = UInt32(reencodedLeafValue), String(position) == reencodedLeafValue else {
+            return nil
+        }
+        return position
+    }
+
     /// Crash-recovery lookup for a Keystone delegation TX hash.
     static func recoverKeystoneDelegationVanPosition(
         roundId: String,
@@ -3148,9 +3207,7 @@ extension VotingCoordFlow {
             return nil
         }
         if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash),
-           confirmation.code == 0,
-           let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-           let vanPosition = UInt32(leafValue) {
+            let vanPosition = delegationVanPosition(from: confirmation) {
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             return vanPosition
         }
@@ -3167,11 +3224,8 @@ extension VotingCoordFlow {
                 guard confirmation.code == 0 else {
                     throw VotingFlowError.delegationTxFailed(code: confirmation.code, log: confirmation.log)
                 }
-                guard
-                    let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                    let vanPosition = UInt32(leafValue)
-                else {
-                    throw VotingFlowError.delegationTxFailed(code: 0, log: "missing delegate_vote leaf_index")
+                guard let vanPosition = delegationVanPosition(from: confirmation) else {
+                    throw VotingFlowError.delegationTxFailed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
                 }
                 return vanPosition
             }
@@ -3422,8 +3476,42 @@ extension VotingCoordFlow {
         }
     }
 
+    /// What a surviving `rounds` row means for this setup attempt.
+    enum ExistingRoundRow: Equatable {
+        /// No row: this is a genuine first setup, so insert one.
+        case absent
+        /// A row from a setup interrupted between `initRound` and
+        /// `setupBundles`. Reuse it.
+        case reusable
+        /// A row that no longer describes the round the session reports.
+        /// Reused anyway: a row only reaches this classification with no
+        /// bundles yet, so there is nothing at stake to protect.
+        case parametersChanged
+    }
+
+    /// Classifies a surviving round row.
+    ///
+    /// A row reaches `prepareFreshRound` only when the round carries no
+    /// bundles, i.e. setup was interrupted between `initRound` and
+    /// `setupBundles`.
+    ///
+    /// Only `snapshotHeight` is compared, because that is the only round
+    /// parameter `RoundStateInfo` carries. A round whose `ea_pk`, `nc_root` or
+    /// `nullifier_imt_root` changed under a stable id is NOT detected here;
+    /// catching that needs those fields on `RoundStateInfo`, or the crate's
+    /// `ensure_round` exposed through the FFI with its network-only comparison
+    /// widened to the full parameter set.
+    static func classifyExistingRoundRow(
+        existingState: RoundStateInfo?,
+        snapshotHeight: UInt64
+    ) -> ExistingRoundRow {
+        guard let existingState else { return .absent }
+        return existingState.snapshotHeight == snapshotHeight ? .reusable : .parametersChanged
+    }
+
     private static func prepareFreshRound(
         roundId: String,
+        existingState: RoundStateInfo?,
         session: VotingSession,
         snapshotHeight: UInt64,
         walletDbPath: String,
@@ -3433,9 +3521,6 @@ extension VotingCoordFlow {
         sdkSynchronizer: SDKSynchronizerClient,
         send: Send<Action>
     ) async throws -> Bool {
-        try? await votingCrypto.clearRound(roundId)
-        try await votingCrypto.clearRecoveryState(roundId)
-
         let params = VotingRoundParams(
             voteRoundId: session.voteRoundId,
             snapshotHeight: snapshotHeight,
@@ -3443,7 +3528,26 @@ extension VotingCoordFlow {
             ncRoot: session.ncRoot,
             nullifierIMTRoot: session.nullifierIMTRoot
         )
-        try await votingCrypto.initRound(params, nil)
+
+        switch classifyExistingRoundRow(existingState: existingState, snapshotHeight: snapshotHeight) {
+        case .absent:
+            try await votingCrypto.initRound(params, nil)
+        case .reusable:
+            break
+        case .parametersChanged:
+            // Reached only when the round has no bundles yet (a round with
+            // bundles takes the `shouldResumePersistedRound` path instead), so
+            // there is no `van_comm_rand` here to protect by hard-failing.
+            // Reuse the row rather than making the round permanently
+            // unopenable: every value it feeds into a proof or submission is
+            // re-verified independently downstream, so a stale row fails
+            // loudly there instead of silently corrupting anything.
+            LoggerProxy.warn(
+                "Reusing round \(roundId) despite a snapshotHeight mismatch (no bundles exist yet to protect)"
+            )
+        }
+
+        try await votingCrypto.clearRecoveryState(roundId)
 
         let setupResult = try await votingCrypto.setupBundles(roundId, notes)
         let bundleCount = setupResult.bundleCount
@@ -3974,11 +4078,8 @@ extension VotingCoordFlow {
                 guard confirmation.code == 0 else {
                     return .failed(code: confirmation.code, log: confirmation.log)
                 }
-                guard
-                    let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index"),
-                    let vanPosition = UInt32(leafValue)
-                else {
-                    return .failed(code: 0, log: "missing delegate_vote leaf_index")
+                guard let vanPosition = delegationVanPosition(from: confirmation) else {
+                    return .failed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
                 }
                 return .confirmed(vanPosition: vanPosition)
             }
