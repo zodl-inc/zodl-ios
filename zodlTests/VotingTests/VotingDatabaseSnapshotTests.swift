@@ -33,7 +33,7 @@ import Foundation
     @Test func preservedSetKeepsCanonicalNamesAndRecordsTheTime() throws {
         let scratch = try Scratch()
         let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
+            try VotingDatabaseSnapshot.captureThrowing(
                 databasePath: scratch.databaseURL.path,
                 now: Date(timeIntervalSince1970: 1_787_675_522),
                 root: scratch.destination
@@ -49,7 +49,7 @@ import Foundation
     @Test func copiesAllThreeFilesByteForByte() throws {
         let scratch = try Scratch()
         let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
+            try VotingDatabaseSnapshot.captureThrowing(
                 databasePath: scratch.databaseURL.path,
                 now: Date(),
                 root: scratch.destination
@@ -139,7 +139,7 @@ import Foundation
         try FileManager.default.removeItem(at: scratch.walURL)
 
         let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
+            try VotingDatabaseSnapshot.captureThrowing(
                 databasePath: scratch.databaseURL.path,
                 now: Date(),
                 root: scratch.destination
