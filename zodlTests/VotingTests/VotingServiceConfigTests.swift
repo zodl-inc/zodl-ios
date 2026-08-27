@@ -96,6 +96,60 @@ import Testing
         }
     }
 
+    @Test func validateRejectsDuplicateVoteServerURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "Primary"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "Backup")
+            ],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
+    }
+
+    @Test func validateRejectsDuplicatePirEndpointURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+            pirEndpoints: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "Primary"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "Backup")
+            ],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
+    }
+
+    @Test func validateAcceptsDuplicateLabelsWithDistinctURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "mirror"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://two.example.com", label: "mirror")
+            ],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
     @Test func staticConfigValidationRejectsShortTrustedKey() {
         let config = makeStaticConfig(trustedKeyBytes: Data(repeating: 0x01, count: 31))
 
@@ -1461,7 +1515,11 @@ import Testing
 
     @Test func fallbackStillReachesTheOmittedHelperWhenTheOthersFail() async throws {
         let recorder = ShareTargetRecorder()
-        // Share 0 omits the server at index 0 from its initial targets.
+        // A single-share send falls below the 16-payload threshold that
+        // enables the per-share spread gate, so it never engages here —
+        // every server, this one included, is eligible from the first
+        // round, and the fallback walk should still reach it once the
+        // other helper fails.
         let omitted = "https://helper-a.example.com"
         let failing = "https://helper-b.example.com"
 
@@ -1477,7 +1535,7 @@ import Testing
         )
 
         let reached = await recorder.shareIndices(for: omitted)
-        #expect(reached.contains(0), "initial-submission omission must not survive into fallback — the share would be lost")
+        #expect(reached.contains(0), "single-share sends have the spread gate off, so the fallback walk must still reach the last one standing")
     }
 }
 

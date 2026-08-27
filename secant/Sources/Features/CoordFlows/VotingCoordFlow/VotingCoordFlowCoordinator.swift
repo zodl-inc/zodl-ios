@@ -353,11 +353,20 @@ extension VotingCoordFlow {
                 case .active:
                     hydratePersistedRoundChoices(&state, roundId: roundId)
 
+                    // MOB-1810: operator health checks start here — in the
+                    // background, at poll entry — instead of blocking the polls
+                    // list load. Their results are advisory ordering input for
+                    // the share-resubmission walk; nothing awaits them.
+                    let startHealthSweep: Effect<Action> = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+
                     if state.voteRecords[roundId] != nil {
                         // Already submitted — review-mode read-only, no
                         // pipeline needed.
                         state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -372,6 +381,7 @@ extension VotingCoordFlow {
                        cached.bundleCount > 0 {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -385,6 +395,7 @@ extension VotingCoordFlow {
                     // the sheet via `.ineligibleForRound`.
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
+                        startHealthSweep,
                         cancelShareTracking,
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
@@ -427,9 +438,23 @@ extension VotingCoordFlow {
                 } else {
                     statusPolling = .none
                 }
+                // MOB-1810: this entry point lands on the same active-round
+                // review screen as `.roundTapped`'s voted branch, so it needs
+                // the same background health sweep at poll entry — advisory
+                // ordering input for the share-resubmission walk; nothing
+                // awaits it.
+                let startHealthSweep: Effect<Action>
+                if state.allRounds.first(where: { $0.id == roundId })?.session.status == .active {
+                    startHealthSweep = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+                } else {
+                    startHealthSweep = .none
+                }
                 return .merge(
                     cancelShareTracking,
                     statusPolling,
+                    startHealthSweep,
                     loadSubmittedVotesFromDb(roundId: roundId)
                 )
 
@@ -1804,6 +1829,12 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
+            // MOB-1810: refresh operator health in the background so the
+            // share-resubmission walk's ordering reflects the present rather
+            // than poll entry. Fire-and-forget — it overlaps the delegation
+            // proof; nothing in this effect awaits probe results.
+            await votingAPI.startHealthProbeSweep()
+
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",
