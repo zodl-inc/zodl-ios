@@ -16,6 +16,10 @@ private enum VotingChainDisplayURL {
         compactAndFull(for: StaticVotingConfig.bundledPinnedSource)
     }
 
+    static var defaultBundledMirrorCompact: String {
+        compactAndFull(for: StaticVotingConfig.bundledPinnedSourceMirror).compact
+    }
+
     private static func displayString(for url: URL) -> String {
         guard let host = url.host else {
             return url.absoluteString
@@ -111,6 +115,7 @@ struct VotingConfigSettingsView: View {
         return chainSourceCard(
             name: String(localizable: .coinVoteConfigSettingsBundledName),
             url: pair.compact,
+            mirrorURL: VotingChainDisplayURL.defaultBundledMirrorCompact,
             isDefault: true,
             isSelected: isSelected,
             selectAccessibilityLabel: String(localizable: .coinVoteConfigSettingsAccessibilityDefault),
@@ -127,6 +132,7 @@ struct VotingConfigSettingsView: View {
         return chainSourceCard(
             name: chain.name,
             url: pair.compact,
+            mirrorURL: nil,
             isDefault: false,
             isSelected: isSelected,
             selectAccessibilityLabel: String(localizable: .coinVoteConfigSettingsAccessibilitySelectChain(chain.name)),
@@ -138,6 +144,7 @@ struct VotingConfigSettingsView: View {
     private func chainSourceCard(
         name: String,
         url: String,
+        mirrorURL: String?,
         isDefault: Bool,
         isSelected: Bool,
         selectAccessibilityLabel: String,
@@ -156,6 +163,7 @@ struct VotingConfigSettingsView: View {
             chainSourceCardContent(
                 name: name,
                 url: url,
+                mirrorURL: mirrorURL,
                 isDefault: isDefault,
                 showChevron: onContentTap != nil,
                 contentTap: onContentTap ?? onSelectTap
@@ -193,12 +201,13 @@ struct VotingConfigSettingsView: View {
     private func chainSourceCardContent(
         name: String,
         url: String,
+        mirrorURL: String?,
         isDefault: Bool,
         showChevron: Bool,
         contentTap: @escaping () -> Void
     ) -> some View {
         Button(action: contentTap) {
-            chainSourceCardContentRow(name: name, url: url, isDefault: isDefault, showChevron: showChevron)
+            chainSourceCardContentRow(name: name, url: url, mirrorURL: mirrorURL, isDefault: isDefault, showChevron: showChevron)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -207,6 +216,7 @@ struct VotingConfigSettingsView: View {
     private func chainSourceCardContentRow(
         name: String,
         url: String,
+        mirrorURL: String?,
         isDefault: Bool,
         showChevron: Bool
     ) -> some View {
@@ -229,6 +239,14 @@ struct VotingConfigSettingsView: View {
                     .tracking(-0.224)
                     .lineLimit(1)
                     .truncationMode(.tail)
+
+                if let mirrorURL {
+                    Text(String(localizable: .coinVoteConfigSettingsBundledMirrorLabel(mirrorURL)))
+                        .zFont(size: 14, style: Design.Text.tertiary)
+                        .tracking(-0.224)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
