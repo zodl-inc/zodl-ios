@@ -82,6 +82,55 @@ struct ShareTargetOrderingTests {
         #expect(result.remainingServerURLs == servers)
     }
 
+    @Test func delegateSharePayloadsBackfillsUnhealthyAfterHealthyFailure() async throws {
+        let recorder = PostRecorder()
+        let servers = [
+            "https://s1.example.com",
+            "https://s2.example.com",
+            "https://s3.example.com",
+            "https://s4.example.com"
+        ]
+        let healthy: Set<String> = ["https://s1.example.com", "https://s2.example.com"]
+        let unhealthy: Set<String> = ["https://s3.example.com", "https://s4.example.com"]
+
+        let result = try await delegateSharePayloads(
+            [makeSharePayload()],
+            proposalId: 7,
+            initialServerURLs: servers,
+            postShare: { server, _ in
+                await recorder.record(server)
+                if server == "https://s1.example.com" {
+                    throw URLError(URLError.Code.cannotConnectToHost)
+                }
+            },
+            selectTargets: { candidates, needed in
+                Array(orderCandidatesByHealth(candidates, healthy: healthy).prefix(needed))
+            }
+        )
+
+        // s1 (healthy but unreachable) is pruned after its initial failure; the
+        // backfill tops the target count back up to 2 from the only candidates
+        // left once s2 (the other initial target) has already succeeded — the
+        // never-veto property from `orderCandidatesByHealth`'s doc comment,
+        // exercised dynamically instead of via a static candidate list.
+        #expect(result.delegatedShares.count == 1)
+        let share = try #require(result.delegatedShares.first)
+        #expect(share.acceptedByServers.count == 2)
+        #expect(share.acceptedByServers.contains("https://s2.example.com"))
+        let backfilled = Set(share.acceptedByServers).subtracting(["https://s2.example.com"])
+        #expect(backfilled.count == 1)
+        #expect(backfilled.isSubset(of: unhealthy))
+
+        let expectedRemaining = Set(servers).subtracting(["https://s1.example.com"])
+        #expect(Set(result.remainingServerURLs) == expectedRemaining)
+
+        let attempts = await recorder.servers()
+        #expect(attempts.contains("https://s1.example.com"))
+        #expect(attempts.contains("https://s2.example.com"))
+        let unhealthyAttempts = Set(attempts).intersection(unhealthy)
+        #expect(unhealthyAttempts.count == 1)
+    }
+
     @Test func resubmitOrdersHealthyUntriedFirstAndSentLast() async {
         let recorder = PostRecorder()
         let configured = [

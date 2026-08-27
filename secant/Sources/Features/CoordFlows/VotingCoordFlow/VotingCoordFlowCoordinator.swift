@@ -438,9 +438,22 @@ extension VotingCoordFlow {
                 } else {
                     statusPolling = .none
                 }
+                // MOB-1810: this entry point lands on the same active-round
+                // review screen as `.roundTapped`'s voted branch, so it needs
+                // the same background health sweep at poll entry — advisory
+                // ordering input for share submission; nothing awaits it.
+                let startHealthSweep: Effect<Action>
+                if state.allRounds.first(where: { $0.id == roundId })?.session.status == .active {
+                    startHealthSweep = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+                } else {
+                    startHealthSweep = .none
+                }
                 return .merge(
                     cancelShareTracking,
                     statusPolling,
+                    startHealthSweep,
                     loadSubmittedVotesFromDb(roundId: roundId)
                 )
 

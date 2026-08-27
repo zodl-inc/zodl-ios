@@ -2187,6 +2187,27 @@ import Testing
     }
 
     @MainActor
+    @Test func viewMyVotesTappedOnActiveRoundStartsHealthSweep() async {
+        let recorder = EventRecorder()
+        var state = VotingCoordFlow.State()
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getBundleCount = { _ in 0 }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.viewMyVotesTapped(roundId: activeRoundId))
+        await waitForStore { recorder.events().contains("sweep") }
+        store.send(.dismissFlow)
+    }
+
+    @MainActor
     @Test func roundTappedOnFinalizedRoundDoesNotStartHealthSweep() async {
         let recorder = EventRecorder()
         var state = VotingCoordFlow.State()

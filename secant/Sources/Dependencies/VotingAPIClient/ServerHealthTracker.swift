@@ -177,7 +177,10 @@ actor ServerHealthTracker {
     /// Probe all servers in parallel with GET /shielded-vote/v1/status.
     /// No-op until `configure(serverURLs:fetcher:)` has set the fetcher; this
     /// is what keeps probes routed through Tor whenever the user has it
-    /// enabled, never the system URLSession.
+    /// enabled, never the system URLSession. The top-of-function and in-loop
+    /// cancellation checks exist so a sweep that `configure` cancels
+    /// mid-flight can neither read the freshly swapped-in config nor record
+    /// stale results into it.
     func probeAll() async {
         guard !Task.isCancelled else { return }
         let urls = Array(servers.keys)
@@ -220,7 +223,11 @@ actor ServerHealthTracker {
 /// present in `healthy` come first, the rest after, each group shuffled so
 /// share distribution across equally-ranked helpers stays uniform. Ordering
 /// only — every candidate is preserved and none is filtered, so a stale health
-/// view can deprioritize a server but never veto it.
+/// view can deprioritize a server but never veto it. When the healthy subset
+/// stays stable across a whole commitment, those helpers end up receiving
+/// most of its shares — each still short the one share `delegateSharePayloads`
+/// omits from its initial spread — a deliberate tradeoff of availability over
+/// uniform spread that leaves the ≥1-omitted-share privacy invariant unaffected.
 func orderCandidatesByHealth(_ candidates: [String], healthy: Set<String>) -> [String] {
     let healthyFirst = candidates.filter { healthy.contains($0) }.shuffled()
     let rest = candidates.filter { !healthy.contains($0) }.shuffled()
