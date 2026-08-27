@@ -16,7 +16,7 @@ extension DependencyValues {
 }
 
 /// Per-account encrypted storage for the voting flow's drafts, submitted
-/// choices, and per-round vote records. Mirrors the shape of
+/// choices, locked submission inputs, and per-round vote records. Mirrors
 /// `UserMetadataProviderClient` but with a scope limited to voting and no
 /// remote/iCloud sync.
 @DependencyClient
@@ -39,6 +39,19 @@ struct VotingMetadataProviderClient {
     var loadSubmittedVotes: @Sendable (_ roundId: String) -> [String: UInt32] = { _ in [:] }
     var setSubmittedVotes: @Sendable (_ votes: [String: UInt32], _ roundId: String) -> Void
     var clearSubmittedVotes: @Sendable (_ roundId: String) -> Void
+
+    /// Cast-vote inputs locked per proposal when commitment construction begins.
+    var loadSubmissionIntents: @Sendable (
+        _ roundId: String
+    ) -> [String: PersistedVoteSubmissionIntent] = { _ in [:] }
+    var setSubmissionIntents: @Sendable (
+        _ intents: [String: PersistedVoteSubmissionIntent],
+        _ roundId: String
+    ) -> Void
+    var clearSubmissionIntents: @Sendable (_ roundId: String) -> Void
+    var singleShareMode: @Sendable (_ roundId: String) -> Bool? = { _ in nil }
+    var setSingleShareMode: @Sendable (_ singleShare: Bool, _ roundId: String) -> Void
+    var clearSingleShareMode: @Sendable (_ roundId: String) -> Void
 
     /// Per-round completed-vote record.
     var record: @Sendable (_ roundId: String) -> PersistedVotingRecord? = { _ in nil }

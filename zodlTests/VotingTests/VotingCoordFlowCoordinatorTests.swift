@@ -140,6 +140,7 @@ import Testing
     }
 
     @Test func authenticationSucceededStartsSoftwareDelegationAtSubmitTime() {
+        let metadata = VotingMetadataBox()
         var session = RoundSession(roundId: activeRoundId)
         session.bundleCount = 1
         session.draftVotes = [1: .option(0)]
@@ -147,7 +148,11 @@ import Testing
         state.roundCache[activeRoundId] = session
         state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
 
-        _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         let updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(!state.pendingBatchSubmission)
@@ -165,6 +170,7 @@ import Testing
     // submission `.run` effect start, reusing the on-chain choice already
     // known from `session.votes`.
     @Test func authenticationSucceededProcessesUndeliveredShareProposalWithEmptyDrafts() {
+        let metadata = VotingMetadataBox()
         var session = RoundSession(roundId: activeRoundId)
         session.bundleCount = 1
         session.votes = [1: .option(0)]
@@ -173,13 +179,89 @@ import Testing
         state.roundCache[activeRoundId] = session
         state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
 
-        _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         let updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(!state.pendingBatchSubmission)
         #expect(updated.batchSubmissionStatus == .authorizing)
         #expect(updated.voteSubmissionStep == .authorizingVote)
         #expect(updated.delegationProofStatus == .generating(progress: 0))
+    }
+
+    @MainActor
+    @Test func voteChoiceRemainsUnlockedWhenTreeSyncFailsBeforeCommitmentBuild() async {
+        let metadata = VotingMetadataBox()
+        let state = softwareSubmissionState()
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(metadata)
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in throw TestError.voteTreeSyncFailed }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(metadata.submissionIntents[activeRoundId] == nil)
+        #expect(metadata.singleShareModes[activeRoundId] != nil)
+    }
+
+    @MainActor
+    @Test func voteChoiceIsLockedBeforeCommitmentBuild() async {
+        let metadata = VotingMetadataBox()
+        let state = softwareSubmissionState()
+        let testRoundId = activeRoundId
+        let expectedIntent = PersistedVoteSubmissionIntent(choice: 0, numOptions: 2)
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(metadata)
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, _, _, _, _, _, _, _, _ in
+                guard metadata.submissionIntents[testRoundId]?["1"] == expectedIntent else {
+                    throw TestError.voteChoiceNotLocked
+                }
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(metadata.submissionIntents[activeRoundId]?["1"] == expectedIntent)
     }
 
     // The literal Finding #8 shape: a vote record landed on-chain
@@ -208,6 +290,231 @@ import Testing
         let result = VotingCoordFlow.undeliveredShareProposalIds(records: records, shareDelegations: [])
 
         #expect(result.isEmpty)
+    }
+
+    @Test func unresolvedCommittedProposalIdsRequireEveryBundleAndShareRecord() throws {
+        let records = [
+            VoteRecord(proposalId: 3, bundleIndex: 0, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 3, bundleIndex: 1, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: true),
+            VoteRecord(proposalId: 7, bundleIndex: 0, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 7, bundleIndex: 1, choice: .option(0), submitted: true)
+        ]
+        let shares = [
+            try shareDelegation(bundleIndex: 0, proposalId: 3),
+            try shareDelegation(bundleIndex: 1, proposalId: 3),
+            try shareDelegation(bundleIndex: 0, proposalId: 7)
+        ]
+
+        let result = VotingCoordFlow.unresolvedCommittedProposalIds(
+            records: records,
+            shareDelegations: shares,
+            bundleCount: 2
+        )
+
+        #expect(result == [5, 7])
+    }
+
+    @MainActor
+    @Test func retryRejectsOmittedPersistedCommitmentBeforeBuildingFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0)],
+            proposalIds: [3, 5]
+        )
+        let expectedError = String(localizable: .coinVoteStoreUserErrorOmittedCommittedProposal)
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                == .submissionFailed(error: expectedError, submittedCount: 0, totalCount: 1)
+        }
+
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @MainActor
+    @Test func failedUnresolvedCommitmentStopsLowerFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:5"])
+    }
+
+    @MainActor
+    @Test func failedFreshCommitmentStopsLaterFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:3"])
+    }
+
+    @MainActor
+    @Test func unresolvedCommitmentCannotBeReplacedWithSyntheticAbstain() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(2), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 3, bundleIndex: 0, choice: .option(0), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events().isEmpty)
+        #expect(
+            store.state.roundCache[activeRoundId]?.batchVoteErrors[3]
+                == String(localizable: .coinVoteStoreUserErrorConflictingSelection)
+        )
+    }
+
+    @MainActor
+    @Test func selectionIntentWithoutPersistedCommitmentCanBeOmitted() async {
+        let metadata = VotingMetadataBox()
+        metadata.submissionIntents[activeRoundId] = [
+            "5": PersistedVoteSubmissionIntent(choice: 1, numOptions: 2)
+        ]
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(metadata)
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:3"])
     }
 
     @Test func delegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() {
@@ -695,6 +1002,86 @@ import Testing
         #expect(session.batchSubmissionStatus == .authorizing)
     }
 
+    @MainActor
+    @Test func interruptedKeystonePcztSetupIsResetAndRebuiltOnce() async {
+        let recorder = EventRecorder()
+        var state = authorizationState(signatures: [], completedBundles: [0])
+        state.roundCache[activeRoundId]?.draftVotes = [1: .option(0)]
+        state.roundCache[activeRoundId]?.delegationProofStatus = .failed("failed")
+        state.roundCache[activeRoundId]?.isDelegationProofInFlight = false
+        state.roundCache[activeRoundId]?.keystoneSigningStatus = .idle
+        state.roundCache[activeRoundId]?.batchSubmissionStatus = .authorizationFailed(error: "failed")
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                if recorder.recordAndCount("pczt:\(bundleIndex)") == 1 {
+                    throw TestError.delegationSetupOverwrite
+                }
+                return Self.makeVotingPcztResult(
+                    pcztSighash: Data(repeating: UInt8(bundleIndex + 5), count: 32)
+                )
+            }
+            $0.votingCrypto.resetVotingSessionState = { roundId in
+                recorder.record("reset:\(roundId)")
+            }
+        }
+
+        store.send(.retryBatchSubmission(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus == .awaitingSignature
+        }
+
+        #expect(recorder.events() == [
+            "pczt:1",
+            "reset:\(activeRoundId)",
+            "pczt:1"
+        ])
+        let session = tryUnwrap(store.state.roundCache[activeRoundId])
+        #expect(session.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.pendingVotingPczt != nil)
+    }
+
+    @MainActor
+    @Test func keystonePcztBuildFailureDoesNotResetUnrelatedState() async {
+        let recorder = EventRecorder()
+        var state = authorizationState(signatures: [], completedBundles: [0])
+        state.roundCache[activeRoundId]?.draftVotes = [1: .option(0)]
+        state.roundCache[activeRoundId]?.delegationProofStatus = .failed("failed")
+        state.roundCache[activeRoundId]?.isDelegationProofInFlight = false
+        state.roundCache[activeRoundId]?.keystoneSigningStatus = .idle
+        state.roundCache[activeRoundId]?.batchSubmissionStatus = .authorizationFailed(error: "failed")
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                recorder.record("pczt:\(bundleIndex)")
+                throw TestError.proofFailed
+            }
+            $0.votingCrypto.resetVotingSessionState = { roundId in
+                recorder.record("reset:\(roundId)")
+            }
+        }
+
+        store.send(.retryBatchSubmission(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus == .failed("proof failed")
+        }
+
+        #expect(recorder.events() == ["pczt:1"])
+    }
+
     @Test func delegationRejectedResetsKeystoneLoopButPreservesVotes() {
         var session = roundSession(
             drafts: [2: .option(1)],
@@ -1093,6 +1480,387 @@ import Testing
         )
 
         #expect(VotingCoordFlow.delegationVanPosition(from: confirmation) == nil)
+    }
+
+    @Test func commitmentTreeScanFindsVanAcrossPinnedPages() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let expected = Data(repeating: 0xA5, count: 32)
+        let other = Data(repeating: 0x5A, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { roundId in
+            await recorder.record("latest:\(roundId)")
+            return CommitmentTreeLatest(height: 130, nextIndex: 3)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { roundId, fromHeight, toHeight in
+            await recorder.record("page:\(roundId):\(fromHeight):\(toHeight)")
+            if fromHeight == 123 {
+                return CommitmentTreeLeafPage(
+                    blocks: [CommitmentTreeLeafBlock(
+                        height: 124,
+                        startIndex: 0,
+                        leavesBase64: [other.base64EncodedString()]
+                    )],
+                    nextFromHeight: 125
+                )
+            }
+            return CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 126,
+                    startIndex: 1,
+                    leavesBase64: [expected.base64EncodedString(), other.base64EncodedString()]
+                )],
+                nextFromHeight: 0
+            )
+        }
+
+        let position = try await VotingCoordFlow.findVanCommitmentPosition(
+            roundId: "aabb",
+            startHeight: 123,
+            expectedVanCmxBase64: expected.base64EncodedString(),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(position == 1)
+        #expect(await recorder.events() == [
+            "latest:aabb",
+            "page:aabb:123:130",
+            "page:aabb:125:130"
+        ])
+    }
+
+    @Test func commitmentTreeScanRejectsDiscontinuousLeaves() async {
+        let expected = Data(repeating: 0xA5, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            CommitmentTreeLatest(height: 10, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 10,
+                    startIndex: 1,
+                    leavesBase64: [expected.base64EncodedString()]
+                )],
+                nextFromHeight: 0
+            )
+        }
+
+        await #expect(throws: SvAPIError.self) {
+            _ = try await VotingCoordFlow.findVanCommitmentPosition(
+                roundId: "aabb",
+                startHeight: 0,
+                expectedVanCmxBase64: expected.base64EncodedString(),
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: 1,
+                retryDelay: .zero
+            )
+        }
+    }
+
+    @Test func spentDelegationFallsBackFromDifferentHashToPersistedVan() async throws {
+        let expected = Data(repeating: 0x05, count: 32)
+        let other = Data(repeating: 0x04, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in nil }
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            CommitmentTreeLatest(height: 125, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, fromHeight, toHeight in
+            #expect(fromHeight == 123)
+            #expect(toHeight == 125)
+            return CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 124,
+                    startIndex: 0,
+                    leavesBase64: [other.base64EncodedString(), expected.base64EncodedString()]
+                )],
+                nextFromHeight: 0
+            )
+        }
+
+        let resolution = try await VotingCoordFlow.resolveDelegationSubmission(
+            TxResult(txHash: "different-literal-tx", code: 1, log: "nullifier already spent"),
+            roundId: "aabb",
+            voteChainStartHeight: 123,
+            expectedVanCmxBase64: expected.base64EncodedString(),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(resolution == .confirmedVan(position: 1, txHash: nil))
+    }
+
+    @Test func successfulDelegationIgnoresSpentTextInLog() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let expected = Data(repeating: 0x05, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in
+            await recorder.record("tx")
+            return nil
+        }
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            await recorder.record("tree")
+            return CommitmentTreeLatest(height: 125, nextIndex: 0)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(blocks: [], nextFromHeight: 0)
+        }
+
+        let resolution = try await VotingCoordFlow.resolveDelegationSubmission(
+            TxResult(txHash: "accepted-tx", code: 0, log: "nullifier already spent"),
+            roundId: "aabb",
+            voteChainStartHeight: 123,
+            expectedVanCmxBase64: expected.base64EncodedString(),
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 1,
+            retryDelay: .zero
+        )
+
+        #expect(resolution == .acceptedTransaction(AcceptedVotingTransaction(
+            txHash: "accepted-tx",
+            confirmation: nil
+        )))
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func spentDelegationCancellationDoesNotFallBackToPersistedVan() async {
+        let recorder = RecoveryOrderRecorder()
+        let expected = Data(repeating: 0x05, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in throw CancellationError() }
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            await recorder.record("tree")
+            return CommitmentTreeLatest(height: 1, nextIndex: 0)
+        }
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await VotingCoordFlow.resolveDelegationSubmission(
+                TxResult(txHash: "cancelled-tx", code: 1, log: "nullifier already spent"),
+                roundId: "aabb",
+                voteChainStartHeight: 0,
+                expectedVanCmxBase64: expected.base64EncodedString(),
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: 1,
+                retryDelay: .zero
+            )
+        }
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func recoveredCastVoteMustMatchBothCommitmentTreePositions() async throws {
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            CommitmentTreeLatest(height: 125, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 124,
+                    startIndex: 0,
+                    leavesBase64: [
+                        voteAuthorityNote.base64EncodedString(),
+                        voteCommitment.base64EncodedString()
+                    ]
+                )],
+                nextFromHeight: 0
+            )
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,1")]
+            )]
+        )
+
+        try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+            roundId: "aabb",
+            startHeight: 123,
+            bundleIndex: 0,
+            proposalId: 1,
+            expectedVoteAuthorityNote: voteAuthorityNote,
+            expectedVoteCommitment: voteCommitment,
+            confirmation: confirmation,
+            votingAPI: votingAPI
+        )
+    }
+
+    @Test func recoveredCastVoteWaitsForCommitmentTreeToReachConfirmationHeight() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            let attempt = await recorder.recordAndCount("latest")
+            return attempt == 1
+                ? CommitmentTreeLatest(height: 123, nextIndex: 0)
+                : CommitmentTreeLatest(height: 124, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 124,
+                    startIndex: 0,
+                    leavesBase64: [
+                        voteAuthorityNote.base64EncodedString(),
+                        voteCommitment.base64EncodedString()
+                    ]
+                )],
+                nextFromHeight: 0
+            )
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,1")]
+            )]
+        )
+
+        try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+            roundId: "aabb",
+            startHeight: 123,
+            bundleIndex: 0,
+            proposalId: 1,
+            expectedVoteAuthorityNote: voteAuthorityNote,
+            expectedVoteCommitment: voteCommitment,
+            confirmation: confirmation,
+            votingAPI: votingAPI,
+            maxRecoveryAttempts: 2,
+            retryDelay: .zero
+        )
+
+        #expect(await recorder.events() == ["latest", "latest", "leaves"])
+    }
+
+    @Test func recoveredCastVoteReportsTreeLagAsVerificationUnavailable() async {
+        let recorder = RecoveryOrderRecorder()
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            await recorder.record("latest")
+            return CommitmentTreeLatest(height: 123, nextIndex: 0)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            await recorder.record("leaves")
+            return CommitmentTreeLeafPage(blocks: [], nextFromHeight: 0)
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,1")]
+            )]
+        )
+
+        await #expect(throws: VotingFlowError.self) {
+            try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+                roundId: "aabb",
+                startHeight: 123,
+                bundleIndex: 0,
+                proposalId: 1,
+                expectedVoteAuthorityNote: voteAuthorityNote,
+                expectedVoteCommitment: voteCommitment,
+                confirmation: confirmation,
+                votingAPI: votingAPI,
+                maxRecoveryAttempts: 2,
+                retryDelay: .zero
+            )
+        }
+
+        #expect(await recorder.events() == ["latest", "latest"])
+    }
+
+    @Test(arguments: [Optional<String>.none, "0"])
+    func recoveredCastVoteReportsMissingOrMalformedEventAsVerificationUnavailable(
+        leafIndex: String?
+    ) async {
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        let events = leafIndex.map {
+            [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: $0)]
+            )]
+        } ?? []
+        let confirmation = TxConfirmation(height: 124, code: 0, events: events)
+
+        do {
+            try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+                roundId: "aabb",
+                startHeight: 123,
+                bundleIndex: 0,
+                proposalId: 1,
+                expectedVoteAuthorityNote: voteAuthorityNote,
+                expectedVoteCommitment: voteCommitment,
+                confirmation: confirmation,
+                votingAPI: VotingAPIClient()
+            )
+            Issue.record("expected recovered vote verification to be unavailable")
+        } catch let error as VotingFlowError {
+            guard case let .recoveredVoteVerificationUnavailable(proposalId, bundleIndex) = error else {
+                Issue.record("expected verification unavailable, got \(error.localizedDescription)")
+                return
+            }
+            #expect(proposalId == 1)
+            #expect(bundleIndex == 0)
+        } catch {
+            Issue.record("expected VotingFlowError, got \(error.localizedDescription)")
+        }
+    }
+
+    @Test func recoveredCastVoteRejectsWrongCommitmentTreePosition() async {
+        let voteAuthorityNote = Data(repeating: 0x11, count: 32)
+        let voteCommitment = Data(repeating: 0x22, count: 32)
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchCommitmentTreeLatest = { _ in
+            CommitmentTreeLatest(height: 125, nextIndex: 2)
+        }
+        votingAPI.fetchCommitmentTreeLeafPage = { _, _, _ in
+            CommitmentTreeLeafPage(
+                blocks: [CommitmentTreeLeafBlock(
+                    height: 124,
+                    startIndex: 0,
+                    leavesBase64: [
+                        voteAuthorityNote.base64EncodedString(),
+                        voteCommitment.base64EncodedString()
+                    ]
+                )],
+                nextFromHeight: 0
+            )
+        }
+        let confirmation = TxConfirmation(
+            height: 124,
+            code: 0,
+            events: [TxEvent(
+                type: "cast_vote",
+                attributes: [TxEventAttribute(key: "leaf_index", value: "0,0")]
+            )]
+        )
+
+        await #expect(throws: VotingFlowError.self) {
+            try await VotingCoordFlow.requireRecoveredCastVoteMatchesCommitment(
+                roundId: "aabb",
+                startHeight: 123,
+                bundleIndex: 0,
+                proposalId: 1,
+                expectedVoteAuthorityNote: voteAuthorityNote,
+                expectedVoteCommitment: voteCommitment,
+                confirmation: confirmation,
+                votingAPI: votingAPI
+            )
+        }
     }
 
     @Test func delegationPipelineRecoversConfirmedCachedTxBeforeSkippingBundle() async throws {
@@ -1653,6 +2421,50 @@ import Testing
         #expect(recorder.events().isEmpty)
     }
 
+    @Test func cachedVoteRecoveryRejectsChangedLockedChoiceBeforeSideEffects() async {
+        let metadata = VotingMetadataBox()
+        metadata.submissionIntents["aabb"] = [
+            "1": PersistedVoteSubmissionIntent(choice: 0, numOptions: 3)
+        ]
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getVoteTxHash = { _, _, _ in .present("cached-tx") }
+        votingCrypto.confirmVoteSubmission = { _, _, _, _, _ in
+            await recorder.record("confirm")
+            return VoteConfirmationInfo(
+                txHash: "cached-tx",
+                vanLeafPosition: 0,
+                voteCommitmentTreePosition: 7
+            )
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+
+        var shareServerURLs = ["https://a.example.com"]
+        await withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            await #expect(throws: VotingFlowError.self) {
+                _ = try await VotingCoordFlow.tryRecoverInflightVote(
+                    roundId: "aabb",
+                    bundleIndex: 0,
+                    proposalId: 1,
+                    intent: Voting.VoteSubmissionIntent(choice: .option(1), numOptions: 3),
+                    account: nil,
+                    submitAtDeadline: nil,
+                    shareServerURLs: &shareServerURLs,
+                    votingCrypto: votingCrypto,
+                    votingAPI: votingAPI,
+                    send: Send<VotingCoordFlow.Action>(send: { _ in }),
+                    roundIdAction: { "aabb" }
+                )
+            }
+        }
+
+        #expect(await recorder.events().isEmpty)
+    }
+
     // Task 8P (CHP.md 2026-08-13, 8O adversarial finding): a share the servers already
     // accepted must not be allowed to vanish from local bookkeeping just because its
     // `recordShareDelegation` write faults. Share 0's local write fails here while share
@@ -1692,20 +2504,26 @@ import Testing
             )
         }
 
+        let metadata = VotingMetadataBox()
         var shareServerURLs = ["https://a.example.com"]
-        await #expect(throws: TestError.self) {
-            _ = try await VotingCoordFlow.tryRecoverInflightVote(
-                roundId: "aabb",
-                bundleIndex: 0,
-                proposalId: 1,
-                choice: .option(0),
-                submitAtDeadline: nil,
-                shareServerURLs: &shareServerURLs,
-                votingCrypto: votingCrypto,
-                votingAPI: votingAPI,
-                send: Send<VotingCoordFlow.Action>(send: { _ in }),
-                roundIdAction: { "aabb" }
-            )
+        await withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            await #expect(throws: TestError.self) {
+                _ = try await VotingCoordFlow.tryRecoverInflightVote(
+                    roundId: "aabb",
+                    bundleIndex: 0,
+                    proposalId: 1,
+                    intent: Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 3),
+                    account: nil,
+                    submitAtDeadline: nil,
+                    shareServerURLs: &shareServerURLs,
+                    votingCrypto: votingCrypto,
+                    votingAPI: votingAPI,
+                    send: Send<VotingCoordFlow.Action>(send: { _ in }),
+                    roundIdAction: { "aabb" }
+                )
+            }
         }
 
         // `markVoteSubmitted` still runs: the on-chain vote really is confirmed here,
@@ -1745,19 +2563,25 @@ import Testing
             )
         }
 
+        let metadata = VotingMetadataBox()
         var shareServerURLs = ["https://a.example.com"]
-        let recovered = try await VotingCoordFlow.tryRecoverInflightVote(
-            roundId: "aabb",
-            bundleIndex: 0,
-            proposalId: 1,
-            choice: .option(0),
-            submitAtDeadline: nil,
-            shareServerURLs: &shareServerURLs,
-            votingCrypto: votingCrypto,
-            votingAPI: votingAPI,
-            send: Send<VotingCoordFlow.Action>(send: { _ in }),
-            roundIdAction: { "aabb" }
-        )
+        let recovered = try await withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            try await VotingCoordFlow.tryRecoverInflightVote(
+                roundId: "aabb",
+                bundleIndex: 0,
+                proposalId: 1,
+                intent: Voting.VoteSubmissionIntent(choice: .option(0), numOptions: 3),
+                account: nil,
+                submitAtDeadline: nil,
+                shareServerURLs: &shareServerURLs,
+                votingCrypto: votingCrypto,
+                votingAPI: votingAPI,
+                send: Send<VotingCoordFlow.Action>(send: { _ in }),
+                roundIdAction: { "aabb" }
+            )
+        }
 
         #expect(recovered)
         let events = await recorder.events()
@@ -1782,7 +2606,7 @@ import Testing
         return session
     }
 
-    private func votingSession() -> VotingSession {
+    private func votingSession(proposalIds: [UInt32] = [1]) -> VotingSession {
         VotingSession(
             voteRoundId: Data(repeating: 0xAA, count: 32),
             snapshotHeight: 123,
@@ -1798,17 +2622,17 @@ import Testing
             nullifierIMTRoot: Data(repeating: 0x08, count: 32),
             creator: "creator",
             description: "Round description",
-            proposals: [
+            proposals: proposalIds.map { proposalId in
                 VotingProposal(
-                    id: 1,
-                    title: "Proposal 1",
-                    description: "Description 1",
+                    id: proposalId,
+                    title: "Proposal \(proposalId)",
+                    description: "Description \(proposalId)",
                     options: [
                         VoteOption(index: 0, label: "Support"),
                         VoteOption(index: 1, label: "Oppose")
                     ]
                 )
-            ],
+            },
             status: .active,
             createdAtHeight: 123,
             title: "Round"
@@ -1896,6 +2720,67 @@ import Testing
         state.isKeystoneUser = true
         state.$selectedWalletAccount.withLock { $0 = keystoneWalletAccount() }
         return state
+    }
+
+    private func softwareSubmissionState(
+        drafts: [UInt32: VoteChoice] = [1: .option(0)],
+        proposalIds: [UInt32] = [1]
+    ) -> VotingCoordFlow.State {
+        var session = roundSession(roundId: activeRoundId, drafts: drafts)
+        session.bundleCount = 1
+        session.delegationProofStatus = .complete
+
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.allRounds = [RoundListItem(
+            roundNumber: 1,
+            session: votingSession(proposalIds: proposalIds)
+        )]
+        state.serviceConfig = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [VotingServiceConfig.ServiceEndpoint(
+                url: "https://vote.example.com",
+                label: "vote"
+            )],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(
+                url: "https://pir.example.com",
+                label: "pir"
+            )],
+            supportedVersions: VotingServiceConfig.SupportedVersions(
+                pir: ["v0"],
+                voteProtocol: "v0",
+                tally: "v0",
+                voteServer: "v1"
+            ),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(
+                pirDepth: 1,
+                tier0Layers: 1,
+                tier1Layers: 1,
+                polyLen: 4096
+            )
+        )
+        state.$selectedWalletAccount.withLock { $0 = zcashWalletAccount() }
+        return state
+    }
+
+    private func shareDelegation(
+        bundleIndex: UInt32,
+        proposalId: UInt32
+    ) throws -> VotingShareDelegation {
+        let object: [String: Any] = [
+            "round_id": activeRoundId,
+            "bundle_index": bundleIndex,
+            "proposal_id": proposalId,
+            "share_index": 0,
+            "sent_to_urls": ["https://helper.example.com"],
+            "nullifier": String(repeating: "0a", count: 32),
+            "confirmed": false,
+            "submit_at": 0,
+            "created_at": 0
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(VotingShareDelegation.self, from: data)
     }
 
     private static func makeVotingPcztResult(
@@ -1992,6 +2877,18 @@ import Testing
         ))
     }
 
+    private func zcashWalletAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Zodl",
+            keySource: "zodl",
+            seedFingerprint: [UInt8](repeating: 0x04, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
     private func configureKeystoneAuthorizationDependencies(
         _ dependencies: inout DependencyValues,
         recorder: EventRecorder,
@@ -2061,6 +2958,16 @@ import Testing
             box.submittedVotes[roundId] = votes
         }
         client.clearSubmittedVotes = { roundId in box.submittedVotes[roundId] = [:] }
+        client.loadSubmissionIntents = { box.submissionIntents[$0] ?? [:] }
+        client.setSubmissionIntents = { intents, roundId in
+            box.submissionIntents[roundId] = intents
+        }
+        client.clearSubmissionIntents = { roundId in box.submissionIntents[roundId] = [:] }
+        client.singleShareMode = { box.singleShareModes[$0] }
+        client.setSingleShareMode = { singleShare, roundId in
+            box.singleShareModes[roundId] = singleShare
+        }
+        client.clearSingleShareMode = { roundId in box.singleShareModes.removeValue(forKey: roundId) }
         client.record = { box.records[$0] }
         client.allRecords = { box.records }
         client.setRecord = { record, roundId in box.records[roundId] = record }
@@ -2072,6 +2979,8 @@ import Testing
 private final class VotingMetadataBox: @unchecked Sendable {
     var drafts: [String: [String: UInt32]] = [:]
     var submittedVotes: [String: [String: UInt32]] = [:]
+    var submissionIntents: [String: [String: PersistedVoteSubmissionIntent]] = [:]
+    var singleShareModes: [String: Bool] = [:]
     var records: [String: PersistedVotingRecord] = [:]
 }
 
@@ -2123,8 +3032,12 @@ private enum TestError: LocalizedError {
     case proofFailed
     case shareRecordWriteFailed
     case delegationSetupMissing
+    case delegationSetupOverwrite
     case delegationProofMissing
     case votingDatabaseReadFailed
+    case voteTreeSyncFailed
+    case voteChoiceNotLocked
+    case commitmentBuildStopped
 
     var errorDescription: String? {
         switch self {
@@ -2136,10 +3049,18 @@ private enum TestError: LocalizedError {
             return "simulated local share-record write failure"
         case .delegationSetupMissing:
             return "simulated missing persisted delegation setup"
+        case .delegationSetupOverwrite:
+            return "refusing to overwrite pczt_sighash"
         case .delegationProofMissing:
             return "simulated missing persisted delegation proof"
         case .votingDatabaseReadFailed:
             return "simulated voting database read failure"
+        case .voteTreeSyncFailed:
+            return "simulated vote tree sync failure"
+        case .voteChoiceNotLocked:
+            return "vote choice was not locked before commitment build"
+        case .commitmentBuildStopped:
+            return "simulated commitment build stop"
         }
     }
 }

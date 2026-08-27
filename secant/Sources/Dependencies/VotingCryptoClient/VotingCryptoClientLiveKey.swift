@@ -477,6 +477,10 @@ extension VotingCryptoClient: DependencyKey {
                 try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
                 publishState(backend: backend, roundId: roundId)
             },
+            resetVotingSessionState: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetSessionState(roundId: roundId)
+            },
             resetTreeClient: {
                 let backend = try await dbActor.backend()
                 try backend.resetTreeClient()

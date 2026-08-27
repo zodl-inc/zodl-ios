@@ -34,6 +34,11 @@ func votingAccountIndex(for account: WalletAccount?) -> UInt32 {
 // MARK: - Voting namespace (helpers only — no reducer)
 
 enum Voting {
+    struct VoteSubmissionIntent: Equatable, Sendable {
+        let choice: VoteChoice
+        let numOptions: UInt32
+    }
+
     // MARK: - Vote record
 
     /// Persisted record of when a round's selected votes completed submission,
@@ -205,6 +210,64 @@ enum Voting {
         }
     }
 
+    // MARK: - Submission-intent persistence
+
+    /// Locks one proposal at the first operation that can persist a vote
+    /// commitment. Retries may reuse the same choice, but not replace it.
+    static func lockVoteSubmissionIntent(
+        _ requestedIntent: VoteSubmissionIntent,
+        proposalId: UInt32,
+        roundId: String,
+        account: Account?
+    ) throws {
+        @Dependency(\.votingMetadata) var votingMetadata
+        let previousIntents = votingMetadata.loadSubmissionIntents(roundId)
+        var lockedIntents = decodedSubmissionIntents(previousIntents)
+        if let lockedIntent = lockedIntents[proposalId], lockedIntent != requestedIntent {
+            throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
+        }
+        lockedIntents[proposalId] = requestedIntent
+
+        votingMetadata.setSubmissionIntents(encodedSubmissionIntents(lockedIntents), roundId)
+        do {
+            try storeVotingMetadata(account)
+        } catch {
+            votingMetadata.setSubmissionIntents(previousIntents, roundId)
+            throw error
+        }
+    }
+
+    /// Locks the round-wide tally-share mode independently of proposal choices.
+    /// This remains fixed from submission start because every bundle must use
+    /// the same share layout, even when no proposal commitment exists yet.
+    static func lockSingleShareMode(
+        proposedSingleShare: Bool,
+        roundId: String,
+        account: Account?
+    ) throws -> Bool {
+        @Dependency(\.votingMetadata) var votingMetadata
+        let previousSingleShare = votingMetadata.singleShareMode(roundId)
+        let lockedSingleShare = previousSingleShare ?? proposedSingleShare
+
+        votingMetadata.setSingleShareMode(lockedSingleShare, roundId)
+        do {
+            try storeVotingMetadata(account)
+        } catch {
+            if let previousSingleShare {
+                votingMetadata.setSingleShareMode(previousSingleShare, roundId)
+            } else {
+                votingMetadata.clearSingleShareMode(roundId)
+            }
+            throw error
+        }
+        return lockedSingleShare
+    }
+
+    static func loadSubmissionIntents(roundId: String) -> [UInt32: VoteSubmissionIntent] {
+        @Dependency(\.votingMetadata) var votingMetadata
+        return decodedSubmissionIntents(votingMetadata.loadSubmissionIntents(roundId))
+    }
+
     static func persistRoundChoices(
         drafts: [UInt32: VoteChoice],
         submittedVotes: [UInt32: VoteChoice],
@@ -233,14 +296,22 @@ enum Voting {
     ) throws {
         @Dependency(\.votingMetadata) var votingMetadata
         let previousDrafts = votingMetadata.loadDrafts(roundId)
+        let previousIntents = votingMetadata.loadSubmissionIntents(roundId)
+        let previousSingleShare = votingMetadata.singleShareMode(roundId)
         let previousRecord = votingMetadata.record(roundId)
 
         votingMetadata.clearDrafts(roundId)
+        votingMetadata.clearSubmissionIntents(roundId)
+        votingMetadata.clearSingleShareMode(roundId)
         votingMetadata.setRecord(record.persisted, roundId)
         do {
             try storeVotingMetadata(account)
         } catch {
             votingMetadata.setDrafts(previousDrafts, roundId)
+            votingMetadata.setSubmissionIntents(previousIntents, roundId)
+            if let previousSingleShare {
+                votingMetadata.setSingleShareMode(previousSingleShare, roundId)
+            }
             restoreVoteRecord(previousRecord, roundId: roundId)
             throw error
         }
@@ -273,6 +344,29 @@ enum Voting {
             if let proposalId = UInt32(entry.key) {
                 dict[proposalId] = .option(entry.value)
             }
+        }
+    }
+
+    private static func encodedSubmissionIntents(
+        _ intents: [UInt32: VoteSubmissionIntent]
+    ) -> [String: PersistedVoteSubmissionIntent] {
+        intents.reduce(into: [String: PersistedVoteSubmissionIntent]()) { result, entry in
+            result[String(entry.key)] = PersistedVoteSubmissionIntent(
+                choice: entry.value.choice.index,
+                numOptions: entry.value.numOptions
+            )
+        }
+    }
+
+    private static func decodedSubmissionIntents(
+        _ intents: [String: PersistedVoteSubmissionIntent]
+    ) -> [UInt32: VoteSubmissionIntent] {
+        intents.reduce(into: [UInt32: VoteSubmissionIntent]()) { result, entry in
+            guard let proposalId = UInt32(entry.key) else { return }
+            result[proposalId] = VoteSubmissionIntent(
+                choice: .option(entry.value.choice),
+                numOptions: entry.value.numOptions
+            )
         }
     }
 
@@ -371,6 +465,10 @@ enum VotingFlowError: LocalizedError {
     case missingKeystoneBundleSignature
     case missingVoteCommitmentBundle
     case inconsistentBundleSetup(bundleCount: UInt32, noteChunkCount: Int)
+    case conflictingVoteSubmissionIntent(proposalId: UInt32)
+    case omittedCommittedProposal(proposalId: UInt32)
+    case recoveredVoteCommitmentMismatch(proposalId: UInt32, bundleIndex: UInt32)
+    case recoveredVoteVerificationUnavailable(proposalId: UInt32, bundleIndex: UInt32)
     case delegationTxFailed(code: UInt32, log: String)
     case voteCommitmentTxFailed(code: UInt32, log: String)
 
@@ -395,6 +493,14 @@ enum VotingFlowError: LocalizedError {
             Voting bundle setup returned \(bundleCount) bundle(s) for \
             \(noteChunkCount) local note chunk(s).
             """
+        case .conflictingVoteSubmissionIntent:
+            return String(localizable: .coinVoteStoreUserErrorConflictingSelection)
+        case .omittedCommittedProposal:
+            return String(localizable: .coinVoteStoreUserErrorOmittedCommittedProposal)
+        case .recoveredVoteCommitmentMismatch:
+            return String(localizable: .coinVoteStoreUserErrorRecoveredVoteMismatch)
+        case .recoveredVoteVerificationUnavailable:
+            return String(localizable: .coinVoteStoreUserErrorRecoveredVoteUnverified)
         case .delegationTxFailed(let code, let log):
             let suffix = log.isEmpty ? "" : ": \(log)"
             return String(localizable: .coinVoteStoreErrorDelegationTxFailed(String(code), suffix))
@@ -491,14 +597,9 @@ enum VotingErrorMapper {
         if rawError.contains("delegation bundle build failed") || rawError.contains("create_proof failed") {
             return String(localizable: .coinVoteStoreUserErrorProofGenerationFailed)
         }
-        if rawError.contains("refusing to overwrite") {
-            // Triage fingerprint for finding #10 (CHP.md): `zcash_voting` stores
-            // `pczt_sighash` and its sibling setup blobs write-once per (round, wallet,
-            // bundle), and randomized re-builds can never match — this guard firing means
-            // a rebuild ran over persisted setup. The delegation pipeline now resumes
-            // from persisted setup instead of rebuilding, so this path is near-unreachable;
-            // if it surfaces anyway, retrying resumes correctly, so map it onto the
-            // existing retryable out-of-sync message rather than leaking crate internals.
+        if isDelegationSetupOverwrite(rawError) {
+            // Keystone recovery handles an interrupted signing request before UI mapping.
+            // Any other write-once setup collision remains retryable.
             return String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight)
         }
         if rawError.contains("NoTreeState") || rawError.contains("no tree state") {
@@ -516,6 +617,10 @@ enum VotingErrorMapper {
     static func isNullifierAlreadySpent(_ rawError: String) -> Bool {
         rawError.localizedCaseInsensitiveContains("nullifier")
             && rawError.localizedCaseInsensitiveContains("spent")
+    }
+
+    static func isDelegationSetupOverwrite(_ rawError: String) -> Bool {
+        rawError.localizedCaseInsensitiveContains("refusing to overwrite")
     }
 }
 

@@ -203,6 +203,9 @@ struct VotingCryptoClient {
     var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
     var generateVanWitness: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ anchorHeight: UInt32) async throws -> VanWitness
     var markVoteSubmitted: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ txHash: String) async throws -> Void
+    /// Clear locally prepared unsigned delegation setup for one round while preserving
+    /// bundles that already have a Keystone signature, submission hash, or VAN position.
+    var resetVotingSessionState: @Sendable (_ roundId: String) async throws -> Void
     /// Drop the in-memory TreeClient so the next `syncVoteTree` starts fresh.
     /// Recovers from stale state after commitment tree timeout.
     var resetTreeClient: @Sendable () async throws -> Void

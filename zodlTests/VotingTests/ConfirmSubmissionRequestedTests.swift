@@ -23,6 +23,7 @@ import Testing
             VotingCoordFlow()
         } withDependencies: {
             $0.localAuthentication.authenticate = { true }
+            $0.votingMetadata = votingMetadataClient()
         }
 
         store.send(.submitAllDraftsTapped(roundId: activeRoundId))
@@ -116,7 +117,11 @@ import Testing
         #expect(!updated.isDelegationPrecomputeInFlight)
         #expect(state.pendingBatchSubmission)
 
-        _ = flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        _ = withDependencies {
+            $0.votingMetadata = votingMetadataClient()
+        } operation: {
+            flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(updated.batchSubmissionStatus == .authorizing)
@@ -140,7 +145,11 @@ import Testing
         )
         #expect(state.pendingBatchSubmission)
 
-        _ = flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        _ = withDependencies {
+            $0.votingMetadata = votingMetadataClient()
+        } operation: {
+            flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(updated.batchSubmissionStatus == .authorizing)
@@ -171,7 +180,11 @@ import Testing
         #expect(updated.batchSubmissionStatus == .authorizing)
         #expect(state.pendingBatchSubmission)
 
-        _ = flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        _ = withDependencies {
+            $0.votingMetadata = votingMetadataClient()
+        } operation: {
+            flow.reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+        }
 
         updated = tryUnwrap(state.roundCache[activeRoundId])
         #expect(updated.batchSubmissionStatus == .submitting(currentIndex: 0, totalCount: 1, currentProposalId: 1))
@@ -240,6 +253,14 @@ import Testing
             createdAtHeight: 123,
             title: "Round"
         )
+    }
+
+    private func votingMetadataClient() -> VotingMetadataProviderClient {
+        var client = VotingMetadataProviderClient()
+        client.singleShareMode = { _ in nil }
+        client.setSingleShareMode = { _, _ in }
+        client.clearSingleShareMode = { _ in }
+        return client
     }
 
     @MainActor

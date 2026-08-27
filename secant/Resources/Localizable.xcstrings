@@ -5414,6 +5414,40 @@
         }
       }
     },
+    "coinVote.store.userError.conflictingSelection" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your choice for a proposal was locked by an earlier submission attempt and can't be changed. Resubmit with your original selection to finish voting."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your choice for a proposal was locked by an earlier submission attempt and can't be changed. Resubmit with your original selection to finish voting."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.omittedCommittedProposal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A proposal from an earlier submission attempt still needs to finish. Resubmit with all of your original selections to finish voting."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A proposal from an earlier submission attempt still needs to finish. Resubmit with all of your original selections to finish voting."
+          }
+        }
+      }
+    },
     "coinVote.store.userError.http5" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5614,6 +5648,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Proof generation failed. Please try again."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.recoveredVoteMismatch" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The network reported an existing vote for this wallet that does not match this submission. If you voted from another device, check that device's voting status."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The network reported an existing vote for this wallet that does not match this submission. If you voted from another device, check that device's voting status."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.recoveredVoteUnverified" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An earlier vote transaction may already be on the network, but it could not be verified with the vote servers. Please try again in a moment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An earlier vote transaction may already be on the network, but it could not be verified with the vote servers. Please try again in a moment."
           }
         }
       }
