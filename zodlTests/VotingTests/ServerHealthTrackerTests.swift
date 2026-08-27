@@ -208,5 +208,14 @@ struct ServerHealthTrackerTests {
         }
         #expect(await cooling.healthyServers() == [Self.serverB])
     }
+
+    @Test func configureToleratesDuplicateServerURLs() async {
+        let tracker = ServerHealthTracker()
+        await tracker.configure(serverURLs: [Self.serverA, Self.serverA, Self.serverB]) { _ in
+            throw ProbeError.unreachable
+        }
+
+        #expect(Set(await tracker.healthyServers()) == Set([Self.serverA, Self.serverB]))
+    }
 }
 #endif

@@ -96,6 +96,60 @@ import Testing
         }
     }
 
+    @Test func validateRejectsDuplicateVoteServerURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "Primary"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "Backup")
+            ],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
+    }
+
+    @Test func validateRejectsDuplicatePirEndpointURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+            pirEndpoints: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "Primary"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "Backup")
+            ],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: (any Error).self) {
+            try config.validate()
+        }
+    }
+
+    @Test func validateAcceptsDuplicateLabelsWithDistinctURLs() {
+        let config = VotingServiceConfig(
+            configVersion: 1,
+            voteServers: [
+                VotingServiceConfig.ServiceEndpoint(url: "https://one.example.com", label: "mirror"),
+                VotingServiceConfig.ServiceEndpoint(url: "https://two.example.com", label: "mirror")
+            ],
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v0", tally: "v0", voteServer: "v1"),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1)
+        )
+
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
     @Test func staticConfigValidationRejectsShortTrustedKey() {
         let config = makeStaticConfig(trustedKeyBytes: Data(repeating: 0x01, count: 31))
 

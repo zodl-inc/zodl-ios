@@ -78,7 +78,9 @@ actor ServerHealthTracker {
         sweepTask?.cancel()
         sweepTask = nil
         sweepGeneration &+= 1
-        servers = Dictionary(uniqueKeysWithValues: serverURLs.map { ($0, ServerState()) })
+        // The config layer rejects duplicate URLs (`VotingServiceConfig.validate`),
+        // but building the map must never be able to trap on them regardless.
+        servers = Dictionary(serverURLs.map { ($0, ServerState()) }, uniquingKeysWith: { first, _ in first })
         probeFetcher = fetcher
     }
 
