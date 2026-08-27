@@ -27,8 +27,32 @@ enum VotingHistoricalDelegationRecovery {
             roundId: request.roundId,
             nodeUrl: request.nodeURL
         )
+        return try prepareRequest(
+            request,
+            databaseURL: databaseURL,
+            walURL: directory.appendingPathComponent("\(VotingDatabaseSnapshot.databaseName)-wal"),
+            snapshot: snapshot
+        )
+    }
+
+    /// Assemble the SDK request from an already root-validated tree and the
+    /// untouched preserved files. Keeping this deterministic step separate
+    /// makes the security-sensitive byte-to-request transform independently
+    /// verifiable.
+    static func prepareRequest(
+        _ request: HistoricalVotingDelegationRecoveryRequest,
+        databaseURL: URL,
+        walURL: URL,
+        snapshot: VotingVerifiedVoteTreeSnapshot
+    ) throws -> VotingForensicDelegationRecoveryRequest? {
+        guard request.expectedBundleCount > 0,
+              request.roundParams.voteRoundId.hexString == request.roundId,
+              VotingDatabaseSnapshot.holdsData(at: databaseURL)
+        else {
+            return nil
+        }
+
         let targets = Set(snapshot.leaves.map { Data($0.commitment) })
-        let walURL = directory.appendingPathComponent("\(VotingDatabaseSnapshot.databaseName)-wal")
         let reports = try VotingDatabaseRecovery.recover(
             databaseURL: databaseURL,
             walURL: walURL,

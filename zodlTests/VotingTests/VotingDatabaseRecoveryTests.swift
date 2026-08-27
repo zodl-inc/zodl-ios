@@ -179,6 +179,96 @@ import Testing
         ) == nil)
     }
 
+    @Test func historicalRecoveryBuildsAValidSDKRequestFromReleasedDatabaseBytes() throws {
+        let incidentRoundId = String(repeating: "01", count: 32)
+        let incidentRand = Data([10] + [UInt8](repeating: 0, count: 31))
+        let incidentVan = Data([
+            232, 61, 123, 29, 249, 247, 83, 140, 64, 62, 212, 129, 182, 235, 51, 128,
+            205, 150, 67, 213, 102, 13, 174, 224, 229, 86, 55, 8, 42, 0, 116, 54
+        ])
+        let database = databasePage(releasedRecord: bundleRecord(
+            van: incidentVan,
+            rand: incidentRand,
+            totalNoteValue: 12_500_000,
+            delegationTxHash: nil,
+            recordRoundId: incidentRoundId
+        ))
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent(VotingDatabaseSnapshot.databaseName)
+        let walURL = directory.appendingPathComponent("\(VotingDatabaseSnapshot.databaseName)-wal")
+        try Data(database).write(to: databaseURL)
+
+        func smallField(_ lowByte: UInt8) -> [UInt8] {
+            [lowByte, 1] + [UInt8](repeating: 0, count: 30)
+        }
+        // These leaves and root are the same known-answer tree exercised by
+        // the SDK FFI success test. The incident VAN occurs once at position 1.
+        let snapshot = VotingVerifiedVoteTreeSnapshot(
+            anchorHeight: 5,
+            root: [
+                251, 113, 3, 32, 68, 62, 155, 112, 149, 216, 10, 161, 132, 61, 83, 238,
+                231, 1, 64, 254, 198, 141, 206, 13, 83, 61, 2, 219, 213, 249, 220, 25
+            ],
+            leaves: [
+                VotingVerifiedVoteTreeLeaf(position: 0, commitment: smallField(244)),
+                VotingVerifiedVoteTreeLeaf(position: 1, commitment: [UInt8](incidentVan)),
+                VotingVerifiedVoteTreeLeaf(position: 2, commitment: smallField(247)),
+                VotingVerifiedVoteTreeLeaf(
+                    position: 3,
+                    commitment: [
+                        207, 139, 95, 34, 0, 170, 237, 29, 132, 33, 187, 215, 204, 157,
+                        179, 238, 254, 209, 34, 74, 219, 185, 103, 109, 185, 145, 160, 26,
+                        33, 230, 51, 41
+                    ]
+                ),
+                VotingVerifiedVoteTreeLeaf(position: 4, commitment: smallField(249))
+            ]
+        )
+        let request = HistoricalVotingDelegationRecoveryRequest(
+            roundId: incidentRoundId,
+            walletId: walletId,
+            roundParams: VotingRoundParams(
+                voteRoundId: Data(repeating: 0x01, count: 32),
+                snapshotHeight: 100,
+                eaPK: Data(repeating: 0x02, count: 32),
+                ncRoot: Data(repeating: 0x03, count: 32),
+                nullifierIMTRoot: Data(repeating: 0x04, count: 32)
+            ),
+            nodeURL: "http://127.0.0.1:1",
+            hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
+            expectedBundleCount: 1
+        )
+
+        let sdkRequest = try #require(try VotingHistoricalDelegationRecovery.prepareRequest(
+            request,
+            databaseURL: databaseURL,
+            walURL: walURL,
+            snapshot: snapshot
+        ))
+
+        #expect(sdkRequest.expectedRoundParams == VotingForensicRoundParameters(
+            voteRoundId: incidentRoundId,
+            snapshotHeight: 100,
+            eaPk: [UInt8](repeating: 0x02, count: 32),
+            ncRoot: [UInt8](repeating: 0x03, count: 32),
+            nullifierImtRoot: [UInt8](repeating: 0x04, count: 32)
+        ))
+        #expect(sdkRequest.nodeUrl == request.nodeURL)
+        #expect(sdkRequest.hotkeyStoredSecret == [UInt8](repeating: 0xAB, count: 64))
+        let bundle = try #require(sdkRequest.bundles.first)
+        #expect(sdkRequest.bundles.count == 1)
+        #expect(bundle.bundleIndex == 0)
+        #expect(bundle.totalNoteValue == 12_500_000)
+        #expect(bundle.addressIndex == 0)
+        #expect(bundle.vanCommRand == [UInt8](incidentRand))
+        #expect(bundle.vanCommitment == [UInt8](incidentVan))
+        #expect(bundle.vanLeafPosition == 1)
+        #expect(bundle.delegationTxHash == nil)
+    }
+
     @Test func historicalRecoveryRejectsMismatchedRoundBeforeDiscovery() throws {
         let request = HistoricalVotingDelegationRecoveryRequest(
             roundId: roundId,
@@ -358,12 +448,14 @@ import Testing
         van: Data,
         rand: Data,
         totalNoteValue: Int64 = 130_000_000,
-        delegationTxHash: String? = String(repeating: "a", count: 64)
+        delegationTxHash: String? = String(repeating: "a", count: 64),
+        recordRoundId: String? = nil,
+        recordWalletId: String? = nil
     ) -> [UInt8] {
         let transactionHash: FixtureValue = delegationTxHash.map { .text($0) } ?? .null
         let values: [FixtureValue] = [
-            .text(roundId),
-            .text(walletId),
+            .text(recordRoundId ?? roundId),
+            .text(recordWalletId ?? walletId),
             .zero,
             .null,
             .null,

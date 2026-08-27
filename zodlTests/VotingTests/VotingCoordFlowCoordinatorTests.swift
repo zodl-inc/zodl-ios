@@ -731,6 +731,57 @@ import Testing
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))
     }
 
+    @Test func historicalRecoveryOnlyUnblocksOnExactSDKReceipt() async throws {
+        let params = VotingRoundParams(
+            voteRoundId: Data(repeating: 0x01, count: 32),
+            snapshotHeight: 100,
+            eaPK: Data(repeating: 0x02, count: 32),
+            ncRoot: Data(repeating: 0x03, count: 32),
+            nullifierIMTRoot: Data(repeating: 0x04, count: 32)
+        )
+        let capturedRequest = LockIsolated<HistoricalVotingDelegationRecoveryRequest?>(nil)
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.recoverHistoricalDelegation = { request in
+            capturedRequest.setValue(request)
+            return .recovered(anchorHeight: 5, bundleCount: 2, alreadyRecovered: false)
+        }
+
+        let result = try await VotingCoordFlow.recoverHistoricalDelegationBatch(
+            roundId: roundId,
+            walletId: "wallet-1",
+            roundParams: params,
+            nodeURL: "http://127.0.0.1:26657",
+            hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
+            expectedBundleCount: 2,
+            votingCrypto: votingCrypto
+        )
+
+        let recovery = try #require(result)
+        #expect(recovery.bundleCount == 2)
+        #expect(!recovery.alreadyRecovered)
+        let request = try #require(capturedRequest.value)
+        #expect(request.roundId == roundId)
+        #expect(request.walletId == "wallet-1")
+        #expect(request.roundParams == params)
+        #expect(request.nodeURL == "http://127.0.0.1:26657")
+        #expect(request.hotkeyStoredSecret == Data(repeating: 0xAB, count: 64))
+        #expect(request.expectedBundleCount == 2)
+
+        votingCrypto.recoverHistoricalDelegation = { _ in
+            .recovered(anchorHeight: 5, bundleCount: 1, alreadyRecovered: false)
+        }
+        let incompleteResult = try await VotingCoordFlow.recoverHistoricalDelegationBatch(
+            roundId: roundId,
+            walletId: "wallet-1",
+            roundParams: params,
+            nodeURL: "http://127.0.0.1:26657",
+            hotkeyStoredSecret: Data(repeating: 0xAB, count: 64),
+            expectedBundleCount: 2,
+            votingCrypto: votingCrypto
+        )
+        #expect(incompleteResult == nil)
+    }
+
     @Test func interruptedPersistedSetupRetriesOnlyDeterministicWork() async throws {
         let recorder = RecoveryOrderRecorder()
         let cachedNotes = [note(value: ballotDivisor, position: 0)]

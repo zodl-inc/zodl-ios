@@ -923,35 +923,32 @@ extension VotingCoordFlow {
                            let accountId,
                            let chainNodeURL,
                            let hotkey = try? walletStorage.exportVotingHotkey(accountId) {
-                            let recoveryRequest = HistoricalVotingDelegationRecoveryRequest(
-                                roundId: roundId,
-                                walletId: walletId,
-                                roundParams: VotingRoundParams(
-                                    voteRoundId: session.voteRoundId,
-                                    snapshotHeight: session.snapshotHeight,
-                                    eaPK: session.eaPK,
-                                    ncRoot: session.ncRoot,
-                                    nullifierIMTRoot: session.nullifierIMTRoot
-                                ),
-                                nodeURL: chainNodeURL,
-                                hotkeyStoredSecret: hotkey.storedSecret.value(),
-                                expectedBundleCount: existingBundleCount
-                            )
                             do {
-                                if case let .recovered(_, bundleCount, alreadyRecovered) =
-                                    try await votingCrypto.recoverHistoricalDelegation(recoveryRequest) {
+                                if let recovery = try await Self.recoverHistoricalDelegationBatch(
+                                    roundId: roundId,
+                                    walletId: walletId,
+                                    roundParams: VotingRoundParams(
+                                        voteRoundId: session.voteRoundId,
+                                        snapshotHeight: session.snapshotHeight,
+                                        eaPK: session.eaPK,
+                                        ncRoot: session.ncRoot,
+                                        nullifierIMTRoot: session.nullifierIMTRoot
+                                    ),
+                                    nodeURL: chainNodeURL,
+                                    hotkeyStoredSecret: hotkey.storedSecret.value(),
+                                    expectedBundleCount: existingBundleCount,
+                                    votingCrypto: votingCrypto
+                                ) {
                                     // The SDK has independently re-fetched the tree and restored
                                     // the complete batch atomically. From here the ordinary vote
                                     // path can use the recovered VAN witnesses.
-                                    delegationReady = bundleCount == existingBundleCount
-                                    if delegationReady {
-                                        recoveredBundleCount = bundleCount
-                                        recoveredBundleIndices = Set(0..<bundleCount)
-                                        LoggerProxy.info(
-                                            "Recovered historical delegation for round \(roundId); "
-                                                + "alreadyRecovered=\(alreadyRecovered)"
-                                        )
-                                    }
+                                    delegationReady = true
+                                    recoveredBundleCount = recovery.bundleCount
+                                    recoveredBundleIndices = Set(0..<recovery.bundleCount)
+                                    LoggerProxy.info(
+                                        "Recovered historical delegation for round \(roundId); "
+                                            + "alreadyRecovered=\(recovery.alreadyRecovered)"
+                                    )
                                 }
                             } catch {
                                 // This is an opportunistic route for the few stranded wallets.
@@ -3425,6 +3422,34 @@ extension VotingCoordFlow {
         let state = try await votingCrypto.getRoundState(roundId)
         let bundleCount = try await votingCrypto.getBundleCount(roundId)
         return (state, bundleCount)
+    }
+
+    /// Submit one complete historical batch and accept only an exact-count SDK
+    /// receipt. A partial or absent result cannot mark delegation as ready.
+    static func recoverHistoricalDelegationBatch(
+        roundId: String,
+        walletId: String,
+        roundParams: VotingRoundParams,
+        nodeURL: String,
+        hotkeyStoredSecret: Data,
+        expectedBundleCount: UInt32,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> (bundleCount: UInt32, alreadyRecovered: Bool)? {
+        let request = HistoricalVotingDelegationRecoveryRequest(
+            roundId: roundId,
+            walletId: walletId,
+            roundParams: roundParams,
+            nodeURL: nodeURL,
+            hotkeyStoredSecret: hotkeyStoredSecret,
+            expectedBundleCount: expectedBundleCount
+        )
+        guard case let .recovered(_, bundleCount, alreadyRecovered) =
+            try await votingCrypto.recoverHistoricalDelegation(request),
+            bundleCount == expectedBundleCount
+        else {
+            return nil
+        }
+        return (bundleCount, alreadyRecovered)
     }
 
     private static func votingWeight(for notes: [NoteInfo], bundleCount: UInt32) -> UInt64 {
