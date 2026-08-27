@@ -726,6 +726,46 @@ import Testing
         #expect(!isDelegationSigningTop(state))
     }
 
+    // MARK: - Round setup never deletes
+
+    @Test func absentRoundRowIsClassifiedForInsert() {
+        #expect(
+            VotingCoordFlow.classifyExistingRoundRow(existingState: nil, snapshotHeight: 100)
+                == .absent
+        )
+    }
+
+    /// A row left behind by setup interrupted between `initRound` and
+    /// `setupBundles` is reusable.
+    @Test func interruptedRoundRowIsClassifiedReusable() {
+        #expect(
+            VotingCoordFlow.classifyExistingRoundRow(
+                existingState: roundState(snapshotHeight: 100),
+                snapshotHeight: 100
+            ) == .reusable
+        )
+    }
+
+    @Test func changedSnapshotHeightIsClassifiedAsChanged() {
+        #expect(
+            VotingCoordFlow.classifyExistingRoundRow(
+                existingState: roundState(snapshotHeight: 100),
+                snapshotHeight: 101
+            ) == .parametersChanged
+        )
+    }
+
+    private func roundState(snapshotHeight: UInt64) -> RoundStateInfo {
+        RoundStateInfo(
+            roundId: roundId,
+            phase: .initialized,
+            snapshotHeight: snapshotHeight,
+            hotkeyAddress: nil,
+            delegatedWeight: nil,
+            proofGenerated: false
+        )
+    }
+
     @Test func persistedBundlesResumeInsteadOfPreparingFreshRound() {
         #expect(VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 1))
         #expect(!VotingCoordFlow.shouldResumePersistedRound(existingBundleCount: 0))

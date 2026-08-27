@@ -32,7 +32,6 @@ struct VotingCryptoClient {
     var getRoundState: @Sendable (_ roundId: String) async throws -> RoundStateInfo
     var getVotes: @Sendable (_ roundId: String) async throws -> [VoteRecord]
     var listRounds: @Sendable () async throws -> [RoundSummaryInfo]
-    var clearRound: @Sendable (_ roundId: String) async throws -> Void
     /// Delete bundle rows with index >= keepCount, removing skipped bundles
     /// so that proof_generated only considers signed+proven bundles.
     var deleteSkippedBundles: @Sendable (_ roundId: String, _ keepCount: UInt32) async throws -> Void

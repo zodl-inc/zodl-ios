@@ -968,6 +968,7 @@ extension VotingCoordFlow {
                         }
                         guard try await Self.prepareFreshRound(
                             roundId: roundId,
+                            existingState: existingState,
                             session: session,
                             snapshotHeight: snapshotHeight,
                             walletDbPath: walletDbPath,
@@ -3444,8 +3445,42 @@ extension VotingCoordFlow {
         }
     }
 
+    /// What a surviving `rounds` row means for this setup attempt.
+    enum ExistingRoundRow: Equatable {
+        /// No row: this is a genuine first setup, so insert one.
+        case absent
+        /// A row from a setup interrupted between `initRound` and
+        /// `setupBundles`. Reuse it.
+        case reusable
+        /// A row that no longer describes the round the session reports.
+        /// Reused anyway: a row only reaches this classification with no
+        /// bundles yet, so there is nothing at stake to protect.
+        case parametersChanged
+    }
+
+    /// Classifies a surviving round row.
+    ///
+    /// A row reaches `prepareFreshRound` only when the round carries no
+    /// bundles, i.e. setup was interrupted between `initRound` and
+    /// `setupBundles`.
+    ///
+    /// Only `snapshotHeight` is compared, because that is the only round
+    /// parameter `RoundStateInfo` carries. A round whose `ea_pk`, `nc_root` or
+    /// `nullifier_imt_root` changed under a stable id is NOT detected here;
+    /// catching that needs those fields on `RoundStateInfo`, or the crate's
+    /// `ensure_round` exposed through the FFI with its network-only comparison
+    /// widened to the full parameter set.
+    static func classifyExistingRoundRow(
+        existingState: RoundStateInfo?,
+        snapshotHeight: UInt64
+    ) -> ExistingRoundRow {
+        guard let existingState else { return .absent }
+        return existingState.snapshotHeight == snapshotHeight ? .reusable : .parametersChanged
+    }
+
     private static func prepareFreshRound(
         roundId: String,
+        existingState: RoundStateInfo?,
         session: VotingSession,
         snapshotHeight: UInt64,
         walletDbPath: String,
@@ -3455,9 +3490,6 @@ extension VotingCoordFlow {
         sdkSynchronizer: SDKSynchronizerClient,
         send: Send<Action>
     ) async throws -> Bool {
-        try? await votingCrypto.clearRound(roundId)
-        try await votingCrypto.clearRecoveryState(roundId)
-
         let params = VotingRoundParams(
             voteRoundId: session.voteRoundId,
             snapshotHeight: snapshotHeight,
@@ -3465,7 +3497,26 @@ extension VotingCoordFlow {
             ncRoot: session.ncRoot,
             nullifierIMTRoot: session.nullifierIMTRoot
         )
-        try await votingCrypto.initRound(params, nil)
+
+        switch classifyExistingRoundRow(existingState: existingState, snapshotHeight: snapshotHeight) {
+        case .absent:
+            try await votingCrypto.initRound(params, nil)
+        case .reusable:
+            break
+        case .parametersChanged:
+            // Reached only when the round has no bundles yet (a round with
+            // bundles takes the `shouldResumePersistedRound` path instead), so
+            // there is no `van_comm_rand` here to protect by hard-failing.
+            // Reuse the row rather than making the round permanently
+            // unopenable: every value it feeds into a proof or submission is
+            // re-verified independently downstream, so a stale row fails
+            // loudly there instead of silently corrupting anything.
+            LoggerProxy.warn(
+                "Reusing round \(roundId) despite a snapshotHeight mismatch (no bundles exist yet to protect)"
+            )
+        }
+
+        try await votingCrypto.clearRecoveryState(roundId)
 
         let setupResult = try await votingCrypto.setupBundles(roundId, notes)
         let bundleCount = setupResult.bundleCount
