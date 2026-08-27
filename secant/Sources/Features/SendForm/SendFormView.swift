@@ -105,6 +105,7 @@ struct SendFormView: View {
                                                         style: .standard,
                                                         isEnabled: store.isMaxButtonEnabled,
                                                         isInFlight: store.isMaxRequestInFlight
+                                                        || store.isSpendabilityBeingDetermined
                                                     ) {
                                                         store.send(.maxTapped)
                                                     }
