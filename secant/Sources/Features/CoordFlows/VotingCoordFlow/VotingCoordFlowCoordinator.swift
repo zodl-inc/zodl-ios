@@ -3153,6 +3153,10 @@ extension VotingCoordFlow {
         guard normalizedLeafValue.unicodeScalars.contains(where: { $0.value > 0x7f }) else {
             return nil
         }
+        // Check that the reencoding produces the same value, to verify the precondition
+        // asserted in the method documentation, to ensure valuex from other
+        // sources of corruption don't get interpreted as the encoding issue this
+        // method is intended to protect against.
         let reencodedLeafValue = Data(normalizedLeafValue.utf8).base64EncodedString()
         guard let position = UInt32(reencodedLeafValue), String(position) == reencodedLeafValue else {
             return nil
