@@ -492,6 +492,19 @@ extension VotingCryptoClient: DependencyKey {
                 }
                 return .notFound
             },
+            recoverHistoricalDelegation: { request in
+                guard let sdkRequest = try VotingHistoricalDelegationRecovery.prepareRequest(request) else {
+                    return .notFound
+                }
+                let backend = try await dbActor.backend()
+                let recovery = try backend.recoverDelegationFromForensicEvidence(sdkRequest)
+                publishState(backend: backend, roundId: request.roundId)
+                return .recovered(
+                    anchorHeight: recovery.anchorHeight,
+                    bundleCount: recovery.bundleCount,
+                    alreadyRecovered: recovery.alreadyRecovered
+                )
+            },
             storeVoteTxHash: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
                 try backend.storeVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)

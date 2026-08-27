@@ -16,6 +16,22 @@ enum VotingTxHashLookup: Equatable, Sendable {
     case present(String)
 }
 
+/// Inputs for the one-time historical delegation repair. This value carries
+/// the voting hotkey secret and is deliberately not printable.
+struct HistoricalVotingDelegationRecoveryRequest: Sendable, Undescribable {
+    let roundId: String
+    let walletId: String
+    let roundParams: VotingRoundParams
+    let nodeURL: String
+    let hotkeyStoredSecret: Data
+    let expectedBundleCount: UInt32
+}
+
+enum HistoricalVotingDelegationRecoveryOutcome: Equatable, Sendable {
+    case notFound
+    case recovered(anchorHeight: UInt32, bundleCount: UInt32, alreadyRecovered: Bool)
+}
+
 @DependencyClient
 struct VotingCryptoClient {
     // --- State stream (DB → UI, follows SDKSynchronizer pattern) ---
@@ -223,6 +239,12 @@ struct VotingCryptoClient {
         _ roundId: String,
         _ bundleIndex: UInt32
     ) async throws -> VotingTxHashLookup
+    /// Attempt the narrow repair for pre-3.10.2 rounds whose confirmed VAN
+    /// randomness was lost. No complete, unambiguous forensic batch is a
+    /// normal `.notFound` result and leaves the current database untouched.
+    var recoverHistoricalDelegation: @Sendable (
+        _ request: HistoricalVotingDelegationRecoveryRequest
+    ) async throws -> HistoricalVotingDelegationRecoveryOutcome = { _ in .notFound }
     /// Persist a vote TX hash for a bundle + proposal immediately after submission.
     var storeVoteTxHash: @Sendable (
         _ roundId: String,

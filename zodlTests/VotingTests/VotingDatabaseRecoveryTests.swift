@@ -2,6 +2,7 @@
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable @preconcurrency import ZcashLightClientKit
 
 @Suite struct VotingDatabaseRecoveryTests {
     private let roundId = String(repeating: "4a", count: 32)
@@ -39,6 +40,163 @@ import Testing
         #expect(candidate.source == .databaseLive(page: 1))
         #expect(unrelated.candidates.isEmpty)
         #expect(unrelated.rawTargetHits.isEmpty)
+    }
+
+    @Test func batchSearchOnlyDecodesTargetsPresentInPreservedBytes() throws {
+        let database = databasePage(
+            liveRecord: bundleRecord(van: rebuiltVan, rand: rebuiltRand),
+            releasedRecord: bundleRecord(van: acceptedVan, rand: originalRand)
+        )
+        var absentWithSamePrefix = acceptedVan
+        absentWithSamePrefix[31] = 0x23
+
+        let reports = try VotingDatabaseRecovery.recover(
+            databaseBytes: database,
+            vanCmxTargets: [
+                acceptedVan,
+                rebuiltVan,
+                absentWithSamePrefix
+            ],
+            roundId: roundId,
+            walletId: walletId
+        )
+
+        #expect(Set(reports.map(\.vanCmx)) == [acceptedVan, rebuiltVan])
+        #expect(reports.allSatisfy { $0.recovered })
+    }
+
+    @Test func conflictingRecoveryMaterialIsNotDeduplicatedAway() throws {
+        let database = databasePage(
+            liveRecord: bundleRecord(
+                van: acceptedVan,
+                rand: originalRand,
+                totalNoteValue: 130_000_000
+            ),
+            releasedRecord: bundleRecord(
+                van: acceptedVan,
+                rand: originalRand,
+                totalNoteValue: 140_000_000
+            )
+        )
+
+        let report = try VotingDatabaseRecovery.recover(
+            databaseBytes: database,
+            vanCmx: acceptedVan,
+            roundId: roundId,
+            walletId: walletId
+        )
+
+        #expect(Set(report.candidates.map(\.totalNoteValue)) == [130_000_000, 140_000_000])
+    }
+
+    @Test func completeBatchUsesTheValidatedTreePosition() throws {
+        let report = try VotingDatabaseRecovery.recover(
+            databaseBytes: databasePage(
+                liveRecord: bundleRecord(van: acceptedVan, rand: originalRand)
+            ),
+            vanCmx: acceptedVan,
+            roundId: roundId,
+            walletId: walletId
+        )
+        let snapshot = VotingVerifiedVoteTreeSnapshot(
+            anchorHeight: 42,
+            root: [UInt8](repeating: 0x77, count: 32),
+            leaves: [VotingVerifiedVoteTreeLeaf(position: 7, commitment: [UInt8](acceptedVan))]
+        )
+
+        let bundles = try #require(VotingHistoricalDelegationRecovery.completeBatch(
+            reports: [report],
+            snapshot: snapshot,
+            expectedBundleCount: 1
+        ))
+
+        #expect(bundles.count == 1)
+        #expect(bundles[0].bundleIndex == 0)
+        #expect(bundles[0].vanCommRand == [UInt8](originalRand))
+        #expect(bundles[0].vanLeafPosition == 7)
+    }
+
+    @Test func completeBatchRejectsConflictingCandidates() throws {
+        let report = try VotingDatabaseRecovery.recover(
+            databaseBytes: databasePage(
+                liveRecord: bundleRecord(
+                    van: acceptedVan,
+                    rand: originalRand,
+                    totalNoteValue: 130_000_000
+                ),
+                releasedRecord: bundleRecord(
+                    van: acceptedVan,
+                    rand: originalRand,
+                    totalNoteValue: 140_000_000
+                )
+            ),
+            vanCmx: acceptedVan,
+            roundId: roundId,
+            walletId: walletId
+        )
+        let snapshot = VotingVerifiedVoteTreeSnapshot(
+            anchorHeight: 42,
+            root: [UInt8](repeating: 0x77, count: 32),
+            leaves: [VotingVerifiedVoteTreeLeaf(position: 7, commitment: [UInt8](acceptedVan))]
+        )
+
+        #expect(VotingHistoricalDelegationRecovery.completeBatch(
+            reports: [report],
+            snapshot: snapshot,
+            expectedBundleCount: 1
+        ) == nil)
+    }
+
+    @Test func completeBatchRejectsConflictingTransactionHashes() throws {
+        let report = try VotingDatabaseRecovery.recover(
+            databaseBytes: databasePage(
+                liveRecord: bundleRecord(
+                    van: acceptedVan,
+                    rand: originalRand,
+                    delegationTxHash: String(repeating: "a", count: 64)
+                ),
+                releasedRecord: bundleRecord(
+                    van: acceptedVan,
+                    rand: originalRand,
+                    delegationTxHash: String(repeating: "b", count: 64)
+                )
+            ),
+            vanCmx: acceptedVan,
+            roundId: roundId,
+            walletId: walletId
+        )
+        let snapshot = VotingVerifiedVoteTreeSnapshot(
+            anchorHeight: 42,
+            root: [UInt8](repeating: 0x77, count: 32),
+            leaves: [VotingVerifiedVoteTreeLeaf(position: 7, commitment: [UInt8](acceptedVan))]
+        )
+
+        #expect(report.candidates.count == 2)
+        #expect(VotingHistoricalDelegationRecovery.completeBatch(
+            reports: [report],
+            snapshot: snapshot,
+            expectedBundleCount: 1
+        ) == nil)
+    }
+
+    @Test func historicalRecoveryRejectsMismatchedRoundBeforeDiscovery() throws {
+        let request = HistoricalVotingDelegationRecoveryRequest(
+            roundId: roundId,
+            walletId: walletId,
+            roundParams: VotingRoundParams(
+                voteRoundId: Data(repeating: 0x5A, count: 32),
+                snapshotHeight: 42,
+                eaPK: Data(repeating: 0x10, count: 32),
+                ncRoot: Data(repeating: 0x11, count: 32),
+                nullifierIMTRoot: Data(repeating: 0x12, count: 32)
+            ),
+            nodeURL: "https://invalid.example",
+            hotkeyStoredSecret: Data(repeating: 0x13, count: 32),
+            expectedBundleCount: 1
+        )
+
+        let sdkRequest = try VotingHistoricalDelegationRecovery.prepareRequest(request)
+        #expect(sdkRequest == nil)
     }
 
     @Test func replaysEveryChecksumValidCommittedWalPrefix() throws {
@@ -196,7 +354,13 @@ import Testing
 
     // MARK: - Deterministic SQLite fixtures
 
-    private func bundleRecord(van: Data, rand: Data) -> [UInt8] {
+    private func bundleRecord(
+        van: Data,
+        rand: Data,
+        totalNoteValue: Int64 = 130_000_000,
+        delegationTxHash: String? = String(repeating: "a", count: 64)
+    ) -> [UInt8] {
+        let transactionHash: FixtureValue = delegationTxHash.map { .text($0) } ?? .null
         let values: [FixtureValue] = [
             .text(roundId),
             .text(walletId),
@@ -213,7 +377,7 @@ import Testing
             .null,
             .null,
             .blob(van),
-            .integer(130_000_000, width: 4),
+            .integer(totalNoteValue, width: 4),
             .zero,
             .null,
             .blob(Data(repeating: 0x55, count: 32)),
@@ -221,7 +385,7 @@ import Testing
             .null,
             .blob(Data(repeating: 0x66, count: 32)),
             .null,
-            .text(String(repeating: "a", count: 64))
+            transactionHash
         ]
         #expect(values.count == 24)
 

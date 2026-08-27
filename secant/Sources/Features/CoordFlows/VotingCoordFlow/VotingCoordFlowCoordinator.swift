@@ -813,6 +813,8 @@ extension VotingCoordFlow {
                 let accountId = state.selectedWalletAccount?.id
                 let accountUUID: [UInt8] = accountId?.id ?? []
                 let isKeystoneUser = state.isKeystoneUser
+                let walletId = state.walletId
+                let chainNodeURL = state.serviceConfig?.voteServers.first?.url
 
                 // Seed the cache entry so subsequent re-entries see an
                 // in-progress session and don't trigger duplicate pipelines.
@@ -915,7 +917,51 @@ extension VotingCoordFlow {
                             }
                         }
 
-                        let delegationReady = recoveredBundleCount >= existingBundleCount
+                        var delegationReady = recoveredBundleCount >= existingBundleCount
+                        if !delegationReady,
+                           recoveredBundleCount == 0,
+                           let accountId,
+                           let chainNodeURL,
+                           let hotkey = try? walletStorage.exportVotingHotkey(accountId) {
+                            let recoveryRequest = HistoricalVotingDelegationRecoveryRequest(
+                                roundId: roundId,
+                                walletId: walletId,
+                                roundParams: VotingRoundParams(
+                                    voteRoundId: session.voteRoundId,
+                                    snapshotHeight: session.snapshotHeight,
+                                    eaPK: session.eaPK,
+                                    ncRoot: session.ncRoot,
+                                    nullifierIMTRoot: session.nullifierIMTRoot
+                                ),
+                                nodeURL: chainNodeURL,
+                                hotkeyStoredSecret: hotkey.storedSecret.value(),
+                                expectedBundleCount: existingBundleCount
+                            )
+                            do {
+                                if case let .recovered(_, bundleCount, alreadyRecovered) =
+                                    try await votingCrypto.recoverHistoricalDelegation(recoveryRequest) {
+                                    // The SDK has independently re-fetched the tree and restored
+                                    // the complete batch atomically. From here the ordinary vote
+                                    // path can use the recovered VAN witnesses.
+                                    delegationReady = bundleCount == existingBundleCount
+                                    if delegationReady {
+                                        recoveredBundleCount = bundleCount
+                                        recoveredBundleIndices = Set(0..<bundleCount)
+                                        LoggerProxy.info(
+                                            "Recovered historical delegation for round \(roundId); "
+                                                + "alreadyRecovered=\(alreadyRecovered)"
+                                        )
+                                    }
+                                }
+                            } catch {
+                                // This is an opportunistic route for the few stranded wallets.
+                                // No evidence or rejected evidence must not block normal setup.
+                                LoggerProxy.warn(
+                                    "Historical delegation recovery unavailable for round \(roundId): "
+                                        + error.localizedDescription
+                                )
+                            }
+                        }
                         if delegationReady {
                             try await votingCrypto.clearRecoveryState(roundId)
                         }
