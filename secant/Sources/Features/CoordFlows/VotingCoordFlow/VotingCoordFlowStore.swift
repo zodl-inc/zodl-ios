@@ -293,6 +293,11 @@ struct VotingCoordFlow {
         /// `.submitAllDraftsTapped` dispatches this directly.
         case authenticationSucceeded(roundId: String)
 
+        /// Biometric / passcode auth gate was declined or dismissed. Rolls
+        /// the `.requested` CTA state back to `.idle`; declining is a
+        /// choice, not an error, so nothing else is surfaced.
+        case batchAuthenticationDeclined(roundId: String)
+
         /// Delegation (ZKP #1) pipeline kick-off. Zashi-inline for non-
         /// Keystone users; for Keystone users this starts the per-bundle
         /// PCZT generation that drives the QR signing screen.

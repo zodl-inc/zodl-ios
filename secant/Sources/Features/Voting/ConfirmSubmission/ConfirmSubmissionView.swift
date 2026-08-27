@@ -8,9 +8,11 @@ import SwiftUI
 import ComposableArchitecture
 import ZcashLightClientKit
 
-/// Final review screen before vote submission. Renders four visual states from
+/// Final review screen before vote submission. Renders its visual states from
 /// the same body, driven by `RoundSession.batchSubmissionStatus`:
 ///   • `.idle` — Poll/Memo card + Confirm CTA
+///   • `.requested` — same chrome as `.idle`, with the Confirm CTA disabled
+///     behind a spinner while local auth (and any remaining prep) runs
 ///   • `.authorizing` / `.submitting` — Poll/VotingPower card + monotonic
 ///     progress bar + disabled CTA reflecting the current sub-step
 ///   • `.completed` — Poll/VotingPower card + green-check icon + Done CTA
@@ -138,15 +140,17 @@ struct ConfirmSubmissionView: View {
     }
 
     private func navTitle(status: BatchSubmissionStatus) -> String {
-        if case .idle = status {
+        switch status {
+        case .idle, .requested:
             return String(localizable: .coinVoteCommonConfirmation)
+        case .authorizing, .submitting, .completed, .authorizationFailed, .submissionFailed:
+            return String(localizable: .coinVoteCommonSubmission)
         }
-        return String(localizable: .coinVoteCommonSubmission)
     }
 
     private func headerTitle(status: BatchSubmissionStatus) -> String {
         switch status {
-        case .idle:
+        case .idle, .requested:
             return String(localizable: .coinVoteConfirmSubmissionHeaderTitleIdle)
         case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
             return String(localizable: .coinVoteConfirmSubmissionHeaderTitleSubmitting)
@@ -157,7 +161,7 @@ struct ConfirmSubmissionView: View {
 
     private func headerSubtitle(status: BatchSubmissionStatus) -> String {
         switch status {
-        case .idle:
+        case .idle, .requested:
             if store.isKeystoneUser {
                 return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleIdleKeystone)
             }
@@ -179,8 +183,10 @@ struct ConfirmSubmissionView: View {
         isKeystoneUser: Bool
     ) -> some View {
         let isIdle: Bool = {
-            if case .idle = status { return true }
-            return false
+            switch status {
+            case .idle, .requested: return true
+            default: return false
+            }
         }()
 
         VStack(spacing: 0) {
@@ -329,6 +335,18 @@ struct ConfirmSubmissionView: View {
                 store.send(.submitAllDraftsTapped(roundId: roundId))
             }
             .disabled(!hasPendingSubmissionWork || bundleCount == 0)
+
+        case .requested:
+            // Same CTA as `.idle`, visibly working: the tap must register
+            // instantly even though local auth hasn't resolved yet. Disabled
+            // so re-taps can't spawn extra auth prompts.
+            ZashiButton(
+                store.isKeystoneUser
+                    ? String(localizable: .coinVoteConfirmSubmissionConfirmWithKeystone)
+                    : String(localizable: .coinVoteCommonConfirm),
+                accessoryView: ProgressView()
+            ) {}
+            .disabled(true)
 
         case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
             // Progress card stays on screen while the error sheets (driven
@@ -527,10 +545,11 @@ private extension BatchSubmissionStatus {
     }
 
     /// True while we're actively making network/proving progress — used by
-    /// the view to disable the back gesture and CTA.
+    /// the view to disable the back gesture and CTA. `.requested` counts:
+    /// auth is pending and the submission is about to own the screen.
     var isInFlight: Bool {
         switch self {
-        case .authorizing, .submitting:
+        case .requested, .authorizing, .submitting:
             return true
         case .idle, .completed, .authorizationFailed, .submissionFailed:
             return false
