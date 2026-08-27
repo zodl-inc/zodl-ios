@@ -1,0 +1,38 @@
+name: 'Set up SDK companion (pin-validated)'
+description: >-
+  Validates .sdk-pin against the committed Xcode project mode. In full mode
+  additionally fetches zodl-swift-wallet-sdk at the pinned commit into the
+  path the project's local package reference expects (a sibling of the
+  checkout). No-op fetch in remote mode.
+inputs:
+  validate-only:
+    description: 'true = validate the pin and emit outputs without fetching'
+    required: false
+    default: 'false'
+outputs:
+  mode:
+    description: "'local' or 'remote'"
+    value: ${{ steps.companion.outputs.mode }}
+  pin:
+    description: 'The validated 40-char SDK sha (empty in remote mode)'
+    value: ${{ steps.companion.outputs.pin }}
+  sdk_path:
+    description: "The project's relativePath to the SDK (empty in remote mode)"
+    value: ${{ steps.companion.outputs.sdk_path }}
+  sdk_abs_path:
+    description: 'Absolute SDK path on this runner (empty in remote mode)'
+    value: ${{ steps.companion.outputs.sdk_abs_path }}
+runs:
+  using: composite
+  steps:
+    - id: companion
+      shell: bash
+      env:
+        SDK_PIN_DURABILITY_CHECK: ${{ inputs.validate-only == 'true' && '1' || '' }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        if [ "${{ inputs.validate-only }}" = "true" ]; then
+          ./Scripts/setup-sdk-companion.sh --validate-only
+        else
+          ./Scripts/setup-sdk-companion.sh
+        fi

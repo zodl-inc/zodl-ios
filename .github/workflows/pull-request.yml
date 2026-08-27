@@ -24,10 +24,101 @@ env:
   SOURCE_PACKAGES_PATH: .ci/DerivedData/SourcePackages
 
 jobs:
+  validate_sdk_pin:
+    # Cheap gate: an invalid .sdk-pin fails here in seconds instead of
+    # burning two macOS jobs. Same draft guard as unit_tests.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.companion.outputs.mode }}
+      pin: ${{ steps.companion.outputs.pin }}
+      sdk_path: ${{ steps.companion.outputs.sdk_path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate SDK pin
+        id: companion
+        uses: ./.github/actions/setup-sdk-companion
+        with:
+          validate-only: 'true'
+
+  build_ffi:
+    # Builds the SDK's Rust core (libzcashlc) once per push, shared with the
+    # e2e workflow through the product cache. Runs only when the project
+    # references a local SDK. The product cache is keyed on the FFI input
+    # tree at the pin, so re-runs and Swift-only SDK bumps finish in seconds.
+    needs: validate_sdk_pin
+    if: ${{ needs.validate_sdk_pin.outputs.mode == 'local' }}
+    runs-on: macos-26
+    # Cold cargo compile of the FFI graph (orchard, tor, ...) runs 20-30 min.
+    timeout-minutes: 45
+    concurrency:
+      # Serialize with the e2e workflow's twin job on the same push: the
+      # second job waits, then finds the product cache warm.
+      group: build-ffi-${{ github.event.pull_request.head.sha || github.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch SDK at the pinned commit
+        id: companion
+        uses: ./.github/actions/setup-sdk-companion
+      - name: Compute FFI cache keys
+        id: keys
+        run: |
+          SDK="${{ steps.companion.outputs.sdk_abs_path }}"
+          RUST_TREE=$(git -C "$SDK" rev-parse "HEAD:rust")
+          CARGO_HASH=$(shasum -a 256 "$SDK/Cargo.toml" "$SDK/Cargo.lock" | shasum -a 256 | awk '{print $1}')
+          if grep -q -- '--arm-simulator' "$SDK/Scripts/init-local-ffi.sh"; then
+            SLICE=arm-simulator
+          else
+            SLICE=arm-ios
+          fi
+          echo "slice=$SLICE" >> "$GITHUB_OUTPUT"
+          echo "product=${{ runner.os }}-ffi-product-$SLICE-$RUST_TREE-$CARGO_HASH" >> "$GITHUB_OUTPUT"
+          echo "cargo=${{ runner.os }}-ffi-cargo-$(shasum -a 256 "$SDK/Cargo.lock" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Restore built FFI (product cache)
+        id: product-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.companion.outputs.sdk_abs_path }}/LocalPackages
+          key: ${{ steps.keys.outputs.product }}
+      - name: Restore cargo cache
+        if: steps.product-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ steps.companion.outputs.sdk_abs_path }}/target
+          key: ${{ steps.keys.outputs.cargo }}
+          restore-keys: |
+            ${{ runner.os }}-ffi-cargo-
+      - name: Build FFI XCFramework
+        if: steps.product-cache.outputs.cache-hit != 'true'
+        run: |
+          if ! command -v rustup > /dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          fi
+          source "$HOME/.cargo/env"
+          rustup target add aarch64-apple-ios-sim aarch64-apple-ios
+          cd "${{ steps.companion.outputs.sdk_abs_path }}"
+          ./Scripts/init-local-ffi.sh --${{ steps.keys.outputs.slice }}
+      - name: Upload FFI LocalPackages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-localpackages
+          path: ${{ steps.companion.outputs.sdk_abs_path }}/LocalPackages
+          retention-days: 1
+          if-no-files-found: error
+
   unit_tests:
     # Skip draft PRs — no tests run until a PR is marked ready for review
     # (matches the e2e/smoke suite guard in e2e-smoke.yml).
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    needs: [validate_sdk_pin, build_ffi]
+    # build_ffi is skipped in remote mode; accept success OR skipped. The draft guard lives on validate_sdk_pin and propagates through needs.
+    if: ${{ !cancelled() && needs.validate_sdk_pin.result == 'success' && (needs.build_ffi.result == 'success' || needs.build_ffi.result == 'skipped') }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -35,6 +126,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up SDK companion
+        id: companion
+        uses: ./.github/actions/setup-sdk-companion
+      - name: Download built FFI (local SDK mode)
+        if: needs.validate_sdk_pin.outputs.mode == 'local'
+        uses: actions/download-artifact@v4
+        with:
+          name: ffi-localpackages
+          path: ${{ steps.companion.outputs.sdk_abs_path }}/LocalPackages
 
       - name: Select latest Xcode
         # macos-26 runners ship multiple Xcodes; default-selected is 16.x
@@ -62,7 +163,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SOURCE_PACKAGES_PATH }}
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-${{ hashFiles('secant.xcodeproj/project.pbxproj', 'secant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', '.sdk-pin') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-${{ steps.xcode-cache-key.outputs.hash }}-
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-
