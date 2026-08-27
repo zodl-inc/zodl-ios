@@ -7,8 +7,8 @@ import Foundation
 /// Health signals come from real share POSTs (`recordSuccess`/`recordFailure`)
 /// and from one-shot probe sweeps started at poll entry and submission start —
 /// never from the polls-list load path, and never from a periodic loop
-/// (MOB-1810). The data is advisory ordering input for share submission;
-/// nothing filters on it and nothing blocks on it.
+/// (MOB-1810). The data is advisory ordering input for the share-resubmission
+/// (recovery) walk; nothing filters on it and nothing blocks on it.
 actor ServerHealthTracker {
     static let shared = ServerHealthTracker()
 

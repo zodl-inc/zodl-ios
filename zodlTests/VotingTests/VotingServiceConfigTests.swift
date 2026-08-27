@@ -1515,7 +1515,11 @@ import Testing
 
     @Test func fallbackStillReachesTheOmittedHelperWhenTheOthersFail() async throws {
         let recorder = ShareTargetRecorder()
-        // Share 0 omits the server at index 0 from its initial targets.
+        // A single-share send falls below the 16-payload threshold that
+        // enables the per-share spread gate, so it never engages here —
+        // every server, this one included, is eligible from the first
+        // round, and the fallback walk should still reach it once the
+        // other helper fails.
         let omitted = "https://helper-a.example.com"
         let failing = "https://helper-b.example.com"
 
@@ -1531,7 +1535,7 @@ import Testing
         )
 
         let reached = await recorder.shareIndices(for: omitted)
-        #expect(reached.contains(0), "initial-submission omission must not survive into fallback — the share would be lost")
+        #expect(reached.contains(0), "single-share sends have the spread gate off, so the fallback walk must still reach the last one standing")
     }
 }
 

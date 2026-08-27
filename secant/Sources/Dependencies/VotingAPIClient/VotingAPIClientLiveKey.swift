@@ -508,8 +508,11 @@ func delegateSharePayloads(
                 // Fail open rather than drop the share: if pruning has left
                 // only the omitted helper untried, losing the share entirely
                 // is worse than that helper completing its set — the crate
-                // weighs it the same way. In every other case the omission
-                // holds across backfill rounds too.
+                // weighs it the same way. The same fail-open also fires as a
+                // redundancy top-up when the share already has an acceptance
+                // but the omitted helper is the only untried candidate left.
+                // In every other case the omission holds across backfill
+                // rounds too.
                 if !spread.isEmpty {
                     candidates = spread
                 }
