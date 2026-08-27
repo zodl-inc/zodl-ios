@@ -1166,6 +1166,45 @@ import Testing
         #expect(events == ["fetch:cached-tx", "van:0:42"])
     }
 
+    @Test func delegationPipelineSkipsHistoricallyRecoveredBundleWithoutTxHash() async throws {
+        let recorder = RecoveryOrderRecorder()
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.getDelegationTxHash = { _, _ in
+            await recorder.record("load-tx")
+            return .notFound
+        }
+
+        var votingAPI = VotingAPIClient()
+        votingAPI.submitDelegation = { _ in
+            await recorder.record("submit")
+            return TxResult(txHash: "unexpected-tx", code: 0)
+        }
+
+        try await VotingCoordFlow.runDelegationPipeline(
+            roundId: "aabb",
+            cachedNotes: [note(value: ballotDivisor, position: 0)],
+            senderSeed: [],
+            hotkeySeed: [],
+            networkId: 1,
+            accountIndex: 0,
+            roundName: "Round",
+            pirEndpoints: ["https://pir.example.com"],
+            expectedSnapshotHeight: 1,
+            pirDepth: 1,
+            tier0Layers: 1,
+            tier1Layers: 1,
+            polyLen: 4096,
+            initiallyCompletedBundles: [0],
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI,
+            send: Send<VotingCoordFlow.Action>(send: { _ in }),
+            delegationConfirmationTimeout: 0,
+            delegationConfirmationRetryDelay: .zero
+        )
+
+        #expect(await recorder.events().isEmpty)
+    }
+
     @Test func delegationPipelineDoesNotSkipCachedTxWithoutConfirmedVanPosition() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()

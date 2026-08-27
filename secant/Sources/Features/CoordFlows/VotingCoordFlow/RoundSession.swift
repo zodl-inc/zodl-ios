@@ -138,7 +138,8 @@ struct RoundSession: Equatable {
     /// scan so a crash mid-loop doesn't lose signed bundles.
     var keystoneBundleSignatures: [KeystoneBundleSignature] = []
 
-    /// Delegation bundles recovered as already submitted on-chain.
+    /// Delegation bundles recovered as already submitted on-chain. Zashi uses this to
+    /// skip forensic recoveries without a TX hash; Keystone also skips their signing loop.
     var completedKeystoneDelegationBundleIndices: Set<UInt32> = []
 
     /// Voting PCZT result (metadata + pczt_bytes) for the bundle currently

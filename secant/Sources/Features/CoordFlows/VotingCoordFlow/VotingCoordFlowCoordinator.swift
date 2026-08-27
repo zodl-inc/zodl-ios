@@ -963,7 +963,7 @@ extension VotingCoordFlow {
                             try await votingCrypto.clearRecoveryState(roundId)
                         }
 
-                        if isKeystoneUser, !recoveredBundleIndices.isEmpty {
+                        if !recoveredBundleIndices.isEmpty {
                             await send(.delegationBundlesRecovered(
                                 roundId: roundId,
                                 bundleIndices: recoveredBundleIndices
@@ -1774,6 +1774,7 @@ extension VotingCoordFlow {
         let totalCount = drafts.count
         let delegationDone = isDelegationReady(session)
         let delegationPrepared = session.delegationPrecomputeStatus == .ready
+        let recoveredDelegationBundleIndices = session.completedKeystoneDelegationBundleIndices
 
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.batchSubmissionStatus = delegationDone
@@ -1860,6 +1861,7 @@ extension VotingCoordFlow {
                         tier1Layers: pirLayout.tier1Layers,
                         polyLen: polyLen,
                         delegationPrepared: delegationPrepared,
+                        initiallyCompletedBundles: recoveredDelegationBundleIndices,
                         seedFingerprint: seedFingerprint,
                         votingCrypto: votingCrypto,
                         votingAPI: votingAPI,
@@ -3816,6 +3818,7 @@ extension VotingCoordFlow {
         tier1Layers: UInt32,
         polyLen: UInt32,
         delegationPrepared: Bool = false,
+        initiallyCompletedBundles: Set<UInt32> = [],
         seedFingerprint: Data? = nil,
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
@@ -3825,8 +3828,11 @@ extension VotingCoordFlow {
     ) async throws {
         let noteChunks = cachedNotes.smartBundles().bundles
         let bundleCount = UInt32(noteChunks.count)
-        var completedBundles = Set<UInt32>()
-        for idx: UInt32 in 0..<bundleCount {
+        // Historical recovery proves the restored VAN against the current on-chain root,
+        // but the pre-3.10.2 database no longer has its original transaction hash. Carry
+        // those proven indices forward so normal delegation only submits missing bundles.
+        var completedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
+        for idx: UInt32 in 0..<bundleCount where !completedBundles.contains(idx) {
             if let vanPosition = try await recoverDelegationVanPosition(
                 roundId: roundId,
                 bundleIndex: idx,
