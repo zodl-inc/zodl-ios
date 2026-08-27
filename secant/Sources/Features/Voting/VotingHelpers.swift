@@ -594,14 +594,9 @@ enum VotingErrorMapper {
         if rawError.contains("delegation bundle build failed") || rawError.contains("create_proof failed") {
             return String(localizable: .coinVoteStoreUserErrorProofGenerationFailed)
         }
-        if rawError.contains("refusing to overwrite") {
-            // Triage fingerprint for finding #10 (CHP.md): `zcash_voting` stores
-            // `pczt_sighash` and its sibling setup blobs write-once per (round, wallet,
-            // bundle), and randomized re-builds can never match — this guard firing means
-            // a rebuild ran over persisted setup. The delegation pipeline now resumes
-            // from persisted setup instead of rebuilding, so this path is near-unreachable;
-            // if it surfaces anyway, retrying resumes correctly, so map it onto the
-            // existing retryable out-of-sync message rather than leaking crate internals.
+        if isDelegationSetupOverwrite(rawError) {
+            // Keystone recovery handles an interrupted signing request before UI mapping.
+            // Any other write-once setup collision remains retryable.
             return String(localizable: .coinVoteStoreUserErrorInvalidAnchorHeight)
         }
         if rawError.contains("NoTreeState") || rawError.contains("no tree state") {
@@ -619,6 +614,10 @@ enum VotingErrorMapper {
     static func isNullifierAlreadySpent(_ rawError: String) -> Bool {
         rawError.localizedCaseInsensitiveContains("nullifier")
             && rawError.localizedCaseInsensitiveContains("spent")
+    }
+
+    static func isDelegationSetupOverwrite(_ rawError: String) -> Bool {
+        rawError.localizedCaseInsensitiveContains("refusing to overwrite")
     }
 }
 

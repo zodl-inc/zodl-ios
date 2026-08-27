@@ -2765,18 +2765,33 @@ extension VotingCoordFlow {
                     bundleNotes[0].ufvkStr, networkId
                 )
                 LoggerProxy.info("Keystone: preparing PCZT for bundle \(keystoneBundleIndex + 1)/\(bundleCount)")
-                let govPczt = try await votingCrypto.buildVotingPczt(
-                    roundId,
-                    keystoneBundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    keystoneSeedFingerprint
-                )
+                let buildPczt: @Sendable () async throws -> VotingPcztResult = {
+                    try await votingCrypto.buildVotingPczt(
+                        roundId,
+                        keystoneBundleIndex,
+                        bundleNotes,
+                        emptySenderSeed,
+                        hotkeySeed,
+                        networkId,
+                        accountIndex,
+                        roundName,
+                        orchardFvk,
+                        keystoneSeedFingerprint
+                    )
+                }
+                let govPczt: VotingPcztResult
+                do {
+                    govPczt = try await buildPczt()
+                } catch {
+                    guard VotingErrorMapper.isDelegationSetupOverwrite(error.localizedDescription) else {
+                        throw error
+                    }
+                    LoggerProxy.info(
+                        "Keystone: resetting interrupted PCZT setup for round \(roundId), bundle \(keystoneBundleIndex)"
+                    )
+                    try await votingCrypto.resetVotingSessionState(roundId)
+                    govPczt = try await buildPczt()
+                }
                 let redactedPczt = try await sdkSynchronizer.redactPCZTForSigner(govPczt.pcztBytes)
                 await backgroundTask.endTask(bgTaskId)
                 await send(.keystoneSigningPrepared(roundId: roundId, govPczt: govPczt, unsignedPczt: redactedPczt))

@@ -777,6 +777,86 @@ import Testing
         #expect(session.batchSubmissionStatus == .authorizing)
     }
 
+    @MainActor
+    @Test func interruptedKeystonePcztSetupIsResetAndRebuiltOnce() async {
+        let recorder = EventRecorder()
+        var state = authorizationState(signatures: [], completedBundles: [0])
+        state.roundCache[activeRoundId]?.draftVotes = [1: .option(0)]
+        state.roundCache[activeRoundId]?.delegationProofStatus = .failed("failed")
+        state.roundCache[activeRoundId]?.isDelegationProofInFlight = false
+        state.roundCache[activeRoundId]?.keystoneSigningStatus = .idle
+        state.roundCache[activeRoundId]?.batchSubmissionStatus = .authorizationFailed(error: "failed")
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                if recorder.recordAndCount("pczt:\(bundleIndex)") == 1 {
+                    throw TestError.delegationSetupOverwrite
+                }
+                return Self.makeVotingPcztResult(
+                    pcztSighash: Data(repeating: UInt8(bundleIndex + 5), count: 32)
+                )
+            }
+            $0.votingCrypto.resetVotingSessionState = { roundId in
+                recorder.record("reset:\(roundId)")
+            }
+        }
+
+        store.send(.retryBatchSubmission(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus == .awaitingSignature
+        }
+
+        #expect(recorder.events() == [
+            "pczt:1",
+            "reset:\(activeRoundId)",
+            "pczt:1"
+        ])
+        let session = tryUnwrap(store.state.roundCache[activeRoundId])
+        #expect(session.completedKeystoneDelegationBundleIndices == Set([0]))
+        #expect(session.currentKeystoneBundleIndex == 1)
+        #expect(session.pendingVotingPczt != nil)
+    }
+
+    @MainActor
+    @Test func keystonePcztBuildFailureDoesNotResetUnrelatedState() async {
+        let recorder = EventRecorder()
+        var state = authorizationState(signatures: [], completedBundles: [0])
+        state.roundCache[activeRoundId]?.draftVotes = [1: .option(0)]
+        state.roundCache[activeRoundId]?.delegationProofStatus = .failed("failed")
+        state.roundCache[activeRoundId]?.isDelegationProofInFlight = false
+        state.roundCache[activeRoundId]?.keystoneSigningStatus = .idle
+        state.roundCache[activeRoundId]?.batchSubmissionStatus = .authorizationFailed(error: "failed")
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.sdkSynchronizer = .noOp
+            $0.walletStorage = .noOp
+            $0.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data([0x01]) }
+            $0.votingCrypto.buildVotingPczt = { _, bundleIndex, _, _, _, _, _, _, _, _ in
+                recorder.record("pczt:\(bundleIndex)")
+                throw TestError.proofFailed
+            }
+            $0.votingCrypto.resetVotingSessionState = { roundId in
+                recorder.record("reset:\(roundId)")
+            }
+        }
+
+        store.send(.retryBatchSubmission(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus == .failed("proof failed")
+        }
+
+        #expect(recorder.events() == ["pczt:1"])
+    }
+
     @Test func delegationRejectedResetsKeystoneLoopButPreservesVotes() {
         var session = roundSession(
             drafts: [2: .option(1)],
@@ -2702,6 +2782,7 @@ private enum TestError: LocalizedError {
     case proofFailed
     case shareRecordWriteFailed
     case delegationSetupMissing
+    case delegationSetupOverwrite
     case delegationProofMissing
     case votingDatabaseReadFailed
     case voteTreeSyncFailed
@@ -2718,6 +2799,8 @@ private enum TestError: LocalizedError {
             return "simulated local share-record write failure"
         case .delegationSetupMissing:
             return "simulated missing persisted delegation setup"
+        case .delegationSetupOverwrite:
+            return "refusing to overwrite pczt_sighash"
         case .delegationProofMissing:
             return "simulated missing persisted delegation proof"
         case .votingDatabaseReadFailed:
