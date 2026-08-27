@@ -5431,6 +5431,23 @@
         }
       }
     },
+    "coinVote.store.userError.omittedCommittedProposal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A proposal from an earlier submission attempt still needs to finish. Resubmit with all of your original selections to finish voting."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A proposal from an earlier submission attempt still needs to finish. Resubmit with all of your original selections to finish voting."
+          }
+        }
+      }
+    },
     "coinVote.store.userError.http5" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -466,6 +466,7 @@ enum VotingFlowError: LocalizedError {
     case missingVoteCommitmentBundle
     case inconsistentBundleSetup(bundleCount: UInt32, noteChunkCount: Int)
     case conflictingVoteSubmissionIntent(proposalId: UInt32)
+    case omittedCommittedProposal(proposalId: UInt32)
     case recoveredVoteCommitmentMismatch(proposalId: UInt32, bundleIndex: UInt32)
     case recoveredVoteVerificationUnavailable(proposalId: UInt32, bundleIndex: UInt32)
     case delegationTxFailed(code: UInt32, log: String)
@@ -494,6 +495,8 @@ enum VotingFlowError: LocalizedError {
             """
         case .conflictingVoteSubmissionIntent:
             return String(localizable: .coinVoteStoreUserErrorConflictingSelection)
+        case .omittedCommittedProposal:
+            return String(localizable: .coinVoteStoreUserErrorOmittedCommittedProposal)
         case .recoveredVoteCommitmentMismatch:
             return String(localizable: .coinVoteStoreUserErrorRecoveredVoteMismatch)
         case .recoveredVoteVerificationUnavailable:

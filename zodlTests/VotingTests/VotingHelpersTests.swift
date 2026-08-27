@@ -63,6 +63,9 @@ import Testing
             from: VotingFlowError.conflictingVoteSubmissionIntent(proposalId: 1)
         ) == String(localizable: .coinVoteStoreUserErrorConflictingSelection))
         #expect(VotingErrorMapper.userFriendlyMessage(
+            from: VotingFlowError.omittedCommittedProposal(proposalId: 1)
+        ) == String(localizable: .coinVoteStoreUserErrorOmittedCommittedProposal))
+        #expect(VotingErrorMapper.userFriendlyMessage(
             from: VotingFlowError.recoveredVoteCommitmentMismatch(proposalId: 1, bundleIndex: 0)
         ) == String(localizable: .coinVoteStoreUserErrorRecoveredVoteMismatch))
         #expect(VotingErrorMapper.userFriendlyMessage(

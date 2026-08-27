@@ -292,6 +292,231 @@ import Testing
         #expect(result.isEmpty)
     }
 
+    @Test func unresolvedCommittedProposalIdsRequireEveryBundleAndShareRecord() throws {
+        let records = [
+            VoteRecord(proposalId: 3, bundleIndex: 0, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 3, bundleIndex: 1, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: true),
+            VoteRecord(proposalId: 7, bundleIndex: 0, choice: .option(0), submitted: true),
+            VoteRecord(proposalId: 7, bundleIndex: 1, choice: .option(0), submitted: true)
+        ]
+        let shares = [
+            try shareDelegation(bundleIndex: 0, proposalId: 3),
+            try shareDelegation(bundleIndex: 1, proposalId: 3),
+            try shareDelegation(bundleIndex: 0, proposalId: 7)
+        ]
+
+        let result = VotingCoordFlow.unresolvedCommittedProposalIds(
+            records: records,
+            shareDelegations: shares,
+            bundleCount: 2
+        )
+
+        #expect(result == [5, 7])
+    }
+
+    @MainActor
+    @Test func retryRejectsOmittedPersistedCommitmentBeforeBuildingFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0)],
+            proposalIds: [3, 5]
+        )
+        let expectedError = String(localizable: .coinVoteStoreUserErrorOmittedCommittedProposal)
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                == .submissionFailed(error: expectedError, submittedCount: 0, totalCount: 1)
+        }
+
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @MainActor
+    @Test func failedUnresolvedCommitmentStopsLowerFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 5, bundleIndex: 0, choice: .option(1), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:5"])
+    }
+
+    @MainActor
+    @Test func failedFreshCommitmentStopsLaterFreshProposal() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:3"])
+    }
+
+    @MainActor
+    @Test func unresolvedCommitmentCannotBeReplacedWithSyntheticAbstain() async {
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(2), 5: .option(1)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(VotingMetadataBox())
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [
+                VoteRecord(proposalId: 3, bundleIndex: 0, choice: .option(0), submitted: false)
+            ] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events().isEmpty)
+        #expect(
+            store.state.roundCache[activeRoundId]?.batchVoteErrors[3]
+                == String(localizable: .coinVoteStoreUserErrorConflictingSelection)
+        )
+    }
+
+    @MainActor
+    @Test func selectionIntentWithoutPersistedCommitmentCanBeOmitted() async {
+        let metadata = VotingMetadataBox()
+        metadata.submissionIntents[activeRoundId] = [
+            "5": PersistedVoteSubmissionIntent(choice: 1, numOptions: 2)
+        ]
+        let recorder = RecoveryOrderRecorder()
+        let state = softwareSubmissionState(
+            drafts: [3: .option(0)],
+            proposalIds: [3, 5]
+        )
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.votingMetadata = votingMetadataClient(metadata)
+            $0.walletStorage = .noOp
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
+            $0.votingCrypto.syncVoteTree = { _, _ in 123 }
+            $0.votingCrypto.generateVanWitness = { _, _, anchorHeight in
+                VanWitness(authPath: [], position: 0, anchorHeight: anchorHeight)
+            }
+            $0.votingCrypto.commitVote = { _, _, _, proposalId, _, _, _, _, _, _, _ in
+                await recorder.record("commit:\(proposalId)")
+                throw TestError.commitmentBuildStopped
+            }
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore {
+            guard let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus,
+                  case .submissionFailed = status else {
+                return false
+            }
+            return true
+        }
+
+        #expect(await recorder.events() == ["commit:3"])
+    }
+
     @Test func delegationFailureDuringBatchAuthorizationShowsAuthorizationFailure() {
         var session = roundSession()
         session.bundleCount = 2
@@ -2381,7 +2606,7 @@ import Testing
         return session
     }
 
-    private func votingSession() -> VotingSession {
+    private func votingSession(proposalIds: [UInt32] = [1]) -> VotingSession {
         VotingSession(
             voteRoundId: Data(repeating: 0xAA, count: 32),
             snapshotHeight: 123,
@@ -2397,17 +2622,17 @@ import Testing
             nullifierIMTRoot: Data(repeating: 0x08, count: 32),
             creator: "creator",
             description: "Round description",
-            proposals: [
+            proposals: proposalIds.map { proposalId in
                 VotingProposal(
-                    id: 1,
-                    title: "Proposal 1",
-                    description: "Description 1",
+                    id: proposalId,
+                    title: "Proposal \(proposalId)",
+                    description: "Description \(proposalId)",
                     options: [
                         VoteOption(index: 0, label: "Support"),
                         VoteOption(index: 1, label: "Oppose")
                     ]
                 )
-            ],
+            },
             status: .active,
             createdAtHeight: 123,
             title: "Round"
@@ -2497,14 +2722,20 @@ import Testing
         return state
     }
 
-    private func softwareSubmissionState() -> VotingCoordFlow.State {
-        var session = roundSession(roundId: activeRoundId, drafts: [1: .option(0)])
+    private func softwareSubmissionState(
+        drafts: [UInt32: VoteChoice] = [1: .option(0)],
+        proposalIds: [UInt32] = [1]
+    ) -> VotingCoordFlow.State {
+        var session = roundSession(roundId: activeRoundId, drafts: drafts)
         session.bundleCount = 1
         session.delegationProofStatus = .complete
 
         var state = VotingCoordFlow.State()
         state.roundCache[activeRoundId] = session
-        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+        state.allRounds = [RoundListItem(
+            roundNumber: 1,
+            session: votingSession(proposalIds: proposalIds)
+        )]
         state.serviceConfig = VotingServiceConfig(
             configVersion: 1,
             voteServers: [VotingServiceConfig.ServiceEndpoint(
@@ -2531,6 +2762,25 @@ import Testing
         )
         state.$selectedWalletAccount.withLock { $0 = zcashWalletAccount() }
         return state
+    }
+
+    private func shareDelegation(
+        bundleIndex: UInt32,
+        proposalId: UInt32
+    ) throws -> VotingShareDelegation {
+        let object: [String: Any] = [
+            "round_id": activeRoundId,
+            "bundle_index": bundleIndex,
+            "proposal_id": proposalId,
+            "share_index": 0,
+            "sent_to_urls": ["https://helper.example.com"],
+            "nullifier": String(repeating: "0a", count: 32),
+            "confirmed": false,
+            "submit_at": 0,
+            "created_at": 0
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(VotingShareDelegation.self, from: data)
     }
 
     private static func makeVotingPcztResult(

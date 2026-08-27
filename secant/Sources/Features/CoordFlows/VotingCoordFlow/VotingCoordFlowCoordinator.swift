@@ -1875,23 +1875,44 @@ extension VotingCoordFlow {
                 }
             }
 
+            let persistedVotes = try await votingCrypto.getVotes(roundId)
+            let persistedShareDelegations = try await votingCrypto.getShareDelegations(roundId)
+            let unresolvedCommittedProposalIds = Self.unresolvedCommittedProposalIds(
+                records: persistedVotes,
+                shareDelegations: persistedShareDelegations,
+                bundleCount: bundleCount
+            )
+            let orderedDrafts = try Self.orderedVoteDrafts(
+                drafts,
+                unresolvedCommittedProposalIds: unresolvedCommittedProposalIds
+            )
+            let submittedBundleIndicesByProposal = Dictionary(
+                grouping: persistedVotes.filter(\.submitted),
+                by: \.proposalId
+            ).mapValues { Set($0.map(\.bundleIndex)) }
+            let sharedBundleIndicesByProposal = Dictionary(
+                grouping: persistedShareDelegations,
+                by: \.proposalId
+            ).mapValues { Set($0.map(\.bundleIndex)) }
+
             // Transition from .authorizing to .submitting now that delegation is done.
             await send(.batchSubmissionProgress(
                 roundId: roundId,
                 currentIndex: 0,
                 totalCount: totalCount,
-                proposalId: drafts[0].key
+                proposalId: orderedDrafts[0].key
             ))
 
             var successCount = 0
             var failCount = 0
             var shareServerURLs = voteServerURLs
 
-            draftLoop: for (draftIndex, draft) in drafts.enumerated() {
+            draftLoop: for (draftIndex, draft) in orderedDrafts.enumerated() {
                 let proposalId = draft.key
                 let choice = draft.value
                 let proposal = proposals.first { $0.id == proposalId }
                 let numOptions = UInt32(proposal?.options.count ?? 3)
+                var commitmentPersistenceStarted = unresolvedCommittedProposalIds.contains(proposalId)
                 let submissionIntent = Voting.VoteSubmissionIntent(
                     choice: choice,
                     numOptions: numOptions
@@ -1904,31 +1925,26 @@ extension VotingCoordFlow {
                     proposalId: proposalId
                 ))
 
-                // Synthetic abstain: no on-chain submission, just mark done.
-                if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
-                    successCount += 1
-                    await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
-                    continue
-                }
-
                 do {
-                    let existingVotes = try await votingCrypto.getVotes(roundId)
-                    let submittedBundles = Set(
-                        existingVotes
-                            .filter { $0.proposalId == proposalId && $0.submitted }
-                            .map(\.bundleIndex)
-                    )
+                    // Synthetic abstain has no on-chain submission, so it cannot stand in for an
+                    // unresolved persisted commitment from an earlier attempt.
+                    if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
+                        guard !commitmentPersistenceStarted else {
+                            throw VotingFlowError.conflictingVoteSubmissionIntent(proposalId: proposalId)
+                        }
+                        successCount += 1
+                        await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
+                        continue
+                    }
+
+                    let submittedBundles = submittedBundleIndicesByProposal[proposalId] ?? []
                     // A tally-share delegation failure can land *after* `markVoteSubmitted` runs
                     // (see Task 8E), leaving `submitted == true` with zero recorded share
                     // delegations — no other lane ever retries an orphaned share. A bundle only
                     // counts as done once it is both submitted AND has a recorded delegation for
                     // this proposal; anything less must fall through to `tryRecoverInflightVote`
                     // below, which re-confirms the cached tx and re-runs share delegation end to end.
-                    let bundlesWithRecordedShares = Set(
-                        try await votingCrypto.getShareDelegations(roundId)
-                            .filter { $0.proposalId == proposalId }
-                            .map(\.bundleIndex)
-                    )
+                    let bundlesWithRecordedShares = sharedBundleIndicesByProposal[proposalId] ?? []
 
                     for bundleIndex: UInt32 in 0..<bundleCount {
                         let alreadySubmitted = submittedBundles.contains(bundleIndex)
@@ -1968,6 +1984,7 @@ extension VotingCoordFlow {
                             roundId: roundId,
                             account: submissionAccount
                         )
+                        commitmentPersistenceStarted = true
                         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
                             roundId, bundleIndex, hotkeySeed, proposalId, choice,
                             numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
@@ -2111,8 +2128,9 @@ extension VotingCoordFlow {
                 } catch {
                     failCount += 1
                     LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
-                    let shouldStopBatch = error as? ShareDelegationError == .noReachableVoteServers
-                    if shouldStopBatch {
+                    let voteServersExhausted = error as? ShareDelegationError == .noReachableVoteServers
+                    let shouldStopBatch = commitmentPersistenceStarted || voteServersExhausted
+                    if voteServersExhausted {
                         shareServerURLs = []
                     }
                     await send(.batchVoteFailed(
@@ -3471,6 +3489,45 @@ extension VotingCoordFlow {
             if !submittedBundles.isSubset(of: sharedBundles) {
                 result.insert(proposalId)
             }
+        }
+    }
+
+    /// A persisted vote row may represent an on-chain transaction whose response was lost.
+    /// Until every bundle is submitted and has reached share delegation, later proposals must
+    /// not build against the predecessor VAN that the unresolved transaction may have spent.
+    static func unresolvedCommittedProposalIds(
+        records: [VoteRecord],
+        shareDelegations: [VotingShareDelegation],
+        bundleCount: UInt32
+    ) -> Set<UInt32> {
+        let persistedProposalIds = Set(records.map(\.proposalId))
+        let fullySubmittedProposalIds = Set(submittedVotesByProposal(records, bundleCount: bundleCount).keys)
+        let proposalsMissingShares = undeliveredShareProposalIds(
+            records: records,
+            shareDelegations: shareDelegations
+        )
+        let durablyCompletedProposalIds = fullySubmittedProposalIds.subtracting(proposalsMissingShares)
+        return persistedProposalIds.subtracting(durablyCompletedProposalIds)
+    }
+
+    /// Require every unresolved persisted commitment in the retry, then put that recovery work
+    /// ahead of fresh proposals while retaining deterministic proposal order within both groups.
+    static func orderedVoteDrafts(
+        _ drafts: [(key: UInt32, value: VoteChoice)],
+        unresolvedCommittedProposalIds: Set<UInt32>
+    ) throws -> [(key: UInt32, value: VoteChoice)] {
+        let includedProposalIds = Set(drafts.map { $0.key })
+        if let omittedProposalId = unresolvedCommittedProposalIds.subtracting(includedProposalIds).min() {
+            throw VotingFlowError.omittedCommittedProposal(proposalId: omittedProposalId)
+        }
+
+        return drafts.sorted { lhs, rhs in
+            let lhsNeedsRecovery = unresolvedCommittedProposalIds.contains(lhs.key)
+            let rhsNeedsRecovery = unresolvedCommittedProposalIds.contains(rhs.key)
+            if lhsNeedsRecovery != rhsNeedsRecovery {
+                return lhsNeedsRecovery
+            }
+            return lhs.key < rhs.key
         }
     }
 
