@@ -139,6 +139,15 @@ struct SendForm {
             && !isMaxRequestInFlight
         }
 
+        /// True while the spendable value is still being determined — the SDK masks spendable to
+        /// zero until it has confirmed a fresh chain tip, which also drives the spinner in
+        /// `AvailableBalanceView`. The Max chip reads this so it presents the same "working on it"
+        /// state as the balance row directly above it; without it the chip merely dims and claims
+        /// to be unavailable while the balance beside it says the value is still being worked out.
+        var isSpendabilityBeingDetermined: Bool {
+            walletBalancesState.isProcessingZeroAvailableBalance
+        }
+
         var isValidForm: Bool {
             isValidAddress
             && !isInsufficientFunds
@@ -457,6 +466,9 @@ struct SendForm {
                         let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
                         await send(.maxAmountResolved(address, amount))
                     } catch {
+                        // Every send-max failure surfaces the same generic toast, so the cause has to
+                        // reach the log or an intermittent failure is undiagnosable after the fact.
+                        LoggerProxy.error("send-max failed to resolve an amount: \(error)")
                         await send(.maxAmountFailed)
                     }
                 }
