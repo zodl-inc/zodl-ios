@@ -41,7 +41,7 @@ struct WalletBalances {
         }
 
         var isProcessingZeroAvailableBalance: Bool {
-            if shieldedBalance.amount == 0 && transparentBalance.amount > autoShieldingThreshold.amount {
+            if shieldedBalance.amount == 0 && ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold) {
                 return false
             }
 
@@ -242,7 +242,7 @@ struct WalletBalances {
                 state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+                || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
                 || state.totalBalance == .zero
 
                 // spendability

@@ -62,14 +62,13 @@ struct MigrationManagerClient: Sendable {
     // now, no longer app persistence). MOB-1509: per-account (`nil` resolves the selected
     // account) — two parallel migrations must not share one lock verdict.
     var lockMigrationDust: @Sendable (_ accountUUID: AccountUUID?) async throws -> Void
-    // MOB-1496: async now — derived from a live SDK balance read (the account's Orchard
-    // `PoolBalance.lockedValue`) rather than app-persisted storage.
-    var isMigrationDustLocked: @Sendable (_ accountUUID: AccountUUID?) async -> Bool = { _ in false }
-    // MOB-1496: the locked remainder amount (the account's Orchard `PoolBalance.lockedValue`).
-    // The Complete screen's locked confirmation shows this on re-entry — `migrationSummary().dust`
-    // re-plans from live spendable notes once the migration state is terminal, so it reads zero
-    // after a lock; the locked value is what still reports the remainder.
-    var migrationLockedAmount: @Sendable (_ accountUUID: AccountUUID?) async -> Zatoshi = { _ in .zero }
+    /// MOB-1749 (wave 2): the residual lane's figures from ONE `getAccountsBalances` read — the
+    /// same value `reentryRoute`'s `.residual` payload carries. `nil` means the read failed or the
+    /// account is unresolvable, never an empty wallet. `completeState` derives its lock story from
+    /// this single read, so the two-read disagreement (locked seen, amount unreadable → a locked
+    /// balance silently dropped from the screen) is unrepresentable. `= { _ in nil }` is a
+    /// required macro default (non-Void, non-throwing).
+    var residualBalances: @Sendable (_ accountUUID: AccountUUID?) async -> MigrationResidualBalances? = { _ in nil }
     // MOB-1511 (W2): the multi-round labels' context — CURRENT round (app-persisted completed-run
     // count + 1) and the engine's estimated TOTAL rounds, `nil` when the SDK's estimate has zero
     // runs (see `SDKSynchronizerClient.estimateMigrationRunCount`'s doc).
@@ -461,6 +460,10 @@ enum MigrationReentryRoute: Equatable, Sendable {
     case statusResume                    // row 2
     case statusProgress                  // row 3 — also the split phase (MOB-1513 B4: the old row-5 `noteSplitProgress` route is retired with the "Splitting Funds" screen)
     case complete                        // row 4 (unacknowledged)
+    // MOB-1749 — notStarted / acknowledged complete (no pending remainder) with a spendable Orchard
+    // residual and Ironwood funds. Carries the figures the decision was made on, so the screen
+    // renders exactly what routed it rather than a second read that could disagree.
+    case residual(MigrationResidualBalances)
     // (row 6 `reviewManual` removed 2026-08-07 with the manual-delivery lane.)
     case entry                           // row 7 (notStarted)
 }

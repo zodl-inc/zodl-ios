@@ -66,7 +66,12 @@ import ComposableArchitecture
     // MARK: - Simple reducer transitions
 
     @MainActor @Test func openBannerOpensAndShortensSubsequentDelay() async {
-        let store = TestStore(initialState: SmartBanner.State()) { SmartBanner() }
+        // `.openBanner` now no-ops over an empty slot (see
+        // SmartBannerShieldingOfferLifecycleTests.openBannerWithEmptySlotDoesNothing) — seat a
+        // banner first so this test still exercises the open-and-shorten-delay behavior.
+        var state = SmartBanner.State()
+        state.priorityContent = .priority4
+        let store = TestStore(initialState: state) { SmartBanner() }
 
         await store.send(.openBanner) {
             $0.delay = 1.0
@@ -74,11 +79,18 @@ import ComposableArchitecture
         }
     }
 
-    @MainActor @Test func transparentBalanceUpdatedStoresBalance() async {
-        let store = TestStore(initialState: SmartBanner.State()) { SmartBanner() }
+    @MainActor @Test func shieldingBalanceFetchedIgnoresAMismatchedAccount() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = SmartBanner.State()
+            state.$selectedWalletAccount.withLock { $0 = nil }
+            let store = TestStore(initialState: state) { SmartBanner() }
+            store.exhaustivity = .off
 
-        await store.send(.transparentBalanceUpdated(Zatoshi(12_345))) {
-            $0.transparentBalance = Zatoshi(12_345)
+            await store.send(.shieldingBalanceFetched(AccountUUID(id: [UInt8](repeating: 5, count: 16)), Zatoshi(12_345)))
+
+            #expect(store.state.transparentBalance == .zero)
         }
     }
 

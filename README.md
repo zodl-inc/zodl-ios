@@ -1,29 +1,27 @@
-# Zashi iOS Wallet
+# Zodl iOS Wallet
 
-This is the official home of the Zashi Zcash wallet, a no-frills
-Zcash mobile wallet leveraging the [Zcash Swift SDK](https://github.com/Electric-Coin-Company/zcash-swift-wallet-sdk).
+This is the official home of the Zodl Zcash wallet, a no-frills
+Zcash mobile wallet leveraging the [Zcash Swift SDK](https://github.com/zcash/zcash-swift-wallet-sdk).
 
 # Production
 
-The Zashi IOS wallet is publicly available for download in the [AppStore](https://apps.apple.com/cz/app/zashi-zcash-wallet/id1672392439).
+The Zodl iOS wallet is publicly available for download in the [AppStore](https://apps.apple.com/us/app/zodl-zcash-wallet/id1672392439).
 
-# Zashi Discord
+# Zodl Support
 
-Join the Zashi community on ECC Discord server, report bugs, share ideas, request new features, and help shape Zashi's journey!
-
-https://discord.gg/jQPU7aXe7A
+Obtain help for Zodl and connect with our team at [support.zodl.com](https://support.zodl.com/).
 
 # Reporting an issue
 
-If you'd like to report a technical issue or feature request for the IOS
-Wallet, please file a GitHub issue [here](https://github.com/Electric-Coin-Company/zashi-ios/issues/new/choose).
+If you'd like to report a technical issue or feature request for the iOS
+Wallet, please file a GitHub issue [here](https://github.com/zodl-inc/zodl-ios/issues/new/choose).
 
-For feature requests and issues related to the Zashi user interface that are
-not iOS-specific, please file a GitHub issue [here](https://github.com/Electric-Coin-Company/zashi/issues/new/choose).
+For feature requests and issues related to the Zodl user interface that are
+not iOS-specific, please file a GitHub issue [here](https://github.com/zodl-inc/zodl-project/issues/new/choose).
 
 If you wish to report a security issue, please follow our
-[Responsible Disclosure guidelines](https://github.com/Electric-Coin-Company/zashi/blob/master/responsible_disclosure.md).
-See the [Wallet App Threat Model](https://github.com/Electric-Coin-Company/zashi/blob/master/wallet_threat_model.md)
+[Responsible Disclosure guidelines](https://github.com/zodl-inc/zodl-project/blob/main/responsible_disclosure.md).
+See the [Wallet App Threat Model](https://github.com/zodl-inc/zodl-project/blob/main/wallet_threat_model.md)
 for more information about the security and privacy limitations of the wallet.
 
 General Zcash questions and/or support requests may also be directed to either:
@@ -37,7 +35,7 @@ and [Code of Conduct](/CONDUCT.md). Our backlog has many Issues tagged with the
 `good first issue` label. Please fork the repo and make a pull request for us
 to review.
 
-Zashi Wallet uses [SwiftLint](https://github.com/realm/SwiftLint) and 
+Zodl Wallet uses [SwiftLint](https://github.com/realm/SwiftLint) and 
 [SwiftGen](https://github.com/SwiftGen/SwiftGen) to conform to our coding
 guidelines for source code and generate accessors for assets. Please install
 these locally when contributing to the project, they are run automatically when

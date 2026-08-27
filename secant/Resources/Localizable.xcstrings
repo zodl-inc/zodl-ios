@@ -2860,6 +2860,23 @@
         }
       }
     },
+    "coinVote.confirmSubmission.progressExplainer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This can take a few minutes. Wallets with more voting weight take longer to process."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto puede tardar unos minutos. Las billeteras con más peso de votación tardan más en procesarse."
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.progressSubmittingVoteCount" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8081,6 +8098,42 @@
         }
       }
     },
+    "general.max" : {
+      "comment" : "Max button on the Send, Pay and Swap amount fields (internal and testnet builds only, compiled in behind #if ZODL_INTERNAL || SECANT_TESTNET).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Max"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Máx."
+          }
+        }
+      }
+    },
+    "general.maxFailed" : {
+      "comment" : "Toast shown when the Max button cannot fetch or convert the max amount (internal and testnet builds only, compiled in behind #if ZODL_INTERNAL || SECANT_TESTNET).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to get the max amount."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo obtener el monto máximo."
+          }
+        }
+      }
+    },
     "general.more" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10267,6 +10320,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Migración requerida"
+          }
+        }
+      }
+    },
+    "migrationBanner.residualInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to decide what happens to it"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toca para decidir qué hacer con él"
+          }
+        }
+      }
+    },
+    "migrationBanner.residualTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ left in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ restantes en Orchard"
           }
         }
       }
@@ -12715,6 +12802,125 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Qué sucede a continuación"
+          }
+        }
+      }
+    },
+    "migrationResidual.dustBody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ is still in Orchard. Moving an amount this specific would link your Ironwood funds back to your Orchard history. We recommend locking it instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ sigue en Orchard. Mover un monto tan específico vincularía tus fondos de Ironwood con tu historial de Orchard. Te recomendamos bloquearlo."
+          }
+        }
+      }
+    },
+    "migrationResidual.rowIronwood" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En Ironwood"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowLocked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locked in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bloqueado en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowOrchard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restante en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.rowPending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending in Orchard"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendiente en Orchard"
+          }
+        }
+      }
+    },
+    "migrationResidual.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A small balance is still sitting in Orchard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todavía queda un pequeño saldo en Orchard."
+          }
+        }
+      }
+    },
+    "migrationResidual.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You've moved to Ironwood"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te has mudado a Ironwood"
           }
         }
       }
@@ -18342,6 +18548,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Error de Protección"
+          }
+        }
+      }
+    },
+    "shieldFunds.nothingToShield.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is nothing left to shield right now. Your transparent balance may already be shielded, or it may be too small to shield on its own."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No queda nada por proteger en este momento. Es posible que tu saldo transparente ya esté protegido, o que sea demasiado pequeño para protegerlo por sí solo."
+          }
+        }
+      }
+    },
+    "shieldFunds.nothingToShield.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to Shield"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nada que Proteger"
           }
         }
       }

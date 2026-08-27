@@ -34,6 +34,7 @@ enum AccessibilityID {
         static let scanButton = "sendForm.scanButton"
         static let reviewButton = "sendForm.reviewButton"
         static let zcashAddressField = "sendForm.zcashAddressField"
+        static let maxButton = "sendForm.maxButton"
     }
 
     enum SendConfirmation {
@@ -48,12 +49,14 @@ enum AccessibilityID {
     enum CrossPayForm {
         static let assetSelectButton = "crossPayForm.assetSelectButton"
         static let reviewButton = "crossPayForm.reviewButton"
+        static let maxButton = "crossPayForm.maxButton"
     }
 
     enum SwapForm {
         static let assetSelectButton = "swapForm.assetSelectButton"
         static let changeModeButton = "swapForm.changeModeButton"
         static let reviewButton = "swapForm.reviewButton"
+        static let maxButton = "swapForm.maxButton"
     }
 
     enum AddressBook {

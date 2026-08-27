@@ -304,6 +304,16 @@ extension SDKSynchronizerClient: DependencyKey {
                     memo: memo
                 )
             },
+            sendMaxAmount: { accountUUID, recipient, memo in
+                let proposal = try await synchronizer.proposeSendMax(
+                    accountUUID: accountUUID,
+                    recipient: recipient,
+                    memo: memo,
+                    mode: .maxSpendable
+                )
+
+                return proposal.totalSpendValue() - proposal.totalFeeRequired()
+            },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {

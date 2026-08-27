@@ -82,6 +82,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: state,
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: transferRows,
@@ -525,13 +526,15 @@ import ZcashLightClientKit
         #expect(flagged?.isPreparingVariant != true)
     }
 
-    /// The defaulted parameters default, so a call site that knows none of them derives the
-    /// quiet answer.
-    @Test func omittingTheNewParametersMatchesTheOldSignature() {
+    /// The still-optional tail parameters default, and the two that are now REQUIRED are passed at
+    /// their inert values (no residual, no pending remainder), so a call site that knows nothing
+    /// beyond the run state derives the quiet answer.
+    @Test func omittingTheOptionalParametersMatchesTheOldSignature() {
         let omitted = MigrationDerivations.bannerVariant(
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(completed: 2, total: 6)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: []
@@ -615,6 +618,7 @@ import ZcashLightClientKit
                 )
             ),
             orchardBalance: Zatoshi(9_999_760_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: stalledRows
@@ -762,6 +766,7 @@ import ZcashLightClientKit
                     isIronwoodActivated: true,
                     state: .inProgress(Self.progress(total: combo.statuses.count)),
                     orchardBalance: Zatoshi(500_000_000),
+                    residual: nil,
                     isCompleteAcknowledged: false,
                     isMigrationRemainderPending: false,
                     transferRows: transfers,
@@ -805,6 +810,7 @@ import ZcashLightClientKit
             isIronwoodActivated: true,
             state: .inProgress(Self.progress(total: 1)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: [row],

@@ -362,6 +362,19 @@ extension SwapAndPayForm {
                 .padding(.vertical, 8)
 
                 HStack(spacing: 0) {
+                    // Swapping INTO ZEC spends no ZEC from this wallet, so no max applies there.
+                    if store.isSwapExperienceEnabled {
+                        ZashiMaxChip(
+                            title: String(localizable: .generalMax),
+                            style: .swap,
+                            isEnabled: store.isSwapMaxButtonEnabled,
+                            isInFlight: store.isMaxRequestInFlight
+                        ) {
+                            store.send(.maxTapped)
+                        }
+                        .accessibilityIdentifier(AccessibilityID.SwapForm.maxButton)
+                    }
+
                     Spacer()
 
                     Text(store.secondaryLabelFrom)

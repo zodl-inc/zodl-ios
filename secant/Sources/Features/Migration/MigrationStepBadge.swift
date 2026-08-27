@@ -23,8 +23,8 @@
 //  step that's ready to run as part of confirming but hasn't happened yet (MigrationTransferPlan's
 //  pre-confirmation "Split Balance" row), rendered as an adaptive circle + inverse checkmark instead
 //  of a fixed color. Reuses the EXACT `Design.Surfaces.bgAlt` (circle) / `Design.Surfaces.bgPrimary`
-//  (checkmark) pairing `MigrationCompleteView.dustResolutionBadge` already ships — see that view's
-//  MOB-1494 (W5) header doc for the dark-mode inversion this mirrors (`bgAlt` is obsidian-on-light /
+//  (checkmark) pairing `MigrationLockBadge` (`MigrationLockResolutionViews.swift`) already ships —
+//  see that badge's own MOB-1494 (W5) note for the dark-mode inversion this mirrors (`bgAlt` is obsidian-on-light /
 //  bone-on-dark, `bgPrimary` is bone-on-light / midnight-on-dark, so the pair inverts together
 //  across color schemes with no fixed hex). `.sent`'s green check stays reserved for steps that have
 //  genuinely completed — never used for a merely-ready precondition.
