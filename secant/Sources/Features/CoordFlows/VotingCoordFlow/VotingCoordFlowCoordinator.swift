@@ -3781,12 +3781,17 @@ extension VotingCoordFlow {
         let bundleCount = UInt32(noteChunks.count)
         var completedBundles = Set<UInt32>()
         for idx: UInt32 in 0..<bundleCount {
+            // Single probe (timeout 0): a cached hash that never propagated —
+            // an earlier attempt died before confirmation — must fall through
+            // to a fresh delegation immediately instead of holding this
+            // bundle's full confirmation budget. The fresh submission below
+            // keeps the full `delegationConfirmationTimeout` wait.
             if let vanPosition = try await recoverDelegationVanPosition(
                 roundId: roundId,
                 bundleIndex: idx,
                 votingCrypto: votingCrypto,
                 votingAPI: votingAPI,
-                confirmationTimeout: delegationConfirmationTimeout,
+                confirmationTimeout: 0,
                 retryDelay: delegationConfirmationRetryDelay
             ) {
                 LoggerProxy.debug("Recovered delegation bundle \(idx) VAN position: \(vanPosition)")

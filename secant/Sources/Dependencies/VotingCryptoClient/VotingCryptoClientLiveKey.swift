@@ -99,7 +99,10 @@ extension VotingCryptoClient: DependencyKey {
                 _ = try backend.deleteSkippedBundles(roundId: roundId, keepCount: keepCount)
             },
             warmProvingCaches: {
-                try await Task.detached(priority: .background) {
+                // The crate's keygen threads inherit this task's QoS; background
+                // priority pinned them to efficiency cores and the first proof
+                // convoyed behind that keygen while the user watched "Authorizing…".
+                try await Task.detached(priority: .userInitiated) {
                     try VotingRustBackend.warmProvingCaches()
                 }.value
             },
