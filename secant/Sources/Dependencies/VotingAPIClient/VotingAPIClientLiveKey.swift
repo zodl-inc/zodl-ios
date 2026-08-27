@@ -1048,12 +1048,15 @@ extension VotingAPIClient: DependencyKey {
             delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
-                    // Active foreground delivery uses the submission-local server set.
-                    // POST failures prune that local set immediately; cached helper
-                    // health and /status probes are intentionally not consulted here.
-                    // Successful/failed foreground POSTs still update the tracker for
-                    // later background recovery decisions.
+                    // Active foreground delivery uses the submission-local server
+                    // set. POST failures prune that local set immediately; cached
+                    // health is consulted only as ORDERING (healthy targets
+                    // first) — it never filters, so every configured server stays
+                    // eligible and delivery can never be vetoed by a stale
+                    // circuit view (MOB-1810). Successful/failed foreground POSTs
+                    // still update the tracker.
                     let tracker = ServerHealthTracker.shared
+                    let healthy = Set(await tracker.healthyServers())
                     return try await delegateSharePayloads(
                         payloads,
                         proposalId: proposalId,
@@ -1066,6 +1069,9 @@ extension VotingAPIClient: DependencyKey {
                                 await tracker.recordFailure(for: server)
                                 throw error
                             }
+                        },
+                        selectTargets: { candidates, needed in
+                            Array(orderCandidatesByHealth(candidates, healthy: healthy).prefix(needed))
                         }
                     )
                 }
@@ -1103,6 +1109,11 @@ extension VotingAPIClient: DependencyKey {
             resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
+                // Recovery walks servers one at a time with a 5 s timeout each
+                // (non-Tor), so putting known-dead servers last is the biggest
+                // recovery-latency win. Ordering only — every configured server
+                // is still attempted (MOB-1810).
+                let healthy = Set(await tracker.healthyServers())
                 return await resubmitSharePayload(
                     payload,
                     configuredServerURLs: configuredServerURLs,
@@ -1115,7 +1126,8 @@ extension VotingAPIClient: DependencyKey {
                             await tracker.recordFailure(for: server)
                             throw error
                         }
-                    }
+                    },
+                    orderServers: { orderCandidatesByHealth($0, healthy: healthy) }
                 )
             },
             fetchProposalTally: { roundId, proposalId in

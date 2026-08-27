@@ -213,4 +213,17 @@ actor ServerHealthTracker {
         }
     }
 }
+
+// MARK: - Advisory Ordering
+
+/// Health-first advisory ordering for share submission (MOB-1810): candidates
+/// present in `healthy` come first, the rest after, each group shuffled so
+/// share distribution across equally-ranked helpers stays uniform. Ordering
+/// only — every candidate is preserved and none is filtered, so a stale health
+/// view can deprioritize a server but never veto it.
+func orderCandidatesByHealth(_ candidates: [String], healthy: Set<String>) -> [String] {
+    let healthyFirst = candidates.filter { healthy.contains($0) }.shuffled()
+    let rest = candidates.filter { !healthy.contains($0) }.shuffled()
+    return healthyFirst + rest
+}
 #endif
