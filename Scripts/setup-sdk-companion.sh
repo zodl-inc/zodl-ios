@@ -37,6 +37,18 @@ fail() {
     exit 1
 }
 
+# Like fail, but first removes $abs_path. Only for the fetch sequence below,
+# once the pre-existing-directory check has confirmed $abs_path is ours (we
+# just created it) — never for the refuse-to-overwrite fail above, which must
+# leave a pre-existing directory untouched. Without this, a single transient
+# fetch failure would leave a half-initialized checkout behind that the
+# refuse-to-overwrite check then treats as a foreign directory forever,
+# blocking every later retry in this workspace.
+cleanup_and_fail() {
+    rm -rf "$abs_path"
+    fail "$@"
+}
+
 note() { echo "setup-sdk-companion: $*"; }
 
 emit() {
@@ -121,10 +133,10 @@ if [ -e "$abs_path" ]; then
 fi
 
 mkdir -p "$abs_path"
-git init -q "$abs_path" || fail "git init failed at $abs_path"
+git init -q "$abs_path" || cleanup_and_fail "git init failed at $abs_path"
 if ! git -C "$abs_path" fetch --depth 1 "$SDK_REPO_URL" "$pin"; then
-    fail "could not fetch $pin from $SDK_REPO_URL — is the pinned commit pushed and still reachable?"
+    cleanup_and_fail "could not fetch $pin from $SDK_REPO_URL — is the pinned commit pushed and still reachable?"
 fi
-git -C "$abs_path" checkout -q --detach FETCH_HEAD || fail "checkout of $pin failed"
+git -C "$abs_path" checkout -q --detach FETCH_HEAD || cleanup_and_fail "checkout of $pin failed"
 note "SDK fetched to $abs_path @ $pin"
 exit 0

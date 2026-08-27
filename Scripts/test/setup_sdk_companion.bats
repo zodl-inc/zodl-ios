@@ -113,6 +113,20 @@ make_origin() {
     run "$SCRIPTS_DIR/setup-sdk-companion.sh"
     [ "$status" -eq 1 ]
     [[ "$output" == *"could not fetch"* ]]
+    [ ! -e "$ROOT/../zodl-swift-wallet-sdk" ]
+}
+
+@test "full mode: failed fetch self-heals" {
+    write_local_pbxproj
+    make_origin
+    printf '%040d\n' 1 > "$SDK_PIN_FILE"
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh"
+    [ "$status" -eq 1 ]
+    printf '%s\n' "$PIN_SHA" > "$SDK_PIN_FILE"
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh"
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$ROOT/../zodl-swift-wallet-sdk" rev-parse HEAD)" = "$PIN_SHA" ]
+    rm -rf "$ROOT/../zodl-swift-wallet-sdk"
 }
 
 @test "full mode: existing checkout at the pin is reused" {
