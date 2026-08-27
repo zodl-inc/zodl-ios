@@ -353,11 +353,20 @@ extension VotingCoordFlow {
                 case .active:
                     hydratePersistedRoundChoices(&state, roundId: roundId)
 
+                    // MOB-1810: operator health checks start here — in the
+                    // background, at poll entry — instead of blocking the polls
+                    // list load. Their results are advisory ordering input for
+                    // share submission; nothing awaits them.
+                    let startHealthSweep: Effect<Action> = .run { [votingAPI] _ in
+                        await votingAPI.startHealthProbeSweep()
+                    }
+
                     if state.voteRecords[roundId] != nil {
                         // Already submitted — review-mode read-only, no
                         // pipeline needed.
                         state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -372,6 +381,7 @@ extension VotingCoordFlow {
                        cached.bundleCount > 0 {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
+                            startHealthSweep,
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
@@ -385,6 +395,7 @@ extension VotingCoordFlow {
                     // the sheet via `.ineligibleForRound`.
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
+                        startHealthSweep,
                         cancelShareTracking,
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
@@ -1804,6 +1815,12 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
+            // MOB-1810: refresh operator health in the background so target
+            // ordering at share-delegation time reflects the present rather
+            // than poll entry. Fire-and-forget — it overlaps the delegation
+            // proof; nothing in this effect awaits probe results.
+            await votingAPI.startHealthProbeSweep()
+
             let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",

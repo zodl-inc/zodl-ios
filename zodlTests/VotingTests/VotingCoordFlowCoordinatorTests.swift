@@ -1822,7 +1822,7 @@ import Testing
         return session
     }
 
-    private func votingSession() -> VotingSession {
+    private func votingSession(status: SessionStatus = .active) -> VotingSession {
         VotingSession(
             voteRoundId: Data(repeating: 0xAA, count: 32),
             snapshotHeight: 123,
@@ -1849,7 +1849,7 @@ import Testing
                     ]
                 )
             ],
-            status: .active,
+            status: status,
             createdAtHeight: 123,
             title: "Round"
         )
@@ -1961,6 +1961,24 @@ import Testing
         )
     }
 
+    private static func makeServiceConfig(
+        voteServers: [VotingServiceConfig.ServiceEndpoint] = []
+    ) -> VotingServiceConfig {
+        VotingServiceConfig(
+            configVersion: 1,
+            voteServers: voteServers,
+            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
+            supportedVersions: VotingServiceConfig.SupportedVersions(
+                pir: ["v0"],
+                voteProtocol: "v0",
+                tally: "v0",
+                voteServer: "v1"
+            ),
+            rounds: [:],
+            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1, polyLen: 4096)
+        )
+    }
+
     private static func makeDelegationRegistration(
         rk: Data = Data(repeating: 0x01, count: 32),
         spendAuthSig: Data = Data(repeating: 0x02, count: 64),
@@ -2026,6 +2044,18 @@ import Testing
             name: "Keystone",
             keySource: String(localizable: .accountsKeystone).lowercased(),
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
+    private func zashiWalletAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Zashi",
+            keySource: nil,
+            seedFingerprint: [UInt8](repeating: 0x04, count: 32),
             hdAccountIndex: Zip32AccountIndex(0),
             ufvk: nil,
             uivk: nil
@@ -2106,6 +2136,113 @@ import Testing
         client.setRecord = { record, roundId in box.records[roundId] = record }
         client.clearRecord = { roundId in box.records.removeValue(forKey: roundId) }
         return client
+    }
+
+    // MARK: - MOB-1810 health sweep hooks
+
+    @MainActor
+    @Test func votingInitializeDoesNotStartHealthSweep() async {
+        let recorder = EventRecorder()
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.configureURLs = { _ in }
+            $0.votingAPI.fetchAllRounds = { [] }
+            $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
+            $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.votingCrypto.openDatabase = { _, _ in }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
+        await waitForStore { store.state.rootScreen == .noRounds }
+
+        #expect(recorder.events().isEmpty)
+    }
+
+    @MainActor
+    @Test func roundTappedOnActiveRoundStartsHealthSweep() async {
+        let recorder = EventRecorder()
+        var session = roundSession(roundId: activeRoundId)
+        session.hotkeyAddress = "hotkey"
+        session.bundleCount = 1
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getBundleCount = { _ in 0 }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.roundTapped(activeRoundId))
+        await waitForStore { recorder.events().contains("sweep") }
+        store.send(.dismissFlow)
+    }
+
+    @MainActor
+    @Test func roundTappedOnFinalizedRoundDoesNotStartHealthSweep() async {
+        let recorder = EventRecorder()
+        var state = VotingCoordFlow.State()
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession(status: .finalized))]
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.votingAPI.fetchTallyResults = { _ in
+                recorder.record("tally")
+                return [:]
+            }
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getBundleCount = { _ in 0 }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.roundTapped(activeRoundId))
+        await waitForStore { recorder.events().contains("tally") }
+
+        #expect(!recorder.events().contains("sweep"))
+        store.send(.dismissFlow)
+    }
+
+    @MainActor
+    @Test func batchSubmissionEffectStartsHealthSweep() async {
+        let recorder = EventRecorder()
+        var session = roundSession(roundId: activeRoundId, drafts: [1: .option(2)])
+        session.bundleCount = 1
+        session.batchSubmissionStatus = .requested
+        session.delegationProofStatus = .complete
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession())]
+        state.serviceConfig = Self.makeServiceConfig(
+            voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")]
+        )
+        state.$selectedWalletAccount.withLock { $0 = self.zashiWalletAccount() }
+
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.backgroundTask = .noOp
+            $0.mnemonic = .noOp
+            $0.walletStorage = .noOp
+            $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.votingCrypto.getVotes = { _ in [] }
+            $0.votingCrypto.getBundleCount = { _ in 0 }
+            $0.votingCrypto.getShareDelegations = { _ in [] }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.authenticationSucceeded(roundId: activeRoundId))
+        await waitForStore { recorder.events().contains("sweep") }
     }
 }
 
