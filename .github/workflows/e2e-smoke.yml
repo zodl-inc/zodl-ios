@@ -70,8 +70,10 @@ jobs:
       - name: Compute FFI cache keys
         id: keys
         run: |
+          set -o pipefail
           SDK="${{ steps.companion.outputs.sdk_abs_path }}"
           RUST_TREE=$(git -C "$SDK" rev-parse "HEAD:rust")
+          SCRIPT_TREE=$(git -C "$SDK" rev-parse "HEAD:Scripts/init-local-ffi.sh")
           CARGO_HASH=$(shasum -a 256 "$SDK/Cargo.toml" "$SDK/Cargo.lock" | shasum -a 256 | awk '{print $1}')
           if grep -q -- '--arm-simulator' "$SDK/Scripts/init-local-ffi.sh"; then
             SLICE=arm-simulator
@@ -79,7 +81,7 @@ jobs:
             SLICE=arm-ios
           fi
           echo "slice=$SLICE" >> "$GITHUB_OUTPUT"
-          echo "product=${{ runner.os }}-ffi-product-$SLICE-$RUST_TREE-$CARGO_HASH" >> "$GITHUB_OUTPUT"
+          echo "product=${{ runner.os }}-ffi-product-$SLICE-$RUST_TREE-$SCRIPT_TREE-$CARGO_HASH" >> "$GITHUB_OUTPUT"
           echo "cargo=${{ runner.os }}-ffi-cargo-$(shasum -a 256 "$SDK/Cargo.lock" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Restore built FFI (product cache)
         id: product-cache
