@@ -112,6 +112,11 @@ if ! printf '%s' "$pin" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 
 abs_path="$REPO_ROOT/$rel_path"
+# upload-artifact v4 rejects patterns containing '..'; normalize lexically
+# (no filesystem dependency — the path may not exist yet in validate-only).
+if command -v python3 > /dev/null 2>&1; then
+    abs_path="$(python3 -c 'import os, sys; print(os.path.normpath(sys.argv[1]))' "$abs_path")"
+fi
 emit mode local
 emit pin "$pin"
 emit sdk_path "$rel_path"

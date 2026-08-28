@@ -93,6 +93,9 @@ make_origin() {
     grep -q '^mode=local$' "$GITHUB_OUTPUT"
     grep -q "^pin=$PIN_SHA$" "$GITHUB_OUTPUT"
     grep -q '^sdk_path=../zodl-swift-wallet-sdk$' "$GITHUB_OUTPUT"
+    abs_path_value="$(sed -n 's/^sdk_abs_path=//p' "$GITHUB_OUTPUT")"
+    [[ "$abs_path_value" != *"/../"* ]]
+    [ "$abs_path_value" = "$(python3 -c 'import os, sys; print(os.path.normpath(sys.argv[1]))' "$ROOT/../zodl-swift-wallet-sdk")" ]
     [ ! -e "$ROOT/../zodl-swift-wallet-sdk" ]
 }
 
