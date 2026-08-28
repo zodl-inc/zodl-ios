@@ -37,7 +37,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct RootPendingTransactionRefreshTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootPendingTransactionRefreshTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -65,15 +65,19 @@ import ComposableArchitecture
     /// helps, because a window that OPENS with an unrelated event also ENDS with one. Under the
     /// fix (filter first) the transaction event is the only element the throttle ever sees.
     ///
-    /// The push+advance loop retries the sandwich, which keeps the test robust against the
+    /// The push+advance pump retries the sandwich, which keeps the test robust against the
     /// subscription racing the first push while preserving the discriminating property above:
-    /// under the old shape NO amount of retries can produce a fetch, so the loop distinguishes
-    /// "never" from "eventually" rather than "fast" from "slow".
+    /// under the old shape NO amount of retries can produce a fetch, so the pump distinguishes
+    /// "never" from "eventually" rather than "fast" from "slow". The pump is deliberately
+    /// unbounded — an iteration cap is a wall-clock deadline in disguise, and a starved CI runner
+    /// can outlast any fixed budget while the effects it waits on sit unscheduled. A genuine
+    /// "never" is recorded by the suite's `.timeLimit` backstop instead.
     @Test func foundTransactionsSurvivesUnrelatedEventsInTheSameThrottleWindow() async {
         let account = Self.walletAccount(idByte: 80)
         let scheduler = DispatchQueue.test
         let events = PassthroughSubject<SynchronizerEvent, Never>()
         let fetchCalls = LockIsolated<Int>(0)
+        let fetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -91,16 +95,21 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked(eventStream: { events.eraseToAnyPublisher() })
             $0.sdkSynchronizer.getAllTransactions = { _ in
                 fetchCalls.withValue { $0 += 1 }
+                fetchSignal.continuation.yield(())
                 return []
             }
         }
 
         store.send(.observeTransactions)
         // The trailing one-shot fetch inside `.observeTransactions` is not scheduler-gated, so it
-        // doubles as the signal that the action's merged effects have started.
-        await waitForRootStore { fetchCalls.value >= 1 }
+        // doubles as the signal that the action's merged effects have started. Suspend on the
+        // fetch itself (event-driven) rather than polling a wall-clock deadline CI load can
+        // outlast.
+        for await _ in fetchSignal.stream {
+            break
+        }
 
-        for _ in 0..<50 where fetchCalls.value < 2 {
+        while fetchCalls.value < 2 {
             events.send(.connectionStateChanged(.online))
             events.send(.foundTransactions([], nil))
             events.send(.connectionStateChanged(.online))

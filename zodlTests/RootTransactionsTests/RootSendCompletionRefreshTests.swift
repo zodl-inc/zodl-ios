@@ -24,7 +24,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct RootSendCompletionRefreshTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootSendCompletionRefreshTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -44,6 +44,7 @@ import ComposableArchitecture
     @Test func sendDoneInSendFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 80)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -55,6 +56,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -62,7 +64,17 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendDone)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        // Event-driven wait: each refetch wakes the loop, which re-reads the locked state — the
+        // same condition `waitForRefetch` polled, but woken by the mock instead of racing a
+        // wall-clock deadline (15 s) that a loaded CI runner can outlast even when nothing is
+        // wrong. (The signal carries Void, not the AccountUUID — sending the @preconcurrency SDK
+        // type across the stream trips strict-concurrency region analysis.) A refetch that never
+        // comes is recorded by the suite's `.timeLimit` backstop instead of a budget here.
+        for await _ in refetchSignal.stream {
+            if fetchedAccounts.value.contains(account.id) {
+                break
+            }
+        }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
