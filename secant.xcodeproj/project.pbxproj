@@ -273,6 +273,7 @@
 				3463CACE2FD8549600A2AE50 /* Validate PartnerKeys.plist */,
 				9E41FFA32CB2814500783CFD /* Swiftgen */,
 				9E41FFA42CB2814500783CFD /* SwiftLint */,
+				C1A05DF12F00000000000002 /* Update SDK Pin */,
 				9E41FFA52CB2814500783CFD /* Sources */,
 				9E41FFA92CB2814500783CFD /* Frameworks */,
 				9E41FFAE2CB2814500783CFD /* Resources */,
@@ -313,6 +314,7 @@
 				3463CACD2FD8548500A2AE50 /* Validate PartnerKeys.plist */,
 				9E4AB29F2BA1BEE900F5D6DB /* Swiftgen */,
 				9E4AB2A02BA1BEE900F5D6DB /* SwiftLint */,
+				C1A05DF12F00000000000003 /* Update SDK Pin */,
 				9E4AB2A12BA1BEE900F5D6DB /* Sources */,
 				9E4AB2A52BA1BEE900F5D6DB /* Frameworks */,
 				9E4AB2AC2BA1BEE900F5D6DB /* Resources */,
@@ -353,6 +355,7 @@
 				3463CACC2FD8544800A2AE50 /* Validate PartnerKeys.plist */,
 				9E5AB46A2C94777800065483 /* Swiftgen */,
 				9E5AB46B2C94777800065483 /* SwiftLint */,
+				C1A05DF12F00000000000001 /* Update SDK Pin */,
 				9E5AB46C2C94777800065483 /* Sources */,
 				9E5AB4702C94777800065483 /* Frameworks */,
 				9E5AB4752C94777800065483 /* Resources */,
@@ -644,6 +647,63 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
 			shellScript = "swiftlint_version=0.50.3\n\nif which swiftlint >/dev/null; then\n  if [[ $(swiftlint version) != $swiftlint_version ]]; then\n    echo \"warning: Compatible SwiftLint version not installed, download version $swiftlint_version from https://github.com/realm/SwiftLint. Currently installed version is $(swiftlint version)\"\n  fi\n   \n  echo \"Linting the Secant code\"\n  #swiftlint lint --config .swiftlint.yml\n  echo \"Linting tests\"\n  #swiftlint lint --config .swiftlint_tests.yml\nelse\n  echo \"warning: SwiftLint not installed, download from https://github.com/realm/SwiftLint\"\nfi\n";
+		};
+		C1A05DF12F00000000000001 /* Update SDK Pin */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Update SDK Pin";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/update-sdk-pin.sh\"\n";
+		};
+		C1A05DF12F00000000000002 /* Update SDK Pin */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Update SDK Pin";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/update-sdk-pin.sh\"\n";
+		};
+		C1A05DF12F00000000000003 /* Update SDK Pin */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Update SDK Pin";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/update-sdk-pin.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

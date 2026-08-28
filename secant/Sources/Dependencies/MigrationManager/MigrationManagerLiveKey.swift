@@ -399,8 +399,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private let snapshotSubjects = OSAllocatedUnfairLock<[AccountUUID: CurrentValueSubject<MigrationViewSnapshot?, Never>]>(initialState: [:])
     /// R13 Brick 1: the republish coalescer — a snapshot build is several FFI reads (measured
     /// 4.75 s quiet, 18.3 s under a sweep), so poke bursts must collapse: one build in flight per
-    /// account, at most one queued behind it (`dirty`), never a pile-up.
-    private let snapshotRepublishState = OSAllocatedUnfairLock<(inFlight: Set<AccountUUID>, dirty: Set<AccountUUID>)>(initialState: ([], []))
+    /// account, at most one queued behind it (`dirty`), never a pile-up. `idleWaiters` is test
+    /// support only (`awaitSnapshotRepublishIdle(for:)`) and lives in this SAME lock so a waiter's
+    /// check-then-register can never race the transition it is waiting for — a separate lock for
+    /// the waiters would reopen exactly the lost-wakeup this coalescer's own inFlight/dirty pair
+    /// already has to avoid.
+    private struct SnapshotRepublishState {
+        var inFlight: Set<AccountUUID> = []
+        var dirty: Set<AccountUUID> = []
+        var idleWaiters: [AccountUUID: [CheckedContinuation<Void, Never>]] = [:]
+    }
+    private let snapshotRepublishState = OSAllocatedUnfairLock<SnapshotRepublishState>(initialState: SnapshotRepublishState())
     /// A13: accounts whose broadcast is IN FLIGHT right now, in this app session
     /// (`runBroadcastSession`). Read by `bannerVariant` to raise `.transferSending`.
     ///
@@ -3046,7 +3055,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
             subjects.values.forEach { $0.send(nil) }
             subjects.removeAll()
         }
-        snapshotRepublishState.withLock { $0 = ([], []) }
+        // Any test-support waiter parked on `awaitSnapshotRepublishIdle(for:)` gets resumed here
+        // too — the wipe makes the coalescer vacuously idle for every account, and dropping the
+        // continuation instead of resuming it would strand that caller forever.
+        let strandedIdleWaiters = snapshotRepublishState.withLock { state -> [CheckedContinuation<Void, Never>] in
+            let waiters = state.idleWaiters
+            state = SnapshotRepublishState()
+            return waiters.values.flatMap { $0 }
+        }
+        strandedIdleWaiters.forEach { $0.resume() }
         presentedFlowAccountUUIDs.withLock { $0.removeAll() }
         fruitlessProveSweeps.withLock { $0 = 0 }
         stateSubjects.withLock { $0.removeAll() }
@@ -3354,13 +3371,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
             let snapshot = await migrationViewSnapshot(accountUUID: accountUUID)
             publishSnapshot(snapshot, for: accountUUID)
 
-            let buildAgain = snapshotRepublishState.withLock { state -> Bool in
+            let (buildAgain, idleWaiters) = snapshotRepublishState.withLock { state -> (Bool, [CheckedContinuation<Void, Never>]) in
                 if state.dirty.remove(accountUUID) != nil {
-                    return true
+                    return (true, [])
                 }
                 state.inFlight.remove(accountUUID)
-                return false
+                // Same lock as the transition itself — see `awaitSnapshotRepublishIdle(for:)` —
+                // so a waiter's check-then-register can never straddle this and miss the wakeup.
+                let waiters = state.idleWaiters.removeValue(forKey: accountUUID) ?? []
+                return (false, waiters)
             }
+            idleWaiters.forEach { $0.resume() }
             guard buildAgain else { return }
             if detachingBacklogAfterFirstBuild {
                 // The awaited caller got its post-lock build; the backlog keeps `inFlight` and
@@ -3380,6 +3401,36 @@ final class MigrationManagerImpl: @unchecked Sendable {
     func isSnapshotRepublishIdle(for accountUUID: AccountUUID) -> Bool {
         snapshotRepublishState.withLock { state in
             !state.inFlight.contains(accountUUID) && !state.dirty.contains(accountUUID)
+        }
+    }
+
+    /// Test-only, `isSnapshotRepublishIdle`'s AWAITABLE sibling: suspends until the coalescer for
+    /// `accountUUID` transitions to idle instead of answering the question for right now. Unlike
+    /// polling `isSnapshotRepublishIdle` against a wall-clock deadline, this never returns early —
+    /// the coalescer itself resumes the continuation exactly when it clears the last `inFlight`
+    /// claim (`republishSnapshotDrainingDirty`'s `idleWaiters` hand-off) or when a full wipe makes
+    /// every account vacuously idle (`wipeAllMigrationState`) — so the wait scales with however
+    /// long the build actually takes under load rather than racing a fixed budget against it. The
+    /// synchronous check and the registration run under the SAME lock `isSnapshotRepublishIdle`
+    /// reads, so a transition landing between "check" and "register" can never strand the caller.
+    /// No timeout, and the continuation below has no cancellation handler: a coalescer that never
+    /// returns to idle leaves this genuinely suspended, not merely slow. A caller's own outer bound
+    /// (this suite's `.timeLimit`, say) can RECORD that as a failed test but cannot reclaim the
+    /// suspended `Task` — only something outside this call, like a CI job's own timeout, actually
+    /// ends it. That is the intended trade for a real bug here: it surfaces as a real hang instead
+    /// of a flaky pass papering over it.
+    func awaitSnapshotRepublishIdle(for accountUUID: AccountUUID) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let alreadyIdle = snapshotRepublishState.withLock { state -> Bool in
+                let idle = !state.inFlight.contains(accountUUID) && !state.dirty.contains(accountUUID)
+                if !idle {
+                    state.idleWaiters[accountUUID, default: []].append(continuation)
+                }
+                return idle
+            }
+            if alreadyIdle {
+                continuation.resume()
+            }
         }
     }
 

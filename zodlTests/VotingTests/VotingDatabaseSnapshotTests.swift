@@ -32,13 +32,12 @@ import Foundation
     /// The capture time lives in the marker filename instead.
     @Test func preservedSetKeepsCanonicalNamesAndRecordsTheTime() throws {
         let scratch = try Scratch()
-        let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
-                databasePath: scratch.databaseURL.path,
-                now: Date(timeIntervalSince1970: 1_787_675_522),
-                root: scratch.destination
-            )
+        let captured = try VotingDatabaseSnapshot.captureThrowing(
+            databasePath: scratch.databaseURL.path,
+            now: Date(timeIntervalSince1970: 1_787_675_522),
+            root: scratch.destination
         )
+        let snapshot = try #require(captured)
 
         #expect(snapshot.databaseURL.lastPathComponent == "voting.sqlite3")
         #expect(snapshot.walURL.path == snapshot.databaseURL.path + "-wal")
@@ -48,13 +47,12 @@ import Foundation
 
     @Test func copiesAllThreeFilesByteForByte() throws {
         let scratch = try Scratch()
-        let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
-                databasePath: scratch.databaseURL.path,
-                now: Date(),
-                root: scratch.destination
-            )
+        let captured = try VotingDatabaseSnapshot.captureThrowing(
+            databasePath: scratch.databaseURL.path,
+            now: Date(),
+            root: scratch.destination
         )
+        let snapshot = try #require(captured)
 
         #expect(try Data(contentsOf: snapshot.databaseURL) == Data(contentsOf: scratch.databaseURL))
         #expect(try Data(contentsOf: snapshot.walURL) == Data(contentsOf: scratch.walURL))
@@ -138,13 +136,12 @@ import Foundation
         let scratch = try Scratch()
         try FileManager.default.removeItem(at: scratch.walURL)
 
-        let snapshot = try #require(
-            VotingDatabaseSnapshot.captureThrowing(
-                databasePath: scratch.databaseURL.path,
-                now: Date(),
-                root: scratch.destination
-            )
+        let captured = try VotingDatabaseSnapshot.captureThrowing(
+            databasePath: scratch.databaseURL.path,
+            now: Date(),
+            root: scratch.destination
         )
+        let snapshot = try #require(captured)
 
         #expect(try Data(contentsOf: snapshot.databaseURL)
             == Data(contentsOf: scratch.databaseURL))

@@ -90,10 +90,6 @@ extension VotingCryptoClient: DependencyKey {
                     )
                 }
             },
-            clearRound: { roundId in
-                let backend = try await dbActor.backend()
-                try backend.clearRound(roundId: roundId)
-            },
             deleteSkippedBundles: { roundId, keepCount in
                 let backend = try await dbActor.backend()
                 _ = try backend.deleteSkippedBundles(roundId: roundId, keepCount: keepCount)
@@ -581,6 +577,18 @@ extension VotingCryptoClient: DependencyKey {
             clearRecoveryState: { roundId in
                 let backend = try await dbActor.backend()
                 try backend.clearRecoveryState(roundId: roundId)
+            },
+            resetSessionState: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetSessionState(roundId: roundId)
+            },
+            getStoredDelegationSighash: { roundId, bundleIndex in
+                let backend = try await dbActor.backend()
+                return Data(try backend.getStoredPcztSighash(roundId: roundId, bundleIndex: bundleIndex))
+            },
+            clearKeystoneSignature: { roundId, bundleIndex in
+                let backend = try await dbActor.backend()
+                try backend.clearKeystoneSignature(roundId: roundId, bundleIndex: bundleIndex)
             },
             computeShareNullifier: { voteCommitment, shareIndex, primaryBlind in
                 try VotingRustBackend.computeShareNullifier(

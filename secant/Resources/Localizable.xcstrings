@@ -5533,6 +5533,23 @@
         }
       }
     },
+    "coinVote.store.userError.delegationSetupIncomplete" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
+          }
+        }
+      }
+    },
     "coinVote.store.userError.pirEndpointsMissing" : {
       "extractionState" : "manual",
       "localizations" : {

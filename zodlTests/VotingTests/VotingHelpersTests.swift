@@ -57,6 +57,24 @@ import Testing
         #expect(message == String(localizable: .coinVoteStoreUserErrorCommitmentTreeNotGrown))
     }
 
+    @Test func mapsMissingAlphaToDelegationSetupIncomplete() {
+        let raw = """
+        Voting backend error: build_and_prove_delegation failed: invalid input: no alpha for round=16ee, bundle=0 \
+        (Invalid column type Null at index: 0, name: alpha)
+        """
+        #expect(VotingErrorMapper.userFriendlyMessage(from: raw) == String(localizable: .coinVoteStoreUserErrorDelegationSetupIncomplete))
+    }
+
+    @Test func mapsNullColumnToDelegationSetupIncomplete() {
+        let raw = "invalid input: no rho_signed for round=aa, bundle=1 (Invalid column type Null at index: 0, name: rho_signed)"
+        #expect(VotingErrorMapper.userFriendlyMessage(from: raw) == String(localizable: .coinVoteStoreUserErrorDelegationSetupIncomplete))
+    }
+
+    @Test func nullifierSpentStillWinsOverSetupIncomplete() {
+        let raw = "broadcast rejected: Nullifier was already spent (Invalid column type Null …)"
+        #expect(VotingErrorMapper.userFriendlyMessage(from: raw) == String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent))
+    }
+
     @Test func smartBundlesUsesRustOrderingAndPerBundleQuantization() {
         let notes = [
             note(value: 31_568_000, position: 0),

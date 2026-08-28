@@ -193,13 +193,15 @@ private let fastHttpSession: URLSession = {
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
 /// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs. A per-request `URLRequest.timeoutInterval` takes precedence over
-/// the session configuration's `timeoutIntervalForRequest` (measured: a
-/// request-level 3 s fails at 3.0 s on a session configured for 120 s), so
-/// stamping the value on the request governs both transports —
-/// `httpRequestOverTor` runs on URLSession too and honors per-request
-/// timeouts, which keeps the fast failover behaviour identical across Tor
-/// on/off.
+/// POSTs — on the non-Tor transports only. A per-request
+/// `URLRequest.timeoutInterval` takes precedence over the session
+/// configuration's `timeoutIntervalForRequest` (measured: a request-level
+/// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
+/// different: `TorClient.httpRequest` hands the URL, headers, and body to
+/// the Rust FFI and ignores `timeoutInterval` entirely, and the app-side
+/// `httpRequestOverTor` wrapper pins `retryLimit: 3` — so over Tor a dead
+/// server costs up to three of arti's internal connection timeouts. That is
+/// why nothing may block user-visible work on these requests (MOB-1810).
 private let fastRequestTimeout: TimeInterval = 5
 
 @Sendable
@@ -475,25 +477,23 @@ func delegateSharePayloads(
     // `share_index % 16` from that share's initial targets, which leaves every helper
     // provably short of at least one share. ZODL drives its own fan-out rather than
     // calling that planner, so the same rule is applied here, under the crate's own
-    // gate: a complete 16-share commitment across more than one helper. Single-share
-    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
-    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
-    // excludes them upstream.
-    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+    // gate: a complete 16-share commitment across more than one helper.
+    // The omission is enforced on EVERY selection round — initial and backfill
+    // alike — with a per-round fail-open (below), so a failed co-target can no
+    // longer route a helper its own omitted share (MOB-1810 review). Single-
+    // share (last-moment) sends and partial recovery resubmits carry fewer
+    // payloads and are excluded, exactly as `!single_share && share_count ==
+    // VOTE_COMMITMENT_SHARE_COUNT` excludes them upstream.
+    let spreadTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
 
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
-        // The guarantee is scoped to initial submission only. Once a target has failed
-        // and we are backfilling, the omitted helper becomes eligible again — losing a
-        // share entirely is worse than one helper holding a complete set, and the crate
-        // scopes its own guarantee the same way.
-        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
             var candidates = availableServers.filter { !triedServers.contains($0) }
-            if isInitialAttempt && spreadInitialTargets {
+            if spreadTargets {
                 let spread = candidates.filter { candidate in
                     // Indexed against the CONFIGURED list, never `availableServers`:
                     // failed helpers are pruned from the working set mid-commitment, and
@@ -505,14 +505,18 @@ func delegateSharePayloads(
                     guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
                     return position % voteCommitmentShareCount != Int(payload.shareIndex)
                 }
-                // Never let the omission starve a share: ceil(n/2) targets are always
-                // available after dropping at most one helper, but fail open rather
-                // than drop the share if that ever stops holding.
+                // Fail open rather than drop the share: if pruning has left
+                // only the omitted helper untried, losing the share entirely
+                // is worse than that helper completing its set — the crate
+                // weighs it the same way. The same fail-open also fires as a
+                // redundancy top-up when the share already has an acceptance
+                // but the omitted helper is the only untried candidate left.
+                // In every other case the omission holds across backfill
+                // rounds too.
                 if !spread.isEmpty {
                     candidates = spread
                 }
             }
-            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
@@ -910,7 +914,7 @@ extension VotingAPIClient: DependencyKey {
             },
             configureURLs: { config in
                 await SvAPIConfigStore.shared.configure(from: config)
-                await ServerHealthTracker.shared.initialize(
+                await ServerHealthTracker.shared.configure(
                     serverURLs: config.voteServers.map(\.url),
                     fetcher: { request in
                         try await performVotingRequest(request, fast: true)
@@ -1046,11 +1050,15 @@ extension VotingAPIClient: DependencyKey {
             delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
-                    // Active foreground delivery uses the submission-local server set.
-                    // POST failures prune that local set immediately; cached helper
-                    // health and /status probes are intentionally not consulted here.
-                    // Successful/failed foreground POSTs still update the tracker for
-                    // later background recovery decisions.
+                    // Active foreground delivery uses the submission-local server
+                    // set with uniformly random target selection — cached health
+                    // is deliberately NOT consulted here: health-first selection
+                    // measurably concentrates a commitment's shares onto the
+                    // healthy subset and, combined with backfill, once let a
+                    // single failed POST hand a helper its own omitted share
+                    // (MOB-1810 review). POST failures prune the local set;
+                    // successful/failed POSTs still feed the tracker, which the
+                    // background resubmission walk consumes.
                     let tracker = ServerHealthTracker.shared
                     return try await delegateSharePayloads(
                         payloads,
@@ -1101,6 +1109,11 @@ extension VotingAPIClient: DependencyKey {
             resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
+                // Recovery walks servers one at a time with a 5 s timeout each
+                // (non-Tor), so putting known-dead servers last is the biggest
+                // recovery-latency win. Ordering only — every configured server
+                // is still attempted (MOB-1810).
+                let healthy = Set(await tracker.healthyServers())
                 return await resubmitSharePayload(
                     payload,
                     configuredServerURLs: configuredServerURLs,
@@ -1113,7 +1126,8 @@ extension VotingAPIClient: DependencyKey {
                             await tracker.recordFailure(for: server)
                             throw error
                         }
-                    }
+                    },
+                    orderServers: healthOrderedWalk(healthy: healthy)
                 )
             },
             fetchProposalTally: { roundId, proposalId in
@@ -1218,6 +1232,9 @@ extension VotingAPIClient: DependencyKey {
                 }
 
                 return nil
+            },
+            startHealthProbeSweep: {
+                await ServerHealthTracker.shared.startProbeSweep()
             }
         )
     }

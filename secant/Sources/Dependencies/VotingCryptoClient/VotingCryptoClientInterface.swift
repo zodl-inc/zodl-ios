@@ -32,7 +32,6 @@ struct VotingCryptoClient {
     var getRoundState: @Sendable (_ roundId: String) async throws -> RoundStateInfo
     var getVotes: @Sendable (_ roundId: String) async throws -> [VoteRecord]
     var listRounds: @Sendable () async throws -> [RoundSummaryInfo]
-    var clearRound: @Sendable (_ roundId: String) async throws -> Void
     /// Delete bundle rows with index >= keepCount, removing skipped bundles
     /// so that proof_generated only considers signed+proven bundles.
     var deleteSkippedBundles: @Sendable (_ roundId: String, _ keepCount: UInt32) async throws -> Void
@@ -306,6 +305,25 @@ struct VotingCryptoClient {
     /// Clear recovery state for a round (keystone sigs, TX hashes).
     var clearRecoveryState: @Sendable (
         _ roundId: String
+    ) async throws -> Void
+    /// Clear per-session voting state for a round without touching signed or
+    /// registered bundles — the safe "resume in place" cleanup. Unlike
+    /// `clearRound`, this can never destroy delegation material an on-chain
+    /// registration may already depend on.
+    var resetSessionState: @Sendable (_ roundId: String) async throws -> Void
+    /// Stored ZIP-244 sighash of the bundle's persisted delegation PCZT.
+    /// Throws when the bundle has no completed delegation setup (e.g. the PCZT
+    /// build never stored its signing fields, or they were cleared).
+    var getStoredDelegationSighash: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32
+    ) async throws -> Data
+    /// Delete one bundle's persisted Keystone signature. The bundle becomes
+    /// eligible again for `resetSessionState`'s guarded cleanup, which leaves
+    /// signed bundles untouched. Deleting a missing row succeeds.
+    var clearKeystoneSignature: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32
     ) async throws -> Void
 
     // --- Share delegation tracking ---

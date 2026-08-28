@@ -24,7 +24,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct RootSendCompletionRefreshTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootSendCompletionRefreshTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -44,6 +44,7 @@ import ComposableArchitecture
     @Test func sendDoneInSendFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 80)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -55,6 +56,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -62,7 +64,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendDone)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -70,6 +72,7 @@ import ComposableArchitecture
     @Test func requestZecSendDoneInSendFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 81)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -81,6 +84,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -88,7 +92,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .requestZecConfirmation(.sendDone)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -96,6 +100,7 @@ import ComposableArchitecture
     @Test func sendFailedWithStoredTransactionRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 82)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -107,6 +112,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -114,7 +120,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendFailed(nil, true))))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -152,6 +158,7 @@ import ComposableArchitecture
     @Test func sendPartialInSendFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 84)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -163,6 +170,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -170,7 +178,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendPartial([], []))))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -180,6 +188,7 @@ import ComposableArchitecture
     @Test func scanFlowSendDoneRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 85)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -191,6 +200,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -198,7 +208,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.scanCoordFlowState.path.ids.first)
         store.send(.scanCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendDone)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -211,6 +221,7 @@ import ComposableArchitecture
     @Test func keystoneSignFlowSendDoneRefetchesTransactions() async {
         let account = Self.walletAccount(idByte: 86)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -221,13 +232,14 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
 
         store.send(.signWithKeystoneCoordFlow(.sendConfirmation(.sendDone)))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -239,6 +251,7 @@ import ComposableArchitecture
     @Test func swapFlowOwnSendDoneRefetchesTransactions() async {
         let account = Self.walletAccount(idByte: 87)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -249,13 +262,14 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
 
         store.send(.swapAndPayCoordFlow(.sendDone))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -263,6 +277,7 @@ import ComposableArchitecture
     @Test func swapFlowKeystoneSendDoneRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 88)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -274,6 +289,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -281,7 +297,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.swapAndPayCoordFlowState.path.ids.first)
         store.send(.swapAndPayCoordFlow(.path(.element(id: elementId, action: .confirmWithKeystone(.sendDone)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -294,6 +310,7 @@ import ComposableArchitecture
     @Test func detailCloseInSendFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 89)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -305,6 +322,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -312,7 +330,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
         store.send(.sendCoordFlow(.path(.element(id: elementId, action: .transactionDetails(.closeDetailTapped)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -320,6 +338,7 @@ import ComposableArchitecture
     @Test func detailCloseInScanFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 90)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -331,6 +350,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -338,7 +358,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.scanCoordFlowState.path.ids.first)
         store.send(.scanCoordFlow(.path(.element(id: elementId, action: .transactionDetails(.closeDetailTapped)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -349,6 +369,7 @@ import ComposableArchitecture
     @Test func detailCloseInKeystoneSignFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 91)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -360,6 +381,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -367,7 +389,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.signWithKeystoneCoordFlowState.path.ids.first)
         store.send(.signWithKeystoneCoordFlow(.path(.element(id: elementId, action: .transactionDetails(.closeDetailTapped)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -375,6 +397,7 @@ import ComposableArchitecture
     @Test func detailCloseInSwapFlowRefetchesTransactions() async throws {
         let account = Self.walletAccount(idByte: 92)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -386,6 +409,7 @@ import ComposableArchitecture
             baseNoOpDependencies(&$0)
             $0.sdkSynchronizer.getAllTransactions = { accountUUID in
                 fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
                 return []
             }
         }
@@ -393,7 +417,7 @@ import ComposableArchitecture
         let elementId = try #require(store.state.swapAndPayCoordFlowState.path.ids.first)
         store.send(.swapAndPayCoordFlow(.path(.element(id: elementId, action: .transactionDetails(.closeDetailTapped)))))
 
-        await waitForRefetch { fetchedAccounts.value.contains(account.id) }
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
         #expect(fetchedAccounts.value.contains(account.id))
     }
@@ -426,15 +450,22 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.zcashSDKEnvironment = .testnet
 }
 
+/// Suspends until `condition()` holds, woken once per signalled refetch — the event-driven
+/// replacement for the 15 s wall-clock poll this helper used to be. The awaited effects run on
+/// the globally shared concurrency pool every parallel suite competes for, so a loaded CI runner
+/// can outlast any fixed deadline while nothing is wrong (trivial tests have taken 20-35 s there).
+/// Each test's mock yields Void into its signal per recorded refetch — Void, not the AccountUUID,
+/// because sending the @preconcurrency SDK type through the stream trips strict-concurrency
+/// region analysis. A refetch that never comes is recorded by the suite's `.timeLimit` backstop
+/// rather than a deadline here.
 @MainActor
 private func waitForRefetch(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
-    sourceLocation: SourceLocation = #_sourceLocation,
-    condition: @escaping @MainActor () -> Bool
+    _ signal: AsyncStream<Void>,
+    until condition: @MainActor () -> Bool
 ) async {
-    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-        try? await Task.sleep(nanoseconds: 10_000_000)
+    for await _ in signal {
+        if condition() {
+            return
+        }
     }
-    #expect(condition(), "Timed out waiting for the send-completion transactions refetch", sourceLocation: sourceLocation)
 }

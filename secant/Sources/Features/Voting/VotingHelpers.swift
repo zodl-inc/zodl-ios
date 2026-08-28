@@ -426,6 +426,15 @@ enum VotingErrorMapper {
         if isNullifierAlreadySpent(rawError) {
             return String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent)
         }
+        if rawError.contains("no alpha for round") || rawError.contains("Invalid column type Null") {
+            // Defense in depth (MOB-1802): a NULL-column read out of the delegation
+            // setup tables (`zcash_voting`'s per-(round, wallet, bundle) blobs) means
+            // this device's local setup state for the round is incomplete. Fixes A–C
+            // aim to prevent this, but any residual case should read as an actionable
+            // message rather than raw rusqlite internals like "Invalid column type
+            // Null at index: 0, name: alpha".
+            return String(localizable: .coinVoteStoreUserErrorDelegationSetupIncomplete)
+        }
         if rawError.contains("vote round is not active") {
             return String(localizable: .coinVoteStoreUserErrorRoundNotActive)
         }
