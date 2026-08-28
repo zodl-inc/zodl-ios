@@ -91,13 +91,53 @@ The app ships a complete design system — reusable SwiftUI components (`secant/
 
 > `Asset.*` symbols are SwiftGen-generated into `Sources/Generated/` — do not edit those files; add the asset/color to the `.xcassets` catalogue and let the build regenerate them.
 
-## Changelog
+## CHANGELOG discipline
 
-Every implemented task — any feature, fix, or other user-facing change — MUST be recorded in `CHANGELOG.md` as part of the same change. Treat the changelog entry as part of "done": do not consider an implementation complete until its entry exists, and add it automatically without waiting to be asked.
+`CHANGELOG.md` exists for the people who use ZODL, and nothing else. It is also
+where the App Store "What's New" copy comes from, so treat every entry as text a
+user will read.
 
-- Add the entry under the `## [Unreleased]` section (create that section if it isn't there), in the matching `### Added` / `### Changed` / `### Fixed` / `### Removed` subsection.
-- Prefix every line with the issue identifier in brackets, e.g. `- [MOB-1321] Short, user-facing description of the change.`
-- Write from the user's perspective — what changed for them and why it matters — not the implementation detail. The changelog focuses on user-impacting modifications.
+- Update it for any **user-visible** change: a feature, a fix, a change in
+  behaviour, or something removed. The entry **must** be part of the same commit
+  that makes the change, not a follow-up. Treat it as part of "done", and add it
+  without waiting to be asked.
+- Add the entry under `## [Unreleased]`, in the matching `### Added` /
+  `### Changed` / `### Fixed` / `### Removed` subsection.
+- Prefix every line with its issue identifier in brackets, e.g.
+  `- [MOB-1321] Short, user-facing description of the change.`
+- Entries carry **only** what a user needs: what is different for them, where
+  they will meet it, and what they should do about it. Write it as they
+  encounter it, not as the code does.
+- **Never** describe implementation detail — a type, a dependency, a refactor —
+  or narrate branch and release topology: which line merged into which, which
+  release on another line carries the same change, which version numbers were
+  skipped, why the file's ordering looks the way it does. None of that is
+  actionable for a user.
+- Record **only completed changes since the last release**, never the
+  interstitial states of something changed several times since then. If a screen
+  was added and then reworked before release, the entry describes what shipped.
+- **Never modify an entry under an already-published version heading** — a
+  `## [X.Y.Z] - DATE` section, or one of the legacy
+  `## X.Y.Z build N (DATE)` ones, whose tag exists. Those are the historical
+  record of what that release shipped, and must not be altered even to clarify
+  or correct. New information goes under `## [Unreleased]`.
+- Do **not** add a separate "Breaking changes" section. `### Changed` already is
+  it: a user meets everything under that heading as something that used to work
+  differently.
+- Privacy, security, and cost properties are user-facing even when they are
+  documented only in a code comment. A change that reveals data on-chain, costs
+  a fee, or can fail at runtime belongs here.
+
+**Not user-visible, so no entry:** developer tooling and scripts, CI workflows,
+tests, build configuration, and refactors with no observable effect. An entry
+for one of these is noise in a file a user reads.
+
+`Scripts/prepare-release.sh start` promotes `## [Unreleased]` to
+`## [X.Y.Z] - YYYY-MM-DD` when the release is cut, and refuses if the section is
+empty. `## [Unreleased]` itself always stays at the top, empty until the next
+change lands. When preparing a release, audit by diffing the release range
+rather than trusting the file to be complete — behaviour-only changes with no
+visible UI change are the ones most often missed.
 
 ## Key Files
 
