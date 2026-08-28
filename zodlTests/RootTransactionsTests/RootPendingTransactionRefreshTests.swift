@@ -132,6 +132,7 @@ import ComposableArchitecture
         let scheduler = DispatchQueue.test
         let events = PassthroughSubject<SynchronizerEvent, Never>()
         let fetchCalls = LockIsolated<Int>(0)
+        let fetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
@@ -158,20 +159,29 @@ import ComposableArchitecture
             )
             $0.sdkSynchronizer.getAllTransactions = { _ in
                 fetchCalls.withValue { $0 += 1 }
+                fetchSignal.continuation.yield(())
                 return []
             }
         }
 
-        store.send(.observeTransactions)
-        await waitForRootStore { fetchCalls.value >= 1 }
+        // One explicit iterator serves this test's signal waits in sequence: each wait drains any
+        // buffered wake-ups and suspends only while its condition is still false — event-driven,
+        // no wall-clock deadline (the deleted `waitForRootStore` raced a 15 s budget CI load can
+        // outlast). A count that never arrives is recorded by the suite's `.timeLimit` backstop.
+        var fetchSignalIterator = fetchSignal.stream.makeAsyncIterator()
 
-        // Live subscription: an event-driven fetch lands.
-        for _ in 0..<50 where fetchCalls.value < 2 {
+        store.send(.observeTransactions)
+        while fetchCalls.value < 1 {
+            _ = await fetchSignalIterator.next()
+        }
+
+        // Live subscription: an event-driven fetch lands. The pump is unbounded on purpose — an
+        // iteration cap is a wall-clock deadline in disguise under CI load.
+        while fetchCalls.value < 2 {
             events.send(.foundTransactions([], nil))
             await scheduler.advance(by: .seconds(0.5))
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
-        await waitForRootStore { fetchCalls.value >= 2 }
 
         store.send(.initialization(.appDelegate(.didEnterBackground)))
         // Give the cancellations a moment to land before probing the dead window.
@@ -191,11 +201,13 @@ import ComposableArchitecture
         // one-shot fetch is the first observable proof of the re-established observation.
         let fetchesBeforeRetryStart = fetchCalls.value
         store.send(.initialization(.retryStart))
-        await waitForRootStore { fetchCalls.value >= fetchesBeforeRetryStart + 1 }
+        while fetchCalls.value < fetchesBeforeRetryStart + 1 {
+            _ = await fetchSignalIterator.next()
+        }
 
         // And the event stream is live again.
         let fetchesBeforeEventProbe = fetchCalls.value
-        for _ in 0..<50 where fetchCalls.value < fetchesBeforeEventProbe + 1 {
+        while fetchCalls.value < fetchesBeforeEventProbe + 1 {
             events.send(.foundTransactions([], nil))
             await scheduler.advance(by: .seconds(0.5))
             try? await Task.sleep(nanoseconds: 20_000_000)
@@ -282,9 +294,11 @@ import ComposableArchitecture
             }
         }
 
-        // Arm the poller and let it tick once, so the effect is provably running.
+        // Arm the poller and let it tick once, so the effect is provably running. Unbounded pump —
+        // an iteration cap is a wall-clock deadline in disguise under CI load; the suite's
+        // `.timeLimit` backstops a poller that genuinely never arms.
         store.send(.fetchedTransactions(account.id, [pendingTransaction]))
-        for _ in 0..<40 where fetchCalls.value < 1 {
+        while fetchCalls.value < 1 {
             await scheduler.advance(by: .seconds(1))
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -338,8 +352,10 @@ import ComposableArchitecture
         store.send(.fetchedTransactions(account.id, [pendingTransaction]))
 
         // First tick. Advancing in 1 s steps with real-time yields lets the poller's sleep
-        // register on the test scheduler before the clock passes its deadline.
-        for _ in 0..<40 where fetchCalls.value < 1 {
+        // register on the test scheduler before the clock passes its deadline. Both pumps are
+        // unbounded on purpose — an iteration cap is a wall-clock deadline in disguise under CI
+        // load; the suite's `.timeLimit` backstops a poller that genuinely never ticks.
+        while fetchCalls.value < 1 {
             await scheduler.advance(by: .seconds(1))
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -347,7 +363,7 @@ import ComposableArchitecture
 
         // The tick's own fetch returned the same still-pending payload (an UNCHANGED list -- the
         // state-equality short-circuit must not skip poller management), so the poller stays armed.
-        for _ in 0..<40 where fetchCalls.value < 2 {
+        while fetchCalls.value < 2 {
             await scheduler.advance(by: .seconds(1))
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -385,17 +401,4 @@ private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.userMetadataProvider.load = { _ in }
     values.walletStorage = .noOp
     values.zcashSDKEnvironment = .testnet
-}
-
-@MainActor
-private func waitForRootStore(
-    timeoutNanoseconds: UInt64 = 15_000_000_000,
-    sourceLocation: SourceLocation = #_sourceLocation,
-    condition: @escaping @MainActor () -> Bool
-) async {
-    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
-    #expect(condition(), "Timed out waiting for Root pending-transaction-refresh store state", sourceLocation: sourceLocation)
 }
