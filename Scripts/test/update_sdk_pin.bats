@@ -38,12 +38,30 @@ make_sdk_checkout() {
     SDK_SHA="$(git -C "$SDK_DIR" rev-parse HEAD)"
 }
 
+tag_sdk_checkout() {
+    # -c tag.gpgSign=false: some environments set tag.gpgSign=true globally,
+    # which turns a plain `git tag` into a signed/annotated one requiring a
+    # message. Scoped to this one invocation only — never touches persisted
+    # config — so the fixture stays a lightweight tag regardless of the
+    # ambient git config.
+    git -C "$SDK_DIR" -c tag.gpgSign=false tag v9.9.9
+}
+
 @test "local mode, clean checkout: writes HEAD sha" {
     write_local_pbxproj
     make_sdk_checkout
     run "$SCRIPTS_DIR/update-sdk-pin.sh"
     [ "$status" -eq 0 ]
     [ "$(tr -d '[:space:]' < "$SDK_PIN_FILE")" = "$SDK_SHA" ]
+}
+
+@test "local mode, clean tagged checkout: writes sha and tag" {
+    write_local_pbxproj
+    make_sdk_checkout
+    tag_sdk_checkout
+    run "$SCRIPTS_DIR/update-sdk-pin.sh"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SDK_PIN_FILE")" = "$SDK_SHA v9.9.9" ]
 }
 
 @test "local mode, dirty checkout: appends -dirty" {
@@ -53,6 +71,16 @@ make_sdk_checkout() {
     run "$SCRIPTS_DIR/update-sdk-pin.sh"
     [ "$status" -eq 0 ]
     [ "$(tr -d '[:space:]' < "$SDK_PIN_FILE")" = "${SDK_SHA}-dirty" ]
+}
+
+@test "local mode, dirty tagged checkout: no tag appended" {
+    write_local_pbxproj
+    make_sdk_checkout
+    tag_sdk_checkout
+    touch "$SDK_DIR/uncommitted"
+    run "$SCRIPTS_DIR/update-sdk-pin.sh"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SDK_PIN_FILE")" = "${SDK_SHA}-dirty" ]
 }
 
 @test "remote mode: empties the pin file" {
@@ -72,6 +100,20 @@ make_sdk_checkout() {
     run "$SCRIPTS_DIR/update-sdk-pin.sh"
     [ "$status" -eq 0 ]
     [ "$(stat -f %m "$SDK_PIN_FILE")" = "$before" ]
+}
+
+@test "same sha, tag added between runs: second run rewrites with tag" {
+    write_local_pbxproj
+    make_sdk_checkout
+    "$SCRIPTS_DIR/update-sdk-pin.sh"
+    [ "$(cat "$SDK_PIN_FILE")" = "$SDK_SHA" ]
+    touch -t 202001010000 "$SDK_PIN_FILE"
+    before="$(stat -f %m "$SDK_PIN_FILE")"
+    tag_sdk_checkout
+    run "$SCRIPTS_DIR/update-sdk-pin.sh"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SDK_PIN_FILE")" = "$SDK_SHA v9.9.9" ]
+    [ "$(stat -f %m "$SDK_PIN_FILE")" != "$before" ]
 }
 
 @test "local mode, missing sibling: warns, exits 0, pin untouched" {

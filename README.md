@@ -76,6 +76,10 @@ The `Update SDK Pin` build phase runs on every build of the app targets and refr
 
 A pin value ending in `-dirty` indicates the app was last built against uncommitted changes in the SDK. CI will reject this state. To fix it: commit and push your SDK work, rebuild the app (the pin refreshes automatically), then commit the updated pin.
 
+When the pinned commit has a tag pointing exactly at it, the pin file gains a second, space-separated field holding that tag (e.g. `<sha> v1.2.3`) purely for human legibility in diffs and merge conflicts — it's informational only, never present on a `-dirty` pin, and CI always reads just the sha.
+
+If `.sdk-pin` conflicts on merge, don't hand-merge it: take either side, run `Scripts/update-sdk-pin.sh` (or just build once), and commit the result — the file is derived state, not something to reconcile by hand.
+
 On CI, a validation gate checks the pin first before proceeding. When you reference a local SDK, a shared `build_ffi` job fetches the SDK at the pinned commit and builds its Rust FFI core once; the result is cached across CI runs and reused by both unit-test and end-to-end-test workflows. If a pin points to a commit reachable only from an unmerged SDK branch, CI emits a warning — repoint the pin to the merged commit before the SDK's PR branch is deleted, or CI's fetch of the pinned commit will start failing outright.
 
 The pin certifies the SDK state you **last built** locally. If you advance the SDK work before pushing, rebuild the app to refresh the pin. CI constructs the FFI from the pinned tree using the SDK's own build script, `Scripts/init-local-ffi.sh`.

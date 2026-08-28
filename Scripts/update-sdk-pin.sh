@@ -4,10 +4,16 @@
 # Runs as the "Update SDK Pin" build phase on every app target. Reads the
 # committed pbxproj to decide the mode:
 #   local SDK reference  -> pin = sibling checkout's HEAD ("-dirty" appended
-#                           while its working tree has uncommitted changes)
+#                           while its working tree has uncommitted changes).
+#                           When the checkout is clean and HEAD has an
+#                           exact-match tag, the pin becomes "<sha> <tag>" —
+#                           the tag is a purely informational annotation,
+#                           never present on a "-dirty" pin.
 #   remote SDK reference -> pin file is emptied
-# Writes only when the content actually changes, and never fails the build:
-# capture is best-effort, CI validation (setup-sdk-companion.sh) enforces.
+# Writes only when the content actually changes (compared on the full line,
+# so a tag appearing later on an already-pinned sha still triggers a
+# rewrite), and never fails the build: capture is best-effort, CI validation
+# (setup-sdk-companion.sh) enforces.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,12 +44,18 @@ if [ -n "$rel_path" ]; then
         exit 0
     fi
     if [ -n "$(git -C "$sdk_dir" status --porcelain 2> /dev/null)" ]; then
-        sha="${sha}-dirty"
+        new_content="${sha}-dirty"
+    else
+        tag="$(git -C "$sdk_dir" describe --exact-match --tags HEAD 2> /dev/null || true)"
+        if [ -n "$tag" ]; then
+            new_content="$sha $tag"
+        else
+            new_content="$sha"
+        fi
     fi
-    new_content="$sha"
 fi
 
-current="$(read_pin "$PIN_FILE")"
+current="$(read_pin_line "$PIN_FILE")"
 if [ "$current" = "$new_content" ]; then
     exit 0
 fi

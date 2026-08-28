@@ -84,6 +84,24 @@ make_origin() {
     [[ "$output" == *"40-character"* ]]
 }
 
+@test "local mode + malformed pin with tag-like annotation: fails" {
+    write_local_pbxproj
+    printf 'garbage some-tag\n' > "$SDK_PIN_FILE"
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh" --validate-only
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"40-character"* ]]
+}
+
+@test "local mode + tagged pin, validate-only: ok with sha-only pin output" {
+    write_local_pbxproj
+    make_origin
+    printf '%s some-tag\n' "$PIN_SHA" > "$SDK_PIN_FILE"
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh" --validate-only
+    [ "$status" -eq 0 ]
+    grep -q '^mode=local$' "$GITHUB_OUTPUT"
+    grep -q "^pin=$PIN_SHA$" "$GITHUB_OUTPUT"
+}
+
 @test "local mode + valid pin, validate-only: ok with outputs, no fetch" {
     write_local_pbxproj
     make_origin
