@@ -24,6 +24,8 @@ struct SwapAndPay {
         var SwapAssetsCancelId = UUID()
         var ABCancelId = UUID()
         var QRCancelId = UUID()
+        var MaxCancelId = UUID()
+        var UAGenerationCancelId = UUID()
 
         var address = ""
         @Shared(.inMemory(.addressBookContacts)) var addressBookContacts: AddressBookContacts = .empty
@@ -41,6 +43,7 @@ struct SwapAndPay {
         var isDepositHelpSheetVisible = false
         var isInputInUsd = false
         var isInsufficientBalance = false
+        var isMaxRequestInFlight = false
         var isNotAddressInAddressBook = false
         var isQuoteRequestInFlight = false
         var isQuotePresented = false
@@ -158,7 +161,27 @@ struct SwapAndPay {
         var spendability: Spendability {
             walletBalancesState.spendability
         }
-        
+
+        /// Max chip on the Swap (ZEC -> token) screen. There must be a spendable balance
+        /// and a selected account, no max/quote request may be running, and — when the
+        /// field is in USD mode — a usable ZEC price to convert the max with.
+        var isSwapMaxButtonEnabled: Bool {
+            spendability != .nothing
+            && walletBalancesState.shieldedBalance.amount > 0
+            && selectedWalletAccount != nil
+            && !isMaxRequestInFlight
+            && !isQuoteRequestInFlight
+            && (!isInputInUsd || (zecAsset?.usdPrice ?? 0) > 0)
+        }
+
+        /// Max chip on the Pay screen. On top of the Swap conditions the max has to be
+        /// convertible into the selected token, which needs a non-zero USD price on both sides.
+        var isPayMaxButtonEnabled: Bool {
+            isSwapMaxButtonEnabled
+            && (selectedAsset?.usdPrice ?? 0) > 0
+            && (zecAsset?.usdPrice ?? 0) > 0
+        }
+
         var amount: Decimal {
             if !_XCTIsTesting {
                 @Dependency(\.numberFormatter) var numberFormatter
@@ -219,6 +242,9 @@ struct SwapAndPay {
         case getQuoteTapped
         case helpSheetRequested(Int)
         case internalBackButtonTapped
+        case maxAmountFailed
+        case maxAmountResolved(Zatoshi)
+        case maxTapped
         case nextTapped
         case onAppear
         case onDisappear
@@ -236,7 +262,8 @@ struct SwapAndPay {
         case switchInputTapped
         case trySwapsAssetsAgainTapped
         case updateAssetsAccordingToSearchTerm
-        case updatePrivateUA(UnifiedAddress?)
+        case updateNextPrivateUA(UnifiedAddress?, AccountUUID)
+        case updatePrivateUA(UnifiedAddress?, AccountUUID)
         case walletBalances(WalletBalances.Action)
         case willEnterForeground
 
@@ -350,10 +377,12 @@ struct SwapAndPay {
 
             case .onDisappear:
                 // __LD2 TESTing
+                state.isMaxRequestInFlight = false
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
-                    .cancel(id: state.QRCancelId)
+                    .cancel(id: state.QRCancelId),
+                    .cancel(id: state.MaxCancelId)
                 )
                 
             case .willEnterForeground:
@@ -397,7 +426,115 @@ struct SwapAndPay {
                 
             case .internalBackButtonTapped:
                 return .none
-                
+
+                // MARK: - Max
+
+            case .maxTapped:
+                // Swapping INTO ZEC spends no ZEC from this wallet, so there is no max to offer
+                // and no chip is rendered in that direction.
+                guard !state.isSwapToZecExperienceEnabled else {
+                    return .none
+                }
+                guard let account = state.selectedWalletAccount else {
+                    return .none
+                }
+                state.isMaxRequestInFlight = true
+                return .run { [accountId = account.id] send in
+                    do {
+                        // The real recipient is the provider's deposit address, which does
+                        // not exist until a quote has been requested. Every deposit address
+                        // the supported providers hand out today is transparent, so proposing
+                        // against this account's own transparent receiver lands in the same
+                        // ZIP-317 fee class and yields the same max. If a provider ever
+                        // returns a shielded deposit address instead, the max computed here
+                        // can overshoot by the fee-class difference — that case is caught
+                        // after the quote, when the real `proposeTransfer` fails into the
+                        // existing insufficient-balance sheet.
+                        guard let transparentAddress = try await sdkSynchronizer.getTransparentAddress(accountId) else {
+                            await send(.maxAmountFailed)
+                            return
+                        }
+                        let recipient = Recipient.transparent(transparentAddress)
+                        let maxAmount = try await sdkSynchronizer.sendMaxAmount(accountId, recipient, nil)
+                        await send(.maxAmountResolved(maxAmount))
+                    } catch {
+                        await send(.maxAmountFailed)
+                    }
+                }
+                .cancellable(id: state.MaxCancelId)
+
+            case .maxAmountFailed:
+                state.isMaxRequestInFlight = false
+                state.$toast.withLock { $0 = .top(String(localizable: .generalMaxFailed)) }
+                return .none
+
+            case let .maxAmountResolved(maxAmount):
+                state.isMaxRequestInFlight = false
+                guard !state.isSwapToZecExperienceEnabled else {
+                    return .none
+                }
+                // Already net of the ZIP-317 fee.
+                let maxZec = maxAmount.decimalValue.decimalValue
+                if state.isSwapExperienceEnabled {
+                    // Swap ZEC -> token: one input field, holding either ZEC or its USD value.
+                    // `conversionFormatter` is the formatter the field can parse back (no grouping
+                    // separators); every dependent label is a computed property, so nothing else
+                    // has to be recomputed here.
+                    let formatter = state.conversionFormatter
+                    if state.isInputInUsd {
+                        guard let zecAsset = state.zecAsset, zecAsset.usdPrice > 0 else {
+                            return .send(.maxAmountFailed)
+                        }
+                        // Floored, never rounded: this field is what the insufficient-funds check
+                        // divides back into ZEC, so rounding up would flag a Max the user just
+                        // tapped as over the balance. Floored to CENTS because every other USD
+                        // figure on this screen (the Spendable header, the To side) shows 2 decimals
+                        // and an 8-decimal dollar amount reads as broken next to them. The cost is
+                        // at most a cent of the max, far inside the ZIP-317 fee headroom.
+                        let amountInUsd = (maxZec * zecAsset.usdPrice).roundedDown(scale: 2)
+                        guard let value = formatter.string(from: NSDecimalNumber(decimal: amountInUsd)) else {
+                            return .send(.maxAmountFailed)
+                        }
+                        state.amountText = value
+                    } else {
+                        guard let value = formatter.string(from: NSDecimalNumber(decimal: maxZec)) else {
+                            return .send(.maxAmountFailed)
+                        }
+                        state.amountText = value
+                    }
+                } else {
+                    // Pay: the amount is entered in the target token, so the max goes through USD.
+                    let formatter = state.conversionCrossPayFormatter
+                    guard let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset else {
+                        return .send(.maxAmountFailed)
+                    }
+                    guard zecAsset.usdPrice > 0, selectedAsset.usdPrice > 0 else {
+                        return .send(.maxAmountFailed)
+                    }
+                    // Floored, never rounded, at the 8 digits the field accepts: `amountAssetText` is
+                    // what the insufficient-funds check reads, so the token amount must not creep
+                    // above the max even by a half-ulp.
+                    let amountInToken = (maxZec * zecAsset.usdPrice / selectedAsset.usdPrice).roundedDown(scale: 8)
+                    // Derived from the FLOORED token amount, exactly as `payUsdLabel` derives it from
+                    // `amountAssetText` — so tapping Max and typing the same token amount agree.
+                    let amountInUsd = amountInToken * selectedAsset.usdPrice
+                    guard
+                        let tokenValue = formatter.string(from: NSDecimalNumber(decimal: amountInToken)),
+                        let usdValue = formatter.string(from: NSDecimalNumber(decimal: amountInUsd))
+                    else {
+                        return .send(.maxAmountFailed)
+                    }
+                    // The same trio `.binding(\.amountAssetText)` writes when the user types an amount:
+                    // the token field, its USD counterpart (`payUsdLabel`) and `amountText` in token
+                    // units (`payAssetLabel`, what `amount` / `isInsufficientFunds` read). Computed
+                    // here rather than read back through `payUsdLabel` / `payAssetLabel` because those
+                    // depend on `assetAmount` / `usdAmount`, which are `_XCTIsTesting`-poisoned to 0.
+                    state.amountAssetText = tokenValue
+                    state.amountUsdText = usdValue
+                    state.amountText = tokenValue
+                }
+                return .none
+
             case .helpSheetRequested:
                 return .none
                 
@@ -649,18 +786,59 @@ struct SwapAndPay {
                 return .send(.updateAssetsAccordingToSearchTerm)
                 
             case .getQuoteTapped:
-                let isKeystone = state.selectedWalletAccount?.vendor == .keystone
-                if let uuid = state.selectedWalletAccount?.id {
-                    return .run { send in
-                        let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, isKeystone ? [.orchard] : [.sapling, .orchard])
-                        await send(.updatePrivateUA(privateUA))
-                        await send(.getQuote)
-                    }
+                guard let account = state.selectedWalletAccount else {
+                    return .send(.getQuote)
                 }
-                return .send(.getQuote)
+                let isKeystone = account.vendor == .keystone
+                let uuid = account.id
+                let receivers: Set<ReceiverType> = isKeystone ? [.orchard] : [.sapling, .orchard]
+                // Rotate-ahead by one (MOB-1803): `getCustomUnifiedAddress` is a wallet-DB write
+                // that can stall for seconds behind the sync engine. `.getQuote` hard-requires
+                // `privateUnifiedAddress` (the refund address — its guard silently no-ops on nil),
+                // so when a pre-generated stash exists it is promoted synchronously and the quote
+                // proceeds immediately, with a background refill of the stash.
+                if account.nextPrivateUA != nil {
+                    state.$selectedWalletAccount.withLock {
+                        let stash = $0?.nextPrivateUA
+                        $0?.privateUA = stash
+                        $0?.nextPrivateUA = nil
+                    }
+                    return .merge(
+                        .send(.getQuote),
+                        .run { send in
+                            let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                            await send(.updateNextPrivateUA(freshUA, uuid))
+                        }
+                        .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
+                    )
+                }
+                // No stash: keep the pre-rotation behavior — await generation so `.getQuote` has
+                // its refund address — then generate one more UA so the stash self-heals and the
+                // next quote request promotes instantly.
+                return .run { send in
+                    let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                    await send(.updatePrivateUA(privateUA, uuid))
+                    await send(.getQuote)
+                    let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                    await send(.updateNextPrivateUA(stashUA, uuid))
+                }
+                .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
 
-            case .updatePrivateUA(let privateUA):
-                state.$selectedWalletAccount.withLock { $0?.privateUA = privateUA }
+            case let .updateNextPrivateUA(nextPrivateUA, accountId):
+                // The UA was derived for `accountId`; if the selection changed while the
+                // generation was in flight, dropping it beats stashing one account's
+                // address under another.
+                state.$selectedWalletAccount.withLock {
+                    guard $0?.id == accountId else { return }
+                    $0?.nextPrivateUA = nextPrivateUA
+                }
+                return .none
+
+            case let .updatePrivateUA(privateUA, accountId):
+                state.$selectedWalletAccount.withLock {
+                    guard $0?.id == accountId else { return }
+                    $0?.privateUA = privateUA
+                }
                 return .none
 
             case .getQuote:

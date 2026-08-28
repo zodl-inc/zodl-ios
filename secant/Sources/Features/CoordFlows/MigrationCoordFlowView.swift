@@ -61,6 +61,8 @@ struct MigrationCoordFlowView: View {
                     MigrationHowItWorksView(store: store)
                 case let .recovery(store):
                     MigrationRecoveryView(store: store)
+                case let .residual(store):
+                    MigrationResidualView(store: store)
                 case let .keystoneSign(store):
                     MigrationKeystoneSignView(store: store)
                 case let .notifications(store):

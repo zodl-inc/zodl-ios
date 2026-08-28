@@ -4,8 +4,11 @@ import Foundation
 // MARK: - Server Health Tracker
 
 /// Tracks per-server health using a circuit breaker pattern.
-/// Servers that fail repeatedly are temporarily excluded from share distribution,
-/// with periodic probes to detect recovery.
+/// Health signals come from real share POSTs (`recordSuccess`/`recordFailure`)
+/// and from one-shot probe sweeps started at poll entry and submission start —
+/// never from the polls-list load path, and never from a periodic loop
+/// (MOB-1810). The data is advisory ordering input for the share-resubmission
+/// (recovery) walk; nothing filters on it and nothing blocks on it.
 actor ServerHealthTracker {
     static let shared = ServerHealthTracker()
 
@@ -36,37 +39,75 @@ actor ServerHealthTracker {
     // MARK: - Constants
 
     private let failureThreshold = 3
-    private let cooldownInterval: TimeInterval = 30
+    private let cooldownInterval: TimeInterval
 
     // MARK: - State
 
     typealias ProbeFetcher = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     private var servers: [String: ServerState] = [:]
-    private var probeTask: Task<Void, Never>?
-    /// Caller-supplied fetcher used by `probe`. Set inside
-    /// `initialize(serverURLs:fetcher:)` and only then. Left `nil` to make
-    /// any pre-initialize call to `probeAll()` a no-op rather than fall back
-    /// to a non-Tor `URLSession.shared`; that fallback would leak the
-    /// device's IP to every vote server every 60s if a future refactor ever
-    /// called probeAll before initialize.
+    /// The in-flight one-shot probe sweep, nil when idle. `startProbeSweep`
+    /// coalesces onto it; `configure` cancels it because its target set is stale.
+    private var sweepTask: Task<Void, Never>?
+    /// Monotonic sweep identity so a finished (or cancelled) sweep can only
+    /// clear its own registration, never a successor started after a
+    /// reconfigure.
+    private var sweepGeneration: UInt64 = 0
+    /// Caller-supplied fetcher used by probe sweeps. Set inside
+    /// `configure(serverURLs:fetcher:)` and only then. Left `nil` to make any
+    /// pre-configure call to `startProbeSweep()` a no-op rather than fall back
+    /// to a non-Tor `URLSession.shared`; that fallback would leak the device's
+    /// IP to every vote server if a future refactor ever probed before
+    /// configuring.
     private var probeFetcher: ProbeFetcher?
 
     // MARK: - Initialization
 
-    /// Populate the server map and run an initial parallel probe of all servers.
-    /// Called when the CDN service config is loaded. The `fetcher` is captured
-    /// so the periodic background probe respects the current Tor preference.
-    func initialize(serverURLs: [String], fetcher: @escaping ProbeFetcher) async {
-        // Replace server map (preserving nothing from prior config)
-        servers = Dictionary(uniqueKeysWithValues: serverURLs.map { ($0, ServerState()) })
+    init(cooldownInterval: TimeInterval = 30) {
+        self.cooldownInterval = cooldownInterval
+    }
+
+    // MARK: - Configuration
+
+    /// Replace the server map and probe fetcher for a freshly loaded service
+    /// config. Cancels any in-flight sweep (its target set is stale) and resets
+    /// every circuit to closed. Never probes — the polls list must never wait
+    /// on operator health checks (MOB-1810); sweeps start at poll entry and
+    /// submission start via `startProbeSweep()`.
+    func configure(serverURLs: [String], fetcher: @escaping ProbeFetcher) {
+        sweepTask?.cancel()
+        sweepTask = nil
+        sweepGeneration &+= 1
+        // The config layer rejects duplicate URLs (`VotingServiceConfig.validate`),
+        // but building the map must never be able to trap on them regardless.
+        servers = Dictionary(serverURLs.map { ($0, ServerState()) }, uniquingKeysWith: { first, _ in first })
         probeFetcher = fetcher
+    }
 
-        // Fire parallel probes so we know who's healthy before the first vote
-        await probeAll()
+    // MARK: - Probe Sweep
 
-        // Start background probing (replaces any existing loop)
-        startBackgroundProbing()
+    /// One-shot background sweep of every configured server. Returns as soon as
+    /// the sweep Task is registered — callers never wait on probe results.
+    /// While a sweep is in flight further calls coalesce into it and return
+    /// nil; a call after completion starts a fresh sweep. Unconfigured (no
+    /// fetcher, empty map) is a no-op returning nil. The returned Task exists
+    /// so tests can await sweep completion.
+    @discardableResult
+    func startProbeSweep() -> Task<Void, Never>? {
+        guard sweepTask == nil, probeFetcher != nil, !servers.isEmpty else { return nil }
+        sweepGeneration &+= 1
+        let generation = sweepGeneration
+        let task = Task { [weak self] in
+            await self?.probeAll()
+            await self?.clearSweepTask(generation: generation)
+        }
+        sweepTask = task
+        return task
+    }
+
+    private func clearSweepTask(generation: UInt64) {
+        guard generation == sweepGeneration else { return }
+        sweepTask = nil
     }
 
     // MARK: - Server Selection
@@ -136,10 +177,14 @@ actor ServerHealthTracker {
     // MARK: - Health Probing
 
     /// Probe all servers in parallel with GET /shielded-vote/v1/status.
-    /// No-op until `initialize(serverURLs:fetcher:)` has set the fetcher;
-    /// this is what keeps probes routed through Tor whenever the user has
-    /// it enabled, never the system URLSession.
+    /// No-op until `configure(serverURLs:fetcher:)` has set the fetcher; this
+    /// is what keeps probes routed through Tor whenever the user has it
+    /// enabled, never the system URLSession. The top-of-function and in-loop
+    /// cancellation checks exist so a sweep that `configure` cancels
+    /// mid-flight can neither read the freshly swapped-in config nor record
+    /// stale results into it.
     func probeAll() async {
+        guard !Task.isCancelled else { return }
         let urls = Array(servers.keys)
         guard !urls.isEmpty, let fetcher = probeFetcher else { return }
 
@@ -151,6 +196,7 @@ actor ServerHealthTracker {
                 }
             }
             for await (url, ok) in group {
+                guard !Task.isCancelled else { continue }
                 if ok {
                     recordSuccess(for: url)
                 } else {
@@ -171,23 +217,28 @@ actor ServerHealthTracker {
             return false
         }
     }
+}
 
-    // MARK: - Background Probing
+// MARK: - Advisory Ordering
 
-    private func startBackgroundProbing() {
-        probeTask?.cancel()
-        probeTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                guard !Task.isCancelled else { break }
-                await self?.probeAll()
-            }
-        }
-    }
+/// Health-first advisory ordering for the sequential share-resubmission walk
+/// (MOB-1810): candidates present in `healthy` come first, the rest after,
+/// each group shuffled so distribution across equally-ranked helpers stays
+/// uniform. Ordering only — every candidate is preserved and none is filtered.
+/// Deliberately NOT used for `delegateSharePayloads` target selection: there,
+/// health-first choice concentrates a commitment's shares onto the healthy
+/// subset and once let a single failed POST hand a helper its own omitted
+/// share, so the parallel spread stays uniformly random.
+func orderCandidatesByHealth(_ candidates: [String], healthy: Set<String>) -> [String] {
+    let healthyFirst = candidates.filter { healthy.contains($0) }.shuffled()
+    let rest = candidates.filter { !healthy.contains($0) }.shuffled()
+    return healthyFirst + rest
+}
 
-    func stopBackgroundProbing() {
-        probeTask?.cancel()
-        probeTask = nil
-    }
+/// The production ordering closure for `resubmitSharePayload`'s sequential
+/// walk. Kept as a named factory so the live wiring and the tests exercise
+/// the same closure instead of byte-copied duplicates.
+func healthOrderedWalk(healthy: Set<String>) -> @Sendable ([String]) -> [String] {
+    { orderCandidatesByHealth($0, healthy: healthy) }
 }
 #endif

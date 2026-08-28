@@ -32,6 +32,9 @@ extension SmartBannerView {
             case .priority8: currencyConversionContent()
             case .priority9: autoShieldingContent()
             case .priorityMigration: migrationContent()
+            // MOB-1749: the residual banner is the same migration content on its own (lowest) rung,
+            // rendered from `migrationBannerVariant` exactly as the migration slot renders it.
+            case .priorityResidual: migrationContent()
             default: EmptyView()
             }
         }

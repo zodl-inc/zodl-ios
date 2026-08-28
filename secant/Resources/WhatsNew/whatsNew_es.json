@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.10.2",
+            "date": "26-08-2026",
+            "timestamp": 1787778739,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema que podía impedir que Coinholder Polling se recuperara después de una entrega interrumpida. Al volver a abrir la encuesta, ahora se conserva la configuración guardada necesaria para reintentar de forma segura."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.0",
             "date": "19-08-2026",
             "timestamp": 1787170089,

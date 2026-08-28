@@ -43,7 +43,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct MigrationSyncCompleteEdgeTests {
+@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct MigrationSyncCompleteEdgeTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -70,6 +70,12 @@ import ComposableArchitecture
     /// be allowed to broadcast, which is the exact correlation ZIP 318 forbids.
     private struct SweepSpy: Sendable {
         let phases = LockIsolated<[MigrationOpenPhase]>([])
+        /// Event signal for the waits below: `advance` yields every phase it records, so a test
+        /// suspends until the call actually happens instead of polling against a wall-clock
+        /// deadline. The old 10 s `waitUntil` budget raced work scheduled on the globally shared
+        /// concurrency pool, which CI load can starve long past any fixed deadline (trivial tests
+        /// have taken 20-35 s on loaded runners) even when nothing is wrong.
+        private let signal = AsyncStream.makeStream(of: MigrationOpenPhase.self)
 
         var afterSyncCalls: Int { phases.value.filter { $0 == .afterSync }.count }
 
@@ -78,10 +84,20 @@ import ComposableArchitecture
             client.recordSyncCompleted = { }
             client.advance = { phase in
                 phases.withValue { $0.append(phase) }
+                signal.continuation.yield(phase)
                 return .proved(count: 0)
             }
             client.armNextWindowNotifications = { _ in }
             values.migrationManager = client
+        }
+
+        /// Suspends until the first `.afterSync` advance is recorded — event-driven, no deadline.
+        /// A call that genuinely never comes is recorded by the suite's `.timeLimit` backstop
+        /// instead of a budget here.
+        func firstAfterSync() async {
+            for await phase in signal.stream where phase == .afterSync {
+                return
+            }
         }
     }
 
@@ -101,7 +117,7 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.afterSyncCalls > 0 }
+        await spy.firstAfterSync()
 
         #expect(spy.afterSyncCalls == 1, "the edge is where the engine gets asked what the run needs next")
         #expect(
@@ -125,7 +141,7 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.afterSyncCalls > 0 }
+        await spy.firstAfterSync()
         store.send(.synchronizerStateChanged(Self.upToDateState()))
         store.send(.synchronizerStateChanged(Self.upToDateState()))
         try? await Task.sleep(nanoseconds: 200_000_000)
@@ -146,7 +162,7 @@ import ComposableArchitecture
         }
 
         store.send(.synchronizerStateChanged(Self.upToDateState()))
-        await waitUntil { spy.afterSyncCalls > 0 }
+        await spy.firstAfterSync()
 
         #expect(spy.afterSyncCalls == 1)
     }
@@ -166,15 +182,4 @@ private func baseMigrationEdgeDependencies(_ values: inout DependencyValues) {
     values.userMetadataProvider.load = { _ in }
     values.walletStorage = .noOp
     values.zcashSDKEnvironment = .testnet
-}
-
-@MainActor
-private func waitUntil(
-    timeoutNanoseconds: UInt64 = 10_000_000_000,
-    condition: @escaping @MainActor () -> Bool
-) async {
-    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-    while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
 }

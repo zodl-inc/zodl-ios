@@ -144,6 +144,7 @@ enum VotingConfigError: Error, Equatable, LocalizedError {
     case unsupportedVersion(component: String, advertised: String)
     case staticConfigSourceMalformed(String)
     case staticConfigFetchFailed(String)
+    case dynamicConfigFetchFailed(String, statusCode: Int?)
     case staticConfigHashMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
@@ -155,7 +156,9 @@ enum VotingConfigError: Error, Equatable, LocalizedError {
         case .staticConfigSourceMalformed(let detail):
             return String(localizable: .coinVoteConfigErrorDecodeFailed("static config source malformed: \(detail)"))
         case .staticConfigFetchFailed(let detail):
-            return String(localizable: .coinVoteConfigErrorDecodeFailed("static config fetch failed: \(detail)"))
+            return String(localizable: .coinVoteConfigErrorFetchFailed("static config: \(detail)"))
+        case .dynamicConfigFetchFailed(let detail, _):
+            return String(localizable: .coinVoteConfigErrorFetchFailed(detail))
         case .staticConfigHashMismatch(let expected, let actual):
             return String(
                 localizable: .coinVoteConfigErrorDecodeFailed(
@@ -179,6 +182,14 @@ extension VotingServiceConfig {
         }
         guard !pirEndpoints.isEmpty else {
             throw VotingConfigError.decodeFailed("pir_endpoints must contain at least one entry")
+        }
+        var seenVoteServerURLs = Set<String>()
+        for endpoint in voteServers where !seenVoteServerURLs.insert(endpoint.url).inserted {
+            throw VotingConfigError.decodeFailed("vote_servers contains duplicate url: \(endpoint.url)")
+        }
+        var seenPirURLs = Set<String>()
+        for endpoint in pirEndpoints where !seenPirURLs.insert(endpoint.url).inserted {
+            throw VotingConfigError.decodeFailed("pir_endpoints contains duplicate url: \(endpoint.url)")
         }
         for roundId in rounds.keys where !Self.isLowercaseHexRoundId(roundId) {
             throw VotingConfigError.decodeFailed("rounds key must be 64 lowercase hex characters: \(roundId)")

@@ -90,16 +90,15 @@ extension VotingCryptoClient: DependencyKey {
                     )
                 }
             },
-            clearRound: { roundId in
-                let backend = try await dbActor.backend()
-                try backend.clearRound(roundId: roundId)
-            },
             deleteSkippedBundles: { roundId, keepCount in
                 let backend = try await dbActor.backend()
                 _ = try backend.deleteSkippedBundles(roundId: roundId, keepCount: keepCount)
             },
             warmProvingCaches: {
-                try await Task.detached(priority: .background) {
+                // The crate's keygen threads inherit this task's QoS; background
+                // priority pinned them to efficiency cores and the first proof
+                // convoyed behind that keygen while the user watched "Authorizing…".
+                try await Task.detached(priority: .userInitiated) {
                     try VotingRustBackend.warmProvingCaches()
                 }.value
             },
@@ -579,6 +578,18 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.clearRecoveryState(roundId: roundId)
             },
+            resetSessionState: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetSessionState(roundId: roundId)
+            },
+            getStoredDelegationSighash: { roundId, bundleIndex in
+                let backend = try await dbActor.backend()
+                return Data(try backend.getStoredPcztSighash(roundId: roundId, bundleIndex: bundleIndex))
+            },
+            clearKeystoneSignature: { roundId, bundleIndex in
+                let backend = try await dbActor.backend()
+                try backend.clearKeystoneSignature(roundId: roundId, bundleIndex: bundleIndex)
+            },
             computeShareNullifier: { voteCommitment, shareIndex, primaryBlind in
                 try VotingRustBackend.computeShareNullifier(
                     voteCommitment: voteCommitment,
@@ -635,6 +646,13 @@ private actor DatabaseActor {
     private var _backend: VotingRustBackend?
 
     func open(path: String, networkId: UInt32) throws {
+        // Before anything touches the database. Closing the previous backend
+        // below drops the last connection, which makes SQLite checkpoint and
+        // unlink the WAL — and the WAL is the only place a cleared round's
+        // original secrets still exist. Once this line has run, the evidence
+        // is safe whatever the rest of the flow does.
+        VotingDatabaseSnapshot.capture(databasePath: path)
+
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).
         if let old = _backend {

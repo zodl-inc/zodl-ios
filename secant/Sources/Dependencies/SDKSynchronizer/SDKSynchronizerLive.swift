@@ -304,6 +304,16 @@ extension SDKSynchronizerClient: DependencyKey {
                     memo: memo
                 )
             },
+            sendMaxAmount: { accountUUID, recipient, memo in
+                let proposal = try await synchronizer.proposeSendMax(
+                    accountUUID: accountUUID,
+                    recipient: recipient,
+                    memo: memo,
+                    mode: .maxSpendable
+                )
+
+                return proposal.totalSpendValue() - proposal.totalFeeRequired()
+            },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
@@ -357,7 +367,10 @@ extension SDKSynchronizerClient: DependencyKey {
                 // Enrich the WalletAccounts with UnifiedAddresses
                 for i in 0..<walletAccounts.count {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
-                    walletAccounts[i].privateUA = try? await synchronizer.getCustomUnifiedAddress(
+                    // This fills the rotation stash (`nextPrivateUA`), not the displayed slot:
+                    // `privateUA` is only ever set by promotion at tap time, so a Receive/Swap
+                    // visit never re-shows an address that was already on screen (MOB-1803).
+                    walletAccounts[i].nextPrivateUA = try? await synchronizer.getCustomUnifiedAddress(
                         accountUUID: walletAccounts[i].id,
                         receivers: walletAccounts[i].vendor == .keystone ? [.orchard] : [.sapling, .orchard]
                     )

@@ -9,6 +9,7 @@ struct Home {
     @ObservableState
     struct State: Equatable {
         var CancelEventId = UUID()
+        var CancelUAGenerationId = UUID()
         var accountSwitchRequest = false
         @Presents var alert: AlertState<Action>?
         var appId: String?
@@ -101,7 +102,8 @@ struct Home {
         case synchronizerStateChanged(RedactableSynchronizerState)
         case syncFailed(ZcashError)
         case torSetupTapped(Bool)
-        case updatePrivateUA(UnifiedAddress?)
+        case updateNextPrivateUA(UnifiedAddress?, AccountUUID)
+        case updatePrivateUA(UnifiedAddress?, AccountUUID)
         case updateTransactionList([TransactionState])
         case transactionList(TransactionList.Action)
         case walletAccountTapped(WalletAccount)
@@ -172,18 +174,59 @@ struct Home {
                 )
 
             case .receiveScreenRequested:
-                let isKeystone = state.selectedWalletAccount?.vendor == .keystone
-                if let uuid = state.selectedWalletAccount?.id {
-                    return .run { send in
-                        let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, isKeystone ? [.orchard] : [.sapling, .orchard])
-                        await send(.updatePrivateUA(privateUA))
-                        await send(.receiveTapped)
-                    }
+                guard let account = state.selectedWalletAccount else {
+                    return .send(.receiveTapped)
                 }
-                return .send(.receiveTapped)
+                let isKeystone = account.vendor == .keystone
+                let uuid = account.id
+                let receivers: Set<ReceiverType> = isKeystone ? [.orchard] : [.sapling, .orchard]
+                // Rotate-ahead by one (MOB-1803): `getCustomUnifiedAddress` is a wallet-DB write
+                // that can stall for seconds behind the sync engine, so it must never be awaited
+                // before navigating. Promote the pre-generated stash into the displayed slot
+                // synchronously and navigate immediately; a background effect refills the stash.
+                // If the stash is empty, `privateUA` becomes nil — the Receive screen shows its
+                // loading treatment rather than ever re-showing the previous visit's address.
+                let hadStash = account.nextPrivateUA != nil
+                state.$selectedWalletAccount.withLock {
+                    let stash = $0?.nextPrivateUA
+                    $0?.privateUA = stash
+                    $0?.nextPrivateUA = nil
+                }
+                return .merge(
+                    .send(.receiveTapped),
+                    .run { send in
+                        let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                        if hadStash {
+                            // The promoted stash is on screen; the fresh UA refills the stash
+                            // for the next visit.
+                            await send(.updateNextPrivateUA(freshUA, uuid))
+                        } else {
+                            // Nothing was promoted — live-fill the displayed slot (filling from
+                            // empty is fine, swapping a displayed address is not), then generate
+                            // one more UA so the stash self-heals for the next visit.
+                            await send(.updatePrivateUA(freshUA, uuid))
+                            let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                            await send(.updateNextPrivateUA(stashUA, uuid))
+                        }
+                    }
+                    .cancellable(id: state.CancelUAGenerationId, cancelInFlight: true)
+                )
 
-            case .updatePrivateUA(let privateUA):
-                state.$selectedWalletAccount.withLock { $0?.privateUA = privateUA }
+            case let .updateNextPrivateUA(nextPrivateUA, accountId):
+                // The UA was derived for `accountId`; if the selection changed while the
+                // generation was in flight, dropping it beats stashing one account's
+                // address under another.
+                state.$selectedWalletAccount.withLock {
+                    guard $0?.id == accountId else { return }
+                    $0?.nextPrivateUA = nextPrivateUA
+                }
+                return .none
+
+            case let .updatePrivateUA(privateUA, accountId):
+                state.$selectedWalletAccount.withLock {
+                    guard $0?.id == accountId else { return }
+                    $0?.privateUA = privateUA
+                }
                 return .none
 
             case .receiveTapped:

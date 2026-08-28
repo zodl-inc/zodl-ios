@@ -395,24 +395,71 @@ extension MigrationCoordFlow {
                     await send(.flowFinished)
                 }
 
-            case .path(.element(id: _, action: .complete(.delegate(.migrateAnyway)))):
-                // The residual is below the transfer threshold, so it cannot ride the scheduled lane.
-                // "Migrate anyway" unlocks it and sweeps it through the ordinary immediate pipeline —
-                // one transaction, engine-external, exactly like the manual lane's own sweep.
+            case .path(.element(id: _, action: .residual(.delegate(.done)))):
+                // MOB-1749: nothing to acknowledge — there is no run behind the residual screen — and
+                // nothing to make fresh either: the lock already republished the snapshot
+                // (`lockMigrationDust` is the writer edge, awaited). This reconcile is state
+                // reconciliation, not banner freshness, and this screen stays on-screen while it
+                // runs. Root's `flowFinished` handling then re-evaluates the banner off a snapshot
+                // that has told the post-lock truth since the lock returned.
+                return reconcileThenFinishEffect()
+
+            case .path(.element(id: let id, action: .complete(.delegate(.migrateAnyway)))):
+                // The residual is below the transfer threshold, so it cannot ride the scheduled
+                // lane. "Migrate anyway" sweeps it through the ordinary immediate pipeline — one
+                // transaction, engine-external, exactly like the manual lane's own sweep.
+                //
+                // Wave 2 — ONE rule for both screens: the leg unlocks iff the tapping screen's
+                // resolution is `.locked`. At `.offered` nothing this tap is about is locked, and a
+                // PRIOR deliberate lock (now a real state here — `completeState` offers the run's
+                // own dust even with an earlier lock in place) must survive the sweep. At `.locked`
+                // the unlock IS the point: it is the release path. At `.locked` the clear is
+                // deliberately BLANKET: an earlier visit's lock is released and swept too — the
+                // review screen names the full amount before anything moves (approved 2026-08-24).
                 guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
-                return .run { [sdkSynchronizer, migrationManager, accountUUID] send in
-                    do {
-                        _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
-                        // Reconcile before handing over: the unlock changes the account's spendable
-                        // Orchard balance, and the Review screen's own proposal reads from it.
-                        await migrationManager.reconcile()
-                        await send(.migrateAnywayUnlocked)
-                    } catch {
-                        await send(.migrateAnywayFailed)
+                var clearsOutputLocks = false
+                if case .complete(let completeState) = state.path[id: id] {
+                    clearsOutputLocks = completeState.lock.resolution == .locked
+                }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: clearsOutputLocks)
+
+            case .path(.element(id: let id, action: .residual(.delegate(.migrateAnyway)))):
+                // Same rule as Complete's arm directly above — see its comment. On the `.offered`
+                // half, and only there, the leg leaves an earlier lock standing: that no-unlock half
+                // is what keeps "0.005 locked earlier, 0.004 received afterwards" safe, because the
+                // send-max covers exactly the spendable balance the card names. On the `.locked`
+                // half the clear is blanket — every locked note is released and swept.
+                guard let accountUUID = state.selectedWalletAccount?.id else { return .send(.migrateAnywayFailed) }
+                var clearsOutputLocks = false
+                if case .residual(let residualState) = state.path[id: id] {
+                    clearsOutputLocks = residualState.lock.resolution == .locked
+                }
+                return migrateAnywayEffect(accountUUID: accountUUID, clearsOutputLocks: clearsOutputLocks)
+
+            case .migrateAnywayUnlocked(let clearedLocks):
+                // Wave 2: a cleared lock re-offers. The screen underneath the review must tell the
+                // truth if the user backs out — its balance is unlocked again, so `.locked` would
+                // claim a lock the chain no longer holds. On the no-unlock leg nothing flips.
+                if clearedLocks {
+                    for id in state.path.ids {
+                        if case .complete(var completeState) = state.path[id: id], completeState.lock.resolution == .locked {
+                            completeState.lock.resolution = .offered
+                            state.path[id: id] = .complete(completeState)
+                        }
+                        if case .residual(var residualState) = state.path[id: id], residualState.lock.resolution == .locked {
+                            residualState.lock.resolution = .offered
+                            // The blanket unlock released every locked note: fold the frozen locked
+                            // figure into the spendable one so the re-offered card names the truth
+                            // (nothing is locked any more). Via a named total rather than `+=`:
+                            // `Zatoshi` is not `AdditiveArithmetic`, so it has no `+=`, and the
+                            // self-assigning `a = a + b` form trips SwiftLint's `shorthand_operator`.
+                            let releasedOrchardBalance = residualState.orchardBalance + residualState.lockedOrchardBalance
+                            residualState.orchardBalance = releasedOrchardBalance
+                            residualState.lockedOrchardBalance = .zero
+                            state.path[id: id] = .residual(residualState)
+                        }
                     }
                 }
-
-            case .migrateAnywayUnlocked:
                 // Straight onto the manual lane's own review screen: the user still confirms the
                 // sweep, and every downstream path (software commit, Keystone single-PCZT ceremony,
                 // broadcast-failure routing) is the one that lane already owns. `.immediate` carries
@@ -423,8 +470,13 @@ extension MigrationCoordFlow {
             case .migrateAnywayFailed:
                 for id in state.path.ids {
                     if case .complete(var completeState) = state.path[id: id] {
-                        completeState.isMigratingAnyway = false
+                        completeState.lock.isMigratingAnyway = false
                         state.path[id: id] = .complete(completeState)
+                    }
+                    // MOB-1749: the residual screen carries the same single-flight flag.
+                    if case .residual(var residualState) = state.path[id: id] {
+                        residualState.lock.isMigratingAnyway = false
+                        state.path[id: id] = .residual(residualState)
                     }
                 }
                 return .none
@@ -866,6 +918,10 @@ extension MigrationCoordFlow {
                 // `.forEach(\.path, action: \.path)` below removes the element, so `state.path`
                 // here is still the PRE-pop stack — see `MigrationCoordFlowStore.body`.
                 guard !state.isReentryResolved && state.path.ids == [id] else { return .none }
+                // Wave 2: finish IMMEDIATELY. The reconcile that briefly gated this exit ran on the
+                // permanently-hidden spinner root (the pop removes the only screen in this same
+                // reduction) — a controlless wait. The lock republishes the snapshot itself now
+                // (`lockMigrationDust` — the writer edge), so this exit owes the banner nothing.
                 return .send(.flowFinished)
 
             case .path:
@@ -1407,6 +1463,24 @@ extension MigrationCoordFlow {
         case .complete:
             return .complete(await completeState(accountUUID: accountUUID, isFlowRoot: true))
 
+        case .residual(let balances):
+            // MOB-1749 review fix: the screen renders the figures the route decision was made on —
+            // ONE read, no second fetch that could disagree with it (the old second read degraded a
+            // transient failure into a zeroed decision screen). The candidate re-check below cannot
+            // actually fail — `balances` is immutable and `.residual` is only ever emitted after the
+            // same predicate already passed — so treat it as a type-level assertion that documents
+            // the invariant (this route emits `.residual` only for candidates), not a runtime guard
+            // against a race.
+            guard balances.isResidualCandidate else { return nil }
+            return .residual(
+                MigrationResidual.State(
+                    orchardBalance: balances.residualOrchard,
+                    lockedOrchardBalance: balances.lockedOrchard,
+                    pendingOrchardBalance: balances.pendingOrchard,
+                    ironwoodBalance: balances.ironwood
+                )
+            )
+
         case .entry:
             return nil
         }
@@ -1440,24 +1514,65 @@ extension MigrationCoordFlow {
         )
     }
 
-    /// PHASE 6: the terminal screen's state. `dust` drives the residual fork — `MigrationComplete
-    /// .State`'s own init derives `.offered` from a non-zero value, so nothing here names it.
+    /// PHASE 6: the terminal screen's state. `dust` alone drives whether there IS a decision — the
+    /// screen renders its lock pieces on `hasDust`, so a zero leaves the celebratory rendering
+    /// untouched.
     ///
-    /// `migrationLockedAmount` wins over `summary.dust` when the residual is ALREADY locked: after a
-    /// lock, `migrationSummary().dust` re-plans from live spendable notes and reports zero, so
-    /// reading it alone would make a locked balance vanish from the screen that exists to report it.
+    /// Wave 2 — ONE balances read, and the run's own dust WINS. `summary.dust` re-plans from live
+    /// spendable notes, so after a lock it reads zero and the locked figure is the signal that
+    /// stays correct — but the locked figure is ACCOUNT-WIDE, so with an earlier residual-screen
+    /// lock in place a fresh run's dust must not be masked by it: nonzero `summary.dust` hydrates
+    /// `.offered` on that dust (and the `.offered` sweep leg leaves the prior lock standing).
+    /// `.locked` is constructible only with `dust == lockedAmount > 0`, so "locked ⟹ hasDust"
+    /// holds structurally and the view fork cannot drop a locked balance.
     private func completeState(accountUUID: AccountUUID?, isFlowRoot: Bool) async -> MigrationComplete.State {
         let summary = await migrationManager.migrationSummary(accountUUID)
-        let isLocked = await migrationManager.isMigrationDustLocked(accountUUID)
-        let lockedAmount = await migrationManager.migrationLockedAmount(accountUUID)
+        let residualBalances = await migrationManager.residualBalances(accountUUID)
+        if residualBalances == nil {
+            // An unreadable read degrades to "nothing locked" — observable, never silent: with
+            // `summary.dust` also zero this renders the celebratory screen over a possible lock.
+            MigrationTrace.event("completeState: balances UNREADABLE — a lock cannot be reported this pass")
+        }
+        let lockedAmount = residualBalances?.lockedOrchard ?? Zatoshi.zero
+        let isLocked = lockedAmount > Zatoshi.zero
         return MigrationComplete.State(
             totalTransferred: summary.transferred,
-            dust: isLocked ? lockedAmount : summary.dust,
+            dust: summary.dust > Zatoshi.zero ? summary.dust : lockedAmount,
             transfersSent: summary.transfersSent,
             transfersTotal: summary.transfersTotal,
             durationHours: summary.estimatedDurationHours,
             isFlowRoot: isFlowRoot,
-            dustResolution: isLocked ? .locked : nil
+            resolution: summary.dust > Zatoshi.zero ? nil : (isLocked ? .locked : nil)
         )
+    }
+
+    /// PHASE 6, the shared "Migrate anyway" leg. `clearsOutputLocks` is true exactly when the
+    /// tapping screen's resolution was `.locked` — the release path; see the delegate arms.
+    private func migrateAnywayEffect(accountUUID: AccountUUID, clearsOutputLocks: Bool) -> Effect<Action> {
+        .run { [sdkSynchronizer, migrationManager] send in
+            do {
+                if clearsOutputLocks {
+                    _ = try await sdkSynchronizer.unlockMigrationResidual(accountUUID)
+                }
+                // Reconcile before handing over: the Review screen's own proposal reads the
+                // account's spendable Orchard balance.
+                await migrationManager.reconcile()
+                await send(.migrateAnywayUnlocked(clearedLocks: clearsOutputLocks))
+            } catch {
+                await send(.migrateAnywayFailed)
+            }
+        }
+    }
+
+    /// The residual Got-it exit's leaving edge: reconcile migration state, then finish. NOT a snapshot
+    /// barrier — `reconcile()`'s republish is scheduled, not awaited, and banner freshness after a
+    /// lock is `lockMigrationDust`'s own job (it republishes before returning). The button exits
+    /// keep the reconcile because their screens stay visible while it runs; the interactive
+    /// back-swipe deliberately does not ride it (see the `.popFrom` arm).
+    private func reconcileThenFinishEffect() -> Effect<Action> {
+        .run { [migrationManager] send in
+            await migrationManager.reconcile()
+            await send(.flowFinished)
+        }
     }
 }

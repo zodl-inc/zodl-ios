@@ -68,6 +68,7 @@ import Testing
             isIronwoodActivated: true,
             state: .inProgress(progress(completed: completed, total: total)),
             orchardBalance: Zatoshi(500_000_000),
+            residual: nil,
             isCompleteAcknowledged: false,
             isMigrationRemainderPending: false,
             transferRows: rows

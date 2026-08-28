@@ -19,8 +19,8 @@ struct MigrationEntry {
         var isInAppBrowserOn = false
         /// Audit 2026-08-03 (C10): single-flight for Next — two fast taps used to emit two
         /// `.chose` delegates and push two identical next screens. Mirrors
-        /// `MigrationComplete.isMigratingAnyway`; re-armed by `.onAppear` when the user backs
-        /// onto this screen.
+        /// `MigrationLockDecision.State.isMigratingAnyway`; re-armed by `.onAppear` when the user
+        /// backs onto this screen.
         var isProceeding = false
         var selectedMode = MigrationMode.privateScheduled
         var orchardBalance = Zatoshi.zero

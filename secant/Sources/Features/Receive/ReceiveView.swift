@@ -39,7 +39,8 @@ struct ReceiveView: View {
                                     iconBg: Design.Utility.Indigo._100,
                                     bcgColor: Design.Utility.Indigo._50.color(colorScheme),
                                     expanded: store.currentFocus == .uaAddress,
-                                    shield: true
+                                    shield: true,
+                                    isLoading: store.isUARotationInFlight
                                 ) {
                                     store.send(.copyToPastboard(store.unifiedAddress.redacted))
                                 } qrAction: {
@@ -82,7 +83,8 @@ struct ReceiveView: View {
                                     iconBg: Design.Utility.Purple._100,
                                     bcgColor: Design.Utility.Purple._50.color(colorScheme),
                                     expanded: store.currentFocus == .uaAddress,
-                                    shield: true
+                                    shield: true,
+                                    isLoading: store.isUARotationInFlight
                                 ) {
                                     store.send(.copyToPastboard(store.unifiedAddress.redacted))
                                 } qrAction: {
@@ -295,6 +297,7 @@ struct ReceiveView: View {
         expanded: Bool,
         shield: Bool = false,
         copyButton: Bool = true,
+        isLoading: Bool = false,
         copyAction: @escaping () -> Void,
         qrAction: @escaping () -> Void,
         requestAction: @escaping () -> Void
@@ -329,9 +332,22 @@ struct ReceiveView: View {
                         .minimumScaleFactor(0.5)
                         .padding(.bottom, 4)
                     
-                    Text(address.truncateMiddle10)
-                        .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
-                        .padding(.bottom, expanded ? 10 : 0)
+                    if isLoading {
+                        // The rotated UA is still being generated (MOB-1803) — show a native
+                        // redacted placeholder instead of an address; the never-rendered
+                        // placeholder content only shapes the redaction bar.
+                        Text(String(repeating: "u", count: 23))
+                            .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
+                            .redacted(reason: .placeholder)
+                            .overlay {
+                                ProgressView()
+                            }
+                            .padding(.bottom, expanded ? 10 : 0)
+                    } else {
+                        Text(address.truncateMiddle10)
+                            .zFont(fontFamily: .robotoMono, size: 14, style: Design.Text.tertiary)
+                            .padding(.bottom, expanded ? 10 : 0)
+                    }
                 }
                 .lineLimit(1)
                 
@@ -387,6 +403,10 @@ struct ReceiveView: View {
                 }
                 .zFont(.medium, size: 14, style: iconFg)
                 .padding(.horizontal, 20)
+                // While the rotated UA is generating there is no address to copy, show, or
+                // request against — the controls sit disabled so the placeholder never leaks
+                // into any address-consuming action.
+                .disabled(isLoading)
             }
         }
         .padding(.vertical, 20)

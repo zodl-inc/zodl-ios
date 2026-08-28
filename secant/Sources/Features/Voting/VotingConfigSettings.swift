@@ -480,10 +480,7 @@ struct VotingConfigSettings {
     }
 
     private static func isBundledDefault(_ source: PinnedConfigSource) -> Bool {
-        guard let bundled = try? PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource) else {
-            return false
-        }
-        return source.url == bundled.url
+        StaticVotingConfig.bundledParsedSources.contains { bundled in bundled.url == source.url }
     }
 
     /// User-visible error when adding or switching a chain URL that matches Default or another custom entry.
@@ -504,12 +501,9 @@ struct VotingConfigSettings {
         return trimmed.count > 15 ? titleTooLongErrorMessage : nil
     }
 
-    /// True when `source` matches the bundled default pin (same URL and checksum semantics as `PinnedConfigSource`).
+    /// True when `source` matches any bundled mirror (same URL and checksum semantics as `PinnedConfigSource`).
     private static func matchesBundledPinnedSource(_ source: PinnedConfigSource) -> Bool {
-        guard let bundled = try? PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource) else {
-            return false
-        }
-        return source == bundled
+        StaticVotingConfig.bundledParsedSources.contains(source)
     }
 
     /// Duplicate if it matches **Default** or any saved custom chain (same `PinnedConfigSource` after parse).

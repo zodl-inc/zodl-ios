@@ -186,6 +186,17 @@ import ComposableArchitecture
         await store.receive(\.updateBalancesOnAppear)
     }
 
+    @MainActor @Test func shieldingProcessorNothingToShieldClearsShieldingAndRefreshes() async {
+        let store = TestStore(initialState: state(isShielding: true)) { Balances() }
+        store.exhaustivity = .off
+
+        await store.send(.shieldingProcessorStateChanged(.nothingToShield)) {
+            $0.isShielding = false
+        }
+        // No selected account, so the refresh request is a no-op effect.
+        await store.receive(\.updateBalancesOnAppear)
+    }
+
     @MainActor @Test func shieldFundsTappedInvokesProcessor() async {
         let shieldCalled = LockIsolated(false)
         let store = TestStore(initialState: state()) {

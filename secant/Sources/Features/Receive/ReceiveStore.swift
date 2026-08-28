@@ -38,6 +38,13 @@ struct Receive {
 
         var requestZecState = RequestZec.State.initial
         
+        /// The displayed rotation slot is empty — a fresh, never-shown-before UA is still being
+        /// generated in the background (MOB-1803). The UA card renders a redacted placeholder with
+        /// disabled controls meanwhile; `@Shared` delivers the address live once generation lands.
+        var isUARotationInFlight: Bool {
+            selectedWalletAccount?.privateUA == nil
+        }
+
         var unifiedAddress: String {
             selectedWalletAccount?.privateUnifiedAddress ?? String(localizable: .receiveErrorCantExtractUnifiedAddress)
         }

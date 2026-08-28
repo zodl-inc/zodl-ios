@@ -132,7 +132,7 @@ extension BalancesView {
             ) {
                 store.send(.shieldFundsTapped)
             }
-            .disabled(store.isShielding)
+            .disabled(store.isShieldingButtonDisabled)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)

@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.10.2",
+            "date": "26-08-2026",
+            "timestamp": 1787778739,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue that could prevent Coinholder Polling from recovering after an interrupted submission. Reopening the poll now preserves the saved setup needed to retry safely."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.0",
             "date": "19-08-2026",
             "timestamp": 1787170089,

@@ -64,7 +64,7 @@ struct Balances {
         }
         
         var isShieldableBalanceAvailable: Bool {
-            transparentBalance.amount >= autoShieldingThreshold.amount
+            ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold)
         }
 
         var isShieldingButtonDisabled: Bool {
@@ -72,7 +72,7 @@ struct Balances {
         }
 
         var isProcessingZeroAvailableBalance: Bool {
-            if shieldedBalance.amount == 0 && transparentBalance.amount > autoShieldingThreshold.amount {
+            if shieldedBalance.amount == 0 && ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold) {
                 return false
             }
             
@@ -153,10 +153,12 @@ struct Balances {
             
             case .shieldingProcessorStateChanged(let shieldingProcessorState):
                 state.isShielding = shieldingProcessorState == .requested
-                if shieldingProcessorState == .succeeded {
+                switch shieldingProcessorState {
+                case .succeeded, .nothingToShield:
                     return .send(.updateBalancesOnAppear)
+                case .failed, .grpc, .proposal, .requested, .unknown:
+                    return .none
                 }
-                return .none
 
             case .updateBalancesOnAppear:
                 guard let account = state.selectedWalletAccount else {
@@ -201,7 +203,7 @@ struct Balances {
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (state.transparentBalance < zcashSDKEnvironment.shieldingThreshold() && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+                || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
                 || state.totalBalance == .zero
                 
                 // spendability
@@ -219,11 +221,5 @@ struct Balances {
                 return .none
             }
         }
-    }
-}
-
-extension IdentifiedArrayOf<TransactionState> {
-    func isAnythingPending() -> Bool {
-        return contains(where: \.isPending)
     }
 }

@@ -31,6 +31,14 @@ extension Decimal {
         return self.rounded(scale: maximumFractionDigits)
     }
 
+    /// Rounds self DOWN to `scale` fraction digits — floor, i.e. toward negative infinity, NOT
+    /// toward zero: `Decimal(-1.005).roundedDown(scale: 2) == -1.01`, which is away from zero.
+    /// Use where rounding up would breach a hard ceiling — e.g. prefilling the maximum
+    /// spendable amount, where `simplified` may round up and push the form over the balance.
+    func roundedDown(scale: Int) -> Decimal {
+        rounded(scale: scale, mode: .down)
+    }
+
     private func rounded(scale: Int, mode: NSDecimalNumber.RoundingMode = .bankers) -> Decimal {
         var result = self
         var value = self

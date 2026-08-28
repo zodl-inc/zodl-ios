@@ -45,7 +45,7 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
         subject.send(.requested)
 
         guard let account = selectedWalletAccount, let zip32AccountIndex = account.zip32AccountIndex else {
-            subject.send(.failed("shieldFunds failed, no account available".toZcashError()))
+            subject.sendTerminal(.failed("shieldFunds failed, no account available".toZcashError()))
             return
         }
 
@@ -54,22 +54,31 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                 do {
                     let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
 
-                    guard let proposal else { throw "shieldFunds with Keystone: nil proposal" }
-                    subject.send(.proposal(proposal))
+                    guard let proposal else {
+                        subject.sendTerminal(.nothingToShield)
+                        return
+                    }
+                    subject.sendTerminal(.proposal(proposal))
                 } catch {
-                    subject.send(.failed(error.toZcashError()))
+                    subject.sendTerminal(.failed(error.toZcashError()))
                 }
             }
         } else {
             Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment] in
                 do {
+                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
+
+                    guard let proposal else {
+                        subject.sendTerminal(.nothingToShield)
+                        return
+                    }
+
+                    // Key material is derived only once there is something to shield — the
+                    // nil-proposal answer above is free, the seed derivation is not, and the
+                    // spending key should live no longer than needed.
                     let storedWallet = try walletStorage.exportWallet()
                     let seedBytes = try mnemonic.toSeed(storedWallet.seedPhrase.value())
                     let spendingKey = try derivationTool.deriveSpendingKey(seedBytes, zip32AccountIndex, zcashSDKEnvironment.network().networkType)
-
-                    let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
-
-                    guard let proposal else { throw "shieldFunds nil proposal" }
 
                     let result = try await sdkSynchronizer.createAndSubmitProposedTransactions(proposal, spendingKey)
 
@@ -80,19 +89,33 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                     // because they have a pending screen to show it on; this path does not.
                     switch result {
                     case .grpcFailure:
-                        subject.send(.grpc)
+                        subject.sendTerminal(.grpc)
                     case let .failure(_, code, description):
-                        subject.send(.failed("shieldFunds failed \(code) \(description)".toZcashError()))
+                        subject.sendTerminal(.failed("shieldFunds failed \(code) \(description)".toZcashError()))
                     case let .partial(_, statuses):
-                        subject.send(.failed("shieldFunds partially failed \(statuses.joined(separator: ", "))".toZcashError()))
+                        subject.sendTerminal(.failed("shieldFunds partially failed \(statuses.joined(separator: ", "))".toZcashError()))
                     case .success:
                         walletStorage.resetShieldingReminder(WalletAccount.Vendor.zcash.name())
-                        subject.send(.succeeded)
+                        subject.sendTerminal(.succeeded)
                     }
                 } catch {
-                    subject.send(.failed(error.toZcashError()))
+                    subject.sendTerminal(.failed(error.toZcashError()))
                 }
             }
         }
+    }
+}
+
+private extension CurrentValueSubject where Output == ShieldingProcessorClient.State, Failure == Never {
+    /// Terminal outcomes are one-shot events, but this is a `CurrentValueSubject`, which replays
+    /// its latest value to every new subscriber. Left latched, a `.succeeded` / `.nothingToShield`
+    /// / `.proposal` re-fires on each resubscribe (SmartBanner re-subscribes on every Home appear,
+    /// Root on re-init) — retracting valid banners, re-popping alerts, or re-launching the
+    /// Keystone signing flow. Follow every terminal send with `.unknown` so live subscribers see
+    /// the outcome exactly once and future subscribers replay only the reset. `.requested` stays
+    /// latched on purpose: a Balances sheet opened mid-shield needs the replay for its spinner.
+    func sendTerminal(_ state: ShieldingProcessorClient.State) {
+        send(state)
+        send(.unknown)
     }
 }

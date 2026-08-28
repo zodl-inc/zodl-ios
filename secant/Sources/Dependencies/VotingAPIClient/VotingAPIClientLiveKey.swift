@@ -44,7 +44,6 @@ enum SvAPIError: LocalizedError {
     case httpError(statusCode: Int, message: String)
     case invalidResponse(String)
     case noActiveVotingSession
-    case txFailed(code: UInt32, log: String)
 
     var errorDescription: String? {
         switch self {
@@ -54,8 +53,6 @@ enum SvAPIError: LocalizedError {
             return "Invalid API response: \(detail)"
         case .noActiveVotingSession:
             return "No active voting round"
-        case .txFailed(let code, let log):
-            return "Transaction failed (code \(code)): \(log)"
         }
     }
 }
@@ -100,8 +97,8 @@ enum SvAPIResponseParser {
                 (candidate["error"] as? String) ??
                 ""
 
-            if code != 0 {
-                throw SvAPIError.txFailed(code: code, log: log)
+            if code == 0, txHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw SvAPIError.invalidResponse("successful tx response is missing tx_hash")
             }
             return TxResult(txHash: txHash, code: code, log: log)
         }
@@ -196,12 +193,15 @@ private let fastHttpSession: URLSession = {
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
 /// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs. With the standard URLSession that timeout comes from the session
-/// config (`fastHttpSession.timeoutIntervalForRequest = 5`). With Tor we
-/// can't pick a session, so we stamp the same value on
-/// `URLRequest.timeoutInterval` — `httpRequestOverTor` ultimately runs on
-/// URLSession too and honors per-request timeouts, which keeps the fast
-/// failover behaviour identical across Tor on/off.
+/// POSTs — on the non-Tor transports only. A per-request
+/// `URLRequest.timeoutInterval` takes precedence over the session
+/// configuration's `timeoutIntervalForRequest` (measured: a request-level
+/// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
+/// different: `TorClient.httpRequest` hands the URL, headers, and body to
+/// the Rust FFI and ignores `timeoutInterval` entirely, and the app-side
+/// `httpRequestOverTor` wrapper pins `retryLimit: 3` — so over Tor a dead
+/// server costs up to three of arti's internal connection timeouts. That is
+/// why nothing may block user-visible work on these requests (MOB-1810).
 private let fastRequestTimeout: TimeInterval = 5
 
 @Sendable
@@ -333,15 +333,20 @@ private func postJSON(_ path: String, body: [String: Any], baseURL base: String)
         throw SvAPIError.invalidResponse("not an HTTP response")
     }
     guard http.statusCode == 200 else {
-        // 422 = chain processed the request but rejected the TX (non-zero CheckTx code).
-        // Parse the structured body for code/log instead of returning a raw HTTP error.
-        if http.statusCode == 422,
-           let json = try? SvAPIResponseParser.parseJSONObject(data, response: http, context: "POST \(path)") {
-            let code = (json["code"] as? NSNumber)?.uint32Value ?? 0
-            let log = json["log"] as? String ?? ""
-            if code != 0 {
-                throw SvAPIError.txFailed(code: code, log: log)
+        // A deterministic CheckTx rejection still carries the hash of the
+        // submitted bytes. Preserve it so the caller can verify whether that
+        // exact transaction was accepted by an earlier broadcast attempt.
+        if http.statusCode == 422 {
+            let json = try SvAPIResponseParser.parseJSONObject(
+                data,
+                response: http,
+                context: "POST \(path)"
+            )
+            let result = try SvAPIResponseParser.parseTxResult(json)
+            guard result.code != 0 else {
+                throw SvAPIError.invalidResponse("HTTP 422 tx response has code 0")
             }
+            return json
         }
         let body = String(data: data, encoding: .utf8) ?? ""
         throw SvAPIError.httpError(statusCode: http.statusCode, message: body)
@@ -472,25 +477,23 @@ func delegateSharePayloads(
     // `share_index % 16` from that share's initial targets, which leaves every helper
     // provably short of at least one share. ZODL drives its own fan-out rather than
     // calling that planner, so the same rule is applied here, under the crate's own
-    // gate: a complete 16-share commitment across more than one helper. Single-share
-    // (last-moment) sends and partial recovery resubmits carry fewer payloads and are
-    // excluded, exactly as `!single_share && share_count == VOTE_COMMITMENT_SHARE_COUNT`
-    // excludes them upstream.
-    let spreadInitialTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
+    // gate: a complete 16-share commitment across more than one helper.
+    // The omission is enforced on EVERY selection round — initial and backfill
+    // alike — with a per-round fail-open (below), so a failed co-target can no
+    // longer route a helper its own omitted share (MOB-1810 review). Single-
+    // share (last-moment) sends and partial recovery resubmits carry fewer
+    // payloads and are excluded, exactly as `!single_share && share_count ==
+    // VOTE_COMMITMENT_SHARE_COUNT` excludes them upstream.
+    let spreadTargets = payloads.count == voteCommitmentShareCount && availableServers.count > 1
 
     for (shareOffset, payload) in payloads.enumerated() {
         let targetCount = max(1, (availableServers.count + 1) / 2)
         var acceptedServers: [String] = []
         var triedServers = Set<String>()
-        // The guarantee is scoped to initial submission only. Once a target has failed
-        // and we are backfilling, the omitted helper becomes eligible again — losing a
-        // share entirely is worse than one helper holding a complete set, and the crate
-        // scopes its own guarantee the same way.
-        var isInitialAttempt = true
 
         while acceptedServers.count < targetCount {
             var candidates = availableServers.filter { !triedServers.contains($0) }
-            if isInitialAttempt && spreadInitialTargets {
+            if spreadTargets {
                 let spread = candidates.filter { candidate in
                     // Indexed against the CONFIGURED list, never `availableServers`:
                     // failed helpers are pruned from the working set mid-commitment, and
@@ -502,14 +505,18 @@ func delegateSharePayloads(
                     guard let position = initialServerURLs.firstIndex(of: candidate) else { return true }
                     return position % voteCommitmentShareCount != Int(payload.shareIndex)
                 }
-                // Never let the omission starve a share: ceil(n/2) targets are always
-                // available after dropping at most one helper, but fail open rather
-                // than drop the share if that ever stops holding.
+                // Fail open rather than drop the share: if pruning has left
+                // only the omitted helper untried, losing the share entirely
+                // is worse than that helper completing its set — the crate
+                // weighs it the same way. The same fail-open also fires as a
+                // redundancy top-up when the share already has an acceptance
+                // but the omitted helper is the only untried candidate left.
+                // In every other case the omission holds across backfill
+                // rounds too.
                 if !spread.isEmpty {
                     candidates = spread
                 }
             }
-            isInitialAttempt = false
             guard !candidates.isEmpty else { break }
 
             let needed = max(1, targetCount - acceptedServers.count)
@@ -606,7 +613,7 @@ func resubmitSharePayload(
     return []
 }
 
-/// Parse a broadcast TX response into TxResult. Throws on non-zero code.
+/// Parse a broadcast TX response into TxResult, preserving deterministic rejections.
 private func parseTxResult(_ json: [String: Any]) throws -> TxResult {
     try SvAPIResponseParser.parseTxResult(json)
 }
@@ -870,40 +877,17 @@ extension VotingAPIClient: DependencyKey {
     static var liveValue: Self {
         Self(
             fetchServiceConfig: { override in
-                let source: PinnedConfigSource
-                if let override {
-                    source = override
-                } else {
-                    source = try PinnedConfigSource.parse(StaticVotingConfig.bundledPinnedSource)
-                }
-                let staticConfig = try await StaticVotingConfig.loadFromNetwork(
-                    source: source,
+                let staticConfig = try await StaticVotingConfig.loadFromNetworkWithFailover(
+                    sources: StaticVotingConfig.resolveConfigSources(override: override),
                     fetch: { request in try await performVotingRequest(request) }
                 )
 
                 // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
                 // or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let configURL = staticConfig.dynamicConfigURL
-                let data: Data
-                let response: URLResponse
-                do {
-                    // Always re-fetch the config from the network instead of trusting
-                    // a persisted URLCache entry. GitHub Pages serves a short TTL, but
-                    // mobile restarts during a round rollover can otherwise keep an old
-                    // round binding alive long enough to brick voting on launch.
-                    var request = URLRequest(
-                        url: configURL,
-                        cachePolicy: .reloadIgnoringLocalCacheData
-                    )
-                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-                    request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-                    (data, response) = try await performVotingRequest(request)
-                } catch {
-                    throw VotingConfigError.decodeFailed("CDN fetch failed: \(error.localizedDescription)")
-                }
-                if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                    throw VotingConfigError.decodeFailed("CDN returned HTTP \(http.statusCode)")
-                }
+                let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(
+                    urls: staticConfig.dynamicConfigURLs,
+                    fetch: { request in try await performVotingRequest(request) }
+                )
                 let config: VotingServiceConfig
                 do {
                     config = try JSONDecoder().decode(VotingServiceConfig.self, from: data)
@@ -922,7 +906,7 @@ extension VotingAPIClient: DependencyKey {
                 )
                 LoggerProxy.info(
                     """
-                    Loaded config from CDN: \(authenticatedConfig.voteServers.count) vote servers, \
+                    Loaded config from \(origin.host ?? "<unknown origin>"): \(authenticatedConfig.voteServers.count) vote servers, \
                     \(authenticatedConfig.rounds.count) authenticated rounds, \(droppedRounds) dropped rounds
                     """
                 )
@@ -930,7 +914,7 @@ extension VotingAPIClient: DependencyKey {
             },
             configureURLs: { config in
                 await SvAPIConfigStore.shared.configure(from: config)
-                await ServerHealthTracker.shared.initialize(
+                await ServerHealthTracker.shared.configure(
                     serverURLs: config.voteServers.map(\.url),
                     fetcher: { request in
                         try await performVotingRequest(request, fast: true)
@@ -1066,11 +1050,15 @@ extension VotingAPIClient: DependencyKey {
             delegateShares: { payloads, proposalId, serverURLs in
                 @Dependency(\.transactionGuard) var transactionGuard
                 return try await transactionGuard.withSubmission {
-                    // Active foreground delivery uses the submission-local server set.
-                    // POST failures prune that local set immediately; cached helper
-                    // health and /status probes are intentionally not consulted here.
-                    // Successful/failed foreground POSTs still update the tracker for
-                    // later background recovery decisions.
+                    // Active foreground delivery uses the submission-local server
+                    // set with uniformly random target selection — cached health
+                    // is deliberately NOT consulted here: health-first selection
+                    // measurably concentrates a commitment's shares onto the
+                    // healthy subset and, combined with backfill, once let a
+                    // single failed POST hand a helper its own omitted share
+                    // (MOB-1810 review). POST failures prune the local set;
+                    // successful/failed POSTs still feed the tracker, which the
+                    // background resubmission walk consumes.
                     let tracker = ServerHealthTracker.shared
                     return try await delegateSharePayloads(
                         payloads,
@@ -1121,6 +1109,11 @@ extension VotingAPIClient: DependencyKey {
             resubmitShare: { payload, excludeURLs in
                 let configuredServerURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
                 let tracker = ServerHealthTracker.shared
+                // Recovery walks servers one at a time with a 5 s timeout each
+                // (non-Tor), so putting known-dead servers last is the biggest
+                // recovery-latency win. Ordering only — every configured server
+                // is still attempted (MOB-1810).
+                let healthy = Set(await tracker.healthyServers())
                 return await resubmitSharePayload(
                     payload,
                     configuredServerURLs: configuredServerURLs,
@@ -1133,7 +1126,8 @@ extension VotingAPIClient: DependencyKey {
                             await tracker.recordFailure(for: server)
                             throw error
                         }
-                    }
+                    },
+                    orderServers: healthOrderedWalk(healthy: healthy)
                 )
             },
             fetchProposalTally: { roundId, proposalId in
@@ -1238,6 +1232,9 @@ extension VotingAPIClient: DependencyKey {
                 }
 
                 return nil
+            },
+            startHealthProbeSweep: {
+                await ServerHealthTracker.shared.startProbeSweep()
             }
         )
     }

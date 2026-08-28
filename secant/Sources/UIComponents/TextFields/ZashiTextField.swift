@@ -57,11 +57,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let title {
-                Text(title)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .font(.custom(FontFamily.Inter.medium.name, size: 14))
-                    .zForegroundColor(Design.Inputs.Filled.label)
+                ZashiTextFieldTitle(title)
                     .padding(.bottom, title.isEmpty ? 0 : 6)
             }
             
