@@ -2085,6 +2085,103 @@ import Testing
         #expect(result == [signature0, signature2])
     }
 
+    // MARK: - Stored-signature reconciliation (persisted row cleanup)
+
+    // The field-report shape: a persisted signature whose bundle setup is incomplete (the
+    // sighash readback throws on the missing alpha/pczt_sighash). Dropping it from memory
+    // alone is not enough — the persisted row shields the bundle from `resetSessionState`'s
+    // guarded cleanup, so the dead setup would survive and re-wedge on the next signing
+    // entry. The row must be deleted and the signature excluded.
+    @Test func reconcileClearsPersistedRowWhenSetupIsIncomplete() async throws {
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 3,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let cleared = LockIsolated<[UInt32]>([])
+
+        let result = try await VotingCoordFlow.reconcileStoredSignatures(
+            [signature],
+            storedSighash: { _ in throw URLError(URLError.Code.badServerResponse) },
+            clearSignature: { index in cleared.withValue { $0.append(index) } }
+        )
+
+        #expect(result.isEmpty)
+        #expect(cleared.value == [3])
+    }
+
+    // Mixed set: only the signature whose stored sighash no longer matches loses its row;
+    // the still-valid neighbor is untouched and survives.
+    @Test func reconcileClearsOnlyMismatchedRows() async throws {
+        let matching = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let stale = KeystoneBundleSignatureInfo(
+            bundleIndex: 1,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xBB, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let sighashes: [UInt32: Data] = [
+            0: Data(repeating: 0xAA, count: 32),
+            1: Data(repeating: 0xEE, count: 32)
+        ]
+        let cleared = LockIsolated<[UInt32]>([])
+
+        let result = try await VotingCoordFlow.reconcileStoredSignatures(
+            [matching, stale],
+            storedSighash: { sighashes[$0] ?? Data() },
+            clearSignature: { index in cleared.withValue { $0.append(index) } }
+        )
+
+        #expect(result == [matching])
+        #expect(cleared.value == [1])
+    }
+
+    // All signatures validate: reconciliation must not touch any persisted row.
+    @Test func reconcileClearsNothingWhenAllSignaturesMatch() async throws {
+        let sighash = Data(repeating: 0xAA, count: 32)
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: sighash,
+            rk: Data(repeating: 0x02, count: 32)
+        )
+        let cleared = LockIsolated<[UInt32]>([])
+
+        let result = try await VotingCoordFlow.reconcileStoredSignatures(
+            [signature],
+            storedSighash: { _ in sighash },
+            clearSignature: { index in cleared.withValue { $0.append(index) } }
+        )
+
+        #expect(result == [signature])
+        #expect(cleared.value.isEmpty)
+    }
+
+    // A failing delete must abort the pipeline retryably (fail closed), never resume on a
+    // half-reconciled signature set that still shields the bundle it failed to free.
+    @Test func reconcileThrowsWhenClearFails() async {
+        let signature = KeystoneBundleSignatureInfo(
+            bundleIndex: 0,
+            sig: Data(repeating: 0x01, count: 64),
+            sighash: Data(repeating: 0xAA, count: 32),
+            rk: Data(repeating: 0x02, count: 32)
+        )
+
+        await #expect(throws: URLError.self) {
+            _ = try await VotingCoordFlow.reconcileStoredSignatures(
+                [signature],
+                storedSighash: { _ in Data(repeating: 0xBB, count: 32) },
+                clearSignature: { _ in throw URLError(URLError.Code.cannotWriteToFile) }
+            )
+        }
+    }
+
     private let roundId = "round-1"
     private let activeRoundId = String(repeating: "aa", count: 32)
 

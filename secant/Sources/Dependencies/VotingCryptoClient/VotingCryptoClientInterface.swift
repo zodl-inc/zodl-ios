@@ -318,6 +318,13 @@ struct VotingCryptoClient {
         _ roundId: String,
         _ bundleIndex: UInt32
     ) async throws -> Data
+    /// Delete one bundle's persisted Keystone signature. The bundle becomes
+    /// eligible again for `resetSessionState`'s guarded cleanup, which leaves
+    /// signed bundles untouched. Deleting a missing row succeeds.
+    var clearKeystoneSignature: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32
+    ) async throws -> Void
 
     // --- Share delegation tracking ---
 

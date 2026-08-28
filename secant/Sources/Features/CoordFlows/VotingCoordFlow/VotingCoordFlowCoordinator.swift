@@ -953,6 +953,21 @@ extension VotingCoordFlow {
                         var savedSignatures: [KeystoneBundleSignatureInfo] = []
                         if isKeystoneUser {
                             savedSignatures = try await votingCrypto.loadKeystoneBundleSignatures(roundId)
+                            // A signature that no longer matches the bundle's stored sighash
+                            // (or whose setup is incomplete) is provably unusable, and its
+                            // persisted row shields the bundle from `resetSessionState`'s
+                            // guarded cleanup — wedging it permanently. Clear such rows now,
+                            // before the resume paths run that reset, so the reset can free
+                            // those bundles for a rebuild. The decision below still counts
+                            // the loaded signatures: even a stale one proves an interrupted
+                            // signing session on this device, and the resume path's
+                            // reset-and-rebuild is the audited recovery for that state —
+                            // `prepareFreshRound`'s re-setup over surviving bundle rows is not.
+                            _ = try await Self.reconcileStoredSignatures(
+                                savedSignatures,
+                                storedSighash: { try await votingCrypto.getStoredDelegationSighash(roundId, $0) },
+                                clearSignature: { try await votingCrypto.clearKeystoneSignature(roundId, $0) }
+                            )
                         }
 
                         switch Self.roundResumeDecision(
@@ -3239,6 +3254,29 @@ extension VotingCoordFlow {
             validated.append(signature)
         }
         return validated
+    }
+
+    /// Validates stored Keystone signatures via ``validatedStoredSignatures`` and
+    /// deletes the persisted rows of the ones that fail, returning the survivors.
+    /// A failed signature's row must go: `resetSessionState` leaves signed bundles
+    /// untouched, so the stale row would otherwise shield its bundle's dead setup
+    /// from cleanup and wedge the bundle permanently. A failing delete throws — the
+    /// caller's pipeline aborts retryably rather than resuming on a half-reconciled
+    /// signature set.
+    static func reconcileStoredSignatures(
+        _ signatures: [KeystoneBundleSignatureInfo],
+        storedSighash: (UInt32) async throws -> Data,
+        clearSignature: (UInt32) async throws -> Void
+    ) async throws -> [KeystoneBundleSignatureInfo] {
+        let usable = await validatedStoredSignatures(signatures, storedSighash: storedSighash)
+        for rejected in signatures
+        where !usable.contains(where: { $0.bundleIndex == rejected.bundleIndex }) {
+            LoggerProxy.warn(
+                "Clearing stored Keystone signature for bundle \(rejected.bundleIndex): it no longer matches the bundle's delegation data"
+            )
+            try await clearSignature(rejected.bundleIndex)
+        }
+        return usable
     }
 
     private static func allKeystoneBundlesResolved(_ session: RoundSession) -> Bool {
