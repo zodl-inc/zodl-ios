@@ -12,10 +12,13 @@ refuses to build on any mismatch.
 
 | Piece | Role |
 |---|---|
+| `Scripts/prepare-release.sh` | cuts the release branches and opens the release PR (git + `gh` only) |
+| `Scripts/lib/release-lib.sh` | its text transforms and preflight predicates (unit-tested) |
 | `Scripts/release.sh`, `Scripts/bump.sh` | GNU-style CLI wrappers you run |
 | `fastlane/Fastfile` | the `release` and `bump` lanes |
 | `fastlane/lib/zodl/` | pure preflight logic (unit-tested) |
 | `fastlane/spec/*_test.rb` | tests for that logic (see [Tests](#tests-and-project-files)) |
+| `Scripts/test/*.bats` | tests for the wrapper scripts and the release library |
 | `git worktree` (temporary) | each build runs against a clean checkout of the exact ref |
 | `.claude/skills/make-builds/` | the `/make-builds` skill — runs a whole release's builds through the wrapper and announces them in Slack (see [Driving a whole run](#driving-a-whole-run-with-make-builds)) |
 
@@ -117,38 +120,54 @@ independent — a build number only has to beat that variant's own history.
 tries `<ref>` and then `origin/<ref>`), and builds it in an isolated `git
 worktree`. Your current checkout and working changes are left untouched.
 
-**1. Start a new version (in `main`).** Set and commit the marketing version, push,
-then cut the release branch:
+**1. Cut the release** with `Scripts/prepare-release.sh` (see
+[Cutting a release](#cutting-a-release) below for what it does and why):
 
 ```bash
-./Scripts/bump.sh --version 3.8.0 --build 1     # edits the project + commits
-git push                                         # push the bump commit on main
-git checkout -b release/3.8.0
-git push -u origin release/3.8.0
+./Scripts/prepare-release.sh start --dry-run upstream 3.8.0   # rehearse
+./Scripts/prepare-release.sh start upstream 3.8.0
 ```
 
-**2. Build the TestFlight pair** from the release branch — note you can run this
-from any checkout, e.g. while still on `main`:
+That leaves `release/3.8.0` and `candidate/3.8.0` on the remote, the marketing
+version and build number recorded, and a pull request open between them.
+
+**2. Build the TestFlight pair** from the **candidate** branch — note you can run
+this from any checkout, e.g. while still on `main`:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref release/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --version 3.8.0 --build 1
 ```
 
-**3. Need a fix?** Commit and push it on `release/3.8.0`, then rebuild with the next
-build number:
+`release/3.8.0` is still the *previous* release until the pull request merges,
+so building from it would ship the wrong code.
+
+**3. Need a fix?** Commit and push it on `candidate/3.8.0` — it appears in the
+pull request — then rebuild with the next build number:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref release/3.8.0 --version 3.8.0 --build 2
+./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --version 3.8.0 --build 2
 ```
 
 **4. Ship to the App Store** when you're happy:
 
 ```bash
-./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1
 ```
 
 `appstore` is its own App Store Connect app, so its build numbers are a separate
 sequence — start from wherever that app left off.
+
+**5. Finish the release.** Merge the pull request, then tag and merge back:
+
+```bash
+git switch release/3.8.0 && git pull --ff-only upstream release/3.8.0
+git tag -s 3.8.0 -m "Release 3.8.0"
+git push upstream refs/tags/3.8.0        # this fires linear-release.yml
+```
+
+Then merge `release/3.8.0` into `maint/v3.8.x` and forward to `main`. Do not
+cherry-pick: a tag that is not reachable from a live branch stops being part of
+the history it shipped from, and the `Release Merged Back` check reports it.
 
 #### Submitting to App Review with `--submit-review`
 
@@ -173,6 +192,59 @@ Submitting to App Review:
 - Reads back promotional text and What's New per locale from App Store Connect and warns loudly if promotional text is empty where a copy was planned (this is **non-fatal and fixable in App Store Connect without a new review** — edit the missing text directly in ASC and save)
 
 The submission fails if: a version is already submitted/in review (cancel in App Store Connect first), a version is approved-awaiting-release (release it first), the requested version is already live, or any enabled App Store localization lacks a What's New entry for the version.
+
+## Cutting a release
+
+`Scripts/prepare-release.sh start <remote> <version> [<revision>]` creates the
+two branches a release runs on and opens the pull request between them:
+
+- **`release/X.Y.Z`** starts out identical to the **previous release tag**.
+- **`candidate/X.Y.Z`** starts at the revision being released (`HEAD` by
+  default), and gets the CHANGELOG promotion and the version bump on top.
+
+The pull request is `candidate/X.Y.Z → release/X.Y.Z`. Basing it on the previous
+tag is the whole point: **its diff is exactly what users receive relative to the
+last release**, rather than the intervening development history. A release
+branch cut from `main` would produce a diff against nothing anyone shipped.
+
+Everything the release needs lands on the candidate branch, so that is what you
+build and what reviewers read. `release/X.Y.Z` is not touched again until the
+pull request merges — which is what declares the release final.
+
+The script does, in order: check the tree, remote, `gh` login and version tool;
+fetch tags; find the previous release tag reachable from the revision; refuse if
+either branch already exists locally or on the remote; refuse if the CHANGELOG's
+`## [Unreleased]` section is empty or already carries a heading for this version;
+create and push `release/X.Y.Z`; create `candidate/X.Y.Z`; promote the CHANGELOG;
+set `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` across every non-test
+target; push; open the pull request.
+
+```
+Scripts/prepare-release.sh start [options] <remote> <version> [<revision>]
+  --issue <N>       release tracking issue; the PR body closes it
+  --build <N>       build number to record (default: 1)
+  --previous <tag>  base the release branch on this tag instead of the detected one
+  --dry-run         print what would happen and change nothing
+```
+
+**The version bump needs macOS.** It runs
+`.claude/skills/update-app-version/scripts/set_version.py`, which reads the Xcode
+project's object graph through `plutil`. `--dry-run` reports the requirement
+rather than refusing, so the plan can be rehearsed anywhere.
+
+`--previous` is for the case where the newest tag reachable from the revision is
+not the release you are following — a patch cut from a maintenance line while a
+newer version has already shipped from `main`.
+
+Tagging and the back-merge are steps 5 above, done by hand. The
+`Release Merged Back` check (`.github/workflows/release-merged-back.yml`) runs on
+every pull request into a maintenance branch or `main` and reports any tagged
+release branch that has not been merged back into its line. It is advisory and
+never blocks; run it locally with:
+
+```bash
+REMOTE=upstream ./.github/scripts/check-release-merged-back.sh
+```
 
 ## Always check first with `--dry-run`
 
@@ -329,7 +401,18 @@ Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [opti
   -h, --help
 
 Scripts/bump.sh --version <X.Y.Z> --build <n>
+
+Scripts/prepare-release.sh start [options] <remote> <version> [<revision>]
+  --issue <N>       release tracking issue; the PR body closes it
+  --build <N>       build number to record (default: 1)
+  --previous <tag>  base the release branch on this tag instead of the detected one
+  --dry-run         print what would happen and change nothing
+  -h, --help
 ```
+
+`Scripts/bump.sh` sets the version on whatever branch you are on;
+`Scripts/prepare-release.sh` does the same as one step of cutting a release.
+Use `bump.sh` only outside a release cut.
 
 ## Troubleshooting (preflight messages)
 
@@ -359,10 +442,16 @@ logic in `fastlane/lib/zodl/` (version parsing, the variant table, build-number
 validation, and the full reconciliation). The app's own tests are the Swift
 `zodlTests` suite and are unrelated.
 
+The `Scripts/test/*.bats` files are the same thing for the shell side:
+`release_args.bats` and `prepare_release_args.bats` cover argument parsing, and
+`release_lib.bats` covers the text transforms and predicates in
+`Scripts/lib/release-lib.sh` — version ordering, the CHANGELOG promotion, remote
+URL parsing. None of them need a network, a git remote, or a GitHub token.
+
 These tests are **not run automatically** today — there is no CI hook for them yet
 (a possible future addition). Run them by hand:
 
 ```bash
-bundle exec rake test                 # Ruby preflight logic (minitest)
-bats Scripts/test/release_args.bats   # wrapper arg parsing (needs bats-core)
+bundle exec rake test    # Ruby preflight logic (minitest)
+bats Scripts/test/       # shell scripts and the release library (needs bats-core)
 ```
