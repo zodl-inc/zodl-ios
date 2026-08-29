@@ -31,6 +31,10 @@ enum AccessibilityID {
         static let addressBook = "settings.addressBook"
     }
 
+    enum AdvancedSettings {
+        static let exportPrivateData = "advancedSettings.exportPrivateData"
+    }
+
     enum SendForm {
         static let addToContactsButton = "sendForm.addToContactsButton"
         static let scanButton = "sendForm.scanButton"
