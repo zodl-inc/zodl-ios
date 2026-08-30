@@ -102,6 +102,17 @@ struct HomeView: View {
                     }
                 }
             }
+            .overlay(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Wallet sync status")
+                    .accessibilityIdentifier(
+                        store.smartBannerState.isSyncComplete
+                            ? AccessibilityID.Home.syncComplete
+                            : AccessibilityID.Home.syncPending
+                    )
+            }
             .sheet(isPresented: $store.isInAppBrowserKeystoneOn) {
                 if let url = URL(string: store.inAppBrowserURLKeystone) {
                     InAppBrowserView(url: url)
