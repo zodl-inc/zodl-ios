@@ -180,20 +180,20 @@ struct SmartBanner {
             isScanProgressComplete && spendableBalance.amount > 0
         }
 
+        var isSyncComplete: Bool {
+            if case .upToDate = synchronizerStatusSnapshot.syncStatus {
+                return true
+            }
+
+            return false
+        }
+
         var hasPendingShieldingTransaction: Bool {
             transactions.isAnyShieldingPending()
         }
 
         func isShieldable(_ shieldingThreshold: Zatoshi) -> Bool {
             ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: shieldingThreshold)
-        }
-
-        var isSyncComplete: Bool {
-            guard case .upToDate = synchronizerStatusSnapshot.syncStatus else {
-                return false
-            }
-
-            return !walletStatus.isNotReadyForFullySyncedOperation
         }
 
         var feeStr: String {

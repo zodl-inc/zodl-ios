@@ -205,11 +205,15 @@ jobs:
 
       - name: Resolve packages
         run: |
-          xcodebuild -project secant.xcodeproj \
-            -scheme zodl-internal \
-            -resolvePackageDependencies \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH"
+          for attempt in 1 2 3; do
+            xcodebuild -project secant.xcodeproj \
+              -scheme zodl-internal \
+              -resolvePackageDependencies \
+              -derivedDataPath "$DERIVED_DATA_PATH" \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::Xcode package resolution failed on attempt $attempt; retrying."
+          done
 
       - name: Save Swift package cache
         if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
@@ -240,7 +244,7 @@ jobs:
           xcodebuild build \
             -project secant.xcodeproj \
             -scheme zodl-internal \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -derivedDataPath "$DERIVED_DATA_PATH" \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" \
             -skipPackagePluginValidation \
@@ -321,9 +325,12 @@ jobs:
     # birthday height on the iOS sim — no inter-run cache like the
     # Android wrapper has via ~/.zodl-qa/cache). After sync we still
     # need ~30 min for the 7 tx + verification flows that follow.
-    # 75 min covers cold cases; warm-cache runs (when we add that)
-    # will land well under.
-    timeout-minutes: 75
+    # Keep phase 1 at 75 min. Phase 2 runs the restore plus every
+    # transaction/export verification flow; iOS 26 Maestro actions can
+    # settle slowly enough for a healthy run to exceed 75 min, so give
+    # that phase a 120-minute job envelope. Individual flow assertions
+    # retain their existing timeouts and still fail promptly.
+    timeout-minutes: ${{ matrix.phase == 2 && 120 || 75 }}
     permissions:
       contents: read
     strategy:
@@ -505,9 +512,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-
 
       - name: Run smoke tests
         env:
@@ -557,18 +564,25 @@ jobs:
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
           ./zodl-qa/scripts/run-smoke-ios.sh
 
-      # Persist the SDK DB regardless of test outcome — partial sync
-      # progress is still useful for the next run's warm-resume. If
-      # the job is hard-killed by the 75-min timeout the save won't
-      # fire, but the prior run's cache entry stays in the pool and
-      # restore-keys will pick it up next time.
-      - name: Save Zcash SDK DB cache
+      - name: Check for a cacheable Zcash SDK DB
         if: ${{ always() && matrix.phase == 2 }}
+        id: sdk-db
+        shell: bash
+        run: |
+          if find "$HOME/.zodl-qa/cache" -type f -name '*.db' -size +0c -print -quit 2>/dev/null | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No SDK database was produced; skipping the empty cache."
+          fi
+
+      - name: Save Zcash SDK DB cache
+        if: ${{ always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload test results
         if: always()
