@@ -59,6 +59,25 @@ import ComposableArchitecture
         #expect(!store.state.swapAssetsToPresent.contains { $0.id == "near.doge.doge" })
     }
 
+    // The offering contains native ZEC (chain "zec") plus the ZEC tokens on Solana
+    // and NEAR — the swap-to-ZEC asset must resolve to the native one regardless of
+    // the order the provider returns them in.
+    @MainActor @Test func zecAssetResolvesToNativeZecNotTokenZec() async {
+        let store = makeLoadStore(lastUsed: [])
+        store.exhaustivity = .off
+        let assets: IdentifiedArrayOf<SwapAsset> = [
+            swapAsset(chain: "sol", token: "ZEC"),
+            swapAsset(chain: "near", token: "ZEC"),
+            swapAsset(chain: "zec", token: "ZEC")
+        ]
+        await store.send(.swapAssetsLoaded(assets))
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.zecAsset?.chain.lowercased() == "zec")
+        #expect(store.state.swapAssetsToPresent.contains { $0.idWithoutProvider == "sol.zec" })
+        #expect(store.state.swapAssetsToPresent.contains { $0.idWithoutProvider == "near.zec" })
+    }
+
     // Control: a last-used asset that IS still supported stays pre-selected — proving
     // the fallback above is driven by the drop, not by a broken lookup.
     @MainActor @Test func lastUsedSupportedAssetStaysPreselected() async {
