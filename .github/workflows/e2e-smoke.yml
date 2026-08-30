@@ -366,6 +366,39 @@ jobs:
           xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
+      - name: Pin simulator device to the iOS 26.2 runtime
+        run: |
+          # `xcode-select` above only pins the BUILD toolchain. CoreSimulator
+          # runtimes are registered system-wide across every installed Xcode,
+          # so the pre-existing "iPhone 17" device (created once by the runner
+          # image against whatever was newest at provisioning time) stays
+          # bound to iOS 26.5 regardless of which Xcode is selected, and
+          # `OS=latest`/a bare device-name boot silently keeps using it. Create
+          # a distinctly-named device explicitly bound to iOS 26.2 instead, so
+          # the actual test run — not just compilation — happens off the
+          # buggy runtime.
+          RUNTIME_ID="com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+          DEVICE_NAME="iPhone 17 (iOS 26.2 pinned)"
+
+          SIM_UDID=$(xcrun simctl list devices available -j | jq -r --arg rt "$RUNTIME_ID" --arg name "$DEVICE_NAME" '(.devices[$rt] // []) | map(select(.name == $name)) | .[0].udid // empty')
+
+          if [ -z "$SIM_UDID" ]; then
+            DEVICE_TYPE_ID=$(xcrun simctl list devicetypes -j | jq -r '.devicetypes[] | select(.name == "iPhone 17") | .identifier' | head -1)
+            if [ -z "$DEVICE_TYPE_ID" ]; then
+              echo '::error::Could not resolve the "iPhone 17" device type identifier'
+              exit 1
+            fi
+            SIM_UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE_ID" "$RUNTIME_ID")
+          fi
+
+          if [ -z "$SIM_UDID" ]; then
+            echo "::error::Could not create/resolve a simulator device on $RUNTIME_ID"
+            exit 1
+          fi
+
+          echo "Pinned simulator: $DEVICE_NAME ($SIM_UDID) on $RUNTIME_ID"
+          echo "ZODL_SIM_NAME=$SIM_UDID" >> "$GITHUB_ENV"
+
       - name: Checkout smoke tests
         uses: actions/checkout@v4
         with:
@@ -381,8 +414,8 @@ jobs:
 
       - name: Boot simulator and install app
         run: |
-          xcrun simctl boot "iPhone 17" || true
-          xcrun simctl bootstatus "iPhone 17" -b
+          xcrun simctl boot "$ZODL_SIM_NAME" || true
+          xcrun simctl bootstatus "$ZODL_SIM_NAME" -b
 
           # On CI the simulator defaults to "Connect Hardware Keyboard",
           # which hides the software keyboard and causes XCUITest typeText
@@ -418,7 +451,18 @@ jobs:
               || { echo "App $BUNDLE_ID not installed after simctl install"; exit 1; }
 
       - name: Install Maestro
+        # Pinned, not "latest" — the install script defaults to whatever's
+        # newest on the day the job happens to run. 2.7.0 is the version
+        # that was current during our last confirmed-green e2e run
+        # (2026-08-11) and shipped targeted iOS XCUITest driver-stability
+        # fixes (cleanup of leftover driver files, recovery from transient
+        # kAXErrorInvalidUIElement, app start/stop timeout handling). Newer
+        # releases (2.8.0, 2.9.0) carry no iOS-driver changelog entries, so
+        # there's no evidence they're better for this — only that they're
+        # unverified for us. Revisit this pin if a later release explicitly
+        # addresses mobile-dev-inc/maestro#3318 / #3254.
         run: |
+          export MAESTRO_VERSION=2.7.0
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
