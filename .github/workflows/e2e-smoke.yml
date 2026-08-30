@@ -133,16 +133,28 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Select latest Xcode
-        # macos-15 runners ship multiple Xcodes; default-selected may be 16.x.
-        # XCUITest from older Xcode driving an iOS 26 sim causes maestro tap/
-        # input quirks (empty seed fields). Pin to the newest Xcode available.
+      - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            echo "Selecting $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
+          # Xcode 26.5/26.6 both ship the iOS 26.5 Simulator runtime, which has a
+          # confirmed Maestro/XCUITest driver-stability bug (repeated e2e-smoke
+          # driver crashes/hangs; see mobile-dev-inc/maestro#3318, #3254). Pin to
+          # Xcode 26.3 (iOS 26.2 Simulator runtime) to sidestep it. Falls back to
+          # newest-available-with-iOS-runtime if 26.3 isn't on this runner image.
+          PINNED="/Applications/Xcode_26.3.app"
+          if [ -d "$PINNED" ]; then
+            sudo xcode-select -s "$PINNED/Contents/Developer"
+            echo "Selecting pinned $PINNED"
+          else
+            echo "::warning::Pinned Xcode 26.3 not found on this runner image, falling back to newest with an iOS runtime"
+            for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+              sudo xcode-select -s "$XCODE/Contents/Developer"
+              if xcrun simctl list runtimes available | grep -q 'iOS'; then
+                echo "Selecting $XCODE"
+                break
+              fi
+            done
           fi
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Checkout app
@@ -323,12 +335,28 @@ jobs:
         phase: [1, 2]
     name: e2e-ios (phase ${{ matrix.phase }})
     steps:
-      - name: Select latest Xcode
+      - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            sudo xcode-select -s "$LATEST/Contents/Developer"
+          # Xcode 26.5/26.6 both ship the iOS 26.5 Simulator runtime, which has a
+          # confirmed Maestro/XCUITest driver-stability bug (repeated e2e-smoke
+          # driver crashes/hangs; see mobile-dev-inc/maestro#3318, #3254). Pin to
+          # Xcode 26.3 (iOS 26.2 Simulator runtime) to sidestep it. Falls back to
+          # newest-available-with-iOS-runtime if 26.3 isn't on this runner image.
+          PINNED="/Applications/Xcode_26.3.app"
+          if [ -d "$PINNED" ]; then
+            sudo xcode-select -s "$PINNED/Contents/Developer"
+            echo "Selecting pinned $PINNED"
+          else
+            echo "::warning::Pinned Xcode 26.3 not found on this runner image, falling back to newest with an iOS runtime"
+            for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+              sudo xcode-select -s "$XCODE/Contents/Developer"
+              if xcrun simctl list runtimes available | grep -q 'iOS'; then
+                echo "Selecting $XCODE"
+                break
+              fi
+            done
           fi
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Checkout smoke tests
