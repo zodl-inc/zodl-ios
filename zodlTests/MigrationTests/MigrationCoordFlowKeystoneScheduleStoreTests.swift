@@ -20,7 +20,10 @@ import Testing
 
 // Serialized: installs the process-global `@Shared(.inMemory(.selectedWalletAccount))` the
 // coordinator reads — the same shared-state discipline the sibling migration suites hold.
-@Suite(.serialized) @MainActor struct MigrationCoordFlowKeystoneScheduleStoreTests {
+// `.timeLimit` records a reconcile that genuinely never runs as a failure — the event-driven
+// wait below has no deadline of its own (see MigrationSweepBannerFreshnessTests' header for why
+// wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct MigrationCoordFlowKeystoneScheduleStoreTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x0B, count: 16))
 
     private static func account() -> WalletAccount {
@@ -82,16 +85,6 @@ import Testing
         return state
     }
 
-    private func waitUntil(
-        timeoutNanoseconds: UInt64 = 5_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-    }
-
     /// The P1 pin: both halves store, split positionally, and the committed schedule records —
     /// no deferral, no drop.
     @Test func lastRoundStoresBothHalvesAndRecordsTheSchedule() async {
@@ -101,7 +94,7 @@ import Testing
         let storedPreps = LockIsolated<[MigrationSignedTransferPczt]>([])
         let storedSchedule = LockIsolated<[MigrationSignedTransferPczt]>([])
         let recordedSchedules = LockIsolated<Int>(0)
-        let reconciles = LockIsolated<Int>(0)
+        let reconciles = SignalledRecords<Void>()
 
         let store = TestStore(initialState: Self.makeState()) {
             MigrationCoordFlow()
@@ -110,7 +103,7 @@ import Testing
 
             var client = MigrationManagerClient.noOp
             client.recordCommittedSchedule = { _, _ in recordedSchedules.withValue { $0 += 1 } }
-            client.reconcile = { reconciles.withValue { $0 += 1 } }
+            client.reconcile = { reconciles.recordCall() }
             client.armNextWindowNotifications = { _ in }
             client.migrationSummary = { _ in MigrationSummary.zero }
             $0.migrationManager = client
@@ -140,14 +133,14 @@ import Testing
                 guard case .keystoneSigningSubmitted = action else { return false }
                 return true
             },
-            timeout: .seconds(5)
+            timeout: .seconds(30)
         )
 
         #expect(storedPreps.value.map(\.id) == [0], "the preparation half stores by position")
         #expect(storedSchedule.value.map(\.id) == [4], "the schedule half stores by position — the audit's dropped payload")
         #expect(recordedSchedules.value == 1, "the committed schedule records exactly once")
-        await waitUntil { reconciles.value >= 1 }
-        #expect(reconciles.value >= 1, "reconcile runs after the stores")
+        await reconciles.countReached(1)
+        #expect(reconciles.count >= 1, "reconcile runs after the stores")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
@@ -197,7 +190,7 @@ import Testing
                 guard case .keystoneScanAbandoned = action else { return false }
                 return true
             },
-            timeout: .seconds(5)
+            timeout: .seconds(30)
         )
 
         #expect(recordedSchedules.value == 0, "a failed store must never record the schedule as committed")
