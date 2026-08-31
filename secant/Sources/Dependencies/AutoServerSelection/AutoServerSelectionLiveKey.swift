@@ -24,30 +24,25 @@ extension AutoServerSelectionClient: DependencyKey {
             // the wallet away from an in-flight run's deliberately-separated broadcast provider. No
             // active snapshots means no filtering, byte-identical to the pre-migration behaviour.
             let snapshots = migrationManager.activeNetworkSnapshots()
-            let endpoints = allEndpoints.filter {
+            let candidates = allEndpoints.filter {
                 MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: snapshots)
             }
-            guard !endpoints.isEmpty else {
+            guard !candidates.isEmpty else {
                 if !snapshots.isEmpty {
                     LoggerProxy.event("[AutoServerSelection] Skipped: migration pinning left no candidates")
                 }
                 return nil
             }
 
-            let ranked = await sdkSynchronizer.evaluateBestOf(
-                endpoints,
+            // The switch decision — benchmark plus hysteresis — lives in the SDK. nil means the
+            // improvement was not worth a synchronizer teardown (or nothing healthier exists).
+            return await sdkSynchronizer.evaluateServerSwitch(
+                zcashSDKEnvironment.endpoint(),
+                candidates,
                 AutoServerSelectionConstants.evaluationTimeoutSeconds,
                 AutoServerSelectionConstants.blocksToDownload,
-                AutoServerSelectionConstants.candidateCount,
                 network
             )
-
-            guard let best = ranked.first else { return nil }
-
-            let current = zcashSDKEnvironment.endpoint()
-            guard best.host != current.host || best.port != current.port else { return nil }
-
-            return best
         },
         applySwitch: { candidate in
             @Dependency(\.migrationManager) var migrationManager
