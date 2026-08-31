@@ -108,6 +108,10 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
         var fullyScannedHeight: BlockHeight
+        /// Qualifies `accountsBalances`: their spendable values are masked to zero because the SDK
+        /// has not confirmed a fresh chain tip. Travels with the balances it describes — without
+        /// it the zeros are indistinguishable from an empty wallet.
+        var isSpendableMasked: Bool
     }
 
     let data: SynchronizerStateWrapper
@@ -118,7 +122,8 @@ struct RedactableSynchronizerState: Equatable, Redactable {
             accountsBalances: data.accountsBalances,
             syncStatus: data.syncStatus,
             latestBlockHeight: data.latestBlockHeight,
-            fullyScannedHeight: data.fullyScannedHeight
+            fullyScannedHeight: data.fullyScannedHeight,
+            isSpendableMasked: data.isSpendableMasked
         )
     }
 }

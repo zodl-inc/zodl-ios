@@ -25,6 +25,14 @@ struct WalletBalances {
         var isExchangeRateRefreshEnabled = false
         var isExchangeRateStale = false
         var migratingDatabase = false
+        /// Mirrors `SynchronizerState.isSpendableMasked`: the SDK has forced every pool's spendable
+        /// value to zero because it has not confirmed a fresh chain tip yet, so the zeros below are
+        /// "not saying yet", not "you have nothing". Bounded — it clears when the tip refreshes.
+        ///
+        /// This is the signal any determinate "working it out" affordance must gate on. A zero
+        /// `shieldedBalance` cannot stand in for it: an empty wallet and funds still confirming
+        /// produce the same zero and never clear, which would leave a spinner up forever.
+        var isSpendableMasked = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var shieldedBalance: Zatoshi
         var shieldedWithPendingBalance: Zatoshi
@@ -261,6 +269,10 @@ struct WalletBalances {
                 if snapshot.syncStatus != .unprepared {
                     state.migratingDatabase = false
                 }
+
+                // Carried alongside the balances it qualifies: the state stream is the only place
+                // the SDK reports it, so `.updateBalances` alone cannot keep this honest.
+                state.isSpendableMasked = latestState.data.isSpendableMasked
 
                 guard let account = state.selectedWalletAccount else {
                     return .none

@@ -139,13 +139,16 @@ struct SendForm {
             && !isMaxRequestInFlight
         }
 
-        /// True while the spendable value is still being determined — the SDK masks spendable to
-        /// zero until it has confirmed a fresh chain tip, which also drives the spinner in
-        /// `AvailableBalanceView`. The Max chip reads this so it presents the same "working on it"
-        /// state as the balance row directly above it; without it the chip merely dims and claims
-        /// to be unavailable while the balance beside it says the value is still being worked out.
+        /// True while the SDK is withholding the spendable value: it has masked every pool to zero
+        /// until it confirms a fresh chain tip. The zeros mean "not saying yet", not "you have
+        /// nothing", so the screen must not draw conclusions from them.
+        ///
+        /// Deliberately NOT `isProcessingZeroAvailableBalance`. That is "spendable is zero while
+        /// total isn't", which is also true of a sub-threshold transparent-only wallet and of funds
+        /// still confirming — neither of which ever clears. Driving a spinner from it would promise
+        /// a figure that never arrives; this signal is bounded by the tip refresh.
         var isSpendabilityBeingDetermined: Bool {
-            walletBalancesState.isProcessingZeroAvailableBalance
+            walletBalancesState.isSpendableMasked
         }
 
         var isValidForm: Bool {
@@ -154,6 +157,11 @@ struct SendForm {
             && memoState.isValid
             && isValidAmount
             && isTexSendSupported
+            // The spendable balance is a masked zero, so the funds check above is not meaningful
+            // yet — `isInsufficientFunds` withholds its verdict rather than accusing the user.
+            // Keep Review disabled until the real figure arrives instead of letting the withheld
+            // verdict read as approval.
+            && !isSpendabilityBeingDetermined
         }
         
         var isTexSendSupported: Bool {
@@ -165,6 +173,13 @@ struct SendForm {
 
         var isInsufficientFunds: Bool {
             guard isValidAmount else { return false }
+            // While the SDK is withholding the spendable value, `shieldedBalance` is a masked zero.
+            // Comparing against it would put a red "Insufficient funds" under the amount and grey
+            // out Review — telling the user they lack money that is genuinely spendable. Withhold
+            // the verdict for the same bounded window the Max chip spends waiting. Returning false
+            // here would on its own let `isValidForm` go true, so that gates on the same signal
+            // separately: no false accusation, and still no send built on a masked zero.
+            guard !isSpendabilityBeingDetermined else { return false }
 
             return amount.amount > shieldedBalance.amount
         }

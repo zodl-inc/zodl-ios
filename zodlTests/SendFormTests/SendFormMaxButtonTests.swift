@@ -293,32 +293,36 @@ private enum MaxButtonTestError: Error {
         #expect(!state.isMaxButtonEnabled)
     }
 
-    // The stale-tip mask ([#1591]) zeroes spendable across every pool until the SDK confirms a
-    // fresh chain tip, so the chip must present the same "still working it out" state the balance
-    // row already shows via `AvailableBalanceView(showIndicator:)` — not a dimmed chip that claims
-    // sending is unavailable. Both read `isProcessingZeroAvailableBalance`; `WalletBalancesTests`
-    // owns the shape of that condition, so this covers the chip's use of it across the states the
-    // Send screen actually sees.
-    @Test func isSpendabilityBeingDeterminedMatchesTheBalanceSpinnerCondition() {
+    // The chip's progress state must key on the SDK's mask signal, never on "spendable is zero".
+    // A spinner promises the figure is coming, so its condition has to be bounded — and the mask
+    // is, by the tip refresh. These are the shapes that share a zero spendable balance but are NOT
+    // the mask; each one would spin forever if the chip inferred from the balance instead.
+    @Test func isSpendabilityBeingDeterminedTracksTheMaskAndNotAZeroBalance() {
         var state = SendForm.State.initial
-        // Threshold above the transparent balance, so the shieldable early-return in
-        // `isProcessingZeroAvailableBalance` cannot fire and mask what is under test.
         state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
         state.walletBalancesState.transparentBalance = .zero
-
-        // Masked: spendable is zero while the wallet still holds funds.
         state.walletBalancesState.shieldedBalance = .zero
         state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
-        #expect(state.isSpendabilityBeingDetermined)
 
-        // Tip refreshed: spendable is known, so the chip must stop spinning.
-        state.walletBalancesState.shieldedBalance = Zatoshi(1_000_000)
+        // Not masked: the SDK is not withholding anything, so no promise of a figure to come —
+        // even though spendable is zero and `isProcessingZeroAvailableBalance` is true here.
+        #expect(state.walletBalancesState.isProcessingZeroAvailableBalance)
         #expect(!state.isSpendabilityBeingDetermined)
 
-        // Genuinely empty wallet — nothing to determine, so no spinner. This is the case the
-        // `totalBalance != shieldedBalance` half of the condition exists to exclude.
-        state.walletBalancesState.shieldedBalance = .zero
-        state.walletBalancesState.totalBalance = .zero
+        // Masked: the SDK says it is not ready to report spendable yet.
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(state.isSpendabilityBeingDetermined)
+
+        // Tip refreshed — the mask lifts and the chip must stop spinning, whatever the balance is.
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(!state.isSpendabilityBeingDetermined)
+
+        // Sub-threshold transparent-only wallet: 50_000 zats against a 100_000 threshold is not
+        // shieldable, so `isProcessingZeroAvailableBalance` is permanently true. Keying the chip on
+        // it would spin forever, promising a figure that never arrives (review item 1).
+        state.walletBalancesState.transparentBalance = Zatoshi(50_000)
+        state.walletBalancesState.totalBalance = Zatoshi(50_000)
+        #expect(state.walletBalancesState.isProcessingZeroAvailableBalance)
         #expect(!state.isSpendabilityBeingDetermined)
     }
 
@@ -334,8 +338,7 @@ private enum MaxButtonTestError: Error {
         defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
 
         state.isValidAddress = true
-        state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
-        state.walletBalancesState.transparentBalance = .zero
+        state.walletBalancesState.isSpendableMasked = true
         state.walletBalancesState.shieldedBalance = .zero
         state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
         state.walletBalancesState.spendability = .nothing
@@ -345,27 +348,34 @@ private enum MaxButtonTestError: Error {
         #expect(!state.isMaxButtonEnabled)
     }
 
-    // Documents a PRE-EXISTING hole inherited from `isProcessingZeroAvailableBalance`, not
-    // introduced here: when the transparent balance is at or above the auto-shielding threshold,
-    // the early return makes the flag false even though spendable is zero. Under the mask that
-    // means NEITHER the balance row nor the chip shows progress — the wallet simply looks
-    // unavailable. Pinned so the behaviour is visible and a future fix has to update this test.
-    @Test func shieldableTransparentBalanceSuppressesTheProgressState() {
+    // Review item 2: under the mask `shieldedBalance` is a zero the SDK is not standing behind, so
+    // `isInsufficientFunds` withholds its verdict instead of accusing the user of lacking funds
+    // that are genuinely spendable. Withholding it would on its own let `isValidForm` read as
+    // approval and enable Review on that same masked zero — so the form gates on the signal too.
+    // This pins that pairing; dropping either half re-breaks one of the two directions.
+    //
+    // Only the Review half is reachable here: `SendForm.State.amount` is stubbed to `.zero` under
+    // `_XCTIsTesting` (see the file header), so `isInsufficientFunds` returns false in this target
+    // whatever the balance is, and its guard cannot be exercised by a unit test.
+    @Test func maskedBalanceKeepsReviewDisabledRatherThanReadingAsApproval() {
         var state = SendForm.State.initial
-        // The live auto-shielding threshold (ZcashSDKEnvironmentLiveKey.swift:46). A zero threshold
-        // would make EVERY balance shieldable, so the early return would fire whatever the
-        // transparent balance is and the test could not tell the two apart.
-        state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        state.isValidAddress = true
+        state.address = Const.validAddress.redacted
+        state.shieldedBalance = .zero
         state.walletBalancesState.shieldedBalance = .zero
         state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
 
-        // At or above the threshold: shieldable, so the early return suppresses the progress state.
-        state.walletBalancesState.transparentBalance = Zatoshi(800_000)
-        #expect(!state.isSpendabilityBeingDetermined)
+        // Masked: no accusation, and no approval either.
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(!state.isInsufficientFunds)
+        #expect(!state.isValidForm)
 
-        // Below it, the early return cannot fire — which is what the sibling tests rely on, and
-        // what makes the assertion above about shieldability rather than about the threshold.
-        state.walletBalancesState.transparentBalance = Zatoshi(50_000)
-        #expect(state.isSpendabilityBeingDetermined)
+        // Mask lifted: the form is judged on the real figure again.
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isValidForm)
     }
 }
