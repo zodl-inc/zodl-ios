@@ -468,7 +468,12 @@ struct SendForm {
                     } catch {
                         // Every send-max failure surfaces the same generic toast, so the cause has to
                         // reach the log or an intermittent failure is undiagnosable after the fact.
-                        LoggerProxy.error("send-max failed to resolve an amount: \(error)")
+                        // Leaving the screen cancels this effect: TCA suppresses the `.maxAmountFailed`
+                        // below on cancellation, so logging one here would report an ordinary dismissal
+                        // as an error — noise in the channel this line exists to keep readable.
+                        if !(error is CancellationError) {
+                            LoggerProxy.error("send-max failed to resolve an amount: \(error)")
+                        }
                         await send(.maxAmountFailed)
                     }
                 }

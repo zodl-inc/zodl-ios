@@ -296,8 +296,9 @@ private enum MaxButtonTestError: Error {
     // The stale-tip mask ([#1591]) zeroes spendable across every pool until the SDK confirms a
     // fresh chain tip, so the chip must present the same "still working it out" state the balance
     // row already shows via `AvailableBalanceView(showIndicator:)` — not a dimmed chip that claims
-    // sending is unavailable. Both read `isProcessingZeroAvailableBalance`, so this pins the chip
-    // to that one condition; if they ever diverge the two controls contradict each other on screen.
+    // sending is unavailable. Both read `isProcessingZeroAvailableBalance`; `WalletBalancesTests`
+    // owns the shape of that condition, so this covers the chip's use of it across the states the
+    // Send screen actually sees.
     @Test func isSpendabilityBeingDeterminedMatchesTheBalanceSpinnerCondition() {
         var state = SendForm.State.initial
         // Threshold above the transparent balance, so the shieldable early-return in
@@ -309,7 +310,6 @@ private enum MaxButtonTestError: Error {
         state.walletBalancesState.shieldedBalance = .zero
         state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
         #expect(state.isSpendabilityBeingDetermined)
-        #expect(state.walletBalancesState.isProcessingZeroAvailableBalance)
 
         // Tip refreshed: spendable is known, so the chip must stop spinning.
         state.walletBalancesState.shieldedBalance = Zatoshi(1_000_000)
@@ -352,11 +352,20 @@ private enum MaxButtonTestError: Error {
     // unavailable. Pinned so the behaviour is visible and a future fix has to update this test.
     @Test func shieldableTransparentBalanceSuppressesTheProgressState() {
         var state = SendForm.State.initial
-        state.walletBalancesState.autoShieldingThreshold = .zero
-        state.walletBalancesState.transparentBalance = Zatoshi(800_000)
+        // The live auto-shielding threshold (ZcashSDKEnvironmentLiveKey.swift:46). A zero threshold
+        // would make EVERY balance shieldable, so the early return would fire whatever the
+        // transparent balance is and the test could not tell the two apart.
+        state.walletBalancesState.autoShieldingThreshold = Zatoshi(100_000)
         state.walletBalancesState.shieldedBalance = .zero
         state.walletBalancesState.totalBalance = Zatoshi(1_000_000)
 
+        // At or above the threshold: shieldable, so the early return suppresses the progress state.
+        state.walletBalancesState.transparentBalance = Zatoshi(800_000)
         #expect(!state.isSpendabilityBeingDetermined)
+
+        // Below it, the early return cannot fire — which is what the sibling tests rely on, and
+        // what makes the assertion above about shieldability rather than about the threshold.
+        state.walletBalancesState.transparentBalance = Zatoshi(50_000)
+        #expect(state.isSpendabilityBeingDetermined)
     }
 }
