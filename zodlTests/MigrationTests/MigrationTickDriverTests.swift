@@ -33,7 +33,10 @@ import ComposableArchitecture
 // `MigrationDerivations.candidateAccountUUIDs` reads off `MigrationManagerImpl` — the same
 // process-global state `MigrationSyncCompleteEdgeTests`/`RootMigrationGateRefusalTests` serialize
 // their own suites over.
-@Suite(.serialized) struct MigrationTickDriverTests {
+// `.timeLimit` records an advance that genuinely never starts (or a gate never opened) as a
+// failure — the event-driven waits below have no deadline of their own (see
+// MigrationSweepBannerFreshnessTests' header for why wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) struct MigrationTickDriverTests {
     // MARK: - Fixtures
 
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x07, count: 16))
@@ -144,20 +147,6 @@ import ComposableArchitecture
             clearDeliveredMigrationNotifications: { },
             pendingMigrationNotifications: { [] }
         )
-    }
-
-    /// Short, repeated real-time polling for a condition driven by a concurrently-running `Task` —
-    /// mirrors `MigrationSyncCompleteEdgeTests`'s `waitUntil`, needed here to know a blocked
-    /// `advance` call has genuinely reached (and is parked inside) its engine read before this test
-    /// starts a second, concurrent call and makes claims about what that second call did or didn't do.
-    private static func waitUntil(
-        timeoutNanoseconds: UInt64 = 5_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
     }
 
     // MARK: - The mode belt
@@ -1227,8 +1216,8 @@ import ComposableArchitecture
     @Test func tickDuringAnInFlightAdvanceSkipsWithoutReadingTheEngine() async {
         Self.installCandidateAccount()
         let engineReadCount = LockIsolated<Int>(0)
-        let firstReadStarted = LockIsolated<Bool>(false)
-        let releaseFirstRead = LockIsolated<Bool>(false)
+        let firstReadStarted = SignalledRecords<Void>()
+        let releaseFirstRead = ResumableGate()
 
         await withDependencies {
             $0.sdkSynchronizer = .mocked(
@@ -1236,10 +1225,8 @@ import ComposableArchitecture
                 isSyncing: { false },
                 migrationAdvanceStep: { _ in
                     engineReadCount.withValue { $0 += 1 }
-                    firstReadStarted.setValue(true)
-                    while !releaseFirstRead.value {
-                        try? await Task.sleep(nanoseconds: 5_000_000)
-                    }
+                    firstReadStarted.recordCall()
+                    await releaseFirstRead.wait()
                     return MigrationAdvance(step: .waiting, next: nil)
                 }
             )
@@ -1253,13 +1240,13 @@ import ComposableArchitecture
             )
 
             let firstTask = Task { await manager.advance(phase: .beforeSync) }
-            await Self.waitUntil { firstReadStarted.value }
+            await firstReadStarted.countReached(1)
 
             let tickVerdict = await manager.advance(phase: .tick)
             #expect(tickVerdict == .skipped)
             #expect(engineReadCount.value == 1, "a skipped tick must not read the engine at all")
 
-            releaseFirstRead.setValue(true)
+            releaseFirstRead.open()
             _ = await firstTask.value
         }
     }
@@ -1269,8 +1256,8 @@ import ComposableArchitecture
     @Test func beforeSyncDuringAnInFlightAdvanceWaitsThenRuns() async {
         Self.installCandidateAccount()
         let engineReadCount = LockIsolated<Int>(0)
-        let firstReadStarted = LockIsolated<Bool>(false)
-        let releaseFirstRead = LockIsolated<Bool>(false)
+        let firstReadStarted = SignalledRecords<Void>()
+        let releaseFirstRead = ResumableGate()
 
         await withDependencies {
             $0.sdkSynchronizer = .mocked(
@@ -1282,10 +1269,8 @@ import ComposableArchitecture
                         return count
                     }
                     if thisRead == 1 {
-                        firstReadStarted.setValue(true)
-                        while !releaseFirstRead.value {
-                            try? await Task.sleep(nanoseconds: 5_000_000)
-                        }
+                        firstReadStarted.recordCall()
+                        await releaseFirstRead.wait()
                     }
                     return MigrationAdvance(step: .waiting, next: nil)
                 }
@@ -1302,7 +1287,7 @@ import ComposableArchitecture
             )
 
             let firstTask = Task { await manager.advance(phase: .beforeSync) }
-            await Self.waitUntil { firstReadStarted.value }
+            await firstReadStarted.countReached(1)
 
             let secondTask = Task { await manager.advance(phase: .afterSync) }
             // The second call must be genuinely PARKED, not running concurrently — prove it has not
@@ -1311,7 +1296,7 @@ import ComposableArchitecture
             try? await Task.sleep(nanoseconds: 100_000_000)
             #expect(engineReadCount.value == 1, "the second call must be parked behind the latch, not running concurrently")
 
-            releaseFirstRead.setValue(true)
+            releaseFirstRead.open()
             let firstVerdict = await firstTask.value
             let secondVerdict = await secondTask.value
 

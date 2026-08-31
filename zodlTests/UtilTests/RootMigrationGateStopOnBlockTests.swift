@@ -61,7 +61,10 @@ import Testing
 // flag per test, plus the shared `selectedWalletAccount`/`walletAccounts` candidate keys every
 // `makeStore` call (re)installs — the same shared-state discipline
 // `MigrationTickDriverTests`/`RootMigrationTickLoopTests` serialize their own suites over.
-@Suite(.serialized) @MainActor struct RootMigrationGateStopOnBlockTests {
+// `.timeLimit` records a probe/stop that genuinely never fires as a failure — the spies'
+// event-driven waits have no deadline of their own (see MigrationSweepBannerFreshnessTests'
+// header for why wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootMigrationGateStopOnBlockTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x08, count: 16))
     /// Only installed when a test passes `secondCandidateMode` to `makeStore` — the wallet-wide
     /// attribution shape (`aCandidateAccountEligibilityIsWalletWide`), where the SELECTED account
@@ -104,7 +107,7 @@ import Testing
     /// entry unless `secondCandidateMode` is passed, in which case `secondCandidateAccountUUID` is
     /// installed alongside it with its own independent mode — the wallet-wide attribution shape.
     private func makeStore(
-        stopCalls: LockIsolated<Int>,
+        stopCalls: SignalledRecords<Void>,
         syncStatus: SyncStatus,
         mode: MigrationMode?,
         advanceStep: @escaping @Sendable (AccountUUID) async throws -> MigrationAdvance?,
@@ -167,7 +170,7 @@ import Testing
                     return syncState
                 },
                 stop: {
-                    stopCalls.withValue { $0 += 1 }
+                    stopCalls.recordCall()
                 },
                 migrationAdvanceStep: advanceStep
             )
@@ -181,20 +184,6 @@ import Testing
     private func resetSharedResumeFlag() {
         @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
         $migrationStoppedSyncForBroadcast.withLock { $0 = false }
-    }
-
-    /// Bounded real-time polling for a condition driven by the store's own in-flight effects —
-    /// advancing a `TestClock` resumes suspended sleepers but does not itself guarantee the
-    /// resulting action/read has propagated by the time `advance(by:)` returns. Same helper shape
-    /// as `RootMigrationTickLoopTests`/`MigrationStatusRefreshPulseTests`.
-    private func waitUntil(
-        timeoutNanoseconds: UInt64 = 5_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
     }
 
     /// The pulse-suite teardown idiom (`MigrationStatusRefreshPulseTests`): the merged
@@ -216,13 +205,13 @@ import Testing
     /// machinery will restart sync later.
     @Test func probeStopsWhenADeliverableCandidateStepIsBroadcast() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             // A stop-eligible candidate now also merges in `migrationTickLoopEffect`'s re-spawn
@@ -233,14 +222,14 @@ import Testing
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stopCalls.value == 1 }
+        await stopCalls.countReached(1)
 
         // Attribution, not just outcome: the stop must be REACHED THROUGH the probe's own
         // `migrationAdvanceStep` read — a stop that fires without ever reading the engine is the
         // pre-probe unconditional behavior this suite exists to retire, and would otherwise pass
         // this test for the wrong reason.
-        #expect(stepReads.value >= 1, "the stop must be attributed through the probe's own migrationAdvanceStep read, not fired unconditionally")
-        #expect(stopCalls.value == 1, "a tick-deliverable candidate's .broadcast step must stop sync")
+        #expect(stepReads.count >= 1, "the stop must be attributed through the probe's own migrationAdvanceStep read, not fired unconditionally")
+        #expect(stopCalls.count == 1, "a tick-deliverable candidate's .broadcast step must stop sync")
         @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
         #expect(migrationStoppedSyncForBroadcast == true, "the stop must go through stopStartedSyncForMigrationGate, arming the resume half")
 
@@ -252,17 +241,14 @@ import Testing
     /// `.broadcast`. The probe must retry rather than give up on the first idle read.
     @Test func probeRetriesThroughTheScannedTipSkew() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                let callNumber = stepReads.withValue { value -> Int in
-                    value += 1
-                    return value
-                }
+                let callNumber = stepReads.recordCall()
                 return callNumber == 1
                     ? MigrationAdvance(step: .waiting, next: nil)
                     : MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
@@ -271,17 +257,17 @@ import Testing
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stepReads.value >= 1 }
+        await stepReads.countReached(1)
 
         // Must NOT stop on the first, `.waiting` read — proves the probe retries rather than
         // (like the pre-probe unconditional stop) firing the instant a candidate is merely
         // eligible.
-        #expect(stopCalls.value == 0, "a .waiting first read must not stop sync — the probe must retry, not give up immediately")
+        #expect(stopCalls.count == 0, "a .waiting first read must not stop sync — the probe must retry, not give up immediately")
 
         await testClock.advance(by: .seconds(20))
-        await waitUntil { stopCalls.value == 1 }
+        await stopCalls.countReached(1)
 
-        #expect(stopCalls.value == 1, "the second attempt's .broadcast must stop sync once the skew clears")
+        #expect(stopCalls.count == 1, "the second attempt's .broadcast must stop sync once the skew clears")
 
         await teardown(store)
     }
@@ -291,14 +277,14 @@ import Testing
     /// running rather than paused for a broadcast nothing automatic will ever send.
     @Test func probeGivesUpOnAManualBlockerShape() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .waiting, next: nil)
             },
             testClock: testClock
@@ -306,10 +292,10 @@ import Testing
 
         await store.send(.migrationSyncGateChanged(true))
         await testClock.advance(by: .seconds(200))
-        await waitUntil { stepReads.value == 10 }
+        await stepReads.countReached(10)
 
-        #expect(stepReads.value == 10, "all ten attempts must be exhausted before giving up")
-        #expect(stopCalls.value == 0, "a blocker that never answers .broadcast must leave sync running")
+        #expect(stepReads.count == 10, "all ten attempts must be exhausted before giving up")
+        #expect(stopCalls.count == 0, "a blocker that never answers .broadcast must leave sync running")
 
         await teardown(store)
     }
@@ -318,31 +304,31 @@ import Testing
     /// and must not land a stop (or keep reading the engine) after it.
     @Test func falseEdgeCancelsThePendingProbe() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .waiting, next: nil)
             },
             testClock: testClock
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stepReads.value >= 1 }
+        await stepReads.countReached(1)
 
         await store.send(.migrationSyncGateChanged(false))
-        let readsAtCancel = stepReads.value
+        let readsAtCancel = stepReads.count
 
         await testClock.advance(by: .seconds(200))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 0, "a cancelled probe must never stop sync")
+        #expect(stopCalls.count == 0, "a cancelled probe must never stop sync")
         #expect(
-            stepReads.value <= readsAtCancel + 1,
+            stepReads.count <= readsAtCancel + 1,
             "the false edge must cancel the pending probe — at most one already-in-flight read may land after it"
         )
 
@@ -363,22 +349,24 @@ import Testing
     /// `AddKeystoneHWWalletTests.unlockTappedIgnoresRetapsWhileImportInFlight`'s release stream.
     @Test func stepReadLandingAfterTheFalseEdgeMustNotStop() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
         let stepContinuation = LockIsolated<CheckedContinuation<MigrationAdvance?, Never>?>(nil)
+        let stepParked = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
                 await withCheckedContinuation { continuation in
                     stepContinuation.setValue(continuation)
+                    stepParked.recordCall()
                 }
             },
             testClock: testClock
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stepContinuation.value != nil }
+        await stepParked.countReached(1)
 
         // The false edge — cancels the probe's Task cooperatively while the read above is still
         // parked on the continuation, exactly the interleaving the guard exists for.
@@ -390,7 +378,7 @@ import Testing
 
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 0, "a step read that lands after the false edge must not stop the just-cleared/resumed sync")
+        #expect(stopCalls.count == 0, "a step read that lands after the false edge must not stop the just-cleared/resumed sync")
 
         await teardown(store)
     }
@@ -406,7 +394,7 @@ import Testing
     /// narrow TWO wallet accounts down to the one the probe may read.
     @Test func aCandidateAccountEligibilityIsWalletWide() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let queriedAccountUUIDs = LockIsolated<[AccountUUID]>([])
         let store = makeStore(
             stopCalls: stopCalls,
@@ -420,9 +408,9 @@ import Testing
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stopCalls.value == 1 }
+        await stopCalls.countReached(1)
 
-        #expect(stopCalls.value == 1, "a second candidate's privateScheduled run must stop sync although the selected account is immediate-mode")
+        #expect(stopCalls.count == 1, "a second candidate's privateScheduled run must stop sync although the selected account is immediate-mode")
         #expect(
             queriedAccountUUIDs.value == [RootMigrationGateStopOnBlockTests.secondCandidateAccountUUID],
             "only the eligible second candidate may ever be read — the ineligible selected account must never reach the probe"
@@ -437,13 +425,13 @@ import Testing
     /// the engine for it at all, let alone stop its sync.
     @Test func nonDeliverableWalletNeverReadsTheEngine() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.immediate,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             }
         )
@@ -451,8 +439,8 @@ import Testing
         await store.send(.migrationSyncGateChanged(true))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 0, "an immediate-mode run must keep today's behavior — no stop")
-        #expect(stepReads.value == 0, "a non-deliverable wallet must never read the engine at all")
+        #expect(stopCalls.count == 0, "an immediate-mode run must keep today's behavior — no stop")
+        #expect(stepReads.count == 0, "a non-deliverable wallet must never read the engine at all")
 
         await teardown(store)
     }
@@ -463,7 +451,7 @@ import Testing
     /// emission (the stream re-evaluates every 15 s) must not probe — or stop — again.
     @Test func repeatedBlockedEmissionsProbeOnlyOnce() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -475,11 +463,11 @@ import Testing
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stopCalls.value == 1 }
+        await stopCalls.countReached(1)
         await store.send(.migrationSyncGateChanged(true))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 1, "only the false->true TRANSITION probes — repeated emissions are quiet")
+        #expect(stopCalls.count == 1, "only the false->true TRANSITION probes — repeated emissions are quiet")
 
         await teardown(store)
     }
@@ -487,7 +475,7 @@ import Testing
     /// The false edge (gate clearing) must never stop — it is the RESUME half's edge.
     @Test func clearingEdgeNeverStops() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -499,7 +487,7 @@ import Testing
         await store.send(.migrationSyncGateChanged(false))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 0, "the clearing edge belongs to the resume half — no stop")
+        #expect(stopCalls.count == 0, "the clearing edge belongs to the resume half — no stop")
 
         await teardown(store)
     }
@@ -511,13 +499,13 @@ import Testing
     /// the engine is NOT mid-scan — `.upToDate` is the actual field-caught wedge shape.
     @Test func aStoppedEngineIsLeftAlone() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.stopped,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             // See `probeStopsWhenADeliverableCandidateStepIsBroadcast`'s identical note — the
@@ -527,13 +515,13 @@ import Testing
         )
 
         await store.send(.migrationSyncGateChanged(true))
-        await waitUntil { stepReads.value >= 1 }
+        await stepReads.countReached(1)
 
         // The probe DOES run and DOES answer `.broadcast` — `stopStartedSyncForMigrationGate()`'s
         // own guard is what no-ops here, on `latestState().syncStatus` BEFORE ever calling the
         // mocked `stop()` closure this suite spies on. `stopCalls` staying 0 is therefore the
         // B12 contract, not a probe failure.
-        #expect(stopCalls.value == 0, "a stopped engine has nothing to stop — the helper's own guard no-ops before calling stop()")
+        #expect(stopCalls.count == 0, "a stopped engine has nothing to stop — the helper's own guard no-ops before calling stop()")
         @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
         #expect(!migrationStoppedSyncForBroadcast, "never arm the resume flag for a sync nobody paused")
 
@@ -547,13 +535,13 @@ import Testing
     /// in that shape, and the engine must not even be read.
     @Test func theTickLoopOffSwitchDisablesTheStop() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
-        let stepReads = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
+        let stepReads = SignalledRecords<Void>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
             mode: MigrationMode.privateScheduled,            advanceStep: { _ in
-                stepReads.withValue { $0 += 1 }
+                stepReads.recordCall()
                 return MigrationAdvance(step: .broadcast(MigrationBroadcastInstruction(id: 9)), next: nil)
             },
             tickInterval: Swift.Duration.zero
@@ -562,8 +550,8 @@ import Testing
         await store.send(.migrationSyncGateChanged(true))
         try? await Task.sleep(nanoseconds: 150_000_000)
 
-        #expect(stopCalls.value == 0, "with the tick loop disabled, nothing can ever consume the stop's silence")
-        #expect(stepReads.value == 0, "the off switch must short-circuit before ever reading the engine")
+        #expect(stopCalls.count == 0, "with the tick loop disabled, nothing can ever consume the stop's silence")
+        #expect(stepReads.count == 0, "the off switch must short-circuit before ever reading the engine")
 
         await teardown(store)
     }
@@ -575,9 +563,9 @@ import Testing
     /// stop with nothing left to use the silence it buys.
     @Test func blockedEdgeEnsuresTheTickLoopIsAlive() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
-        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let advancePhases = SignalledRecords<MigrationOpenPhase>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -586,15 +574,15 @@ import Testing
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
-            advancePhases.withValue { $0.append(phase) }
+            advancePhases.record(phase)
             return MigrationStepVerdict.idle
         }
 
         await store.send(.migrationSyncGateChanged(true))
         await testClock.advance(by: .seconds(30))
-        await waitUntil { advancePhases.value.contains(MigrationOpenPhase.tick) }
+        await advancePhases.recorded { $0.contains(MigrationOpenPhase.tick) }
 
-        #expect(advancePhases.value.contains(MigrationOpenPhase.tick), "the blocked edge must ensure the tick loop is alive")
+        #expect(advancePhases.values.contains(MigrationOpenPhase.tick), "the blocked edge must ensure the tick loop is alive")
 
         await teardown(store)
     }
@@ -604,9 +592,9 @@ import Testing
     /// loop for the identical reason the blocked edge does.
     @Test func flowFinishedRespawnsTheTickLoop() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
-        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let advancePhases = SignalledRecords<MigrationOpenPhase>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -615,15 +603,15 @@ import Testing
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
-            advancePhases.withValue { $0.append(phase) }
+            advancePhases.record(phase)
             return MigrationStepVerdict.idle
         }
 
         await store.send(.migrationCoordFlow(.flowFinished))
         await testClock.advance(by: .seconds(30))
-        await waitUntil { advancePhases.value.contains(MigrationOpenPhase.tick) }
+        await advancePhases.recorded { $0.contains(MigrationOpenPhase.tick) }
 
-        #expect(advancePhases.value.contains(MigrationOpenPhase.tick), "flowFinished must respawn the tick loop for a run committed mid-session")
+        #expect(advancePhases.values.contains(MigrationOpenPhase.tick), "flowFinished must respawn the tick loop for a run committed mid-session")
 
         await teardown(store)
     }
@@ -633,9 +621,9 @@ import Testing
     /// (a no-op when the flow committed, since confirm converts the snapshot).
     @Test func flowFinishedClearsTheProvisionalNetworkSnapshot() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
-        let clearedFor = LockIsolated<[AccountUUID?]>([])
+        let clearedFor = SignalledRecords<AccountUUID?>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -644,13 +632,13 @@ import Testing
             testClock: testClock
         )
         store.dependencies.migrationManager.clearProvisionalNetworkSnapshot = { accountUUID in
-            clearedFor.withValue { $0.append(accountUUID) }
+            clearedFor.record(accountUUID)
         }
 
         await store.send(.migrationCoordFlow(.flowFinished))
-        await waitUntil { !clearedFor.value.isEmpty }
+        await clearedFor.countReached(1)
 
-        #expect(clearedFor.value.count == 1, "flowFinished runs the provisional cleaner exactly once")
+        #expect(clearedFor.count == 1, "flowFinished runs the provisional cleaner exactly once")
 
         await teardown(store)
     }
@@ -664,9 +652,9 @@ import Testing
     /// `flowFinished` must run the driver once at the phase the commit missed.
     @Test func flowFinishedOnAnAtTipWalletDrivesTheAfterSyncPhaseOnce() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
-        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let advancePhases = SignalledRecords<MigrationOpenPhase>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.upToDate,
@@ -675,15 +663,15 @@ import Testing
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
-            advancePhases.withValue { $0.append(phase) }
+            advancePhases.record(phase)
             return MigrationStepVerdict.idle
         }
 
         await store.send(.migrationCoordFlow(.flowFinished))
-        await waitUntil { advancePhases.value.contains(MigrationOpenPhase.afterSync) }
+        await advancePhases.recorded { $0.contains(MigrationOpenPhase.afterSync) }
 
         #expect(
-            advancePhases.value.filter { $0 == MigrationOpenPhase.afterSync }.count == 1,
+            advancePhases.values.filter { $0 == MigrationOpenPhase.afterSync }.count == 1,
             "flowFinished on an at-tip wallet must drive the driver exactly once at .afterSync — the edge the commit missed"
         )
 
@@ -695,9 +683,9 @@ import Testing
     /// must not pre-empt it against a stale tip.
     @Test func flowFinishedWhileStillSyncingLeavesTheDriveToTheComingEdge() async {
         resetSharedResumeFlag()
-        let stopCalls = LockIsolated(0)
+        let stopCalls = SignalledRecords<Void>()
         let testClock = TestClock()
-        let advancePhases = LockIsolated<[MigrationOpenPhase]>([])
+        let advancePhases = SignalledRecords<MigrationOpenPhase>()
         let store = makeStore(
             stopCalls: stopCalls,
             syncStatus: SyncStatus.syncing(0.5, false),
@@ -706,7 +694,7 @@ import Testing
             testClock: testClock
         )
         store.dependencies.migrationManager.advance = { phase in
-            advancePhases.withValue { $0.append(phase) }
+            advancePhases.record(phase)
             return MigrationStepVerdict.idle
         }
 
@@ -714,7 +702,7 @@ import Testing
         try? await Task.sleep(nanoseconds: 150_000_000)
 
         #expect(
-            !advancePhases.value.contains(MigrationOpenPhase.afterSync),
+            !advancePhases.values.contains(MigrationOpenPhase.afterSync),
             "mid-sync, the coming .upToDate edge owns the .afterSync drive — flowFinished must leave it alone"
         )
 

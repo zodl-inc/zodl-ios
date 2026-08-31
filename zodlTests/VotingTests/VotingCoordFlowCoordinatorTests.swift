@@ -2398,7 +2398,11 @@ import Testing
 
     @MainActor
     private func waitForStore(
-        timeoutNanoseconds: UInt64 = 2_000_000_000,
+        // Generous ceiling, not a responsiveness claim: starved CI runners have inflated
+        // trivially-fast tests to 60-120 s (unit_tests runs 33367909253, 33371909793 — the
+        // 2 s budget this replaces lost twice), the poll exits the moment the condition
+        // lands, and a real regression still fails, just slower.
+        timeoutNanoseconds: UInt64 = 60_000_000_000,
         sourceLocation: SourceLocation = #_sourceLocation,
         condition: @escaping @MainActor () -> Bool
     ) async {

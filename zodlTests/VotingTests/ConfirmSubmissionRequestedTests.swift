@@ -245,9 +245,10 @@ import Testing
     @MainActor
     private func waitForStore(
         // Generous ceiling: suites run in parallel and effect delivery can lag well past
-        // a "reasonable" bound under full-suite load; the condition normally lands in
-        // milliseconds and a real regression still fails, just slower.
-        timeoutNanoseconds: UInt64 = 15_000_000_000,
+        // a "reasonable" bound under full-suite load — starved CI runners have inflated
+        // trivially-fast tests to 60-120 s (unit_tests run 33367909253); the condition
+        // normally lands in milliseconds and a real regression still fails, just slower.
+        timeoutNanoseconds: UInt64 = 60_000_000_000,
         sourceLocation: SourceLocation = #_sourceLocation,
         condition: @escaping @MainActor () -> Bool
     ) async {

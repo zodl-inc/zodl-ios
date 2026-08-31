@@ -21,8 +21,11 @@ import Testing
 @testable import zodl_internal
 
 // Serialized per repo convention for suites driving lifecycle actions through a real TestStore —
-// see `RootMigrationGateRefusalTests`'s identical `@Suite(.serialized)` rationale.
-@Suite(.serialized) @MainActor struct RootMigrationTickLoopTests {
+// see `RootMigrationGateRefusalTests`'s identical `@Suite(.serialized)` rationale. `.timeLimit`
+// records a tick that genuinely never fires as a failure — the spy's event-driven waits have no
+// deadline of their own (see MigrationSweepBannerFreshnessTests' header for why wall-clock
+// budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootMigrationTickLoopTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x0A, count: 16))
 
     private static func account() -> WalletAccount {
@@ -44,7 +47,7 @@ import Testing
     /// included) so these tests exercise Root's loop-management reducer logic in isolation from the
     /// driver's own internals.
     private final class TickSpy: @unchecked Sendable {
-        let phases = LockIsolated<[MigrationOpenPhase]>([])
+        let phases = SignalledRecords<MigrationOpenPhase>()
         let verdict: LockIsolated<MigrationStepVerdict>
         private let ironwoodActivated: LockIsolated<Bool>
         private let mode: LockIsolated<MigrationMode?>
@@ -59,8 +62,22 @@ import Testing
             self.mode = LockIsolated(migrationMode)
         }
 
-        var tickCalls: Int { phases.value.filter { $0 == MigrationOpenPhase.tick }.count }
-        var nonTickCalls: Int { phases.value.filter { $0 != MigrationOpenPhase.tick }.count }
+        var tickCalls: Int { phases.values.filter { $0 == MigrationOpenPhase.tick }.count }
+        var nonTickCalls: Int { phases.values.filter { $0 != MigrationOpenPhase.tick }.count }
+
+        /// Event-driven waits, resumed by the spy's own `record` call — no deadline; the suite's
+        /// `.timeLimit` records the genuinely-never case.
+        func ticksReached(_ threshold: Int) async {
+            await phases.recorded { $0.filter { $0 == MigrationOpenPhase.tick }.count >= threshold }
+        }
+
+        func nonTicksReached(_ threshold: Int) async {
+            await phases.recorded { $0.filter { $0 != MigrationOpenPhase.tick }.count >= threshold }
+        }
+
+        func phaseSeen(_ phase: MigrationOpenPhase) async {
+            await phases.recorded { $0.contains(phase) }
+        }
 
         func install(_ values: inout DependencyValues) {
             var client = MigrationManagerClient.noOp
@@ -68,7 +85,7 @@ import Testing
             client.migrationMode = { [mode] _ in mode.value }
             client.visitKind = { .sync }
             client.advance = { [phases, verdict] phase in
-                phases.withValue { $0.append(phase) }
+                phases.record(phase)
                 return verdict.value
             }
             client.armNextWindowNotifications = { _ in }
@@ -169,20 +186,6 @@ import Testing
         await store.skipInFlightEffects(strict: false)
     }
 
-    /// Bounded real-time polling for a condition driven by the store's own concurrently-running
-    /// effects — needed because advancing a `TestClock` resumes suspended sleepers but does not
-    /// itself guarantee the resulting action has finished propagating through the store by the time
-    /// `advance(by:)` returns.
-    private func waitUntil(
-        timeoutNanoseconds: UInt64 = 5_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-    }
-
     // MARK: - Launch snapshot sweep (audit 2026-08-03, #6)
 
     /// The launch-time sweep the snapshot docs always named but nothing implemented: every
@@ -192,17 +195,17 @@ import Testing
         let spy = TickSpy()
         let testClock = TestClock()
         let store = makeStore(spy: spy, testClock: testClock)
-        let sweptFor = LockIsolated<[AccountUUID]>([])
+        let sweptFor = SignalledRecords<AccountUUID>()
         store.dependencies.migrationManager.clearAbandonedNetworkSnapshot = { accountUUID in
             if let accountUUID {
-                sweptFor.withValue { $0.append(accountUUID) }
+                sweptFor.record(accountUUID)
             }
         }
 
         await store.send(.initialization(.initializationSuccessfullyDone))
-        await waitUntil { !sweptFor.value.isEmpty }
+        await sweptFor.countReached(1)
 
-        #expect(sweptFor.value == [Self.accountUUID], "every candidate account gets the abandoned-snapshot sweep at launch")
+        #expect(sweptFor.values == [Self.accountUUID], "every candidate account gets the abandoned-snapshot sweep at launch")
 
         await drain(store)
     }
@@ -221,7 +224,7 @@ import Testing
         #expect(spy.tickCalls == 0, "the first tick must not fire before a full 30s has elapsed")
 
         await testClock.advance(by: .seconds(1))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
         #expect(spy.tickCalls == 1)
 
         await drain(store)
@@ -247,7 +250,7 @@ import Testing
         #expect(spy.tickCalls == 0, "the foreground restart must reset the countdown, not merely continue the old one")
 
         await testClock.advance(by: .seconds(1))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
         #expect(spy.tickCalls == 1, "exactly one tick once the RESTARTED countdown reaches 30s")
 
         await drain(store)
@@ -281,7 +284,7 @@ import Testing
         await store.send(.initialization(.initializationSuccessfullyDone))
 
         await testClock.advance(by: .seconds(90))
-        await waitUntil { spy.tickCalls >= 3 }
+        await spy.ticksReached(3)
 
         #expect(spy.tickCalls == 3, "three 30s wake-ups in 90s")
         #expect(spy.nonTickCalls == 0, ".initializationSuccessfullyDone alone must never call .beforeSync/.afterSync")
@@ -305,7 +308,7 @@ import Testing
         await store.send(.initialization(.initializationSuccessfullyDone))
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
         #expect(spy.tickCalls == 1, "a committed immediate-mode run must tick — its preparations are engine-paced")
 
         await drain(store)
@@ -358,11 +361,11 @@ import Testing
         await store.send(.initialization(.initializationSuccessfullyDone))
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
         #expect(spy.tickCalls == 1)
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 2 }
+        await spy.ticksReached(2)
         #expect(spy.tickCalls == 2, "a transient .notApplicable must not kill the loop — the next tick still fires")
 
         await drain(store)
@@ -376,7 +379,7 @@ import Testing
         await store.send(.initialization(.initializationSuccessfullyDone))
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
         #expect(spy.tickCalls == 1)
 
         await testClock.advance(by: .seconds(300))
@@ -385,7 +388,7 @@ import Testing
 
         await store.send(.initialization(.appDelegate(.willEnterForeground)))
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 2 }
+        await spy.ticksReached(2)
         #expect(spy.tickCalls == 2, "a fresh foreground must respawn the loop")
 
         await drain(store)
@@ -425,7 +428,7 @@ import Testing
                 guard case .initialization(.retryStart) = action else { return false }
                 return true
             },
-            timeout: .seconds(5)
+            timeout: .seconds(30)
         )
 
         #expect(!migrationStoppedSyncForBroadcast, "the resume must clear the flag it consumed")
@@ -434,7 +437,7 @@ import Testing
         // second resume — a duplicated `.retryStart` means a duplicated `.beforeSync` driver call
         // (a second engine read and a second arming pass per resume). The spy counts the phase,
         // so the pin is on the observable consequence rather than the action stream.
-        await waitUntil { spy.nonTickCalls >= 1 }
+        await spy.nonTicksReached(1)
         try? await Task.sleep(nanoseconds: 300_000_000)
         #expect(spy.nonTickCalls == 1, "exactly ONE resume open — a second .beforeSync means a duplicated .retryStart")
 
@@ -457,7 +460,7 @@ import Testing
         await store.send(.initialization(.initializationSuccessfullyDone))
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { spy.tickCalls == 1 }
+        await spy.ticksReached(1)
 
         // The shape a LANDED broadcast produces regardless of whether the app had anything of its
         // own to stop: the SDK's post-broadcast gate blocks, then clears.
@@ -472,11 +475,11 @@ import Testing
                 guard case .initialization(.retryStart) = action else { return false }
                 return true
             },
-            timeout: .seconds(5)
+            timeout: .seconds(30)
         )
 
         // Parked-debt pin (2026-08-03), same rationale as (a) above: exactly one resume open.
-        await waitUntil { spy.nonTickCalls >= 1 }
+        await spy.nonTicksReached(1)
         try? await Task.sleep(nanoseconds: 300_000_000)
         #expect(spy.nonTickCalls == 1, "exactly ONE resume open — a second .beforeSync means a duplicated .retryStart")
 
@@ -524,10 +527,10 @@ import Testing
         let store = makeStore(spy: spy, testClock: testClock, tickInterval: Swift.Duration.zero)
 
         await store.send(.initialization(.appDelegate(.willEnterForeground)))
-        await waitUntil { spy.phases.value.contains(MigrationOpenPhase.beforeSync) }
+        await spy.phaseSeen(MigrationOpenPhase.beforeSync)
 
         #expect(
-            spy.phases.value.contains(MigrationOpenPhase.beforeSync),
+            spy.phases.values.contains(MigrationOpenPhase.beforeSync),
             "the open poke is a separate lane and must survive the zero switch"
         )
         #expect(spy.tickCalls == 0, "and still no tick, ever")
