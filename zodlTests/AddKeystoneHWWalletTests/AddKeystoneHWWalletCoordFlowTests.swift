@@ -23,7 +23,6 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 
 @Suite(.serialized) @MainActor struct AddKeystoneHWWalletCoordFlowTests {
-
     // MARK: - accountImportFailed from keystoneDeviceReady
 
     @Test func accountImportFailedShowsFailureSheet() async {

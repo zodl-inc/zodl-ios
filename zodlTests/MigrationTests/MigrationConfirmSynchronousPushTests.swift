@@ -119,7 +119,7 @@ import Testing
     /// path mutation happens in the reducer handling the delegate, with the state built from the
     /// in-hand schedule + the published snapshot; no async receive precedes the push.
     @Test func aConfirmedPlanPushesTheScheduledScreenSynchronously() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = nil }
 
         var planState = MigrationTransferPlan.State(variant: .scheduled, requiresSigning: true)
@@ -225,7 +225,7 @@ import Testing
     /// the pin: any mutation (e.g. `isConfirming` flipping true on the way into the auth gate)
     /// fails it outright.
     @Test func aCommittedPlanIgnoresAnotherConfirmTap() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         var state = MigrationTransferPlan.State(variant: .scheduled, requiresSigning: true)

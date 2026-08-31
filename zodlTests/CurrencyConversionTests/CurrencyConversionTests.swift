@@ -9,9 +9,7 @@ import XCTest
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-
 class CurrencyConversionTests: XCTestCase {
-
     func testInitRoundsRatioToSixDecimals() {
         let conversion = CurrencyConversion(.usd, ratio: 1.123456789, timestamp: 0)
 

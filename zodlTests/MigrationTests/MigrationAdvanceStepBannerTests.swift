@@ -17,7 +17,8 @@
 
 import Foundation
 import Testing
-@_spi(Testing) import ZcashLightClientKit
+@_spi(Testing)
+import ZcashLightClientKit
 @testable import zodl_internal
 
 @Suite struct MigrationAdvanceStepBannerTests {

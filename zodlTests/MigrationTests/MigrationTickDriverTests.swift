@@ -24,7 +24,8 @@
 
 import Foundation
 import Testing
-@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing)
+@testable @preconcurrency import ZcashLightClientKit
 import ComposableArchitecture
 @testable import zodl_internal
 
@@ -75,7 +76,7 @@ import ComposableArchitecture
     /// via the same shared in-memory keys `MigrationManagerImpl.advance` reads. Every test calls
     /// this first; `.serialized` (above) is what makes doing so from several tests safe.
     private static func installCandidateAccount() {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         $selectedWalletAccount.withLock { $0 = Self.account() }
         $walletAccounts.withLock { $0 = [Self.account()] }
@@ -960,7 +961,7 @@ import ComposableArchitecture
     /// with its own due transfer. The first hold used to end the discharge loop — account B's
     /// delivery never ran, on every tick, for as long as A stayed due.
     @Test func aHeldAccountDoesNotStarveTheNextAccountsDelivery() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         $selectedWalletAccount.withLock { $0 = Self.account() }
         $walletAccounts.withLock { $0 = [Self.account(), Self.secondAccount()] }

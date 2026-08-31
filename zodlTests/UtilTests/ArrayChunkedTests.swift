@@ -22,7 +22,7 @@ import Testing
     }
 
     @Test func chunkedEmptyArrayReturnsEmpty() {
-        #expect([Int]().chunked(into: 3) == [])
+        #expect([Int]().chunked(into: 3).isEmpty)
     }
 
     @Test func chunkedWithZeroSizeReturnsWholeArrayInsteadOfTrapping() {
@@ -53,7 +53,8 @@ import Testing
     }
 
     @Test func removingDuplicatesOnEmptyReturnsEmpty() {
-        #expect([Item]().removingDuplicates().isEmpty)
+        let empty: [Item] = []
+        #expect(empty.removingDuplicates().isEmpty)
     }
 }
 

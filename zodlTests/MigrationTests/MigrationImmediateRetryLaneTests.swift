@@ -87,7 +87,7 @@ import Testing
     /// THE PRIMARY PATH, unchanged: the Review element survived the pop, so its own commit-failure
     /// sheet is armed IN PLACE and nothing is pushed. Retry there re-runs the ceremony.
     @Test func aSurvivingReviewIsArmedInPlace() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         let store = Self.coordinatorStore(bottom: .reviewTransfer(MigrationReviewTransfer.State(mode: .immediate)))
@@ -109,7 +109,7 @@ import Testing
     /// carrying the same commit-failure sheet — NOT a Sending screen. This is the whole regression:
     /// the Sending screen it used to push had no proposal, so its Retry drove the scheduled lane.
     @Test func aLostReviewPushesAFreshImmediateReviewNotSending() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         let store = Self.coordinatorStore(bottom: .transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -137,7 +137,7 @@ import Testing
     /// The tombstone check is untouched by the fix: a ceremony the user already abandoned drops the
     /// late failure silently rather than pushing anything at all.
     @Test func anAbandonedCeremonyDropsTheLateFailure() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         var state = Self.makeState(bottom: .transferPlan(MigrationTransferPlan.State(variant: .scheduled)))
@@ -167,7 +167,7 @@ import Testing
     /// counted rather than left unimplemented, so a reintroduced drive fails loudly here instead of
     /// silently working.
     @Test func retryOnAProposallessSendingScreenNeverConsultsTheDrive() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         let cranks = LockIsolated<Int>(0)

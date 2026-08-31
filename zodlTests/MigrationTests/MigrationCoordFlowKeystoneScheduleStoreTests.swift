@@ -95,7 +95,7 @@ import Testing
     /// The P1 pin: both halves store, split positionally, and the committed schedule records —
     /// no deferral, no drop.
     @Test func lastRoundStoresBothHalvesAndRecordsTheSchedule() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         let storedPreps = LockIsolated<[MigrationSignedTransferPczt]>([])
@@ -135,13 +135,10 @@ import Testing
             )
         )
 
-        await store.receive(
-            { action in
-                guard case .keystoneSigningSubmitted = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .keystoneSigningSubmitted = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(storedPreps.value.map(\.id) == [0], "the preparation half stores by position")
         #expect(storedSchedule.value.map(\.id) == [4], "the schedule half stores by position — the audit's dropped payload")
@@ -156,7 +153,7 @@ import Testing
     /// The honest-failure twin: a schedule-store failure abandons the ceremony (run cancelled,
     /// nothing resumes) rather than landing on "Migration Scheduled" with half a batch stored.
     @Test func scheduleStoreFailureAbandonsInsteadOfResuming() async {
-        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
         $selectedWalletAccount.withLock { $0 = Self.account() }
 
         let recordedSchedules = LockIsolated<Int>(0)
@@ -192,13 +189,10 @@ import Testing
             )
         )
 
-        await store.receive(
-            { action in
-                guard case .keystoneScanAbandoned = action else { return false }
-                return true
-            },
-            timeout: .seconds(5)
-        )
+        await store.receive({ action in
+            guard case .keystoneScanAbandoned = action else { return false }
+            return true
+        }, timeout: .seconds(5))
 
         #expect(recordedSchedules.value == 0, "a failed store must never record the schedule as committed")
 

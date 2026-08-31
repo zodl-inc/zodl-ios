@@ -6,8 +6,7 @@ included:
 
 excluded:
   - xctemplates
-  - secantTests
-  - secantUITests
+  - zodlTests
 
 disabled_rules:
   - notification_center_detachment
