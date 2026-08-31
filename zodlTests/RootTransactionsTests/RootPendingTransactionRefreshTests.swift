@@ -37,7 +37,11 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootPendingTransactionRefreshTests {
+// Three minutes, not one: the deliberately-unbounded pumps below are backstopped by this limit
+// alone, and a starved CI runner blew the 1-minute version on a healthy test (unit_tests run
+// 33371909793 — `cancellingThePollerPreventsAnyLaterTick`, ~16 s on an ordinary run). Sized above
+// the ~120 s worst healthy inflation observed fleet-wide.
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootPendingTransactionRefreshTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
