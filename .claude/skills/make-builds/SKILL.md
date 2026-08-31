@@ -122,14 +122,7 @@ state. The thread key is the parent's entire first line, exactly:
 For each build line, with `<ref>`, `<version>`, `<build>` taken from the
 header:
 
-1. Capture the SDK state now (the project consumes the sibling checkout live,
-   so read it at launch time, per build):
-   ```bash
-   git -C ../zcash-swift-wallet-sdk rev-parse --abbrev-ref HEAD
-   git -C ../zcash-swift-wallet-sdk rev-parse --short=8 HEAD
-   git -C ../zcash-swift-wallet-sdk status --porcelain
-   ```
-2. Launch the build in the **background** (`run_in_background`, no `sleep`
+1. Launch the build in the **background** (`run_in_background`, no `sleep`
    polling — wait for its completion notification). A foreground call is
    killed at 10 minutes; a build takes 30–90+. Log to the session scratchpad:
    ```bash
@@ -139,20 +132,28 @@ header:
    otherwise hang forever on a non-tty. Add `--skip-tests` only when the build
    line says `skip-tests`, and `--submit-review` only when it says
    `submit-review`. Add nothing else.
-3. Wait for the process to exit before doing anything further. Do not kill it
+2. Wait for the process to exit before doing anything further. Do not kill it
    for being slow — after the archive it waits for App Store Connect
    processing, which is long and quiet. Do not start the next build and do not
    run other commands in this repo while it runs.
-4. **Exit 0** → the build is on TestFlight. Send its Slack reply now, before
+3. **Exit 0** → the build is on TestFlight. Send its Slack reply now, before
    the next build starts. Take `<sha8>` from the log's final
    `Done: … from <ref> @ <sha8>` line (fallbacks:
-   `git rev-parse --short=8 origin/<ref>`, then the literal `<ref>`).
-5. **Non-zero exit** → keep the last ~40 log lines for the final report, post
+   `git rev-parse --short=8 origin/<ref>`, then the literal `<ref>`), then
+   render the reply's two ref lines:
+   ```bash
+   python3 .claude/skills/make-builds/scripts/build-refs.py --ref <ref> --sha <sha8>
+   ```
+   Paste its stdout into the reply verbatim — see step 4. Anything it writes to
+   stderr is a `note:` explaining why the SDK line is missing; carry that into
+   the final report rather than inventing a replacement line.
+4. **Non-zero exit** → keep the last ~40 log lines for the final report, post
    nothing to Slack for this build, and continue with the next build.
 
 Never run builds in parallel — they share one git repository (fetch, worktree
-add/remove), the live `../zcash-swift-wallet-sdk` checkout, and the signing
-profile store, and same-commit refs would collide on the build worktree path.
+add/remove), the live local-package checkout the project points at, and the
+signing profile store, and same-commit refs would collide on the build worktree
+path.
 
 Never insert a `--dry-run` pass first: the real run performs the identical
 preflight before building and aborts cleanly on any mismatch.
@@ -166,25 +167,51 @@ exactly:
 ```
 _iOS TestFlight Build (<variant>)_ — <version> (<build>)
 
-App: `<ref>@<sha8>`
-SDK: `<sdk-branch>@<sdk-sha8>`
+<the two lines printed by build-refs.py>
 ```
 
-- The SDK line uses the values captured at launch: append ` (dirty)` inside
-  the backticks when `status --porcelain` was non-empty; on a detached HEAD use
-  just the sha; drop the whole SDK line when the checkout does not exist.
+- **Never hand-write the `App:` / `SDK:` lines** — paste what `build-refs.py`
+  printed. It resolves the SDK from the Xcode project rather than from a
+  hardcoded path, so it keeps working when the SDK checkout is renamed or is
+  switched between a local and a remote package. Both lines carry any tag
+  pointing at the built commit, which is the point of the pair: a reader can
+  tell at a glance which tagged version an announcement corresponds to.
+- What the script emits, so you can sanity-check it. Tag groups render as
+  `(tag: X)`, or `(tags: X, Y)` when several tags point at the same commit, and
+  are omitted when there are none:
+
+  ```
+  App: `<ref>@<sha8> (tag: X)`
+  SDK: `<branch>@<sha8> (tag: X) (dirty)`     ← local package
+  SDK: `<version-or-branch>@<sha8>`           ← remote package
+  ```
+
+  - **App** — release commits are usually tagged *after* the build, so no tag
+    on this line is normal, not a failure.
+  - **Local** SDK package — read live from the checkout the project points at.
+    ` (dirty)` follows the tag group when that checkout has uncommitted
+    changes; a detached HEAD drops the branch and shows just the sha.
+  - **Remote** SDK package — taken from the `Package.resolved` pin. A pin has no
+    working copy, so it is never dirty and needs no tag lookup: the pinned
+    version *is* the tag, and sits in the branch slot.
+  - **No `SDK:` line at all** when nothing resolves. Say why in the final
+    report, quoting the script's `note:`.
+- The SDK line is read after the build, while the lane's own preflight recorded
+  it at the start — the log line `build uses local Swift package <path>
+  (<sha8>, clean|dirty)`. If the two shas disagree the checkout moved mid-build:
+  post the log's sha and flag it in the final report.
 - No changelog in replies — it lives in the thread parent.
 - Post for real with `slack_send_message` — not a draft, and never ask for
   approval first: posting immediately is what this skill was invoked to do.
   Keep the returned message link for the final report.
 
-Example:
+Example — a local SDK checkout sitting on a tagged commit, app not yet tagged:
 
 ```
-_iOS TestFlight Build (internal)_ — 3.10.0 (1)
+_iOS TestFlight Build (internal)_ — 3.10.1 (1)
 
-App: `release/3.10.0@a7522c01`
-SDK: `main@0b5e678c`
+App: `release/3.10.1@54812f81`
+SDK: `candidate/4.1.0@cafca07a (tag: 4.1.0-rc.1)`
 ```
 
 ### 5. Final report — after the last build
@@ -195,6 +222,8 @@ Report in chat:
 - One line per build, in order: variant `version (build)` — ✅ uploaded (with
   the Slack reply link) or ❌ failed (one-sentence reason).
 - For each failure: the log file path and the decisive error lines.
+- If a reply went out without an `SDK:` line, or its sha disagreed with the
+  log's preflight: say so, quoting the `note:` `build-refs.py` printed.
 - If changelog lines were skipped because the thread already existed: say so.
 - If the Slack connector was unavailable or a send failed: say so explicitly
   and include each unsent message verbatim, ready to paste.
@@ -210,4 +239,5 @@ Report in chat:
 | A reply send errors | Retry once; if it still fails, put the message in the final report |
 | Thread found and the invocation has changelog lines | Don't post them; note it in the final report |
 | A build seems slow or stuck | Leave it alone; only its exit ends the wait |
+| `build-refs.py` prints no `SDK:` line | Post the reply without it; quote its `note:` in the final report — never hand-write a replacement |
 | Tempted to ask "proceed?" / "post this?" mid-run | Don't — the invocation already authorized the run |

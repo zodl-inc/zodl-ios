@@ -17,6 +17,7 @@ refuses to build on any mismatch.
 | `fastlane/lib/zodl/` | pure preflight logic (unit-tested) |
 | `fastlane/spec/*_test.rb` | tests for that logic (see [Tests](#tests-and-project-files)) |
 | `git worktree` (temporary) | each build runs against a clean checkout of the exact ref |
+| `.claude/skills/make-builds/` | the `/make-builds` skill — runs a whole release's builds through the wrapper and announces them in Slack (see [Driving a whole run](#driving-a-whole-run-with-make-builds)) |
 
 You call the wrappers; they run `bundle exec fastlane`; fastlane gathers facts,
 runs the preflight, then builds in a throwaway worktree and uploads to App Store
@@ -190,6 +191,128 @@ is lower than the variant's latest on App Store Connect; the ref isn't on
 proceeds) on a build-number gap or an uncommitted working tree.
 
 With `--submit-review`, the dry run also verifies the build's existence and processing state on App Store Connect, the version record's state, and that every enabled App Store localization has a What's New entry for the version.
+
+## Driving a whole run with `/make-builds`
+
+`Scripts/release.sh` builds one variant. A release usually means several builds
+in a row, each followed by a note to the team — so the repo also ships a Claude
+Code skill, [`.claude/skills/make-builds/`](../.claude/skills/make-builds/SKILL.md),
+that runs the wrapper for you, one build at a time, and announces every success
+in a per-release Slack thread in `#wallet-team`.
+
+It is a thin driver, not a second implementation: every build is the same
+`./Scripts/release.sh …` invocation described above, with the same preflight and
+the same failure modes. What it adds is sequencing, the Slack thread, and a
+final report.
+
+The skill is **manual only** — Claude never starts it on its own; you type
+`/make-builds`. Invoking it authorizes the whole run: it will not stop to ask
+"proceed?" before a build, before a Slack post, or after a failure.
+
+### The invocation
+
+One header line, then one line per build, then optional changelog lines:
+
+```
+/make-builds
+release/3.8.0 3.8.0 2
+internal-testnet
+appstore submit-review
+- Sending now works while a migration is running
+- Keystone firmware 3.0.1 is the new minimum for signing
+```
+
+| Line | Format | Notes |
+|---|---|---|
+| Header (first non-blank line) | `<ref> <version> <build>` | Shared by every build of the run. `ref` is a branch, tag, or commit; `version` is `X.Y.Z`; `build` is an integer |
+| Build line | `<variant> [skip-tests] [submit-review]` | `variant` is `internal`, `testnet`, `appstore`, or `internal-testnet`; options come in any order, at most once each; `submit-review` is `appstore`-only |
+| Changelog line | starts with `-`, `*`, or `•` | Optional. Rendered in the thread parent only, never in the per-build replies |
+
+Everything is validated **before anything runs**. A malformed header, an unknown
+or repeated option, `submit-review` on a non-`appstore` line, the same variant
+twice (`internal-testnet` counts as containing `internal` and `testnet`), or
+zero build lines → every error is printed and no build starts. One build costs
+30–90 minutes and uploads to TestFlight, so the skill never guesses a missing
+value and never runs half a batch.
+
+> The header carries `ref`/`version`/`build` once for the whole run. An older
+> format repeated all three on every build line; paste one of those and the
+> skill tells you so instead of misreading it.
+
+### What happens per build
+
+Builds run **strictly one at a time**, in the order you listed them — they share
+one git repository, the local package checkout the project points at, and the
+signing profile store, so parallel runs would collide. Each is launched in the
+background (a foreground command would be killed at 10 minutes, a build takes
+30–90+) with `-y` appended so the lane's confirmation prompt can't hang, and is
+logged to the session scratchpad as
+`make-builds-<variant>-<version>-<build>.log`.
+
+There is no `--dry-run` pass first — the real run performs the identical
+preflight and aborts cleanly on any mismatch — and a slow build is never killed:
+after the archive it waits on App Store Connect processing, which is long and
+quiet.
+
+- **Build succeeds** → its Slack reply goes out immediately, before the next
+  build starts.
+- **Build fails** → nothing is posted for it, the decisive log lines are kept
+  for the final report, and the run continues with the next build.
+
+### What lands in Slack
+
+One release run = one thread in `#wallet-team`. The parent names the version and
+build, and each successful build adds a reply:
+
+```
+:thread: :green_apple: iOS builds 3.8.0 (2)
+Builds: internal-testnet, appstore (→ App Review)
+• Sending now works while a migration is running
+• Keystone firmware 3.0.1 is the new minimum for signing
+```
+
+```
+_iOS TestFlight Build (internal-testnet)_ — 3.8.0 (2)
+
+App: `release/3.8.0@54812f81`
+SDK: `candidate/4.1.0@cafca07a (tag: 4.1.0-rc.1)`
+```
+
+Slack itself is the registry — there is no local state. Before the first build
+the skill scans the last 48 hours of the channel for a top-level message whose
+first line is exactly `:thread: :green_apple: iOS builds <version> (<build>)`,
+and reuses it when it finds one. There is deliberately **no author check**, so
+you can finish a run a colleague started; in that case any changelog lines you
+passed are skipped (the existing parent already carries one and can't be edited)
+and the final report says so. `skip-tests` is never surfaced in the thread.
+
+The `App:` / `SDK:` pair is rendered by
+`.claude/skills/make-builds/scripts/build-refs.py`, never hand-written. It names
+the built commit plus any tag pointing at it, and discovers the SDK from the
+Xcode project rather than a hardcoded path: a local package is read live from
+the checkout the project points at (with a `(dirty)` marker when it has
+uncommitted changes), a remote one comes from the `Package.resolved` pin. Since
+release commits are usually tagged *after* the build, no tag on the `App:` line
+is normal. If no SDK reference resolves, the line is omitted and the final
+report quotes the reason.
+
+If the Slack connector isn't available in the session, the builds still run and
+every composed message comes back in the final report, ready to paste. If the
+parent can't be sent after a retry, the run falls back to **flat mode**:
+per-build messages are posted top-level instead of threaded.
+
+### The final report
+
+After the last build you get, in chat: the thread link and whether it was reused
+or created; one line per build with ✅ uploaded (and its reply link) or ❌ failed
+(with a one-sentence reason); the log path and decisive error lines for each
+failure; and any of the caveats above that applied.
+
+### What it doesn't cover
+
+`bump`, `--dry-run`, and submitting a build that is already uploaded (the
+`--ref`-less `--submit-review` form) are outside the skill — run
+`Scripts/bump.sh` / `Scripts/release.sh` directly for those.
 
 ## Command reference
 
