@@ -310,6 +310,11 @@ struct SDKSynchronizerClient: Sendable {
     
     var evaluateBestOf: @Sendable ([LightWalletEndpoint], Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_ in [] }
 
+    /// SDK-side automatic-switch decision: benchmarks the candidates, compares the winner
+    /// against the current endpoint, and returns the endpoint worth switching to — or nil
+    /// when staying is the right call. See `AutoServerSelectionClient.findBestServer`.
+    var evaluateServerSwitch: @Sendable (LightWalletEndpoint, [LightWalletEndpoint], Double, UInt64, NetworkType) async -> LightWalletEndpoint? = { _, _, _, _, _ in nil }
+
     var walletAccounts: @Sendable () async throws -> [WalletAccount] = { [] }
     
     var estimateBirthdayHeight: @Sendable (Date) -> BlockHeight = { _ in BlockHeight(0) }
