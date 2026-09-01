@@ -1,0 +1,140 @@
+name: E2E Auto-Update Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [y4ssi/macos-autoupdate]
+    paths: ['zodlmac-shared/Updater.swift']
+
+jobs:
+  e2e:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download v1.0.0 DMG (base install)
+        run: |
+          curl -L -s -o /tmp/Zodl-1.0.0.dmg \
+            "https://github.com/zodl-inc/poc-macos-dmg-test/releases/download/mac-v1.0.0/Zodl-1.0.0.dmg"
+          echo "Downloaded: $(du -sh /tmp/Zodl-1.0.0.dmg | cut -f1)"
+
+      - name: Install Zodl v1.0.0
+        run: |
+          hdiutil attach /tmp/Zodl-1.0.0.dmg -nobrowse -quiet
+          cp -R "/Volumes/Zodl-1.0.0/Zodl Internal.app" /Applications/
+          xattr -dr com.apple.quarantine "/Applications/Zodl Internal.app"
+          hdiutil detach /Volumes/Zodl-1.0.0 -quiet -force
+          VERSION=$(defaults read "/Applications/Zodl Internal.app/Contents/Info.plist" \
+            CFBundleShortVersionString)
+          echo "Installed version: $VERSION"
+          [ "$VERSION" = "1.0.0" ] || (echo "❌ Wrong version: $VERSION"; exit 1)
+          echo "✅ v1.0.0 installed"
+
+      - name: Launch app and capture updater logs
+        run: |
+          # Updater uses NSLog("[Updater] ...") → unified log (capturable via log stream)
+          log stream \
+            --predicate 'process CONTAINS "Zodl Internal" AND eventMessage CONTAINS "[Updater]"' \
+            --style compact > /tmp/zodl-updater.log 2>&1 &
+          LOG_PID=$!
+          echo "LOG_PID=$LOG_PID" >> $GITHUB_ENV
+
+          open -a "/Applications/Zodl Internal.app"
+          echo "App launched"
+          sleep 2
+          pgrep -x "Zodl Internal" && echo "App running" || echo "App not found in ps"
+
+          # Wait for the NSAlert dialog to appear (3s startup delay)
+          echo "Waiting 6s for NSAlert to appear..."
+          sleep 6
+
+          # Click "Install & Relaunch" via osascript (AppleScript UI automation)
+          echo "Clicking Install & Relaunch button..."
+          osascript << 'APPLESCRIPT' || true
+            tell application "System Events"
+              repeat 5 times
+                if exists (button "Install & Relaunch" of sheet 1 of window 1 of process "Zodl Internal") then
+                  click button "Install & Relaunch" of sheet 1 of window 1 of process "Zodl Internal"
+                  return "clicked sheet"
+                end if
+                if exists (button "Install & Relaunch" of window 1 of process "Zodl Internal") then
+                  click button "Install & Relaunch" of window 1 of process "Zodl Internal"
+                  return "clicked window"
+                end if
+                -- NSAlert may appear as its own window
+                repeat with w in windows of process "Zodl Internal"
+                  if exists (button "Install & Relaunch" of w) then
+                    click button "Install & Relaunch" of w
+                    return "clicked"
+                  end if
+                end repeat
+                delay 1
+              end repeat
+              return "button not found"
+            end tell
+          APPLESCRIPT
+          echo "osascript done"
+
+          echo "Waiting 90s for download + verify + install + relaunch..."
+          sleep 90
+
+          kill $LOG_PID 2>/dev/null || true
+          echo "Log capture stopped"
+
+      - name: Verify update flow
+        run: |
+          echo "=== Updater logs (NSLog → unified log) ==="
+          cat /tmp/zodl-updater.log | grep "\[Updater\]" || \
+            echo "(no [Updater] lines — check log stream predicate)"
+
+          echo ""
+          echo "=== Checking for key updater events ==="
+
+          if grep -q "Latest.*1\.0\.1\|update available\|Update available" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ Detected v1.0.1 update"
+          else
+            echo "⚠️  Update detection not confirmed in logs"
+          fi
+
+          if grep -q "Ed25519.*verified\|signature verified" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ Ed25519 signature verified"
+          fi
+
+          if grep -q "SHA256.*verified" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ SHA256 checksum verified"
+          fi
+
+          if grep -q "Install complete\|installed to\|mv .new → current" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ Install completed"
+          fi
+
+          if grep -q "Helper launched\|Launching.*helper\|app will close" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ Relaunch helper launched"
+          fi
+
+          # Check if installed version changed to 1.0.1
+          echo ""
+          echo "=== Installed version after update ==="
+          INSTALLED=$(defaults read "/Applications/Zodl Internal.app/Contents/Info.plist" \
+            CFBundleShortVersionString 2>/dev/null || echo "unknown")
+          echo "Installed: $INSTALLED"
+
+          if [ "$INSTALLED" = "1.0.1" ]; then
+            echo "✅ Successfully updated to v1.0.1"
+          else
+            echo "❌ Still at $INSTALLED — auto-update did NOT complete"
+            exit 1
+          fi
+
+          # Check for running processes
+          echo ""
+          echo "=== Running Zodl processes ==="
+          ps aux | grep -i "Zodl Internal" | grep -v grep || echo "(none)"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-logs
+          path: /tmp/zodl-updater.log
