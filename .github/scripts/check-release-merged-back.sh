@@ -112,10 +112,9 @@ while IFS= read -r rel; do
     fi
   fi
 
-  # [v]MAJOR.MINOR.PATCH[-anything] -> its maintenance line.
-  ver="${tag#v}"
-  major="${ver%%.*}"
-  rest="${ver#*.}"
+  # X.Y.Z -> its maintenance line.
+  major="${tag%%.*}"
+  rest="${tag#*.}"
   minor="${rest%%.*}"
   maint="$(line_for "${major}.${minor}")"
 
@@ -126,7 +125,7 @@ while IFS= read -r rel; do
   own=''
   downstream=()
   seen=0
-  for b in "${CHAIN[@]}"; do
+  for b in ${CHAIN[@]+"${CHAIN[@]}"}; do
     if [ "$b" = "$maint" ]; then seen=1; own="$b"; continue; fi
     if [ "$seen" -eq 1 ]; then downstream+=("$b"); fi
   done

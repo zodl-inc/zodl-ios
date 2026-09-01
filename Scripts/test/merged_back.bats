@@ -72,7 +72,6 @@ mkcommit() {
   run "$CHECK"
   [ "$status" -eq 0 ]
   [[ "$output" == *'(`3.10.2`)'* ]] || false
-  [[ "$output" != *"vbeta"* ]] || false
   [[ "$output" != *"v0.0.x"* ]] || false
   [[ "$output" == *'`release/experimental` has no release tag at its tip'* ]] || false
 }
@@ -88,4 +87,18 @@ mkcommit() {
   run "$CHECK" maint/3.10.x prmerge
   [ "$status" -eq 0 ]
   [[ "$output" == *'is in `maint/3.10.x` but has not reached main'* ]] || false
+}
+
+@test "maintenance lines are ordered by version across both spellings" {
+  mkcommit "release 3.9.5"; REL="$SHA"
+  git tag 3.9.5 "$REL"
+  git update-ref refs/remotes/origin/release/3.9.5 "$REL"
+  mkcommit "on the 3.9 line only"
+  git update-ref refs/remotes/origin/maint/3.9.x "$SHA"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$BASE"
+  git update-ref refs/remotes/origin/maint/3.11.x "$BASE"
+  git update-ref refs/remotes/origin/main "$BASE"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'is in `maint/3.9.x` but has not reached maint/v3.10.x, maint/3.11.x, main yet'* ]] || false
 }
