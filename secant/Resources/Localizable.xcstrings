@@ -5533,6 +5533,91 @@
         }
       }
     },
+    "coinVote.store.userError.delegationDiagnosis.alreadyBroadcast" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.notBroadcast" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.secretsLost" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.secretsRecovered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and has been recovered from a backup copy. Voting cannot continue until it is restored. Please contact support with this code. (POLL-03)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and has been recovered from a backup copy. Voting cannot continue until it is restored. Please contact support with this code. (POLL-03)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.undetermined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting service could not be reached, so the app cannot tell whether your delegation was already submitted. Nothing has been changed. Please try again when you have a connection. (POLL-05)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting service could not be reached, so the app cannot tell whether your delegation was already submitted. Nothing has been changed. Please try again when you have a connection. (POLL-05)"
+          }
+        }
+      }
+    },
     "coinVote.store.userError.delegationSetupIncomplete" : {
       "extractionState" : "manual",
       "localizations" : {
