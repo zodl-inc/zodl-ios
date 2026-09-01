@@ -128,6 +128,20 @@ extension VotingRecoveryEndToEndTests {
             }
         }
 
+
+        /// The schema applied and nothing inserted: a wallet that never opened
+        /// a poll. Closed cleanly on purpose, so its log is checkpointed away
+        /// and there is genuinely nothing anywhere to find.
+        static func writeEmptySchema(to url: URL) throws {
+            let database = try open(url)
+            defer { sqlite3_close(database) }
+
+            try exec(database, "PRAGMA journal_mode=WAL;")
+            try exec(database, "PRAGMA foreign_keys=ON;")
+            try exec(database, schema)
+            try exec(database, "PRAGMA wal_checkpoint(TRUNCATE);")
+        }
+
         /// Every `van_comm_rand` SQL can still see, in bundle order.
         func queryVanCommRands() throws -> [String] {
             let database = try Self.open(databaseURL)
@@ -154,7 +168,7 @@ extension VotingRecoveryEndToEndTests {
             case sqlite(String)
         }
 
-        private static func open(_ url: URL) throws -> OpaquePointer? {
+        static func open(_ url: URL) throws -> OpaquePointer? {
             var database: OpaquePointer?
             let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
             guard sqlite3_open_v2(url.path, &database, flags, nil) == SQLITE_OK else {
@@ -165,7 +179,7 @@ extension VotingRecoveryEndToEndTests {
             return database
         }
 
-        private static func exec(_ database: OpaquePointer?, _ sql: String) throws {
+        static func exec(_ database: OpaquePointer?, _ sql: String) throws {
             var error: UnsafeMutablePointer<CChar>?
             guard sqlite3_exec(database, sql, nil, nil, &error) == SQLITE_OK else {
                 let message = error.map { String(cString: $0) } ?? "exec failed"
@@ -201,7 +215,7 @@ extension VotingRecoveryEndToEndTests {
 
         /// `rounds` and `bundles` from `001_init.sql`. Column order is part of
         /// the contract: records are decoded positionally.
-        private static let schema = """
+        static let schema = """
             CREATE TABLE rounds (
                 round_id            TEXT NOT NULL,
                 wallet_id           TEXT NOT NULL DEFAULT '',

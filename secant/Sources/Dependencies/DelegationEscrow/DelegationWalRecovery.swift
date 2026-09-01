@@ -316,9 +316,12 @@ enum DelegationWalRecovery {
 
     /// Carves the main database file: live b-tree rows, plus deleted cells that
     /// no cell-pointer array references any more.
-    static func recover(databaseBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
-        guard databaseBytes.count > Format.fileHeaderLength else { return [] }
-        guard Array(databaseBytes[0..<Format.magic.count]) == Format.magic else { return [] }
+    /// Page size, usable size and page count, or `nil` when the bytes are not
+    /// a SQLite database. Shared so the round-data probe and the carver can
+    /// never disagree about a file's geometry.
+    static func geometry(databaseBytes: [UInt8]) -> (pageSize: Int, usable: Int, pages: Int)? {
+        guard databaseBytes.count > Format.fileHeaderLength else { return nil }
+        guard Array(databaseBytes[0..<Format.magic.count]) == Format.magic else { return nil }
 
         // Page size lives at offset 16; the value 1 means 65536, which does not
         // fit the 16-bit field. Byte 20 is the per-page reserved region, which
@@ -327,12 +330,19 @@ enum DelegationWalRecovery {
         let pageSize = declared == Format.largestPageSizeSentinel
             ? Format.largestPageSize
             : declared
-        guard isPlausiblePageSize(pageSize) else { return [] }
+        guard isPlausiblePageSize(pageSize) else { return nil }
         let usable = pageSize - Int(databaseBytes[Format.reservedSizeOffset])
-        guard usable > Format.maxLocalReserve else { return [] }
+        guard usable > Format.maxLocalReserve else { return nil }
+
+        return (pageSize, usable, databaseBytes.count / pageSize)
+    }
+
+    static func recover(databaseBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
+        guard let (pageSize, usable, pageCount) = geometry(databaseBytes: databaseBytes) else {
+            return []
+        }
 
         var rows: [RecoveredBundle] = []
-        let pageCount = databaseBytes.count / pageSize
         for index in 0..<pageCount {
             let page = Array(databaseBytes[(index * pageSize)..<((index + 1) * pageSize)])
             // Page 1 carries the 100-byte file header before its b-tree header.
@@ -349,6 +359,88 @@ enum DelegationWalRecovery {
             }
         }
         return rows
+    }
+
+
+    // MARK: - Is there anything to recover at all?
+
+    /// Whether these files hold any voting round at all.
+    ///
+    /// A wallet that never opened a poll has an empty `rounds` table, and with
+    /// no round there is nothing a wipe could have destroyed. Recovery can skip
+    /// such a device without reading further.
+    ///
+    /// IMPORTANT, because the inverse is the intuitive reading and it is wrong:
+    /// a round whose delegation was wiped is NOT absent. `prepareFreshRound`
+    /// deleted the row and immediately rebuilt it, so a corrupted database has
+    /// a `rounds` row like any other. Presence means "worth looking at", never
+    /// "healthy". Only `plan` can tell those apart.
+    ///
+    /// Detects `rounds` and `bundles` alike. Both begin with a 64-character hex
+    /// `round_id`, so both open with the same record signature; the tables
+    /// differ only in how many columns follow, which this deliberately ignores.
+    ///
+    /// Opens no SQLite connection, for the same reason nothing else here does.
+    static func holdsRoundData(databaseURL: URL, walURL: URL? = nil) throws -> Bool {
+        let database = try Data(contentsOf: databaseURL, options: .mappedIfSafe)
+        if holdsRoundData(databaseBytes: [UInt8](database)) { return true }
+
+        if let walURL, FileManager.default.fileExists(atPath: walURL.path) {
+            let wal = try Data(contentsOf: walURL, options: .mappedIfSafe)
+            return holdsRoundData(walBytes: [UInt8](wal))
+        }
+        return false
+    }
+
+    static func holdsRoundData(databaseBytes: [UInt8]) -> Bool {
+        guard let (pageSize, usable, pageCount) = geometry(databaseBytes: databaseBytes) else {
+            return false
+        }
+
+        for index in 0..<pageCount {
+            let page = Array(databaseBytes[(index * pageSize)..<((index + 1) * pageSize)])
+            let headerOffset = index == 0 ? Format.fileHeaderLength : 0
+            for (columns, _) in bundleRecords(
+                inPage: page, usable: usable, headerOffset: headerOffset
+            ) where carriesRoundId(columns) {
+                return true
+            }
+        }
+        return false
+    }
+
+    static func holdsRoundData(walBytes: [UInt8]) -> Bool {
+        guard walBytes.count > Format.walHeaderLength else { return false }
+        guard walMagic.contains(readUInt32(walBytes, 0)) else { return false }
+
+        let pageSize = Int(readUInt32(walBytes, Format.walPageSizeOffset))
+        guard isPlausiblePageSize(pageSize) else { return false }
+
+        var offset = Format.walHeaderLength
+        let frameLength = Format.walFrameHeaderLength + pageSize
+        while offset + frameLength <= walBytes.count {
+            let imageStart = offset + Format.walFrameHeaderLength
+            let page = Array(walBytes[imageStart..<(imageStart + pageSize)])
+            for (columns, _) in bundleRecords(inPage: page, usable: pageSize)
+            where carriesRoundId(columns) {
+                return true
+            }
+            offset += frameLength
+        }
+        return false
+    }
+
+    /// A record whose first column is a 64-character hex round id, which both
+    /// `rounds` and `bundles` are and stray bytes almost never are.
+    private static func carriesRoundId(_ columns: [RecordValue]) -> Bool {
+        guard let first = columns.first,
+              case let .text(roundId) = first,
+              roundId.count == roundIdHexLength,
+              roundId.allSatisfy(\.isHexDigit)
+        else {
+            return false
+        }
+        return true
     }
 
     /// Keeps one row per `(roundId, bundleIndex, vanCommRand)`, preferring the

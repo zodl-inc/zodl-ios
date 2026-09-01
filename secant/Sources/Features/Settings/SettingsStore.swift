@@ -15,9 +15,6 @@ struct Settings {
         case chooseServerSetup(ServerSetup)
         case disconnectHWWallet(DisconnectHWWallet)
         case currencyConversionSetup(CurrencyConversionSetup)
-        #if VOTING_ENABLED && ZODL_INTERNAL
-        case delegationRecovery(DelegationRecovery)
-        #endif
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
         case migrationRestart(MigrationRestart)
@@ -88,9 +85,6 @@ struct Settings {
         case coinholderPollingTapped
         case votingCoordFlow(PresentationAction<VotingCoordFlow.Action>)
         #endif
-        #if VOTING_ENABLED && ZODL_INTERNAL
-        case recoverDelegationTapped
-        #endif
         case currencyConversionTapped
         case enableEnhanceTransactionMode
         case enableRecoverFundsMode
@@ -157,16 +151,6 @@ struct Settings {
                 // Presentation actions for the voting flow are routed
                 // through .ifLet at the body level + the coordinator's
                 // dismiss handler.
-                return .none
-
-            #endif
-
-            #if VOTING_ENABLED && ZODL_INTERNAL
-            case .recoverDelegationTapped:
-                // Navigates rather than acting. The screen reports what the
-                // databases hold and what a run would change, and carries the
-                // button that runs it.
-                state.path.append(.delegationRecovery(DelegationRecovery.State()))
                 return .none
             #endif
 

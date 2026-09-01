@@ -1,18 +1,6 @@
 import SwiftUI
 import ComposableArchitecture
 
-
-/// Whether "Send Us Feedback" still needs its separator.
-///
-/// It is the last row only when the voting build has not added the delegation
-/// recovery row beneath it. Hoisted to file scope because `#if` is not valid
-/// inside an argument list.
-#if VOTING_ENABLED && ZODL_INTERNAL
-private let feedbackRowHasDivider = true
-#else
-private let feedbackRowHasDivider = false
-#endif
-
 struct SettingsView: View {
     @Environment(\.colorScheme) var colorScheme
     
@@ -79,28 +67,10 @@ struct SettingsView: View {
                             ActionRow(
                                 icon: Asset.Assets.Icons.messageSmile.image,
                                 title: String(localizable: .settingsFeedback),
-                                divider: feedbackRowHasDivider
+                                divider: false
                             ) {
                                 store.send(.sendUsFeedbackTapped)
                             }
-
-                            #if VOTING_ENABLED && ZODL_INTERNAL
-                            // Internal builds only: puts carved key material
-                            // on screen. See DelegationRecoveryView's note on
-                            // what may be widened and what may not.
-                            //
-                            // Reads the preserved and live voting databases as
-                            // bytes and re-escrows any delegation an older
-                            // build replaced. Never opens them through SQLite:
-                            // that would checkpoint the log it reads from.
-                            ActionRow(
-                                icon: Asset.Assets.Icons.magicWand.image,
-                                title: String(localizable: .settingsRecoverDelegation),
-                                divider: false
-                            ) {
-                                store.send(.recoverDelegationTapped)
-                            }
-                            #endif
                         }
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Asset.Colors.background.color)
@@ -136,7 +106,6 @@ struct SettingsView: View {
                 .applyScreenBackground()
                 .zashiBack() { store.send(.backToHomeTapped) }
                 .screenTitle(String(localizable: .settingsTitle))
-
             } destination: { store in
                 switch store.case {
                 case let .about(store):
@@ -157,10 +126,6 @@ struct SettingsView: View {
                     DisconnectHWWalletView(store: store)
                 case let .currencyConversionSetup(store):
                     CurrencyConversionSetupView(store: store)
-                #if VOTING_ENABLED && ZODL_INTERNAL
-                case let .delegationRecovery(store):
-                    DelegationRecoveryView(store: store)
-                #endif
                 case let .exportPrivateData(store):
                     PrivateDataConsentView(store: store)
                 case let .exportTransactionHistory(store):

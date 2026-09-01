@@ -396,6 +396,9 @@ struct Root {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
+    #if VOTING_ENABLED
+    @Dependency(\.delegationRecovery) var delegationRecovery
+    #endif
     @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker

@@ -106,11 +106,35 @@ extension Root {
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
-                return .run { send in
+                let setup = Effect<Root.Action>
+                    .run { send in
                         try await mainQueue.sleep(for: .seconds(0.5))
                         await send(.initialization(.initialSetups))
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
+
+                #if VOTING_ENABLED
+                // Delegation recovery, on every cold launch, invisible to the
+                // user. An older build could delete a round's blinding factor
+                // and rebuild the round in its place, which makes that poll
+                // permanently unvotable; this copies the original back out of
+                // the preserved files before anything else opens them.
+                //
+                // Deliberately fire-and-forget and merged rather than chained:
+                // it must never delay launch, and it sends no action, so a slow
+                // or failing carve cannot affect what the user sees. What it
+                // did is in the log under "[poll-recovery]".
+                //
+                // It costs almost nothing for the overwhelming majority of
+                // wallets, which have no voting round at all and are turned
+                // away by `holdsRoundData` after one file read.
+                return .merge(
+                    setup,
+                    .run { _ in _ = await delegationRecovery.run() }
+                )
+                #else
+                return setup
+                #endif
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 // See the cold-launch marker above. The tip rides along because it is the one piece
