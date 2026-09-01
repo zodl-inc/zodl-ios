@@ -30,11 +30,133 @@ enum DelegationWalRecovery {
     /// Number of columns in `bundles`; a record with fewer is not one of ours.
     static let bundleColumnCount = 24
 
-    /// Pallas base field modulus. A genuine blinding factor is a canonical
-    /// little-endian element below it.
+    /// Pallas base field modulus, as big-endian hex. A genuine blinding factor
+    /// is a canonical little-endian element below it.
+    /// <https://github.com/zcash/pasta_curves/blob/18ee865b9dc9a4a3c6f4f84b0d3db3c887b8970c/src/fields/fp.rs#L110>
     static let pallasModulus = "40000000000000000000000000000000224698fc094cf91b992d30ed00000001"
 
+    /// The first four bytes of a write-ahead log, big-endian. The low bit
+    /// names the byte order of the frame checksums: `0x377F0683` big-endian,
+    /// `0x377F0682` little-endian. This parser reads page images and never
+    /// checks a checksum, so it accepts both. Spec sections 4.1 and 4.2.
+    /// <https://www.sqlite.org/fileformat.html#wal_file_format>
     static let walMagic: [UInt32] = [0x377F_0682, 0x377F_0683]
+
+    // MARK: - SQLite file format constants
+
+    /// Every constant below is fixed by the SQLite file format specification,
+    /// <https://www.sqlite.org/fileformat.html>. None is a tuning choice: they
+    /// describe a layout that already exists on disk, so changing one does not
+    /// change behaviour, it makes the parser wrong.
+    enum Format {
+        // Database header, spec section 1.3.
+
+        /// The database file header occupies the first 100 bytes of page 1,
+        /// ahead of that page's b-tree header. No other page carries it.
+        static let fileHeaderLength = 100
+        /// The first 16 bytes of every database file.
+        static let magic = Array("SQLite format 3\u{0}".utf8)
+        /// Offset of the 2-byte page size field.
+        static let pageSizeOffset = 16
+        /// Offset of the 1-byte "reserved space per page" field. That region
+        /// sits at the end of every page and is not usable payload area.
+        static let reservedSizeOffset = 20
+        /// Page sizes are powers of two in this range. The field is 16 bits,
+        /// so the largest is encoded as the value 1 rather than 65536.
+        static let smallestPageSize = 512
+        static let largestPageSize = 65_536
+        static let largestPageSizeSentinel = 1
+
+        // B-tree page header, spec section 1.6.
+        //
+        // | offset | size | meaning                                   |
+        // | ------ | ---- | ----------------------------------------- |
+        // |      0 |    1 | page type                                 |
+        // |      1 |    2 | first freeblock                           |
+        // |      3 |    2 | cell count                                |
+        // |      5 |    2 | start of cell content area                |
+        // |      7 |    1 | fragmented free bytes                     |
+        // |      8 |    4 | right-most pointer, INTERIOR pages only   |
+
+        /// Page type byte for a table b-tree leaf, the only kind that holds
+        /// table rows and so the only kind this parser walks.
+        static let tableLeafPageType: UInt8 = 0x0D
+        /// Offset of the 2-byte cell count within the b-tree page header.
+        static let cellCountOffset = 3
+        /// A LEAF page header is 8 bytes, and the cell pointer array begins
+        /// immediately after it. Interior pages append a 4-byte right-most
+        /// pointer, making theirs 12; this parser never reads one, which is
+        /// why the fixed 8 is safe here.
+        static let leafHeaderLength = 8
+        /// Each cell pointer array entry is a 2-byte page offset.
+        static let cellPointerWidth = 2
+
+        // Cell payload overflow for a TABLE LEAF page, spec section 1.6.
+        //
+        // With U the usable page size and P the payload length:
+        //     X = U - 35                      most payload that may stay local
+        //     M = ((U - 12) * 32 / 255) - 23  least that must
+        //     K = M + ((P - M) % (U - 4))
+        // P <= X keeps the payload local; else K bytes are local if K <= X;
+        // otherwise M bytes are.
+
+        /// The `35` in `X = U - 35`. Table leaves only: an index leaf uses
+        /// `((U-12)*64/255)-23` instead, so this is correct only because the
+        /// caller has already filtered on `tableLeafPageType`.
+        static let maxLocalReserve = 35
+        /// The `12` and the `23`: the spec's allowances for the page header
+        /// and for cell header overhead. Stated by the specification rather
+        /// than derived in it.
+        static let minLocalHeaderAllowance = 12
+        static let minLocalCellOverhead = 23
+        /// `32/255`, roughly 12.5%: the minimum fraction of a page a spilled
+        /// payload must still occupy, so a long value cannot strand a nearly
+        /// empty page behind it.
+        static let minLocalNumerator = 32
+        static let minLocalDenominator = 255
+        /// An overflow page spends its first 4 bytes on the next-page pointer,
+        /// so it carries `U - 4` bytes of payload.
+        static let overflowPointerLength = 4
+
+        // Record format, spec section 2.1.
+
+        /// Serial types 12 and above encode length in the type itself: even
+        /// N is a BLOB of `(N-12)/2` bytes, odd N a TEXT of `(N-13)/2`.
+        static let firstVariableLengthSerial: UInt64 = 12
+
+        // Varint, spec section 2.1.
+
+        /// A varint is at most 9 bytes: the first 8 contribute 7 bits each,
+        /// the 9th contributes all 8.
+        static let varintMaxBytes = 8
+        static let varintContinuationBit: UInt8 = 0x80
+        static let varintPayloadMask: UInt8 = 0x7F
+
+        // Write-ahead log, spec section 4.
+
+        /// The WAL header is 32 bytes, then a run of frames.
+        static let walHeaderLength = 32
+        /// Each frame is a 24-byte header followed by one page image.
+        static let walFrameHeaderLength = 24
+        /// Offset of the page size within the WAL header.
+        static let walPageSizeOffset = 8
+    }
+
+    /// A `round_id` is a 32-byte value rendered as lowercase hex, so 64
+    /// characters. This is a voting-schema fact, not a SQLite one.
+    static let roundIdHexLength = 64
+
+    /// A Pallas base field element is 32 bytes little-endian, and so is the
+    /// `gov_comm` commitment stored beside it.
+    static let fieldElementLength = 32
+
+    /// The two bytes a `bundles` record always opens with.
+    ///
+    /// The first column is `round_id`, TEXT of length 64, whose serial type is
+    /// `2 * 64 + 13 = 141`. As a SQLite varint that is `0x81 0x0D`. The
+    /// single-byte record-header-length varint sits immediately before it,
+    /// which is why a match at `index` means the record starts at `index - 1`.
+    static let bundleRecordSignature: [UInt8] = [0x81, 0x0D]
 
     /// Where a carved row came from, ordered oldest to newest.
     ///
@@ -79,6 +201,14 @@ enum DelegationWalRecovery {
         /// False when the round was never cleared. Callers must treat this as
         /// "do nothing" rather than restoring anything.
         var needsRecovery: Bool { !replacements.isEmpty }
+    }
+
+
+    /// Page sizes are powers of two between 512 and 65536, per spec 1.3.
+    private static func isPlausiblePageSize(_ pageSize: Int) -> Bool {
+        pageSize >= Format.smallestPageSize
+            && pageSize <= Format.largestPageSize
+            && pageSize.nonzeroBitCount == 1
     }
 
     // MARK: - Public entry point
@@ -187,24 +317,26 @@ enum DelegationWalRecovery {
     /// Carves the main database file: live b-tree rows, plus deleted cells that
     /// no cell-pointer array references any more.
     static func recover(databaseBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
-        guard databaseBytes.count > 100 else { return [] }
-        guard Array(databaseBytes[0..<16]) == Array("SQLite format 3\u{0}".utf8) else { return [] }
+        guard databaseBytes.count > Format.fileHeaderLength else { return [] }
+        guard Array(databaseBytes[0..<Format.magic.count]) == Format.magic else { return [] }
 
         // Page size lives at offset 16; the value 1 means 65536, which does not
         // fit the 16-bit field. Byte 20 is the per-page reserved region, which
         // is not part of the usable payload area.
-        let declared = Int(readUInt16(databaseBytes, 16))
-        let pageSize = declared == 1 ? 65_536 : declared
-        guard pageSize >= 512, pageSize <= 65_536, pageSize % 512 == 0 else { return [] }
-        let usable = pageSize - Int(databaseBytes[20])
-        guard usable > 35 else { return [] }
+        let declared = Int(readUInt16(databaseBytes, Format.pageSizeOffset))
+        let pageSize = declared == Format.largestPageSizeSentinel
+            ? Format.largestPageSize
+            : declared
+        guard isPlausiblePageSize(pageSize) else { return [] }
+        let usable = pageSize - Int(databaseBytes[Format.reservedSizeOffset])
+        guard usable > Format.maxLocalReserve else { return [] }
 
         var rows: [RecoveredBundle] = []
         let pageCount = databaseBytes.count / pageSize
         for index in 0..<pageCount {
             let page = Array(databaseBytes[(index * pageSize)..<((index + 1) * pageSize)])
             // Page 1 carries the 100-byte file header before its b-tree header.
-            let headerOffset = index == 0 ? 100 : 0
+            let headerOffset = index == 0 ? Format.fileHeaderLength : 0
             for (columns, isLive) in bundleRecords(
                 inPage: page, usable: usable, headerOffset: headerOffset
             ) {
@@ -234,13 +366,13 @@ enum DelegationWalRecovery {
     }
 
     static func recover(walBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
-        guard walBytes.count > 32 else { return [] }
+        guard walBytes.count > Format.walHeaderLength else { return [] }
 
         let magic = readUInt32(walBytes, 0)
         guard walMagic.contains(magic) else { return [] }
 
-        let pageSize = Int(readUInt32(walBytes, 8))
-        guard pageSize >= 512, pageSize <= 65_536, pageSize % 512 == 0 else { return [] }
+        let pageSize = Int(readUInt32(walBytes, Format.walPageSizeOffset))
+        guard isPlausiblePageSize(pageSize) else { return [] }
 
         var recovered: [RecoveredBundle] = []
         var seen: Set<String> = []
@@ -249,10 +381,12 @@ enum DelegationWalRecovery {
         // is walked, including any whose salts no longer match the WAL header:
         // SQLite ignores those, but they are physically intact and are often
         // the oldest surviving copy of a page.
-        var offset = 32
+        var offset = Format.walHeaderLength
         var frame = 0
-        while offset + 24 + pageSize <= walBytes.count {
-            let page = Array(walBytes[(offset + 24)..<(offset + 24 + pageSize)])
+        let frameLength = Format.walFrameHeaderLength + pageSize
+        while offset + frameLength <= walBytes.count {
+            let imageStart = offset + Format.walFrameHeaderLength
+            let page = Array(walBytes[imageStart..<(imageStart + pageSize)])
             for (columns, _) in bundleRecords(inPage: page, usable: pageSize) {
                 guard let bundle = makeBundle(columns: columns, origin: .walFrame(frame))
                 else { continue }
@@ -264,7 +398,7 @@ enum DelegationWalRecovery {
                     recovered.append(bundle)
                 }
             }
-            offset += 24 + pageSize
+            offset += frameLength
             frame += 1
         }
 
@@ -274,7 +408,7 @@ enum DelegationWalRecovery {
     /// Whether `candidate` could be a Pallas base field element. A carved value
     /// that fails this was never a blinding factor.
     static func isCanonicalPallasElement(_ candidate: Data) -> Bool {
-        guard candidate.count == 32 else { return false }
+        guard candidate.count == fieldElementLength else { return false }
         // Stored little-endian; compare big-endian against the modulus.
         let reversed = Data(candidate.reversed()).hexString
         return reversed < pallasModulus
@@ -285,18 +419,18 @@ enum DelegationWalRecovery {
     private static func makeBundle(columns: [RecordValue], origin: Origin) -> RecoveredBundle? {
         guard columns.count >= bundleColumnCount,
               case let .text(roundId) = columns[BundleColumn.roundId.rawValue],
-              roundId.count == 64,
+              roundId.count == roundIdHexLength,
               roundId.allSatisfy(\.isHexDigit),
               case let .integer(bundleIndex) = columns[BundleColumn.bundleIndex.rawValue],
               bundleIndex >= 0, bundleIndex < Int64(UInt32.max),
               case let .blob(rand) = columns[BundleColumn.vanCommRand.rawValue],
-              rand.count == 32
+              rand.count == fieldElementLength
         else {
             return nil
         }
 
         let van: Data
-        if case let .blob(stored) = columns[BundleColumn.govComm.rawValue], stored.count == 32 {
+        if case let .blob(stored) = columns[BundleColumn.govComm.rawValue], stored.count == fieldElementLength {
             van = stored
         } else {
             van = Data()
@@ -341,7 +475,7 @@ enum DelegationWalRecovery {
         var records: [(columns: [RecordValue], isLive: Bool)] = []
         var liveRanges: [Range<Int>] = []
 
-        if page.count > headerOffset, page[headerOffset] == 0x0D {
+        if page.count > headerOffset, page[headerOffset] == Format.tableLeafPageType {
             for payload in tableLeafPayloads(
                 page: page, usable: usable, headerOffset: headerOffset
             ) {
@@ -356,9 +490,13 @@ enum DelegationWalRecovery {
         // serial type for its 64-character hex `round_id` (TEXT of length 64 ->
         // 2 * 64 + 13 = 141, the varint `0x81 0x0D`), with the single-byte
         // header-length varint immediately before it.
+        // Start at 1 at the earliest: a match at index 0 would put the
+        // record header-length varint before the start of the page.
         var index = max(1, headerOffset)
         while index + 1 < page.count {
-            guard page[index] == 0x81, page[index + 1] == 0x0D else {
+            guard page[index] == bundleRecordSignature[0],
+                  page[index + 1] == bundleRecordSignature[1]
+            else {
                 index += 1
                 continue
             }
@@ -382,13 +520,17 @@ enum DelegationWalRecovery {
         usable: Int,
         headerOffset: Int = 0
     ) -> [(bytes: [UInt8], range: Range<Int>)] {
-        let cellCount = Int(readUInt16(page, headerOffset + 3))
-        let arrayEnd = headerOffset + 8 + 2 * cellCount
+        let cellCount = Int(readUInt16(page, headerOffset + Format.cellCountOffset))
+        let arrayEnd = headerOffset + Format.leafHeaderLength
+            + Format.cellPointerWidth * cellCount
         guard cellCount > 0, arrayEnd <= page.count else { return [] }
 
         var payloads: [(bytes: [UInt8], range: Range<Int>)] = []
         for cell in 0..<cellCount {
-            let cellOffset = Int(readUInt16(page, headerOffset + 8 + 2 * cell))
+            let cellOffset = Int(readUInt16(
+                page,
+                headerOffset + Format.leafHeaderLength + Format.cellPointerWidth * cell
+            ))
             guard cellOffset > 0, cellOffset < page.count else { continue }
             guard let (payloadLength, lengthBytes) = varint(page, cellOffset) else { continue }
             guard let (_, rowidBytes) = varint(page, cellOffset + lengthBytes) else { continue }
@@ -404,10 +546,13 @@ enum DelegationWalRecovery {
 
     /// Bytes of a table-leaf payload held in-page before overflow begins.
     private static func localPayloadSize(payloadLength: Int, usable: Int) -> Int {
-        let maxLocal = usable - 35
+        let maxLocal = usable - Format.maxLocalReserve
         if payloadLength <= maxLocal { return payloadLength }
-        let minLocal = ((usable - 12) * 32 / 255) - 23
-        let surplus = minLocal + (payloadLength - minLocal) % (usable - 4)
+        let minLocal = ((usable - Format.minLocalHeaderAllowance)
+            * Format.minLocalNumerator / Format.minLocalDenominator)
+            - Format.minLocalCellOverhead
+        let surplus = minLocal
+            + (payloadLength - minLocal) % (usable - Format.overflowPointerLength)
         return surplus <= maxLocal ? surplus : minLocal
     }
 
@@ -452,6 +597,29 @@ enum DelegationWalRecovery {
         return values
     }
 
+    /// Bytes on disk for one record serial type, per spec section 2.1.
+    ///
+    /// | serial        | type                     | bytes      |
+    /// | ------------- | ------------------------ | ---------- |
+    /// | 0             | NULL                     | 0          |
+    /// | 1, 2, 3, 4    | signed integer           | 1, 2, 3, 4 |
+    /// | 5             | signed integer           | 6          |
+    /// | 6             | signed integer           | 8          |
+    /// | 7             | IEEE-754 float           | 8          |
+    /// | 8, 9          | the constants 0 and 1    | 0          |
+    /// | 10, 11        | reserved for internal use| 0          |
+    /// | N >= 12, even | BLOB                     | (N-12)/2   |
+    /// | N >= 13, odd  | TEXT                     | (N-13)/2   |
+    ///
+    /// Cases 1 to 4 return the serial itself only by coincidence of the first
+    /// four codes; 5 and 6 break that pattern, which is why they are listed
+    /// separately rather than folded into a formula.
+    ///
+    /// The default arm covers BLOB and TEXT together: for odd N, `N - 12` is
+    /// odd and integer division floors, which yields `(N-13)/2` exactly.
+    ///
+    /// This also explains the sweep signature. `round_id` is TEXT of length
+    /// 64, so its serial is `2 * 64 + 13 = 141`, the varint `0x81 0x0D`.
     private static func serialWidth(_ serial: UInt64) -> Int {
         switch serial {
         case 0, 8, 9, 10, 11: return 0
@@ -462,6 +630,12 @@ enum DelegationWalRecovery {
         }
     }
 
+    /// Decodes one value given its serial type and its raw bytes.
+    ///
+    /// Integers are stored big-endian and two's complement, so decoding seeds
+    /// the accumulator with all-ones when the leading byte's sign bit (`0x80`)
+    /// is set. That sign-extends a 1-, 2-, 3-, 4- or 6-byte value into `Int64`
+    /// without a separate widening step.
     private static func serialValue(_ serial: UInt64, _ raw: [UInt8]) -> RecordValue {
         switch serial {
         case 0: return .null
@@ -476,7 +650,9 @@ enum DelegationWalRecovery {
         case 8: return .integer(0)
         case 9: return .integer(1)
         default:
-            if serial >= 12, serial % 2 == 0 { return .blob(Data(raw)) }
+            if serial >= Format.firstVariableLengthSerial, serial % 2 == 0 {
+                return .blob(Data(raw))
+            }
             return .text(String(decoding: raw, as: UTF8.self))
         }
     }
@@ -487,15 +663,17 @@ enum DelegationWalRecovery {
     static func varint(_ bytes: [UInt8], _ offset: Int) -> (UInt64, Int)? {
         var value: UInt64 = 0
         var index = 0
-        while index < 8 {
+        while index < Format.varintMaxBytes {
             guard offset + index < bytes.count else { return nil }
             let byte = bytes[offset + index]
-            value = (value << 7) | UInt64(byte & 0x7F)
-            if byte & 0x80 == 0 { return (value, index + 1) }
+            value = (value << 7) | UInt64(byte & Format.varintPayloadMask)
+            if byte & Format.varintContinuationBit == 0 { return (value, index + 1) }
             index += 1
         }
-        guard offset + 8 < bytes.count else { return nil }
-        return ((value << 8) | UInt64(bytes[offset + 8]), 9)
+        guard offset + Format.varintMaxBytes < bytes.count else { return nil }
+        // The ninth byte contributes all 8 of its bits, not 7.
+        return ((value << 8) | UInt64(bytes[offset + Format.varintMaxBytes]),
+                Format.varintMaxBytes + 1)
     }
 
     private static func readUInt16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {

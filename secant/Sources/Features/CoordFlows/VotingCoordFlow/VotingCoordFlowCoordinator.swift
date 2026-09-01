@@ -3667,7 +3667,7 @@ extension VotingCoordFlow {
         // Entering this path rebuilds the round's bundles, and a rebuild
         // resamples the 32-byte VAN blinding factor. That value comes from
         // `OsRng`, is not derived from the seed, and no FFI call can write it
-        // back — so replacing it once a delegation commitment exists
+        // back, so replacing it once a delegation commitment exists
         // permanently forfeits the user's ability to vote in that round.
         //
         // `shouldResumePersistedRound` already keeps callers off this path once
