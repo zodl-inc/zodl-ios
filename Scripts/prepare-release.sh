@@ -206,11 +206,14 @@ cmd_start() {
     for b in "$release_branch" "$candidate_branch"; do
         if git rev-parse -q --verify "refs/heads/${b}" >/dev/null; then
             die "branch ${b} already exists locally." \
-                "This usually means a previous 'start' for ${version} stopped before its" \
-                "single push near the end -- nothing is on ${remote} until then. Delete the" \
-                "local leftovers and re-run:" \
+                "A previous 'start' for ${version} left it behind. Clean up and re-run:" \
                 "" \
-                "  git branch -D ${release_branch} ${candidate_branch}"
+                "  git switch -      # a failed run can leave this checkout on ${candidate_branch}" \
+                "  git branch -D ${release_branch} ${candidate_branch}" \
+                "" \
+                "If that run got as far as its single push, both branches are on ${remote}" \
+                "too -- the re-run's remote check will then say so; either delete them there" \
+                "or finish that attempt by opening the pull request by hand (see start_pr_body)."
         fi
         # Checked separately from the local branches: this checkout no longer
         # having them says nothing about the remote, where a completed (or
