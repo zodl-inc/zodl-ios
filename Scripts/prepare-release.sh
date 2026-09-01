@@ -278,7 +278,12 @@ cmd_start() {
         echo "  would insert '## [${version}] - ${today}' below '## [Unreleased]'"
     else
         if ! promote_changelog CHANGELOG.md "$version" "$today"; then
-            die "CHANGELOG.md has no '## [Unreleased]' heading to promote." \
+            # A failed write can truncate the file, so restore the revision's
+            # own CHANGELOG before reporting -- the retry instructions below
+            # promise a clean starting point.
+            git checkout -- CHANGELOG.md
+            die "promoting CHANGELOG.md failed: no '## [Unreleased]' heading, or the file could not be written." \
+                "CHANGELOG.md has been restored." \
                 "Nothing has been pushed. To retry: git switch -, then" \
                 "git branch -D ${release_branch} ${candidate_branch}, fix, and re-run."
         fi

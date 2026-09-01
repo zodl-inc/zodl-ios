@@ -269,6 +269,23 @@ EOF
   [ "$before" = "-rw-rw-r--" ]
 }
 
+# The write's status must decide the function's: before this test existed the
+# function returned the trailing rm's status, so a failed write to the
+# CHANGELOG was reported as a successful promotion.
+@test "promote_changelog fails, and changes nothing, when the file cannot be written" {
+  write_changelog <<'EOF'
+## [Unreleased]
+
+- [MOB-1] entry
+EOF
+  chmod 444 "$FIXTURE"
+  before="$(cat "$FIXTURE")"
+  run promote_changelog "$FIXTURE" 3.11.0 2026-08-27
+  chmod 644 "$FIXTURE"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$FIXTURE")" = "$before" ]
+}
+
 # --- dry-run plumbing -------------------------------------------------------
 
 @test "run_cmd executes normally and only describes under DRY_RUN" {

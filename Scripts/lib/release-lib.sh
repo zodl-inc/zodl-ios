@@ -153,8 +153,13 @@ promote_changelog() {
         return 1
     fi
     # Overwrite in place rather than mv: mktemp files are 0600, and the
-    # CHANGELOG keeps whatever mode it already has.
-    cat "$tmp" > "$file"
+    # CHANGELOG keeps whatever mode it already has. The write's status must
+    # decide the function's -- left bare, the rm below would mask a failed
+    # (or truncated) write as a successful promotion.
+    if ! cat "$tmp" > "$file"; then
+        rm -f "$tmp"
+        return 1
+    fi
     rm -f "$tmp"
 }
 
