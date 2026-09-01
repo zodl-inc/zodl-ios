@@ -233,6 +233,23 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | xcbeautify
 
+      - name: Run delegation recovery end-to-end
+        run: |
+          # Drives the app's LAUNCH action on a booted simulator against a
+          # corrupted voting database, and asserts the delegation secrets the
+          # user broadcast are in the escrow afterwards.
+          #
+          # Not covered by the unit tests above: recovery has no user-facing
+          # trigger, so the thing most worth protecting is that opening the app
+          # is what sets it going. A change that unhooked it from launch would
+          # leave every other test green.
+          #
+          # Reuses this job's derived data and resolved packages, so it does
+          # not build or resolve a second copy.
+          DERIVED="$DERIVED_DATA_PATH" \
+          SOURCE_PACKAGES="$SOURCE_PACKAGES_PATH" \
+            ./Scripts/e2e/run-delegation-recovery-e2e.sh -d 'iPhone 17'
+
       - name: Upload test results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

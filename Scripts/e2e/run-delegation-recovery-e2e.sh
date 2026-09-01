@@ -31,6 +31,11 @@
 #
 #   -d  simulator device name (default: iPhone 17)
 #   -k  keep the simulator booted and the planted files in place afterwards
+#
+# Environment:
+#   DERIVED          derived data path (default: build/e2e-derived-data)
+#   SOURCE_PACKAGES  resolved SPM checkouts, so CI does not resolve twice
+#   SCHEME           default: zodl-internal
 set -euo pipefail
 
 DEVICE="${DEVICE:-iPhone 17}"
@@ -55,6 +60,9 @@ WORK="$(mktemp -d)"
 # Kept across runs so CI and repeat local runs do not rebuild from scratch.
 # `build/` is already gitignored.
 DERIVED="${DERIVED:-$REPO_ROOT/build/e2e-derived-data}"
+# CI already has resolved packages; point at them so this does not resolve a
+# second copy. Empty locally, where xcodebuild's default cache is fine.
+SOURCE_PACKAGES="${SOURCE_PACKAGES:-}"
 TEST_LOG="$WORK/test.log"
 
 cleanup() {
@@ -94,6 +102,7 @@ xcodebuild \
     -scheme "$SCHEME" \
     -destination "id=$UDID" \
     -derivedDataPath "$DERIVED" \
+    ${SOURCE_PACKAGES:+-clonedSourcePackagesDirPath "$SOURCE_PACKAGES"} \
     -skipPackagePluginValidation \
     -skipMacroValidation \
     build-for-testing
@@ -138,6 +147,7 @@ xcodebuild \
     -scheme "$SCHEME" \
     -destination "id=$UDID" \
     -derivedDataPath "$DERIVED" \
+    ${SOURCE_PACKAGES:+-clonedSourcePackagesDirPath "$SOURCE_PACKAGES"} \
     -skipPackagePluginValidation \
     -skipMacroValidation \
     -only-testing:zodlTests/DelegationRecoveryDeviceE2ETests \
