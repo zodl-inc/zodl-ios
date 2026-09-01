@@ -44,6 +44,8 @@ PROJECT="secant.xcodeproj"
 KEEP=0
 # Tests in DelegationRecoveryDeviceE2ETests; bump with the suite.
 EXPECTED_TESTS=6
+# Deliberately-disabled tests; see the skip check below.
+EXPECTED_SKIPS=1
 
 while getopts "d:k" opt; do
     case "$opt" in
@@ -165,7 +167,11 @@ fi
 PASSED=$(grep -coE 'Test [A-Za-z]+\(\) passed' "$TEST_LOG" || true)
 SKIPPED=$(grep -coE 'Test [A-Za-z]+\(\) skipped' "$TEST_LOG" || true)
 say "Suite outcome: $PASSED passed, $SKIPPED skipped"
-if [ "$SKIPPED" -ne 0 ] || [ "$PASSED" -lt "$EXPECTED_TESTS" ]; then
+# One skip is expected and deliberate: the vote-again step in
+# VoteAgainAfterRecoveryE2ETests is .disabled until zcash_voting exposes an
+# entry point that restores carved delegation state. Any OTHER skip means the
+# suite quietly did not run, which is the false pass this check exists to catch.
+if [ "$SKIPPED" -gt "$EXPECTED_SKIPS" ] || [ "$PASSED" -lt "$EXPECTED_TESTS" ]; then
     echo "The recovery suite did not actually run. Treat this as a failure." >&2
     exit 1
 fi
