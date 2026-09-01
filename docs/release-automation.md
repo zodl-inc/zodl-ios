@@ -116,9 +116,12 @@ independent — a build number only has to beat that variant's own history.
 ## Everyday use — the release flow
 
 **You do not need to check out the branch you want to build.** Pass it to `--ref`
-(a branch, tag, or commit); the script fetches from `origin`, resolves it (it
-tries `<ref>` and then `origin/<ref>`), and builds it in an isolated `git
-worktree`. Your current checkout and working changes are left untouched.
+(a branch, tag, or commit); the script fetches from the release remote — named
+with `--remote`, default `origin` — resolves the ref, and builds it in an
+isolated `git worktree`. Your current checkout and working changes are left
+untouched. A branch resolves as `<remote>/<ref>` and must be on the remote — a
+stale local branch of the same name is never built silently; tags and commit
+SHAs may resolve locally.
 
 **1. Cut the release** with `Scripts/prepare-release.sh` (see
 [Cutting a release](#cutting-a-release) below for what it does and why):
@@ -135,8 +138,11 @@ version and build number recorded, and a pull request open between them.
 this from any checkout, e.g. while still on `main`:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --remote upstream --version 3.8.0 --build 1
 ```
+
+`--remote` names the remote the release was cut on — the one step 1 was given —
+wherever it differs from the default `origin`.
 
 `release/3.8.0` is still the *previous* release until the pull request merges,
 so building from it would ship the wrong code.
@@ -145,7 +151,7 @@ so building from it would ship the wrong code.
 pull request — then rebuild with the next build number:
 
 ```bash
-./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --version 3.8.0 --build 2
+./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --remote upstream --version 3.8.0 --build 2
 ```
 
 **4. Update What's New** before the App Store build. The App Store "What's
@@ -158,7 +164,7 @@ blocks the submission — with `--ref`, before the build even starts.
 **5. Ship to the App Store** when you're happy:
 
 ```bash
-./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1
+./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --remote upstream --version 3.8.0 --build 1
 ```
 
 `appstore` is its own App Store Connect app, so its build numbers are a separate
@@ -205,7 +211,7 @@ After the build is uploaded and App Store Connect has processed it, you can subm
 
 With `--ref` (build in one go, then submit):
 ```bash
-./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1 --submit-review
+./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --remote upstream --version 3.8.0 --build 1 --submit-review
 ```
 
 Without `--ref` (submit an already-uploaded build):
@@ -299,7 +305,7 @@ The preflight blocks the build if: the version doesn't match the project's
 `MARKETING_VERSION` or the version in the `release/X.Y.Z` / `candidate/X.Y.Z`
 branch name; the build number duplicates or
 is lower than the variant's latest on App Store Connect; the ref isn't on
-`origin`; `PartnerKeys.plist` is missing/invalid; Xcode doesn't match
+the release remote; `PartnerKeys.plist` is missing/invalid; Xcode doesn't match
 `.xcode-version`; or no distribution signing identity is present. It *warns* (but
 proceeds) on a build-number gap or an uncommitted working tree.
 
@@ -461,8 +467,9 @@ Use `bump.sh` only outside a release cut.
 |---|---|
 | `version … does not match project MARKETING_VERSION …` | During a release cycle you are probably building from `release/X.Y.Z`, which is still the *previous* release — pass `--ref candidate/X.Y.Z`. Outside a cut, run `bump` or pass the version the project is actually at. |
 | `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. With `--submit-review`, you can instead drop `--ref` to submit that already-uploaded build. |
-| `ref is not on origin` | `git push` the branch or commit first. |
-| `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |
+| `ref is not on <remote>` | `git push` the branch or commit to the release remote — the one named by `--remote` (default `origin`). |
+| `Branch … is not on <remote>` | A local branch of that name exists, but the release remote doesn't have it — push it, or pass `--remote` for the remote that does. |
+| `Could not resolve ref …` | The branch/tag/commit isn't on the release remote or locally — push or fetch it, or point `--remote` at the remote that has it. |
 | `PartnerKeys.plist is missing or invalid` | Place a valid plist at `secant/Resources/PartnerKeys.plist` (see `Scripts/validate-partner-keys.sh`). |
 | `Xcode version does not match .xcode-version` | Switch Xcode (e.g. `xcodes select`) to the pinned version, or update `.xcode-version`. |
 | `no distribution signing identity` | Ensure your Apple Distribution certificate is in the keychain — the same setup that lets you Archive manually. |
