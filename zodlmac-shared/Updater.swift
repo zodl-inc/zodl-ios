@@ -24,15 +24,25 @@ struct Release: Decodable {
 //   - MITM with a different cert while the real one is still valid is blocked
 //   - Developer should update the pinned hashes after GitHub rotates
 
-// GitHub's current SPKI SHA-256 hashes (as of 2026-08-27, updated from live cert)
+// GitHub's current SPKI SHA-256 hashes (as of 2026-09-01, updated from live certs)
 // Update these after GitHub rotates their key (OCSP fallback handles the transition window)
+// Covers every host the updater touches:
+//   api.github.com (release feed), github.com (asset URL first hop),
+//   release-assets.githubusercontent.com / objects.githubusercontent.com (asset CDN redirect)
 private let pinnedSPKIHashes: Set<String> = [
+    // api.github.com / github.com (Sectigo chain)
+    "0s/GtpLQ1yVt5XpRSTiKlyH8XpJA7CHtRfvyRI5eTKo=", // *.github.com leaf (2026-09-01)
+    "WOuQ10gt35YfHFpXfWUwwuJXcCENfMgSvxzW1lDFc74=", // github.com leaf (2026-09-01)
+    "VqePxH3EcFwZuYK3CCOMz5HKMoeIZpZcEyBf4diPGSA=", // Sectigo Public Server Auth CA DV E36 intermediate
+    "EdsvlytFf4a/O+hCPwBXFFi46RKXqivCAF+mO7s+5Ng=", // Sectigo Public Server Auth Root E46
+    // release-assets/objects.githubusercontent.com — asset CDN (Let's Encrypt chain)
+    "dkIMxI2gcKcx2J9yXK5CRDulWy5qnNuiVtboKVg9XuU=", // *.github.io leaf (2026-09-01)
+    "Hy81vkYUgs1Asa55LFV4+vfUaPt3QgaPuLTHTkAxqmE=", // Let's Encrypt YR1 intermediate
+    "3udbYNAibUAofT8NAf6ktVK0UZSjEhF99kRyhtyJ2yM=", // ISRG Root YR
+    // Previous hashes kept for rotation window
     "rlkAiJEjAwr5USvccZ2NlLzz7elZETOabSnkRvKdow0=", // api.github.com leaf (2026-08-27)
     "ZSagvDzjltLkewXEBuDxIzpW/dpVw1Juvvmd0hhkzdY=", // intermediate (2026-08-27)
-    // Previous hashes kept for rotation window
     "EfXAzYKYsOsdi115+whKa+Yntz0T55fOk7iirLhX7rc=",
-    "VqePxH3EcFwZuYK3CCOMz5HKMoeIZpZcEyBf4diPGSA=",
-    "EdsvlytFf4a/O+hCPwBXFFi46RKXqivCAF+mO7s+5Ng=",
 ]
 
 final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
@@ -69,17 +79,20 @@ final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
 
         // Step 3: pin mismatch — check OCSP to distinguish rotation vs MITM
         log("⚠️ TLS pin mismatch — checking OCSP to distinguish rotation from MITM...")
-        checkOCSPFallback(serverTrust: serverTrust, completionHandler: completionHandler)
+        checkOCSPFallback(serverTrust: serverTrust,
+                          host: challenge.protectionSpace.host,
+                          completionHandler: completionHandler)
     }
 
     private func checkOCSPFallback(serverTrust: SecTrust,
+                                    host: String,
                                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         // macOS evaluates OCSP automatically as part of SecTrustEvaluateWithError.
         // We re-evaluate with explicit revocation policy to get revocation status.
         let revocationPolicy = SecPolicyCreateRevocation(
             kSecRevocationOCSPMethod | kSecRevocationRequirePositiveResponse
         )
-        let basicPolicy = SecPolicyCreateSSL(true, "api.github.com" as CFString)
+        let basicPolicy = SecPolicyCreateSSL(true, host as CFString)
 
         let certChain = SecTrustCopyCertificateChain(serverTrust) as! [SecCertificate]
         var newTrust: SecTrust?
