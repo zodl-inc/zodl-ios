@@ -4,10 +4,9 @@
 //
 //  Reproducible randomness for tests.
 //
-//  General-purpose, and deliberately NOT gated on VOTING_ENABLED or tied to
-//  any one suite: it was extracted from the delegation-recovery fixture, which
-//  needs filler bytes that vary per run yet can be replayed exactly when a run
-//  fails, but nothing here knows about that fixture.
+//  General-purpose: any test that wants bytes which vary per run yet replay
+//  exactly when a run fails. Nothing here is tied to a particular suite or
+//  feature.
 //
 //  The pattern it supports:
 //
@@ -58,7 +57,7 @@ extension String {
     ///
     /// `hashValue` cannot be used for this. Swift seeds it per process, so the
     /// same label would give a different stream in every run even at a fixed
-    /// seed — the failure would not replay, which is the whole point of
+    /// seed, and the failure would not replay, which is the whole point of
     /// carrying a seed. FNV-1a is stable across processes and runs.
     ///
     /// Not a cryptographic hash, and not meant to be.
