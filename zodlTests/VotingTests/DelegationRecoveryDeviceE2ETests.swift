@@ -119,7 +119,7 @@ struct DelegationRecoveryDeviceE2ETests {
     ///
     /// Returns the preserved directory so the caller can assert on the files.
     @discardableResult
-    private func plantCorruptedDatabase() throws -> URL {
+    private func plantCorruptedDatabase() throws -> (preserved: URL, source: VotingRecoveryEndToEndTests.CorruptedDatabase) {
         let documents = try #require(RecoveryDeviceE2E.documents)
         let preserved = documents.appendingPathComponent("voting_recovery", isDirectory: true)
 
@@ -137,7 +137,7 @@ struct DelegationRecoveryDeviceE2ETests {
                 to: preserved.appendingPathComponent(source.lastPathComponent)
             )
         }
-        return preserved
+        return (preserved, corrupted)
     }
 
     /// Entries the file-backed escrow holds for the fixture round.
@@ -155,7 +155,7 @@ struct DelegationRecoveryDeviceE2ETests {
     /// The planted files must be there. Asserted, never skipped: a green run
     /// against a missing fixture would prove nothing.
     @Test func theCorruptedDatabaseWasPlantedInTheContainer() throws {
-        let preserved = try plantCorruptedDatabase()
+        let (preserved, source) = try plantCorruptedDatabase()
 
         for name in ["voting.sqlite3", "voting.sqlite3-wal"] {
             let url = preserved.appendingPathComponent(name)
@@ -173,6 +173,34 @@ struct DelegationRecoveryDeviceE2ETests {
             contentsOf: preserved.appendingPathComponent("voting.sqlite3-wal")
         )
         #expect(wal.count > 32, "the planted log holds only a header")
+
+        // The state of the TABLE, which is what actually makes this database
+        // the incident rather than merely a file of the right size.
+        //
+        // The table is NOT empty, and asserting that it were would be wrong:
+        // `clear_round` deleted the broadcast rows and the app then rebuilt
+        // the round, so SQL sees three rows holding generation 1. What makes
+        // the fixture the incident is that generation 0 — the secrets the user
+        // actually broadcast — is no longer reachable through SQL at all.
+        //
+        // That is the precondition worth pinning. Without it a recovery test
+        // could pass by reading the secrets straight out of the table, and
+        // nothing would notice.
+        let visible = try source.queryVanCommRands()
+        #expect(visible == Expected.rebuiltRand, "SQL should see the rebuilt round")
+        for original in Expected.originalRand {
+            #expect(
+                visible.contains(original) == false,
+                "a broadcast secret is still readable through SQL, so this database is not the incident"
+            )
+        }
+
+        // Queried on the fixture's OWN copy, deliberately, never on the
+        // planted one. Opening a database with a live -wal makes SQLite
+        // recover and checkpoint it, which would destroy the only place the
+        // deleted rows survive — the assertion would consume the evidence the
+        // rest of the suite depends on. The planted files are byte-identical
+        // copies, so the source answers the same question safely.
     }
 
     // MARK: - The recovery path, driven by opening the app
@@ -183,7 +211,7 @@ struct DelegationRecoveryDeviceE2ETests {
         // Start from a clean escrow, so what is on disk afterwards can only
         // have been put there by this launch.
         try? FileManager.default.removeItem(at: escrowFile)
-        try plantCorruptedDatabase()
+        _ = try plantCorruptedDatabase()
 
         await openTheApp()
 
@@ -214,7 +242,7 @@ struct DelegationRecoveryDeviceE2ETests {
     /// The recovered value must be usable as a blinding factor, not merely
     /// 32 bytes that decoded cleanly.
     @Test func everyRecoveredSecretIsACanonicalPallasElement() async throws {
-        try plantCorruptedDatabase()
+        _ = try plantCorruptedDatabase()
         await openTheApp()
 
         let entries = try await escrowedEntries()
@@ -227,7 +255,7 @@ struct DelegationRecoveryDeviceE2ETests {
     /// Recovery runs on EVERY cold launch, so opening the app repeatedly must
     /// converge rather than accumulate or drift.
     @Test func openingTheAppTwiceLeavesTheEscrowUnchanged() async throws {
-        try plantCorruptedDatabase()
+        _ = try plantCorruptedDatabase()
         await openTheApp()
         let first = try await escrowedEntries().map(\.vanCommRand.hexString)
 
@@ -241,18 +269,64 @@ struct DelegationRecoveryDeviceE2ETests {
     /// Reading is not writing: the preserved files must come out byte for byte
     /// identical, or the next launch would have less to work with than this
     /// one did.
+    ///
+    /// Recovery reads through `FileHandle(forReadingFrom:)` and never opens a
+    /// SQLite connection, precisely so it cannot check point the log away. This
+    /// test is what holds that property in place.
     @Test func openingTheAppDoesNotModifyThePlantedFiles() async throws {
-        let documents = try #require(RecoveryDeviceE2E.documents)
-        let preserved = documents.appendingPathComponent("voting_recovery", isDirectory: true)
+        let (preserved, _) = try plantCorruptedDatabase()
         let urls = ["voting.sqlite3", "voting.sqlite3-wal"]
             .map { preserved.appendingPathComponent($0) }
 
-        try plantCorruptedDatabase()
         let before = try urls.map { try Data(contentsOf: $0) }
         await openTheApp()
         let after = try urls.map { try Data(contentsOf: $0) }
 
         #expect(before == after)
+    }
+
+    /// Recovery must DELETE nothing.
+    ///
+    /// Separate from the byte-comparison test above on purpose. That one reads
+    /// each file by name and would fail on a deleted file only incidentally,
+    /// through a thrown error rather than a stated expectation, and it says
+    /// nothing about a file being ADDED or the sidecars being unlinked. The
+    /// property that matters on a real device is stronger and worth stating
+    /// outright: after recovery the preserved directory holds exactly the same
+    /// entries it held before, all of them still readable.
+    ///
+    /// It matters because these three files are the ONLY copy of the deleted
+    /// delegation. A recovery that consumed them would work once, on a device
+    /// that could never be asked again — and every other test here would still
+    /// be green, because they all re-plant a fresh fixture first.
+    @Test func openingTheAppDeletesNothingItRecoveredFrom() async throws {
+        let (preserved, _) = try plantCorruptedDatabase()
+
+        let listing: () throws -> [String] = {
+            try FileManager.default
+                .contentsOfDirectory(atPath: preserved.path)
+                .sorted()
+        }
+        let before = try listing()
+        // The whole three-file set, sidecars included: -wal is where the
+        // deleted rows live, and -shm is what a checkpoint needs.
+        #expect(before.contains("voting.sqlite3"))
+        #expect(before.contains("voting.sqlite3-wal"))
+
+        await openTheApp()
+
+        let after = try listing()
+        #expect(after == before, "recovery added or removed files: \(before) -> \(after)")
+
+        for name in before {
+            let url = preserved.appendingPathComponent(name)
+            #expect(
+                FileManager.default.fileExists(atPath: url.path),
+                "\(name) is gone after recovery"
+            )
+            let size = (try? Data(contentsOf: url).count) ?? 0
+            #expect(size > 0, "\(name) was emptied by recovery")
+        }
     }
 }
 #endif

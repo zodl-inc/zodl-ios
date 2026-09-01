@@ -43,7 +43,7 @@ SCHEME="${SCHEME:-zodl-internal}"
 PROJECT="secant.xcodeproj"
 KEEP=0
 # Tests in DelegationRecoveryDeviceE2ETests; bump with the suite.
-EXPECTED_TESTS=5
+EXPECTED_TESTS=6
 
 while getopts "d:k" opt; do
     case "$opt" in
@@ -178,7 +178,8 @@ for required in \
     openingTheAppTwiceLeavesTheEscrowUnchanged \
     openingTheAppDoesNotModifyThePlantedFiles \
     everyRecoveredSecretIsACanonicalPallasElement \
-    theCorruptedDatabaseWasPlantedInTheContainer
+    theCorruptedDatabaseWasPlantedInTheContainer \
+    openingTheAppDeletesNothingItRecoveredFrom
 do
     if ! grep -q "Test ${required}() passed" "$TEST_LOG"; then
         echo "Required test did not pass: ${required}" >&2

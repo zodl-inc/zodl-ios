@@ -40,6 +40,9 @@ extension VotingRecoveryEndToEndTests {
         let databaseURL: URL
         let walURL: URL
         let shmURL: URL
+        /// The run's filler seed. Logged on construction so a failure can be
+        /// reproduced exactly by setting `VOTING_FIXTURE_SEED`.
+        let seed: UInt64
 
         var allURLs: [URL] { [databaseURL, walURL, shmURL] }
 
@@ -66,8 +69,21 @@ extension VotingRecoveryEndToEndTests {
             rebuildAfterClearing: Bool,
             updateAfterCheckpoint: Bool = false,
             notesPerBundle: Int = 1,
-            otherRounds: Int = 0
+            otherRounds: Int = 0,
+            seed: UInt64? = nil
         ) throws {
+            // A caller's seed wins, then the environment (which is how a CI
+            // failure is reproduced), then a fresh one for this run.
+            self.seed = seed
+                ?? ProcessInfo.processInfo.environment["VOTING_FIXTURE_SEED"]
+                    .flatMap(UInt64.init)
+                ?? UInt64.random(in: .min ... .max)
+            // print, NOT LoggerProxy: the seed has to land in the xcodebuild
+            // output a failing CI run is read from. LoggerProxy goes to
+            // os_log, which that output never shows, so the seed would be
+            // unreachable exactly when it is needed.
+            print("[fixture] filler seed \(self.seed) (replay with VOTING_FIXTURE_SEED=\(self.seed))")
+
             directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("voting-e2e-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -98,7 +114,7 @@ extension VotingRecoveryEndToEndTests {
             for other in 0..<otherRounds {
                 try Self.exec(
                     database,
-                    Self.insertRound(
+                    insertRound(
                         phase: 3,
                         rands: Fixture.originalRand,
                         notesPerBundle: notesPerBundle,
@@ -108,7 +124,7 @@ extension VotingRecoveryEndToEndTests {
             }
             try Self.exec(
                 database,
-                Self.insertRound(
+                insertRound(
                     phase: 3, rands: Fixture.originalRand, notesPerBundle: notesPerBundle
                 )
             )
@@ -136,7 +152,7 @@ extension VotingRecoveryEndToEndTests {
                 // …and what `prepareFreshRound` does next.
                 try Self.exec(
                     database,
-                    Self.insertRound(
+                    insertRound(
                         phase: 0, rands: Fixture.rebuiltRand, notesPerBundle: notesPerBundle
                     )
                 )
@@ -189,6 +205,7 @@ extension VotingRecoveryEndToEndTests {
         }
 
         private init(cloning original: CorruptedDatabase) throws {
+            seed = original.seed
             directory = original.directory
                 .deletingLastPathComponent()
                 .appendingPathComponent("voting-e2e-copy-\(UUID().uuidString)", isDirectory: true)
@@ -286,33 +303,31 @@ extension VotingRecoveryEndToEndTests {
         }
 
         /// Blob values go in as hex literals so no statement binding is needed.
-        /// Blob literal of `bytes` pseudo-random bytes, distinct for every
-        /// (column, bundle, generation).
+        /// Blob literal of `bytes` random bytes, distinct for every
+        /// (column, bundle) and different on every run.
         ///
-        /// Every column the test does NOT assert on is filled this way rather
+        /// Every column the tests do NOT assert on is filled this way rather
         /// than with a repeated pattern, so a parser that reads the wrong
-        /// column cannot accidentally produce something that looks right.
-        /// `van_comm_rand` is column 5, immediately after two blobs and
-        /// immediately before another, and several of its neighbours are also
-        /// 32 bytes wide; with fixed filler an off-by-one in the column index
-        /// would return a value the assertion might not distinguish.
+        /// column cannot accidentally return something plausible.
+        /// `van_comm_rand` is column 5, and five of its neighbours are also
+        /// exactly 32 bytes while `makeBundle` checks only the width.
         ///
-        /// Deterministic on purpose. A seeded generator means a failure is
-        /// reproducible, while still giving values with no structure for a
-        /// mistaken read to land on. Same seed, same bytes, every run.
-        private static func randomBlob(_ label: String, _ bytes: Int, seed: Int) -> String {
-            var state = UInt64(truncatingIfNeeded: label.hashValueStable &* 31 &+ seed)
-            if state == 0 { state = 0x9E37_79B9_7F4A_7C15 }
+        /// The seed VARIES per run and is logged. A fixed seed would test one
+        /// arrangement of filler bytes forever; varying it turns these into a
+        /// light property test that accumulates coverage across runs, and the
+        /// log line makes any failure reproducible:
+        ///
+        ///     VOTING_FIXTURE_SEED=<value> xcodebuild test ...
+        private func randomBlob(_ label: String, _ bytes: Int, bundle: Int) -> String {
+            // Derive a per-column stream from the run seed, so columns differ
+            // from each other while the whole database stays reproducible.
+            var generator = SeededGenerator(
+                seed: seed ^ label.stableHash ^ (UInt64(bundle) &* 0x9E37_79B9)
+            )
             var hex = ""
             hex.reserveCapacity(max(bytes, 1) * 2)
             for _ in 0..<max(bytes, 1) {
-                // splitmix64: cheap, well distributed, and reproducible.
-                state &+= 0x9E37_79B9_7F4A_7C15
-                var z = state
-                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-                z ^= z >> 31
-                hex += String(format: "%02x", UInt8(truncatingIfNeeded: z))
+                hex += String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))
             }
             return "X'\(hex)'"
         }
@@ -325,7 +340,7 @@ extension VotingRecoveryEndToEndTests {
         /// bundle holding enough notes pushes the secret past the page's local
         /// payload and into an overflow page, which the carver does not follow.
         /// That boundary is what `DelegationRecordSizeTests` measures.
-        private static func insertRound(
+        private func insertRound(
             phase: Int,
             rands: [String],
             notesPerBundle: Int = 1,
@@ -354,24 +369,24 @@ extension VotingRecoveryEndToEndTests {
                          tx1_effects)
                     VALUES
                         ('\(roundId)', '\(Fixture.walletId)', \(index),
-                         \(randomBlob("positions", 8 * notes, seed: index)),
-                         \(randomBlob("identityHashes", 32 * notes, seed: index)),
+                         \(randomBlob("positions", 8 * notes, bundle: index)),
+                         \(randomBlob("identityHashes", 32 * notes, bundle: index)),
                          X'\(rand)',
-                         \(randomBlob("dummyNullifiers", 32 * notes, seed: index)),
-                         \(randomBlob("rhoSigned", 32, seed: index)),
-                         \(randomBlob("paddedNoteData", 64 * notes, seed: index)),
-                         \(randomBlob("nfSigned", 32, seed: index)),
-                         \(randomBlob("cmxNew", 32, seed: index)),
-                         \(randomBlob("alpha", 32, seed: index)),
-                         \(randomBlob("rseedSigned", 32, seed: index)),
-                         \(randomBlob("rseedOutput", 32, seed: index)),
+                         \(randomBlob("dummyNullifiers", 32 * notes, bundle: index)),
+                         \(randomBlob("rhoSigned", 32, bundle: index)),
+                         \(randomBlob("paddedNoteData", 64 * notes, bundle: index)),
+                         \(randomBlob("nfSigned", 32, bundle: index)),
+                         \(randomBlob("cmxNew", 32, bundle: index)),
+                         \(randomBlob("alpha", 32, bundle: index)),
+                         \(randomBlob("rseedSigned", 32, bundle: index)),
+                         \(randomBlob("rseedOutput", 32, bundle: index)),
                          X'\(Fixture.govComm)',
                          130000000, 0,
-                         \(randomBlob("rk", 32, seed: index)),
-                         \(randomBlob("govNullifiers", 32 * notes, seed: index)),
-                         \(randomBlob("paddedNoteSecrets", 64 * notes, seed: index)),
-                         \(randomBlob("pcztSighash", 32, seed: index)),
-                         \(randomBlob("tx1Effects", 512, seed: index)));
+                         \(randomBlob("rk", 32, bundle: index)),
+                         \(randomBlob("govNullifiers", 32 * notes, bundle: index)),
+                         \(randomBlob("paddedNoteSecrets", 64 * notes, bundle: index)),
+                         \(randomBlob("pcztSighash", 32, bundle: index)),
+                         \(randomBlob("tx1Effects", 512, bundle: index)));
 
                     """
             }
@@ -450,24 +465,8 @@ extension VotingRecoveryEndToEndTests {
     }
 }
 
-private extension URL {
-    /// `voting.sqlite3` + `-wal`, which is how SQLite names its sidecars —
-    /// a path suffix, not a path extension.
-    func appendingSuffix(_ suffix: String) -> URL {
-        deletingLastPathComponent().appendingPathComponent(lastPathComponent + suffix)
-    }
-}
+// `SeededGenerator`, `String.stableHash` and `URL.appendingSuffix` are
+// general-purpose and live in zodlTests/TestSupport/, not here: nothing about
+// them is specific to delegation recovery.
 
-private extension String {
-    /// `hashValue` is seeded per process, so it cannot be used where the same
-    /// input must give the same bytes across runs. FNV-1a is stable.
-    var hashValueStable: Int {
-        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-        for byte in utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x0000_0100_0000_01B3
-        }
-        return Int(truncatingIfNeeded: hash)
-    }
-}
 #endif

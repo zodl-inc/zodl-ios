@@ -118,6 +118,28 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  shellcheck:
+    # Lints every script under Scripts/, which is what this repo's shell
+    # tooling is. The root symlink-templates.sh is deliberately NOT covered:
+    # it predates this job and has a real finding (SC2148, no shebang), and
+    # fixing it belongs to whoever owns that script, not to a recovery PR.
+    #
+    # -x follows sourced files. SC1091 is excluded because the two SDK-pin
+    # scripts source through "$SCRIPT_DIR/...", which shellcheck cannot
+    # resolve statically; that is the ONLY check relaxed, so everything else
+    # stays at full strictness.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint shell scripts
+        run: shellcheck -x -e SC1091 $(find Scripts -name '*.sh' | sort)
+
   unit_tests:
     # Skip draft PRs — no tests run until a PR is marked ready for review —
     # except release PRs, which are tested while still draft
