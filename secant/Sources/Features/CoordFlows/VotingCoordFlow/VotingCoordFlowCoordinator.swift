@@ -3664,27 +3664,6 @@ extension VotingCoordFlow {
         sdkSynchronizer: SDKSynchronizerClient,
         send: Send<Action>
     ) async throws -> Bool {
-        // Entering this path rebuilds the round's bundles, and a rebuild
-        // resamples the 32-byte VAN blinding factor. That value comes from
-        // `OsRng`, is not derived from the seed, and no FFI call can write it
-        // back, so replacing it once a delegation commitment exists
-        // permanently forfeits the user's ability to vote in that round.
-        //
-        // `shouldResumePersistedRound` already keeps callers off this path once
-        // bundle rows exist, `roundResumeDecision` keeps them off it whenever a
-        // probe or local material says the round is worth keeping, and
-        // `loadExistingRoundSetup` makes a failed read propagate rather than
-        // read as an empty round. This is the backstop for that invariant: the
-        // cost of a redundant check is one database read, the cost of a missed
-        // one is an unvotable round, and the asymmetry is the whole argument
-        // for keeping it.
-        if try await hasDelegationWorthKeeping(roundId: roundId, votingCrypto: votingCrypto) {
-            LoggerProxy.error(
-                "Refusing to rebuild round \(roundId): it holds a delegation commitment whose blinding factor cannot be regenerated."
-            )
-            throw VotingCoordFlowError.roundHoldsUnrecoverableDelegation(roundId: roundId)
-        }
-
         let params = VotingRoundParams(
             voteRoundId: session.voteRoundId,
             snapshotHeight: snapshotHeight,
@@ -4416,50 +4395,6 @@ enum RoundResumeDecision: Equatable, Sendable {
     case resumeInPlace
     /// Nothing recoverable — safe to rebuild the round from scratch.
     case freshRound
-}
-
-// MARK: - Delegation preservation
-
-enum VotingCoordFlowError: Error, Equatable {
-    /// A round replan would have destroyed a delegation commitment whose
-    /// blinding factor cannot be regenerated. Surfaced instead of wiping, so
-    /// the user can retry once connectivity recovers rather than losing the
-    /// round outright.
-    case roundHoldsUnrecoverableDelegation(roundId: String)
-}
-
-extension VotingCoordFlow {
-    /// Whether `roundId` still holds delegation material that a wipe would
-    /// destroy for good.
-    ///
-    /// `delegationConstructed` is the first phase at which `build_pczt` has
-    /// written `van_comm_rand` and `gov_comm` into `bundles`, so it is the
-    /// point from which clearing becomes irreversible. The escrow is consulted
-    /// as a second opinion: if it holds entries for this round then a
-    /// delegation was built at some point, even if the round row itself is
-    /// unreadable right now.
-    static func hasDelegationWorthKeeping(
-        roundId: String,
-        votingCrypto: VotingCryptoClient
-    ) async throws -> Bool {
-        @Dependency(\.delegationEscrow) var delegationEscrow
-
-        if await delegationEscrow.holdsDelegation(roundId) {
-            return true
-        }
-
-        guard let state = try? await votingCrypto.getRoundState(roundId) else {
-            // No readable round means nothing to protect; let the replan run.
-            return false
-        }
-
-        switch state.phase {
-        case .initialized, .hotkeyGenerated:
-            return false
-        case .delegationConstructed, .delegationProved, .voteReady:
-            return true
-        }
-    }
 }
 
 // MARK: - Delegation TX confirmation status
