@@ -127,12 +127,9 @@ CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
 DOCUMENTS="$CONTAINER/Documents"
 mkdir -p "$DOCUMENTS"
 
-# The suite builds and plants its own corrupted database, with the SAME
-# builder the in-process tests use, so there is one implementation of the
-# fixture rather than a Swift one and a Python one kept in step by hand. That
-# also removes the marker file this script used to plant to switch the suite
-# from "skip" to "assert": a suite that builds its own data has nothing to gate
-# on.
+# The suite builds and plants its own corrupted database, with the SAME builder
+# the in-process tests use, so the fixture has one implementation and this
+# script needs no fixture handling of its own.
 #
 # Only the escrow is cleared here, so the counts the run reports mean what they
 # say from a known-empty start.

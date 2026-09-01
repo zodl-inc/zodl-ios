@@ -4,16 +4,12 @@ import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
 
-/// Carver behaviour against a database this test builds with real SQLite.
+/// Carver behaviour against a database built with real SQLite.
 ///
-/// Everything here once ran against binary fixtures generated out of band by
-/// `Fixtures/make_fixtures.py`, git-ignored, with the suite SKIPPING until
-/// somebody produced them. On a clean checkout it proved nothing, and it went
-/// unnoticed long enough that the file stopped compiling.
-///
-/// It now shares `CorruptedDatabase` with the other suites, so there is ONE
-/// implementation of the fixture rather than a Swift one and two Python ones
-/// that had to be kept in step by hand.
+/// Shares `CorruptedDatabase` with every other voting suite, so the fixture
+/// has one implementation and the expected values have one source. Nothing
+/// here is gated or skipped: the database is built in-process, so these run on
+/// a clean checkout with no setup.
 @Suite struct DelegationWalRecoveryTests {
     private typealias Fixture = VotingRecoveryEndToEndTests.Fixture
     private typealias Corrupted = VotingRecoveryEndToEndTests.CorruptedDatabase
