@@ -217,6 +217,28 @@ extension VotingRecoveryEndToEndTests {
             try exec(database, "PRAGMA wal_checkpoint(TRUNCATE);")
         }
 
+        /// Hex of one column for every bundle, in bundle order. Used to show
+        /// that the columns around `van_comm_rand` hold different bytes, so a
+        /// test asserting on the secret cannot be satisfied by a neighbour.
+        func queryColumn(_ name: String) throws -> [String] {
+            let database = try Self.open(databaseURL)
+            defer { sqlite3_close(database) }
+
+            var statement: OpaquePointer?
+            let sql = "SELECT hex(\(name)) FROM bundles ORDER BY bundle_index;"
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw Failure.sqlite(String(cString: sqlite3_errmsg(database)))
+            }
+            defer { sqlite3_finalize(statement) }
+
+            var values: [String] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let text = sqlite3_column_text(statement, 0) else { continue }
+                values.append(String(cString: text).lowercased())
+            }
+            return values
+        }
+
         /// Every `van_comm_rand` SQL can still see, in bundle order.
         func queryVanCommRands() throws -> [String] {
             let database = try Self.open(databaseURL)
@@ -264,9 +286,35 @@ extension VotingRecoveryEndToEndTests {
         }
 
         /// Blob values go in as hex literals so no statement binding is needed.
-        /// Blob literal of `bytes` bytes, filled with `fill`.
-        private static func blob(_ fill: String, _ bytes: Int) -> String {
-            "X'\(String(repeating: fill, count: max(bytes, 1)))'"
+        /// Blob literal of `bytes` pseudo-random bytes, distinct for every
+        /// (column, bundle, generation).
+        ///
+        /// Every column the test does NOT assert on is filled this way rather
+        /// than with a repeated pattern, so a parser that reads the wrong
+        /// column cannot accidentally produce something that looks right.
+        /// `van_comm_rand` is column 5, immediately after two blobs and
+        /// immediately before another, and several of its neighbours are also
+        /// 32 bytes wide; with fixed filler an off-by-one in the column index
+        /// would return a value the assertion might not distinguish.
+        ///
+        /// Deterministic on purpose. A seeded generator means a failure is
+        /// reproducible, while still giving values with no structure for a
+        /// mistaken read to land on. Same seed, same bytes, every run.
+        private static func randomBlob(_ label: String, _ bytes: Int, seed: Int) -> String {
+            var state = UInt64(truncatingIfNeeded: label.hashValueStable &* 31 &+ seed)
+            if state == 0 { state = 0x9E37_79B9_7F4A_7C15 }
+            var hex = ""
+            hex.reserveCapacity(max(bytes, 1) * 2)
+            for _ in 0..<max(bytes, 1) {
+                // splitmix64: cheap, well distributed, and reproducible.
+                state &+= 0x9E37_79B9_7F4A_7C15
+                var z = state
+                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+                z ^= z >> 31
+                hex += String(format: "%02x", UInt8(truncatingIfNeeded: z))
+            }
+            return "X'\(hex)'"
         }
 
         /// One round and its bundles, with every column `build_pczt` writes
@@ -306,15 +354,24 @@ extension VotingRecoveryEndToEndTests {
                          tx1_effects)
                     VALUES
                         ('\(roundId)', '\(Fixture.walletId)', \(index),
-                         \(blob("aa", 8 * notes)), \(blob("bb", 32 * notes)),
-                         X'\(rand)', \(blob("cc", 32 * notes)), \(blob("dd", 32)),
-                         \(blob("ee", 64 * notes)), \(blob("ff", 32)),
-                         \(blob("11", 32)), \(blob("22", 32)),
-                         \(blob("33", 32)), \(blob("44", 32)),
+                         \(randomBlob("positions", 8 * notes, seed: index)),
+                         \(randomBlob("identityHashes", 32 * notes, seed: index)),
+                         X'\(rand)',
+                         \(randomBlob("dummyNullifiers", 32 * notes, seed: index)),
+                         \(randomBlob("rhoSigned", 32, seed: index)),
+                         \(randomBlob("paddedNoteData", 64 * notes, seed: index)),
+                         \(randomBlob("nfSigned", 32, seed: index)),
+                         \(randomBlob("cmxNew", 32, seed: index)),
+                         \(randomBlob("alpha", 32, seed: index)),
+                         \(randomBlob("rseedSigned", 32, seed: index)),
+                         \(randomBlob("rseedOutput", 32, seed: index)),
                          X'\(Fixture.govComm)',
-                         130000000, 0, \(blob("55", 32)),
-                         \(blob("66", 32 * notes)), \(blob("77", 64 * notes)),
-                         \(blob("88", 32)), \(blob("99", 512)));
+                         130000000, 0,
+                         \(randomBlob("rk", 32, seed: index)),
+                         \(randomBlob("govNullifiers", 32 * notes, seed: index)),
+                         \(randomBlob("paddedNoteSecrets", 64 * notes, seed: index)),
+                         \(randomBlob("pcztSighash", 32, seed: index)),
+                         \(randomBlob("tx1Effects", 512, seed: index)));
 
                     """
             }
@@ -398,6 +455,19 @@ private extension URL {
     /// a path suffix, not a path extension.
     func appendingSuffix(_ suffix: String) -> URL {
         deletingLastPathComponent().appendingPathComponent(lastPathComponent + suffix)
+    }
+}
+
+private extension String {
+    /// `hashValue` is seeded per process, so it cannot be used where the same
+    /// input must give the same bytes across runs. FNV-1a is stable.
+    var hashValueStable: Int {
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return Int(truncatingIfNeeded: hash)
     }
 }
 #endif

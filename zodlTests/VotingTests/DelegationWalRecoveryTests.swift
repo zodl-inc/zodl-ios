@@ -243,6 +243,76 @@ import ComposableArchitecture
         )
     }
 
+    // MARK: - The recovered value is the right column
+
+    /// Every column the assertions do not name is filled with pseudo-random
+    /// bytes, so a parser reading the WRONG column cannot return something
+    /// that happens to look right.
+    ///
+    /// This is the check that gives that filler teeth. `van_comm_rand` is
+    /// column 5, sandwiched between `note_identity_hashes_blob` and
+    /// `dummy_nullifiers`, and several nearby columns -- `rho_signed`,
+    /// `alpha`, `rk`, `pczt_sighash` -- are also 32 bytes wide. An off-by-one
+    /// in the column index would return one of those, and with a repeated
+    /// filler pattern the mistake could be hard to distinguish from a real
+    /// value.
+    @Test func theRecoveredValueIsTheBlindingFactorAndNotANeighbour() throws {
+        let corrupted = try Corrupted(rebuildAfterClearing: true, notesPerBundle: 5)
+
+        let rows = try DelegationWalRecovery.recover(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
+        #expect(rows.isEmpty == false)
+
+        // Everything carved must be one of the two generations of the SECRET.
+        // Anything else means a neighbouring column was read instead.
+        let expected = Set(Fixture.originalRand + Fixture.rebuiltRand)
+        for row in rows {
+            #expect(
+                expected.contains(row.vanCommRand.hexString),
+                """
+                bundle \(row.bundleIndex) carried \(row.vanCommRand.hexString.prefix(16)), \
+                which is neither generation of van_comm_rand: a different \
+                column was decoded
+                """
+            )
+        }
+    }
+
+    /// And the filler really is distinct, so the check above cannot pass
+    /// because every column happens to hold the same bytes.
+    ///
+    /// Read through SQL on a second copy, since opening a database
+    /// checkpoints and unlinks its log.
+    @Test func theColumnsAroundTheSecretHoldDifferentBytes() throws {
+        let healthy = try Corrupted(rebuildAfterClearing: false, notesPerBundle: 5)
+        let queryable = try healthy.duplicate()
+
+        let secrets = try queryable.queryColumn("van_comm_rand")
+        #expect(secrets.count == Fixture.bundleCount)
+
+        // The 32-byte columns nearest the secret, the ones an off-by-one in
+        // the column index would land on.
+        for neighbour in ["rho_signed", "alpha", "rk", "pczt_sighash", "cmx_new"] {
+            let values = try queryable.queryColumn(neighbour)
+            #expect(values.count == Fixture.bundleCount)
+            for (index, value) in values.enumerated() {
+                // `Comment` takes a single interpolated literal, not a
+                // concatenation, so the message is built in one piece.
+                #expect(
+                    value != secrets[index],
+                    "\(neighbour) matches van_comm_rand for bundle \(index), so the filler cannot discriminate"
+                )
+            }
+        }
+
+        // And the bundles differ from each other, so a test cannot pass by
+        // reading the wrong bundle either.
+        #expect(Set(secrets).count == secrets.count)
+    }
+
     // MARK: - Pure properties
 
     /// Origin ordering is what lets `plan` pick the original without a clock:
