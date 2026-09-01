@@ -1146,7 +1146,15 @@ extension VotingCoordFlow {
                     }
                 } catch: { error, send in
                     LoggerProxy.error("Active round pipeline failed: \(error)")
-                    await send(.pipelineFailed(roundId: roundId, message: VotingErrorMapper.userFriendlyMessage(from: error)))
+                    await send(.pipelineFailed(
+                        roundId: roundId,
+                        message: await Self.pipelineFailureMessage(
+                            error: error,
+                            roundId: roundId,
+                            escrow: delegationEscrow,
+                            crypto: votingCrypto
+                        )
+                    ))
                 }
                 .cancellable(id: cancelPipelineId, cancelInFlight: true)
 
@@ -4409,3 +4417,40 @@ private enum DelegationTxConfirmationStatus: Sendable {
     case notFound
 }
 #endif
+
+extension VotingCoordFlow {
+    /// The message shown when the round pipeline fails.
+    ///
+    /// Everything except an incomplete delegation setup keeps the existing
+    /// mapping. That one case gets `DelegationDiagnosis` instead, because it
+    /// is the case where the old single message was not merely vague but
+    /// wrong: it told the voter to leave the poll and enter it again, and
+    /// re-entering is what used to call `clear_round`. Which of several
+    /// states they are actually in decides whether that advice is safe, and
+    /// only the round's own state separates them.
+    ///
+    /// `voteServiceAnswered: false` is literal here rather than pessimistic.
+    /// This path fails on a local database read, so no check with the voting
+    /// service has been made, and "not asked" and "asked and got nothing" are
+    /// the same evidence: none. The diagnosis therefore never reports that
+    /// rebuilding is safe from here, which is the intended direction to err.
+    static func pipelineFailureMessage(
+        error: Error,
+        roundId: String,
+        escrow: DelegationEscrowClient,
+        crypto: VotingCryptoClient
+    ) async -> String {
+        guard VotingErrorMapper.isIncompleteDelegationSetup(error.localizedDescription) else {
+            return VotingErrorMapper.userFriendlyMessage(from: error)
+        }
+
+        let diagnosis = await DelegationDiagnosis.forRound(
+            roundId,
+            voteServiceAnswered: false,
+            escrow: escrow,
+            crypto: crypto
+        )
+        LoggerProxy.info("[poll-diagnosis] round=\(roundId) diagnosis=\(diagnosis.rawValue)")
+        return diagnosis.message
+    }
+}

@@ -5607,13 +5607,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voting service could not be reached, so the app cannot tell whether your delegation was already submitted. Nothing has been changed. Please try again when you have a connection. (POLL-05)"
+            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voting service could not be reached, so the app cannot tell whether your delegation was already submitted. Nothing has been changed. Please try again when you have a connection. (POLL-05)"
+            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
           }
         }
       }
