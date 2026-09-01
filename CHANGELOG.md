@@ -17,7 +17,6 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
 - [Ironwood] A poll whose delegation was already broadcast is no longer wiped and rebuilt when the app cannot confirm it. Previously a single failed confirmation lookup after an interrupted delegation caused the poll to be deleted and recreated, which discarded the one secret that makes voting in it possible and could not be regenerated — the poll was silently unvotable from then on. The app now refuses to clear such a poll, keeps the original delegation, and can recover it from the database's write-ahead log if an older build already replaced it.
-- [Ironwood] Settings now offers "Recover Poll Delegation", below "Send Us Feedback". It reads the copies of the polling database ZODL preserves, along with the live one, and restores the delegation secrets an older build replaced, so a poll that was silently made unvotable can be used again. It reports what it found, only reads those files, and is safe to run more than once: a wallet with nothing to recover is told so and nothing is changed.
 
 ## [3.10.3] - 2026-08-31
 

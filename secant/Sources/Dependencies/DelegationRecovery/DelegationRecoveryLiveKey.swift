@@ -42,7 +42,7 @@ extension DelegationRecoveryClient: DependencyKey {
     /// its own: both the preserved set and the live database are deliberately
     /// left backup-eligible, so a migrated device presents them at exactly
     /// these paths.
-    static func sources() -> [Source] {
+    static func sources(includingAbsent: Bool) -> [Source] {
         var sources: [Source] = []
         let fileManager = FileManager.default
 
@@ -76,7 +76,198 @@ extension DelegationRecoveryClient: DependencyKey {
             )
         }
 
-        return sources.filter { VotingDatabaseSnapshot.holdsData(at: $0.databaseURL) }
+        return sources
+    }
+
+    /// Copies that actually hold data. `run` uses this; the diagnostics screen
+    /// asks for the unfiltered list so it can show what is missing too.
+    static func sources() -> [Source] {
+        sources(includingAbsent: true)
+            .filter { VotingDatabaseSnapshot.holdsData(at: $0.databaseURL) }
+    }
+
+
+
+    /// Every line this subsystem emits carries the same prefix, so the whole
+    /// run can be isolated in the Xcode console by filtering on "poll-recovery".
+    ///
+    /// Values are logged ELIDED, exactly as they are shown on screen. These
+    /// logs reach os_log and the app's own log export, and `van_comm_rand` is
+    /// the one secret in the system that cannot be regenerated, so it must not
+    /// be written out in full.
+    static func log(_ message: String) {
+        LoggerProxy.info("[poll-recovery] \(message)")
+    }
+
+    /// Byte size of a file, or 0 when it is not there.
+    static func byteCount(_ url: URL) -> Int {
+        guard let attributes = try? FileManager.default
+            .attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber
+        else {
+            return 0
+        }
+        return size.intValue
+    }
+
+    /// Keeps both ends of a hex value and drops the middle.
+    ///
+    /// Not only for brevity: the two generations in the test fixtures differ
+    /// in the LAST byte, so an elision that kept only a prefix would render
+    /// them identical and make the screen useless for the thing it exists to
+    /// show.
+    static func elide(_ data: Data) -> String {
+        let hex = data.hexString
+        guard hex.count > 16 else { return hex }
+        return "\(hex.prefix(6))...\(hex.suffix(6))"
+    }
+
+    static func inspection() async -> DelegationRecoveryInspection {
+        @Dependency(\.delegationEscrow) var delegationEscrow
+
+        var reports: [DelegationRecoveryInspection.Source] = []
+        let candidates = Self.sources(includingAbsent: true)
+        log("inspecting \(candidates.count) candidate copy/copies, best first")
+
+        for source in candidates {
+            let databaseBytes = byteCount(source.databaseURL)
+            let walBytes = byteCount(source.walURL)
+            let shmBytes = byteCount(
+                source.databaseURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(source.databaseURL.lastPathComponent + "-shm")
+            )
+
+            guard databaseBytes > 0 else {
+                log("  [\(source.name)] absent at \(source.databaseURL.lastPathComponent)")
+                reports.append(
+                    .init(
+                        name: source.name,
+                        fileName: source.databaseURL.lastPathComponent,
+                        databaseBytes: 0, walBytes: 0, shmBytes: 0,
+                        verdict: .absent, rows: []
+                    )
+                )
+                continue
+            }
+
+            log(
+                "  [\(source.name)] db \(databaseBytes)B, wal \(walBytes)B, shm \(shmBytes)B"
+            )
+            if walBytes <= 32 {
+                // A log holding only its header has been checkpointed, so the
+                // superseded page images it used to hold are already gone.
+                log("  [\(source.name)] the write-ahead log is empty or header-only")
+            }
+
+            let carved: [DelegationWalRecovery.RecoveredBundle]
+            let plan: DelegationWalRecovery.Plan
+            do {
+                carved = try DelegationWalRecovery.recover(
+                    databaseURL: source.databaseURL,
+                    walURL: source.walURL
+                )
+                plan = DelegationWalRecovery.plan(bundles: carved)
+            } catch {
+                log("  [\(source.name)] UNREADABLE: \(error)")
+                reports.append(
+                    .init(
+                        name: source.name,
+                        fileName: source.databaseURL.lastPathComponent,
+                        databaseBytes: databaseBytes, walBytes: walBytes, shmBytes: shmBytes,
+                        verdict: .unreadable, rows: []
+                    )
+                )
+                continue
+            }
+
+            log(
+                "  [\(source.name)] carved \(carved.count) row(s); plan proposes "
+                + "\(plan.replacements.count) replacement(s)"
+            )
+
+            // The originals are what the button would restore, so mark them.
+            var originals: Set<String> = []
+            for replacement in plan.replacements {
+                let original = replacement.original
+                originals.insert(
+                    "\(original.roundId)/\(original.bundleIndex)/\(original.vanCommRand.hexString)"
+                )
+            }
+
+            let rows = carved
+                .sorted { ($0.bundleIndex, $0.origin) < ($1.bundleIndex, $1.origin) }
+                .map { bundle in
+                    DelegationRecoveryInspection.Row(
+                        roundId: bundle.roundId,
+                        bundleIndex: bundle.bundleIndex,
+                        vanCommRand: elide(bundle.vanCommRand),
+                        isPlausible: DelegationWalRecovery
+                            .isCanonicalPallasElement(bundle.vanCommRand),
+                        origin: describe(bundle.origin),
+                        isOriginal: originals.contains(
+                            "\(bundle.roundId)/\(bundle.bundleIndex)/\(bundle.vanCommRand.hexString)"
+                        )
+                    )
+                }
+
+            for row in rows {
+                log(
+                    "    \(row.isOriginal ? "ORIGINAL " : "         ")"
+                    + "bundle \(row.bundleIndex) \(row.vanCommRand) "
+                    + "from \(row.origin)"
+                    + (row.isPlausible ? "" : " (NOT a field element)")
+                )
+            }
+
+            reports.append(
+                .init(
+                    name: source.name,
+                    fileName: source.databaseURL.lastPathComponent,
+                    databaseBytes: databaseBytes, walBytes: walBytes, shmBytes: shmBytes,
+                    verdict: plan.needsRecovery
+                        ? .replacedDelegation(bundles: plan.replacements.count)
+                        : .intact,
+                    rows: rows
+                )
+            )
+        }
+
+        // What the escrow already holds, so the screen can say whether a run
+        // would add anything.
+        var escrowedBundles = 0
+        var escrowedRounds: Set<String> = []
+        for source in reports {
+            for row in source.rows where row.isOriginal {
+                if await delegationEscrow.holdsDelegation(row.roundId) {
+                    escrowedRounds.insert(row.roundId)
+                }
+            }
+        }
+        for round in escrowedRounds {
+            escrowedBundles += ((try? await delegationEscrow.entries(round)) ?? []).count
+        }
+
+        let inspection = DelegationRecoveryInspection(
+            sources: reports,
+            escrowedBundles: escrowedBundles,
+            escrowedRounds: escrowedRounds.count
+        )
+        log(
+            "inspection done: needsRecovery=\(inspection.needsRecovery), "
+            + "restorable=\(inspection.restorableBundles), "
+            + "already escrowed=\(escrowedBundles) bundle(s) "
+            + "across \(escrowedRounds.count) round(s)"
+        )
+        return inspection
+    }
+
+    static func describe(_ origin: DelegationWalRecovery.Origin) -> String {
+        switch origin {
+        case .databaseFreeSpace: return "released space"
+        case .databaseLive: return "live row"
+        case let .walFrame(index): return "log frame \(index)"
+        }
     }
 
     static var liveValue: Self {
@@ -84,11 +275,13 @@ extension DelegationRecoveryClient: DependencyKey {
             run: {
                 @Dependency(\.delegationEscrow) var delegationEscrow
 
+                log("RUN requested")
                 let sources = Self.sources()
                 guard !sources.isEmpty else {
-                    LoggerProxy.info("Delegation recovery: no voting database to carve.")
+                    log("RUN aborted: no voting database holds data")
                     return DelegationRecoveryReport(outcome: .noSnapshot)
                 }
+                log("RUN over \(sources.count) copy/copies: \(sources.map(\.name).joined(separator: ", "))")
 
                 // Keyed by bundle, holding the oldest surviving copy found in
                 // the most trusted source that had one.
@@ -116,14 +309,18 @@ extension DelegationRecoveryClient: DependencyKey {
                         // may still hold the value. The live database in
                         // particular can be mid-write while this runs.
                         LoggerProxy.error(
-                            "Delegation recovery could not read source \(source.name): \(error)"
+                            "[poll-recovery] could not read source \(source.name): \(error)"
                         )
                         readFailed = true
                         continue
                     }
 
                     scanned += 1
-                    guard plan.needsRecovery else { continue }
+                    guard plan.needsRecovery else {
+                        log("  [\(source.name)] nothing to restore")
+                        continue
+                    }
+                    log("  [\(source.name)] proposes \(plan.replacements.count) replacement(s)")
 
                     for replacement in plan.replacements {
                         let original = replacement.original
@@ -131,6 +328,9 @@ extension DelegationRecoveryClient: DependencyKey {
                         // First writer wins: sources are in descending trust.
                         if originals[key] == nil {
                             originals[key] = original
+                            log("    take \(key) from \(describe(original.origin))")
+                        } else {
+                            log("    skip \(key), a more trusted copy already supplied it")
                         }
                     }
                 }
@@ -151,6 +351,7 @@ extension DelegationRecoveryClient: DependencyKey {
                     guard DelegationWalRecovery
                         .isCanonicalPallasElement(original.vanCommRand) else {
                         report.bundlesRejected += 1
+                        log("    REJECT \(key): not a canonical Pallas element")
                         continue
                     }
 
@@ -169,11 +370,12 @@ extension DelegationRecoveryClient: DependencyKey {
                         // Keep going. Every one of these is irreplaceable, so
                         // one unwritable entry must not abandon the rest.
                         LoggerProxy.error(
-                            "Delegation recovery could not escrow round \(original.roundId) bundle \(original.bundleIndex): \(error)"
+                            "[poll-recovery] could not escrow \(key): \(error)"
                         )
                         escrowFailed = true
                         continue
                     }
+                    log("    ESCROWED \(key) = \(elide(original.vanCommRand))")
 
                     report.bundlesEscrowed += 1
                     if original.van.isEmpty {
@@ -192,15 +394,16 @@ extension DelegationRecoveryClient: DependencyKey {
                     report.outcome = .nothingToRecover
                 }
 
-                LoggerProxy.info(
-                    """
-                    Delegation recovery finished over \(scanned) source(s): escrowed \
-                    \(report.bundlesEscrowed) bundle(s) across \(report.rounds) round(s), \
-                    rejected \(report.bundlesRejected), \(report.bundlesWithoutVan) \
-                    without a commitment.
-                    """
+                log(
+                    "RUN finished over \(scanned) source(s): outcome=\(report.outcome), "
+                    + "escrowed=\(report.bundlesEscrowed) across \(report.rounds) round(s), "
+                    + "rejected=\(report.bundlesRejected), "
+                    + "withoutCommitment=\(report.bundlesWithoutVan)"
                 )
                 return report
+            },
+            inspect: {
+                await Self.inspection()
             }
         )
     }

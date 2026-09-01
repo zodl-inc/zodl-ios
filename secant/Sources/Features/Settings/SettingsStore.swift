@@ -15,6 +15,9 @@ struct Settings {
         case chooseServerSetup(ServerSetup)
         case disconnectHWWallet(DisconnectHWWallet)
         case currencyConversionSetup(CurrencyConversionSetup)
+        #if VOTING_ENABLED && ZODL_INTERNAL
+        case delegationRecovery(DelegationRecovery)
+        #endif
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
         case migrationRestart(MigrationRestart)
@@ -49,10 +52,6 @@ struct Settings {
         /// `AnyNavigationPath.Error.comparisonTypeMismatch` that fires when
         /// two NavigationStacks are nested.
         @Presents var votingCoordFlow: VotingCoordFlow.State?
-        /// Result of a manual delegation-recovery run, reported as an alert.
-        @Presents var delegationRecoveryAlert: AlertState<Action>?
-        /// Set while a run is in flight so the row cannot be tapped twice.
-        var isRecoveringDelegation = false
         #endif
         var resyncBirthday: BlockHeight? = nil
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -88,8 +87,8 @@ struct Settings {
         #if VOTING_ENABLED
         case coinholderPollingTapped
         case votingCoordFlow(PresentationAction<VotingCoordFlow.Action>)
-        case delegationRecoveryAlert(PresentationAction<Action>)
-        case delegationRecoveryFinished(DelegationRecoveryReport)
+        #endif
+        #if VOTING_ENABLED && ZODL_INTERNAL
         case recoverDelegationTapped
         #endif
         case currencyConversionTapped
@@ -106,9 +105,6 @@ struct Settings {
 
     @Dependency(\.appVersion) var appVersion
     @Dependency(\.audioServices) var audioServices
-    #if VOTING_ENABLED
-    @Dependency(\.delegationRecovery) var delegationRecovery
-    #endif
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
@@ -163,19 +159,14 @@ struct Settings {
                 // dismiss handler.
                 return .none
 
+            #endif
+
+            #if VOTING_ENABLED && ZODL_INTERNAL
             case .recoverDelegationTapped:
-                guard !state.isRecoveringDelegation else { return .none }
-                state.isRecoveringDelegation = true
-                return .run { send in
-                    await send(.delegationRecoveryFinished(await delegationRecovery.run()))
-                }
-
-            case let .delegationRecoveryFinished(report):
-                state.isRecoveringDelegation = false
-                state.delegationRecoveryAlert = AlertState.delegationRecovery(report)
-                return .none
-
-            case .delegationRecoveryAlert:
+                // Navigates rather than acting. The screen reports what the
+                // databases hold and what a run would change, and carries the
+                // button that runs it.
+                state.path.append(.delegationRecovery(DelegationRecovery.State()))
                 return .none
             #endif
 
@@ -229,71 +220,6 @@ struct Settings {
         .ifLet(\.$votingCoordFlow, action: \.votingCoordFlow) {
             VotingCoordFlow()
         }
-        .ifLet(\.$delegationRecoveryAlert, action: \.delegationRecoveryAlert)
         #endif
     }
 }
-
-#if VOTING_ENABLED
-extension AlertState where Action == Settings.Action {
-    /// Reports what a manual delegation-recovery run did.
-    ///
-    /// Counts are shown rather than a bare "done" because the partial cases
-    /// are the ones worth acting on. The failure arm carries no underlying
-    /// error text on purpose: raw internals must not reach the user.
-    static func delegationRecovery(_ report: DelegationRecoveryReport) -> AlertState {
-        switch report.outcome {
-        case .recovered:
-            return AlertState {
-                TextState(String(localizable: .settingsRecoverDelegationAlertRecoveredTitle))
-            } actions: {
-                ButtonState(action: .delegationRecoveryAlert(.dismiss)) {
-                    TextState(String(localizable: .generalOk))
-                }
-            } message: {
-                TextState(
-                    String(
-                        localizable: .settingsRecoverDelegationAlertRecoveredMessage(
-                            report.bundlesEscrowed,
-                            report.rounds
-                        )
-                    )
-                )
-            }
-
-        case .nothingToRecover:
-            return AlertState {
-                TextState(String(localizable: .settingsRecoverDelegationAlertNothingTitle))
-            } actions: {
-                ButtonState(action: .delegationRecoveryAlert(.dismiss)) {
-                    TextState(String(localizable: .generalOk))
-                }
-            } message: {
-                TextState(String(localizable: .settingsRecoverDelegationAlertNothingMessage))
-            }
-
-        case .noSnapshot:
-            return AlertState {
-                TextState(String(localizable: .settingsRecoverDelegationAlertNoSnapshotTitle))
-            } actions: {
-                ButtonState(action: .delegationRecoveryAlert(.dismiss)) {
-                    TextState(String(localizable: .generalOk))
-                }
-            } message: {
-                TextState(String(localizable: .settingsRecoverDelegationAlertNoSnapshotMessage))
-            }
-
-        case .failed:
-            return AlertState {
-                TextState(String(localizable: .settingsRecoverDelegationAlertFailedTitle))
-            } actions: {
-                ButtonState(action: .delegationRecoveryAlert(.dismiss)) {
-                    TextState(String(localizable: .generalOk))
-                }
-            } message: {
-                TextState(String(localizable: .settingsRecoverDelegationAlertFailedMessage))
-            }
-        }
-    }
-}
-#endif
