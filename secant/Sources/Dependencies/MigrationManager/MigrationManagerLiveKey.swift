@@ -361,6 +361,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// production read.
     let sessionOrdinalProvider: @Sendable () -> Int?
 
+    /// Final-review fix: the longest a writer edge (`lockMigrationDust`, `recordTransferBroadcast`)
+    /// will WAIT for its awaited republish. The bound exists for the pathological case only (a
+    /// wedged SDK read behind a server switch or a broadcast): past it the build keeps running
+    /// detached — cancelling it would leak the coalescer's claimed `inFlight` — and the SmartBanner
+    /// snapshot subscription delivers the late publish, the same heal path the coalescer's
+    /// contended branch already rides.
+    ///
+    /// Injectable (every production call site keeps the 10 s default) for the same reason as
+    /// `sessionOrdinalProvider`: the freshness suites read published state immediately after a
+    /// writer edge returns, and a starved CI runner can stretch a mocked build past any fixed
+    /// production bound — the chain then returns early by design and the read sees the pre-edge
+    /// snapshot (unit_tests run 33495197340). Those suites raise the bound past their own
+    /// `.timeLimit`, so the limit records a genuine hang while load alone can no longer expire a
+    /// writer edge mid-test.
+    let lockRepublishTimeoutNanoseconds: UInt64
+
     /// Internal (not private) with injectable storage so unit tests can exercise the real
     /// `reconcile()` against a scoped `UserDefaults` suite.
     init(
@@ -368,13 +384,15 @@ final class MigrationManagerImpl: @unchecked Sendable {
         scheduleStorage: MigrationScheduleStorage = MigrationScheduleStorage(),
         snapshotStorage: MigrationSnapshotStorage = MigrationSnapshotStorage(),
         failureRoutingStorage: MigrationFailureRoutingStorage = MigrationFailureRoutingStorage(),
-        sessionOrdinalProvider: @escaping @Sendable () -> Int? = { MigrationTrace.currentSessionOrdinal }
+        sessionOrdinalProvider: @escaping @Sendable () -> Int? = { MigrationTrace.currentSessionOrdinal },
+        lockRepublishTimeoutNanoseconds: UInt64 = 10_000_000_000
     ) {
         self.gateStorage = gateStorage
         self.scheduleStorage = scheduleStorage
         self.snapshotStorage = snapshotStorage
         self.failureRoutingStorage = failureRoutingStorage
         self.sessionOrdinalProvider = sessionOrdinalProvider
+        self.lockRepublishTimeoutNanoseconds = lockRepublishTimeoutNanoseconds
     }
 
     /// MOB-1496: one `CurrentValueSubject` per account `stateEvents` has ever been asked about,
@@ -1417,7 +1435,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // `MigrationSweepBannerFreshnessTests`. The split-phase early return above keeps its
         // shape: preparation broadcasts already republish at both edges via the broadcast
         // session's own pokes.
-        await awaitBounded(nanoseconds: Self.lockRepublishTimeoutNanoseconds) { [weak self] in
+        await awaitBounded(nanoseconds: lockRepublishTimeoutNanoseconds) { [weak self] in
             await self?.republishSnapshotNow(for: resolvedAccountUUID)
         }
     }
@@ -1467,18 +1485,10 @@ final class MigrationManagerImpl: @unchecked Sendable {
         // is what frees every flow exit from carrying a reconcile barrier: by the time the user
         // can leave the screen, the snapshot already tells the post-lock truth, bounded — see
         // `lockRepublishTimeoutNanoseconds`.
-        await awaitBounded(nanoseconds: Self.lockRepublishTimeoutNanoseconds) { [weak self] in
+        await awaitBounded(nanoseconds: lockRepublishTimeoutNanoseconds) { [weak self] in
             await self?.republishSnapshotNow(for: resolvedAccountUUID)
         }
     }
-
-    /// Final-review fix: the longest a writer edge (`lockMigrationDust`, `recordTransferBroadcast`)
-    /// will WAIT for its awaited republish. The
-    /// bound exists for the pathological case only (a wedged SDK read behind a server switch or a
-    /// broadcast): past it the build keeps running detached — cancelling it would leak the
-    /// coalescer's claimed `inFlight` — and the SmartBanner snapshot subscription delivers the
-    /// late publish, the same heal path the coalescer's contended branch already rides.
-    private static let lockRepublishTimeoutNanoseconds: UInt64 = 10_000_000_000
 
     /// Awaits `operation` for at most `nanoseconds`, then returns while the operation keeps
     /// running unstructured. Never cancels the operation — see `lockRepublishTimeoutNanoseconds`.

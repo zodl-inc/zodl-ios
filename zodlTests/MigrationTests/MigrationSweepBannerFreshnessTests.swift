@@ -28,13 +28,15 @@
 //  where the sibling records at one: the immediate-sweep chain crosses two writer edges plus
 //  `reconcile()`, so a starved runner stacks more sequential builds into one test here.
 //
-//  One clock remains outside this file's control (the sibling documents the same for its lock
-//  test): `recordTransferBroadcast`'s awaited republish carries the PRODUCTION
-//  `lockRepublishTimeoutNanoseconds` bound (10 s), so under starvation extreme enough that bound
-//  can expire and the chain returns early by design — `theSweepSuccessChainOutrunsItsOwnRepublish`
-//  reads the banner immediately after the chain on purpose and would see the stale residual then.
-//  A recurrence there is that production bound doing its job under an even worse runner, not a
-//  deadline these waits reintroduce.
+//  The one clock that used to sit outside this file's control is now pinned too:
+//  `recordTransferBroadcast`'s awaited republish carries the `lockRepublishTimeoutNanoseconds`
+//  bound (production default 10 s), and CI re-proved the residual risk this header used to only
+//  predict — on a starved runner the mocked build outlasted the bound, the chain returned early by
+//  design, and `theSweepSuccessChainOutrunsItsOwnRepublish`'s deliberately-immediate re-read saw
+//  the stale residual (unit_tests run 33495197340). Every manager here is therefore constructed
+//  with the bound raised past this suite's `.timeLimit` through the init seam, so a genuinely
+//  wedged build is recorded by the limit while load alone can no longer expire a writer edge's
+//  awaited republish mid-test.
 //
 
 import Foundation
@@ -49,6 +51,12 @@ import ComposableArchitecture
     private static let activationHeight: BlockHeight = 4_134_000
     private static let tip: BlockHeight = 4_200_000
     private static let suiteName = "MigrationSweepBannerFreshnessTests"
+
+    /// The writer edges' awaited-republish bound for every manager this suite constructs: raised
+    /// far past the suite's `.timeLimit` (2 min) so the limit is what records a genuinely wedged
+    /// build, and a merely starved one can never expire the await mid-test the way the 10 s
+    /// production default did on CI (see header).
+    private static let raisedRepublishBoundNanoseconds: UInt64 = 600_000_000_000
 
     /// Caught up at the tip — the residual banner requires the offer gate open, and on the device
     /// the pre-broadcast stop no-ops on an idle-at-tip engine, so the status stays `.upToDate`
@@ -167,7 +175,10 @@ import ComposableArchitecture
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
-            let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
+            let manager = MigrationManagerImpl(
+                scheduleStorage: Self.makeEmptyScheduleStorage(),
+                lockRepublishTimeoutNanoseconds: Self.raisedRepublishBoundNanoseconds
+            )
 
             var cancellables = Set<AnyCancellable>()
             let preSweepSnapshot = await Self.firstSnapshot(
@@ -243,7 +254,10 @@ import ComposableArchitecture
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
-            let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
+            let manager = MigrationManagerImpl(
+                scheduleStorage: Self.makeEmptyScheduleStorage(),
+                lockRepublishTimeoutNanoseconds: Self.raisedRepublishBoundNanoseconds
+            )
 
             var cancellables = Set<AnyCancellable>()
             let preSweepSnapshot = await Self.firstSnapshot(
@@ -303,7 +317,10 @@ import ComposableArchitecture
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
-            let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
+            let manager = MigrationManagerImpl(
+                scheduleStorage: Self.makeEmptyScheduleStorage(),
+                lockRepublishTimeoutNanoseconds: Self.raisedRepublishBoundNanoseconds
+            )
 
             var cancellables = Set<AnyCancellable>()
             let preSweepSnapshot = await Self.firstSnapshot(

@@ -24,14 +24,14 @@
 //  work whose actual duration scales with CI load, so a busier-than-tested runner could always
 //  make the deadline lose even though nothing was wrong.
 //
-//  `.timeLimit` below is NOT the only clock left in this suite's path.
-//  `lockingRepublishesTheSnapshotBeforeReturning` still calls `lockMigrationDust`, which separately
-//  wraps its own awaited republish in the PRODUCTION `lockRepublishTimeoutNanoseconds` bound (10 s,
-//  `awaitBounded`, in MigrationManagerLiveKey.swift) — under starvation extreme enough, that budget
-//  can still lose to the mocked build, in which case `lockMigrationDust` returns early by design
-//  (its documented heal path) and this test's final `#expect(published.banner == nil)` would see
-//  the stale residual. A recurrence there is that production-side bound doing its job under an
-//  even worse runner, not a gap in the waits this file controls.
+//  `lockingRepublishesTheSnapshotBeforeReturning` crosses a writer edge whose awaited republish
+//  `lockMigrationDust` wraps in the `lockRepublishTimeoutNanoseconds` bound (`awaitBounded`,
+//  production default 10 s in MigrationManagerLiveKey.swift) — past it the lock returns early by
+//  design (its documented heal path) and the final `#expect(published.banner == nil)` would see
+//  the stale residual. The sweep sibling hit exactly that race under CI starvation (unit_tests run
+//  33495197340, `recordTransferBroadcast`'s twin of this bound), so this test now constructs its
+//  manager with the bound raised past `.timeLimit` through the init seam: the limit records a
+//  genuinely wedged build, and load alone can no longer expire the lock's awaited republish.
 //
 //  `.timeLimit` is also not a hang-preventer: both new awaits above are plain
 //  `withCheckedContinuation`s with no cancellation handler, so a coalescer that genuinely never
@@ -53,6 +53,11 @@ import ComposableArchitecture
     private static let activationHeight: BlockHeight = 4_134_000
     private static let tip: BlockHeight = 4_200_000
     private static let suiteName = "MigrationSnapshotFreshnessTests"
+
+    /// The lock test's awaited-republish bound: raised far past this suite's `.timeLimit` (1 min)
+    /// so the limit is what records a genuinely wedged build, and a merely starved one can never
+    /// expire `lockMigrationDust`'s awaited republish mid-test (see header).
+    private static let raisedRepublishBoundNanoseconds: UInt64 = 600_000_000_000
 
     private static func atTipState() -> SynchronizerState {
         var state = SynchronizerState.zero
@@ -268,7 +273,7 @@ import ComposableArchitecture
             )
             $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
         } operation: {
-            let manager = MigrationManagerImpl()
+            let manager = MigrationManagerImpl(lockRepublishTimeoutNanoseconds: Self.raisedRepublishBoundNanoseconds)
 
             var cancellables = Set<AnyCancellable>()
             let preLockSnapshot = await Self.firstSnapshot(
