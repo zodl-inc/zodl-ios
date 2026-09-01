@@ -1,0 +1,318 @@
+name: Release zodlmac
+
+on:
+  push:
+    tags:
+      - 'mac-v*'
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      # Ported from zodl-inc/poc-macos-dmg (branch feature/zodlmac-with-autoupdate)
+      - uses: actions/checkout@v4
+
+      # The project uses XCLocalSwiftPackageReference "../ZcashLightClientKit".
+      # GHA restricts checkouts to within the workspace — clone inside, then symlink.
+      # Pinned to sdk main @ 785c7618 which includes SlipstreamSynchronizer.
+      # fetch-depth: 0 needed for SHA checkout; main works since 785c7618 is on main.
+      # Clone SDK and checkout exact commit 785c7618 (zodl-inc/zcash-swift-wallet-sdk
+      # main @ 785c7618 = merge/ironwood-slipstream, which matches macos-revival FFI).
+      # actions/checkout can't checkout a SHA directly without fetch-depth:0.
+      - name: Checkout zcash-swift-wallet-sdk @ 785c7618
+        uses: actions/checkout@v4
+        with:
+          repository: zodl-inc/zcash-swift-wallet-sdk
+          ref: main
+          path: zcash-swift-wallet-sdk-src
+          fetch-depth: 0
+
+      - name: Pin SDK to 785c7618
+        run: git -C "$GITHUB_WORKSPACE/zcash-swift-wallet-sdk-src" checkout 785c7618
+
+      - name: Symlink SDK as sibling of app directory
+        run: |
+          PARENT=$(dirname "$GITHUB_WORKSPACE")
+          ln -s "$GITHUB_WORKSPACE/zcash-swift-wallet-sdk-src" "$PARENT/zcash-swift-wallet-sdk"
+          ls "$PARENT/zcash-swift-wallet-sdk/Package.swift" && echo "SDK symlink OK"
+
+      # The upstream 2.8.0-rc.2 binary doesn't have zodl-inc voting symbols.
+      # Build the FFI from source so the custom zcashlc_voting_* functions are present.
+      - name: Authorize cargo for slipstream (zodl-inc private Rust crate)
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.SLIPSTREAM_PAT }}@github.com/zodl-inc/slipstream-internal".insteadOf "https://github.com/zodl-inc/slipstream-internal"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/zcash-swift-wallet-sdk-src/target
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: ${{ runner.os }}-cargo-ffi-${{ hashFiles('zcash-swift-wallet-sdk-src/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-ffi-
+
+      - name: Build macOS FFI (libzcashlc.xcframework)
+        working-directory: zcash-swift-wallet-sdk-src
+        run: make ffi-macos
+
+      - name: Convert libzcashlc.framework to versioned bundle (macOS requires this)
+        run: |
+          # The BuildSupport Makefile builds a shallow (iOS-style) bundle as a
+          # workaround for Xcode 15.3 (see ECC issue #1166). macOS archiving
+          # rejects shallow bundles. Convert to the required versioned layout.
+          FW="$GITHUB_WORKSPACE/zcash-swift-wallet-sdk-src/BuildSupport/products/libzcashlc.xcframework/macos-arm64_x86_64/libzcashlc.framework"
+          if [ ! -d "$FW/Versions" ]; then
+            mkdir -p "$FW/Versions/A/Resources"
+            # Move binary and headers into the versioned slot
+            mv "$FW/libzcashlc"        "$FW/Versions/A/libzcashlc"
+            mv "$FW/Headers"           "$FW/Versions/A/Headers"
+            mv "$FW/Modules"           "$FW/Versions/A/Modules"
+            mv "$FW/Info.plist"        "$FW/Versions/A/Resources/Info.plist"
+            # Create Current symlink and top-level symlinks
+            ln -s A                         "$FW/Versions/Current"
+            ln -s Versions/Current/libzcashlc  "$FW/libzcashlc"
+            ln -s Versions/Current/Headers     "$FW/Headers"
+            ln -s Versions/Current/Modules     "$FW/Modules"
+            ln -s Versions/Current/Resources   "$FW/Resources"
+            echo "✅ Converted libzcashlc.framework to versioned bundle"
+          else
+            echo "ℹ️ Already versioned — skipping"
+          fi
+
+      - name: Point SDK Package.swift at locally built FFI
+        working-directory: zcash-swift-wallet-sdk-src
+        run: make configure-local-ffi
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#mac-v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # pbxproj is not a real plist — use sed to update MARKETING_VERSION
+          sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $VERSION/g" \
+            secant.xcodeproj/project.pbxproj
+          # Set CFBundleShortVersionString in Info.plist (used by Updater.currentVersion)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
+            zodlmac-internal/Info.plist 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" \
+            zodlmac-internal/Info.plist 2>/dev/null || true
+          # Verify
+          grep "MARKETING_VERSION" secant.xcodeproj/project.pbxproj | head -2
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" zodlmac-internal/Info.plist 2>/dev/null
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.GHA_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Import Developer ID certificate + notarization creds
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ vars.APPLE_CERT_SECRET_ID || '/infra/apple/developer-id-macos' }}" \
+            --query SecretString --output text)
+          P12_B64=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['p12_base64'])")
+          P12_PASS=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['p12_password'])")
+          APPLE_ID=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['apple_id'])")
+          NOTARY_PASS=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['notarytool_password'])")
+          TEAM_ID=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['team_id'])")
+
+          echo "$P12_B64" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci-keychain /tmp/ci.keychain
+          security default-keychain -s /tmp/ci.keychain
+          security unlock-keychain -p ci-keychain /tmp/ci.keychain
+          security import /tmp/cert.p12 -k /tmp/ci.keychain -P "$P12_PASS" \
+            -T /usr/bin/codesign -T /usr/bin/xcodebuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci-keychain /tmp/ci.keychain
+          security set-keychain-settings -lut 3600 /tmp/ci.keychain
+          rm /tmp/cert.p12
+
+          xcrun notarytool store-credentials "notarytool-ci" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$NOTARY_PASS" \
+            --keychain /tmp/ci.keychain
+
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+
+      # All updater trust anchors come from repo variables — the checked-in
+      # zodlmac-shared/UpdaterConfig.plist is a dev-build default only.
+      # Unset variables fall back to the checked-in plist values.
+      - name: Generate UpdaterConfig.plist from repo variables
+        env:
+          FEED_REPO: ${{ vars.UPDATE_FEED_REPO }}
+          UPD_TEAM_ID: ${{ vars.UPDATE_TEAM_ID }}
+          ED25519_PUBKEY: ${{ vars.UPDATE_ED25519_PUBKEY }}
+          SPKI_PINS: ${{ vars.UPDATE_SPKI_PINS }}
+        run: |
+          PLIST=zodlmac-shared/UpdaterConfig.plist
+          [ -n "$FEED_REPO" ] && /usr/libexec/PlistBuddy -c "Set :UpdateFeedRepo $FEED_REPO" "$PLIST"
+          [ -n "$UPD_TEAM_ID" ] && /usr/libexec/PlistBuddy -c "Set :UpdateTeamID $UPD_TEAM_ID" "$PLIST"
+          [ -n "$ED25519_PUBKEY" ] && /usr/libexec/PlistBuddy -c "Set :UpdateEd25519PublicKey $ED25519_PUBKEY" "$PLIST"
+          if [ -n "$SPKI_PINS" ]; then
+            /usr/libexec/PlistBuddy -c "Delete :UpdateSPKIPins" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UpdateSPKIPins array" "$PLIST"
+            i=0
+            # UPDATE_SPKI_PINS: comma- or newline-separated list of base64 hashes
+            echo "$SPKI_PINS" | tr ',' '\n' | while read -r pin; do
+              pin=$(echo "$pin" | xargs)
+              [ -z "$pin" ] && continue
+              /usr/libexec/PlistBuddy -c "Add :UpdateSPKIPins:$i string $pin" "$PLIST"
+              i=$((i+1))
+            done
+          fi
+          plutil -lint "$PLIST"
+          echo "UpdaterConfig.plist:"
+          /usr/libexec/PlistBuddy -c "Print" "$PLIST"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project secant.xcodeproj \
+            -scheme zodlmac-internal \
+            -clonedSourcePackagesDirPath SourcePackages \
+            | tail -5
+
+      - name: Archive zodlmac-internal
+        run: |
+          xcodebuild archive \
+            -project secant.xcodeproj \
+            -scheme zodlmac-internal \
+            -configuration Release-Testflight \
+            -destination "platform=macOS,arch=arm64" \
+            -archivePath build/Zodl.xcarchive \
+            -clonedSourcePackagesDirPath SourcePackages \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            OTHER_CODE_SIGN_FLAGS="--keychain /tmp/ci.keychain" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            | xcpretty || true
+          ls build/Zodl.xcarchive/Products/Applications/
+
+      - name: Export app
+        run: |
+          # TEAM_ID comes from the Secrets Manager cert secret (set in the import step)
+          cat > /tmp/export.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>developer-id</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath build/Zodl.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist /tmp/export.plist
+
+          ls build/export/
+
+      - name: Build DMG
+        run: |
+          APP="build/export/Zodl Internal.app"
+          DMG_STAGING="build/dmg-staging"
+          mkdir -p "$DMG_STAGING"
+          cp -R "$APP" "$DMG_STAGING/"
+          ln -s /Applications "$DMG_STAGING/Applications"
+
+          hdiutil create \
+            -volname "Zodl-$VERSION" \
+            -srcfolder "$DMG_STAGING" \
+            -ov -format UDZO \
+            -o "build/Zodl-$VERSION.dmg"
+
+          # Discover the Developer ID identity from the imported keychain — no hardcoded name
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/ci.keychain \
+            | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          [ -n "$SIGN_IDENTITY" ] || { echo "❌ No Developer ID Application identity in keychain"; exit 1; }
+          echo "Signing DMG with: $SIGN_IDENTITY"
+          codesign --force --keychain /tmp/ci.keychain --sign "$SIGN_IDENTITY" \
+            "build/Zodl-$VERSION.dmg"
+
+          echo "DMG_PATH=build/Zodl-$VERSION.dmg" >> $GITHUB_ENV
+
+      - name: Notarize DMG
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "notarytool-ci" \
+            --keychain /tmp/ci.keychain \
+            --wait --timeout 15m
+          xcrun stapler staple "$DMG_PATH"
+          echo "✅ Notarized: $DMG_PATH"
+
+      # The updater consumes the ZIP (ditto-extracted in place — no DMG mount,
+      # which is flaky on virtualized macOS and TCC-blocked on macOS 15).
+      # The DMG remains the human-facing install artifact.
+      - name: Build update ZIP
+        run: |
+          # Staple the app itself so the zipped copy carries the notarization ticket
+          xcrun stapler staple "build/export/Zodl Internal.app" || true
+          ZIP_PATH="build/Zodl-$VERSION.zip"
+          ditto -c -k --keepParent "build/export/Zodl Internal.app" "$ZIP_PATH"
+          echo "ZIP_PATH=$ZIP_PATH" >> $GITHUB_ENV
+          du -sh "$ZIP_PATH"
+
+      - name: SHA256 + Ed25519 sign
+        run: |
+          SHA256_FILE="${DMG_PATH%.dmg}.sha256"
+          shasum -a 256 "$DMG_PATH" | awk '{print $1}' > "$SHA256_FILE"
+          echo "SHA256 (dmg): $(cat $SHA256_FILE)"
+
+          # Zip checksum is named <zip>.sha256 — the updater matches on the exact
+          # asset name, keeping it distinct from the legacy DMG .sha256.
+          ZIP_SHA256_FILE="$ZIP_PATH.sha256"
+          shasum -a 256 "$ZIP_PATH" | awk '{print $1}' > "$ZIP_SHA256_FILE"
+          echo "SHA256 (zip): $(cat $ZIP_SHA256_FILE)"
+
+          SIGNING_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ vars.UPDATE_SIGNING_KEY_SECRET_ID || '/infra/apple/update-signing-key' }}" \
+            --query SecretString --output text)
+          echo "$SIGNING_SECRET" | python3 -c \
+            "import json,sys,base64; print(base64.b64decode(json.load(sys.stdin)['private_key_pem_b64']).decode())" \
+            > /tmp/update_signing_key.pem
+          pip3 install cryptography --quiet --break-system-packages 2>/dev/null || true
+          python3 Scripts/sign-checksum.py /tmp/update_signing_key.pem "$SHA256_FILE"
+          python3 Scripts/sign-checksum.py /tmp/update_signing_key.pem "$ZIP_SHA256_FILE"
+          rm /tmp/update_signing_key.pem
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/Zodl-*.dmg
+            build/Zodl-*.zip
+            build/Zodl-*.sha256
+            build/Zodl-*.sha256.sig.b64
+          generate_release_notes: false
+          body: |
+            ## Zodl macOS ${{ env.VERSION }}
+
+            Signed + notarized with Developer ID Application (team ${{ env.TEAM_ID }}).
+            Built from `zodlmac-internal` target — real Zodl wallet with auto-update.
+
+            ### Install
+            Download `Zodl-${{ env.VERSION }}.dmg`, open it, drag **Zodl.app** to Applications.
+
+            ### Auto-update
+            App checks for updates 3s after launch and on every foreground resume.

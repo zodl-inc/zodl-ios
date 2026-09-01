@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Default config for local dev builds only.
+	     CI regenerates this file at build time from GitHub repo variables:
+	     UPDATE_FEED_REPO, UPDATE_TEAM_ID, UPDATE_ED25519_PUBKEY, UPDATE_SPKI_PINS.
+	     See docs/macos/AUTO_UPDATE.md. -->
+	<key>UpdateFeedRepo</key>
+	<string>zodl-inc/poc-macos-dmg-test</string>
+	<key>UpdateTeamID</key>
+	<string>RLPRR8CPQG</string>
+	<key>UpdateEd25519PublicKey</key>
+	<string>MCowBQYDK2VwAyEA9aT3lXqgqgD2NyCH7S7nJ7MANFPOb9oL+8u9K1sWp28=</string>
+	<key>UpdateSPKIPins</key>
+	<array>
+		<!-- api.github.com / github.com (Sectigo chain) -->
+		<string>0s/GtpLQ1yVt5XpRSTiKlyH8XpJA7CHtRfvyRI5eTKo=</string>
+		<string>WOuQ10gt35YfHFpXfWUwwuJXcCENfMgSvxzW1lDFc74=</string>
+		<string>VqePxH3EcFwZuYK3CCOMz5HKMoeIZpZcEyBf4diPGSA=</string>
+		<string>EdsvlytFf4a/O+hCPwBXFFi46RKXqivCAF+mO7s+5Ng=</string>
+		<!-- release-assets/objects.githubusercontent.com — asset CDN (Let's Encrypt chain) -->
+		<string>dkIMxI2gcKcx2J9yXK5CRDulWy5qnNuiVtboKVg9XuU=</string>
+		<string>Hy81vkYUgs1Asa55LFV4+vfUaPt3QgaPuLTHTkAxqmE=</string>
+		<string>3udbYNAibUAofT8NAf6ktVK0UZSjEhF99kRyhtyJ2yM=</string>
+		<!-- previous hashes kept for rotation window -->
+		<string>rlkAiJEjAwr5USvccZ2NlLzz7elZETOabSnkRvKdow0=</string>
+		<string>ZSagvDzjltLkewXEBuDxIzpW/dpVw1Juvvmd0hhkzdY=</string>
+		<string>EfXAzYKYsOsdi115+whKa+Yntz0T55fOk7iirLhX7rc=</string>
+	</array>
+</dict>
+</plist>
