@@ -50,6 +50,48 @@ setup() {
   done
 }
 
+# --- tag discovery ----------------------------------------------------------
+
+# A fixture repository for the tag helpers. Its default branch is `main`; a
+# `side` branch diverges by one commit so a tag can exist without being
+# reachable from main.
+make_tag_repo() {
+  TAG_REPO="$BATS_TEST_TMPDIR/tagrepo"
+  git init -q -b main "$TAG_REPO"
+  git -C "$TAG_REPO" config tag.gpgsign false
+  git -C "$TAG_REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+}
+
+@test "release_tags_merged_into is empty, not fatal, when no release tag is reachable" {
+  make_tag_repo
+  git -C "$TAG_REPO" tag beta4-rc2
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; release_tags_merged_into HEAD"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "newest_release_tag reports the newest release tag regardless of reachability" {
+  make_tag_repo
+  git -C "$TAG_REPO" tag 3.10.2
+  git -C "$TAG_REPO" checkout -q -b side
+  git -C "$TAG_REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+  git -C "$TAG_REPO" tag 3.10.3
+  git -C "$TAG_REPO" tag not-a-release
+  git -C "$TAG_REPO" checkout -q main
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; newest_release_tag"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3.10.3" ]
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; release_tags_merged_into main | tail -1"
+  [ "$output" = "3.10.2" ]
+}
+
+@test "newest_release_tag is empty in a repo with no release tags" {
+  make_tag_repo
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; newest_release_tag"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 # --- remote URL parsing -----------------------------------------------------
 
 @test "repo_slug_from_url handles every GitHub remote form" {

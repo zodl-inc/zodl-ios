@@ -86,9 +86,17 @@ RELEASE_TAG_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
 
 # The release tags reachable from a revision, oldest first. Only reachable tags
 # are candidates: a tag on a line this revision does not descend from is not a
-# release it can succeed.
+# release it can succeed. grep exits 1 when nothing matches, which pipefail
+# would escalate into killing the caller under set -e -- an empty list is an
+# answer here, not a failure.
 release_tags_merged_into() {
-    git tag --list --merged "$1" | grep -E "$RELEASE_TAG_RE" | version_sort
+    git tag --list --merged "$1" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort
+}
+
+# The newest release tag in the repository, reachable or not. Empty when no
+# release has ever been tagged.
+newest_release_tag() {
+    git tag --list | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1
 }
 
 # owner/repo from any form of GitHub remote URL: scp-style ssh, ssh://, or
