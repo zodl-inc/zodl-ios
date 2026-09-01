@@ -16,9 +16,14 @@
 
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# Resolve everything relative to this script, not the caller's directory: the
+# script edits and pushes the repository it lives in whichever checkout is
+# invoked, and a failed rev-parse would otherwise become `cd ""`, which
+# succeeds and leaves the script running somewhere it does not understand.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}/.."
 # shellcheck source=Scripts/lib/release-lib.sh
-. "Scripts/lib/release-lib.sh"
+. "${SCRIPT_DIR}/lib/release-lib.sh"
 
 usage() {
     cat <<'EOF'
@@ -149,6 +154,12 @@ cmd_start() {
     require_version_tool die_unless_dry_run
 
     GH_REPO="$(repo_for_remote "$remote")"
+    # Validated here, in preflight, rather than discovered by `gh pr create`
+    # after both branches are already pushed.
+    if ! printf '%s\n' "$GH_REPO" | grep -qE '^[^/:@]+/[^/:@]+$'; then
+        die "remote '${remote}' does not look like a GitHub repository (got '${GH_REPO}')." \
+            "Releases are cut against a GitHub remote; gh needs an owner/repo slug."
+    fi
     export GH_REPO
     echo "  repository: ${GH_REPO}"
 
