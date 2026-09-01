@@ -172,6 +172,7 @@
 				Assets.xcassets,
 				zodlmac_internalApp.swift,
 				Updater.swift,
+				UpdaterConfig.plist,
 			);
 			target = 9E6E82502FE3DC15008A82EF /* zodlmac-internal */;
 		};

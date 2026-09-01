@@ -116,12 +116,12 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.GHA_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - name: Import Developer ID certificate + notarization creds
         run: |
           SECRET=$(aws secretsmanager get-secret-value \
-            --secret-id /infra/apple/developer-id-macos \
+            --secret-id "${{ vars.APPLE_CERT_SECRET_ID || '/infra/apple/developer-id-macos' }}" \
             --query SecretString --output text)
           P12_B64=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['p12_base64'])")
           P12_PASS=$(echo "$SECRET" | python3 -c "import json,sys; print(json.load(sys.stdin)['p12_password'])")
@@ -146,6 +146,36 @@ jobs:
             --keychain /tmp/ci.keychain
 
           echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+
+      # All updater trust anchors come from repo variables — the checked-in
+      # zodlmac-shared/UpdaterConfig.plist is a dev-build default only.
+      # Unset variables fall back to the checked-in plist values.
+      - name: Generate UpdaterConfig.plist from repo variables
+        env:
+          FEED_REPO: ${{ vars.UPDATE_FEED_REPO }}
+          UPD_TEAM_ID: ${{ vars.UPDATE_TEAM_ID }}
+          ED25519_PUBKEY: ${{ vars.UPDATE_ED25519_PUBKEY }}
+          SPKI_PINS: ${{ vars.UPDATE_SPKI_PINS }}
+        run: |
+          PLIST=zodlmac-shared/UpdaterConfig.plist
+          [ -n "$FEED_REPO" ] && /usr/libexec/PlistBuddy -c "Set :UpdateFeedRepo $FEED_REPO" "$PLIST"
+          [ -n "$UPD_TEAM_ID" ] && /usr/libexec/PlistBuddy -c "Set :UpdateTeamID $UPD_TEAM_ID" "$PLIST"
+          [ -n "$ED25519_PUBKEY" ] && /usr/libexec/PlistBuddy -c "Set :UpdateEd25519PublicKey $ED25519_PUBKEY" "$PLIST"
+          if [ -n "$SPKI_PINS" ]; then
+            /usr/libexec/PlistBuddy -c "Delete :UpdateSPKIPins" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UpdateSPKIPins array" "$PLIST"
+            i=0
+            # UPDATE_SPKI_PINS: comma- or newline-separated list of base64 hashes
+            echo "$SPKI_PINS" | tr ',' '\n' | while read -r pin; do
+              pin=$(echo "$pin" | xargs)
+              [ -z "$pin" ] && continue
+              /usr/libexec/PlistBuddy -c "Add :UpdateSPKIPins:$i string $pin" "$PLIST"
+              i=$((i+1))
+            done
+          fi
+          plutil -lint "$PLIST"
+          echo "UpdaterConfig.plist:"
+          /usr/libexec/PlistBuddy -c "Print" "$PLIST"
 
       - name: Resolve Swift packages
         run: |
@@ -175,7 +205,8 @@ jobs:
 
       - name: Export app
         run: |
-          cat > /tmp/export.plist << 'EOF'
+          # TEAM_ID comes from the Secrets Manager cert secret (set in the import step)
+          cat > /tmp/export.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -185,7 +216,7 @@ jobs:
             <key>signingStyle</key>
             <string>manual</string>
             <key>teamID</key>
-            <string>RLPRR8CPQG</string>
+            <string>$TEAM_ID</string>
           </dict>
           </plist>
           EOF
@@ -211,7 +242,12 @@ jobs:
             -ov -format UDZO \
             -o "build/Zodl-$VERSION.dmg"
 
-          codesign --force --sign "Developer ID Application: The Zerocoin Electric Coin Company LLC (RLPRR8CPQG)" \
+          # Discover the Developer ID identity from the imported keychain — no hardcoded name
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning /tmp/ci.keychain \
+            | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          [ -n "$SIGN_IDENTITY" ] || { echo "❌ No Developer ID Application identity in keychain"; exit 1; }
+          echo "Signing DMG with: $SIGN_IDENTITY"
+          codesign --force --keychain /tmp/ci.keychain --sign "$SIGN_IDENTITY" \
             "build/Zodl-$VERSION.dmg"
 
           echo "DMG_PATH=build/Zodl-$VERSION.dmg" >> $GITHUB_ENV
@@ -250,7 +286,7 @@ jobs:
           echo "SHA256 (zip): $(cat $ZIP_SHA256_FILE)"
 
           SIGNING_SECRET=$(aws secretsmanager get-secret-value \
-            --secret-id /infra/apple/update-signing-key \
+            --secret-id "${{ vars.UPDATE_SIGNING_KEY_SECRET_ID || '/infra/apple/update-signing-key' }}" \
             --query SecretString --output text)
           echo "$SIGNING_SECRET" | python3 -c \
             "import json,sys,base64; print(base64.b64decode(json.load(sys.stdin)['private_key_pem_b64']).decode())" \
@@ -272,7 +308,7 @@ jobs:
           body: |
             ## Zodl macOS ${{ env.VERSION }}
 
-            Signed + notarized with Developer ID Application (ZODL / RLPRR8CPQG).
+            Signed + notarized with Developer ID Application (team ${{ env.TEAM_ID }}).
             Built from `zodlmac-internal` target — real Zodl wallet with auto-update.
 
             ### Install

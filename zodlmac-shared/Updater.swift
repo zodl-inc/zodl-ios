@@ -24,30 +24,20 @@ struct Release: Decodable {
 //   - MITM with a different cert while the real one is still valid is blocked
 //   - Developer should update the pinned hashes after GitHub rotates
 
-// GitHub's current SPKI SHA-256 hashes (as of 2026-09-01, updated from live certs)
-// Update these after GitHub rotates their key (OCSP fallback handles the transition window)
-// Covers every host the updater touches:
+// SPKI SHA-256 pins come from UpdaterConfig.plist (UpdateSPKIPins) — CI-managed.
+// They must cover every host the updater touches:
 //   api.github.com (release feed), github.com (asset URL first hop),
 //   release-assets.githubusercontent.com / objects.githubusercontent.com (asset CDN redirect)
-private let pinnedSPKIHashes: Set<String> = [
-    // api.github.com / github.com (Sectigo chain)
-    "0s/GtpLQ1yVt5XpRSTiKlyH8XpJA7CHtRfvyRI5eTKo=", // *.github.com leaf (2026-09-01)
-    "WOuQ10gt35YfHFpXfWUwwuJXcCENfMgSvxzW1lDFc74=", // github.com leaf (2026-09-01)
-    "VqePxH3EcFwZuYK3CCOMz5HKMoeIZpZcEyBf4diPGSA=", // Sectigo Public Server Auth CA DV E36 intermediate
-    "EdsvlytFf4a/O+hCPwBXFFi46RKXqivCAF+mO7s+5Ng=", // Sectigo Public Server Auth Root E46
-    // release-assets/objects.githubusercontent.com — asset CDN (Let's Encrypt chain)
-    "dkIMxI2gcKcx2J9yXK5CRDulWy5qnNuiVtboKVg9XuU=", // *.github.io leaf (2026-09-01)
-    "Hy81vkYUgs1Asa55LFV4+vfUaPt3QgaPuLTHTkAxqmE=", // Let's Encrypt YR1 intermediate
-    "3udbYNAibUAofT8NAf6ktVK0UZSjEhF99kRyhtyJ2yM=", // ISRG Root YR
-    // Previous hashes kept for rotation window
-    "rlkAiJEjAwr5USvccZ2NlLzz7elZETOabSnkRvKdow0=", // api.github.com leaf (2026-08-27)
-    "ZSagvDzjltLkewXEBuDxIzpW/dpVw1Juvvmd0hhkzdY=", // intermediate (2026-08-27)
-    "EfXAzYKYsOsdi115+whKa+Yntz0T55fOk7iirLhX7rc=",
-]
+// Update the UPDATE_SPKI_PINS repo variable after GitHub rotates keys
+// (the OCSP fallback handles the transition window).
 
 final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
     let log: @Sendable (String) -> Void
-    init(log: @escaping @Sendable (String) -> Void) { self.log = log }
+    let pinnedSPKIHashes: Set<String>
+    init(pins: Set<String>, log: @escaping @Sendable (String) -> Void) {
+        self.pinnedSPKIHashes = pins
+        self.log = log
+    }
 
     func urlSession(_ session: URLSession,
                     didReceive challenge: URLAuthenticationChallenge,
@@ -132,16 +122,44 @@ final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
     }
 }
 
-// MARK: - Ed25519 public key for checksum verification
-// Private key in SM: /infra/apple/update-signing-key
-private let updatePublicKeyB64 = "MCowBQYDK2VwAyEA9aT3lXqgqgD2NyCH7S7nJ7MANFPOb9oL+8u9K1sWp28="
+// MARK: - Updater configuration
+//
+// All trust anchors (feed repo, team ID, Ed25519 public key, SPKI pins) come from
+// UpdaterConfig.plist in the app bundle — no hardcoded values in code. A default
+// plist is checked in for local dev builds; CI regenerates it at build time from
+// GitHub repo variables (UPDATE_FEED_REPO, UPDATE_TEAM_ID, UPDATE_ED25519_PUBKEY,
+// UPDATE_SPKI_PINS). If the plist is missing or incomplete the updater logs and
+// refuses to update (fail-closed).
+struct UpdaterConfig {
+    let feedRepo: String            // "owner/repo" of the GitHub Releases feed
+    let teamID: String              // codesign TeamIdentifier the staged app must carry
+    let ed25519PublicKeyB64: String // DER (44-byte) base64 public key for checksum sigs
+    let spkiPins: Set<String>       // SPKI SHA-256 pins (SecKeyCopyExternalRepresentation)
+
+    var repoAPI: String { "https://api.github.com/repos/\(feedRepo)/releases/latest" }
+
+    static let shared: UpdaterConfig? = load()
+
+    private static func load() -> UpdaterConfig? {
+        guard let url = Bundle.main.url(forResource: "UpdaterConfig", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let dict = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
+              let feedRepo = dict["UpdateFeedRepo"] as? String, !feedRepo.isEmpty,
+              let teamID = dict["UpdateTeamID"] as? String, !teamID.isEmpty,
+              let pubKey = dict["UpdateEd25519PublicKey"] as? String, !pubKey.isEmpty,
+              let pins = dict["UpdateSPKIPins"] as? [String], !pins.isEmpty
+        else { return nil }
+        return UpdaterConfig(feedRepo: feedRepo, teamID: teamID,
+                             ed25519PublicKeyB64: pubKey, spkiPins: Set(pins))
+    }
+}
 
 // MARK: - Updater
 
 class Updater {
-    static let repoAPI = "https://api.github.com/repos/zodl-inc/poc-macos-dmg-test/releases/latest"
     static let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String
-    static let teamID = "RLPRR8CPQG"
+    // Sentinel never matches a codesign TeamIdentifier line — fail-closed if config is absent
+    private static var teamID: String { UpdaterConfig.shared?.teamID ?? "__MISSING_CONFIG__" }
 
     // Retained strongly so the session + delegate survive past runModal()
     // Wrapped in a class to avoid Swift concurrency static var warnings
@@ -152,13 +170,17 @@ class Updater {
     }
 
     static func checkAndUpdate(log: @escaping @Sendable (String) -> Void) {
-        log("🔍 Checking for updates (current: v\(currentVersion))...")
-        let delegate = PinningDelegate(log: log)
+        guard let config = UpdaterConfig.shared else {
+            log("❌ UpdaterConfig.plist missing or incomplete — auto-update disabled (fail-closed)")
+            return
+        }
+        log("🔍 Checking for updates (current: v\(currentVersion), feed: \(config.feedRepo))...")
+        let delegate = PinningDelegate(pins: config.spkiPins, log: log)
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         _holder.delegate = delegate
         _holder.session = session
 
-        guard let url = URL(string: repoAPI) else { return }
+        guard let url = URL(string: config.repoAPI) else { return }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
@@ -254,7 +276,7 @@ class Updater {
 
     private static func verifyEd25519(data: Data, signatureB64: String, log: @Sendable (String) -> Void) -> Bool {
         // CryptoKit Curve25519 (Ed25519) — strip the 12-byte DER header to get the raw 32-byte key
-        guard let pubKeyDER = Data(base64Encoded: updatePublicKeyB64),
+        guard let pubKeyDER = Data(base64Encoded: UpdaterConfig.shared?.ed25519PublicKeyB64 ?? ""),
               pubKeyDER.count == 44,
               let sigData = Data(base64Encoded: signatureB64) else {
             log("❌ Ed25519: failed to decode key or signature")

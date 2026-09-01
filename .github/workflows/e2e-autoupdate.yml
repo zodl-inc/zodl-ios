@@ -2,9 +2,25 @@ name: E2E Auto-Update Test
 
 on:
   workflow_dispatch:
+    inputs:
+      baseline_version:
+        description: 'Version to install first (must exist as a release)'
+        required: false
+      target_version:
+        description: 'Version the app must self-update to (usually the latest release)'
+        required: false
+      feed_repo:
+        description: 'owner/repo of the GitHub Releases feed'
+        required: false
   push:
     branches: [y4ssi/macos-autoupdate]
     paths: ['zodlmac-shared/Updater.swift']
+
+# Dispatch inputs win, then repo variables, then checked-in defaults.
+env:
+  BASELINE_VERSION: ${{ inputs.baseline_version || vars.E2E_BASELINE_VERSION || '1.0.0' }}
+  TARGET_VERSION: ${{ inputs.target_version || vars.E2E_TARGET_VERSION || '1.0.1' }}
+  FEED_REPO: ${{ inputs.feed_repo || vars.UPDATE_FEED_REPO || 'zodl-inc/poc-macos-dmg-test' }}
 
 jobs:
   e2e:
@@ -13,23 +29,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download v1.0.0 DMG (base install)
+      - name: Download baseline DMG (base install)
         run: |
-          curl -L -s -o /tmp/Zodl-1.0.0.dmg \
-            "https://github.com/zodl-inc/poc-macos-dmg-test/releases/download/mac-v1.0.0/Zodl-1.0.0.dmg"
-          echo "Downloaded: $(du -sh /tmp/Zodl-1.0.0.dmg | cut -f1)"
+          curl -L -s -o "/tmp/Zodl-$BASELINE_VERSION.dmg" \
+            "https://github.com/$FEED_REPO/releases/download/mac-v$BASELINE_VERSION/Zodl-$BASELINE_VERSION.dmg"
+          echo "Downloaded: $(du -sh /tmp/Zodl-$BASELINE_VERSION.dmg | cut -f1)"
 
-      - name: Install Zodl v1.0.0
+      - name: Install baseline Zodl
         run: |
-          hdiutil attach /tmp/Zodl-1.0.0.dmg -nobrowse -quiet
-          cp -R "/Volumes/Zodl-1.0.0/Zodl Internal.app" /Applications/
+          hdiutil attach "/tmp/Zodl-$BASELINE_VERSION.dmg" -nobrowse -quiet
+          cp -R "/Volumes/Zodl-$BASELINE_VERSION/Zodl Internal.app" /Applications/
           xattr -dr com.apple.quarantine "/Applications/Zodl Internal.app"
-          hdiutil detach /Volumes/Zodl-1.0.0 -quiet -force
+          hdiutil detach "/Volumes/Zodl-$BASELINE_VERSION" -quiet -force
           VERSION=$(defaults read "/Applications/Zodl Internal.app/Contents/Info.plist" \
             CFBundleShortVersionString)
           echo "Installed version: $VERSION"
-          [ "$VERSION" = "1.0.0" ] || (echo "❌ Wrong version: $VERSION"; exit 1)
-          echo "✅ v1.0.0 installed"
+          [ "$VERSION" = "$BASELINE_VERSION" ] || (echo "❌ Wrong version: $VERSION"; exit 1)
+          echo "✅ v$BASELINE_VERSION installed"
 
       - name: Launch app and capture updater logs
         run: |
@@ -91,8 +107,8 @@ jobs:
           echo ""
           echo "=== Checking for key updater events ==="
 
-          if grep -q "Latest.*1\.0\.1\|update available\|Update available" /tmp/zodl-updater.log 2>/dev/null; then
-            echo "✅ Detected v1.0.1 update"
+          if grep -q "Latest.*$TARGET_VERSION\|update available\|Update available" /tmp/zodl-updater.log 2>/dev/null; then
+            echo "✅ Detected v$TARGET_VERSION update"
           else
             echo "⚠️  Update detection not confirmed in logs"
           fi
@@ -113,15 +129,15 @@ jobs:
             echo "✅ Relaunch helper launched"
           fi
 
-          # Check if installed version changed to 1.0.1
+          # Check if installed version changed to the target
           echo ""
           echo "=== Installed version after update ==="
           INSTALLED=$(defaults read "/Applications/Zodl Internal.app/Contents/Info.plist" \
             CFBundleShortVersionString 2>/dev/null || echo "unknown")
           echo "Installed: $INSTALLED"
 
-          if [ "$INSTALLED" = "1.0.1" ]; then
-            echo "✅ Successfully updated to v1.0.1"
+          if [ "$INSTALLED" = "$TARGET_VERSION" ]; then
+            echo "✅ Successfully updated to v$TARGET_VERSION"
           else
             echo "❌ Still at $INSTALLED — auto-update did NOT complete"
             exit 1
