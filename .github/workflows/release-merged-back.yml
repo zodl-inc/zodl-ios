@@ -3,8 +3,8 @@
 # cherry-picked back leaves its tag unreachable from any live branch, so the
 # released commit stops being part of the history it shipped from.
 #
-# Advisory only: continue-on-error keeps this from blocking. Read the detail in
-# the run summary.
+# Advisory only: the check step carries continue-on-error, so findings never
+# block. Read the detail in the run summary.
 #
 # Only missing from its OWN maint line fails; not having reached main yet is a
 # warning, since the merge-forward jobs already track that.
@@ -35,7 +35,6 @@ jobs:
   release_merged_back:
     name: release branches merged back
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -43,16 +42,19 @@ jobs:
         timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # Full history plus tags: with fetch-depth 0 this checkout fetches
+          # +refs/heads/*:refs/remotes/origin/* and +refs/tags/*:refs/tags/*,
+          # which is everything the check reads.
           fetch-depth: 0
-          # Read-only job, and the tag fetch below works unauthenticated against
-          # this public repository, so the credential is not needed past
-          # checkout and should not be left in .git/config.
+          # Read-only job against a public repository; the credential is not
+          # needed past checkout and should not be left in .git/config.
           persist-credentials: false
       - name: Check release branches
         timeout-minutes: 5
+        # Advisory: findings must never block a PR -- but only findings. On
+        # the job this would also swallow a broken checkout or a fetch
+        # failure, leaving a green run that checked nothing.
+        continue-on-error: true
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: |
-          # Tags are what mark a release branch as released, so fetch them.
-          git fetch --quiet --tags origin '+refs/heads/*:refs/remotes/origin/*'
-          ./.github/scripts/check-release-merged-back.sh "${BASE_REF}"
+        run: ./.github/scripts/check-release-merged-back.sh "${BASE_REF}"
