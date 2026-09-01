@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 #
-# Tests for prepare-release.sh's argument handling. Every case here is rejected
-# before the script reaches git or the network, so the suite needs neither.
+# Tests for prepare-release.sh's argument handling. Every case here either is
+# rejected at parsing or dies in read-only preflight (against a remote that
+# cannot exist, under --dry-run), so the suite touches neither the network nor
+# any repository state.
 
 setup() {
   PREPARE="$BATS_TEST_DIRNAME/../prepare-release.sh"
@@ -65,10 +67,15 @@ setup() {
 }
 
 # A leading v is stripped before validation, so `v3.11.0` means 3.11.0 and is
-# accepted -- it reaches the preconditions rather than the version check.
+# accepted -- it reaches the preconditions rather than the version check. The
+# remote deliberately cannot exist and --dry-run is set, so the run dies in
+# preflight (dirty tree or unknown remote, depending on the checkout) without
+# touching anything; the non-zero status is asserted, not assumed.
 @test "a leading v is stripped rather than rejected" {
-  run "$PREPARE" start upstream v3.11.0
+  run "$PREPARE" start --dry-run bats-no-such-remote v3.11.0
+  [ "$status" -ne 0 ]
   [[ "$output" != *"is not in X.Y.Z form"* ]]
+  [[ "$output" == *"Checking preconditions"* ]]
 }
 
 # Confirm the rejection message names the value actually checked, not the
