@@ -112,7 +112,10 @@ Fixes found in testing land on \`candidate/${version}\` and appear here. This
 pull request stays a **draft** while builds are in progress; marking it ready
 for review is part of declaring the release final, and merging it is what makes
 it final. Tag \`release/${version}\` afterwards, then merge it back into
-\`${maint_line}\` and forward to \`main\` so the tag stays reachable.
+\`${maint_line}\` and forward to \`main\` so the tag stays reachable. Make each
+merge with \`--no-commit\` and check that \`## [${version}]\` in the CHANGELOG
+still matches the tag before committing — entries added on the target branch
+during the release cycle merge into the published section without a conflict.
 EOF
 }
 
@@ -394,7 +397,9 @@ ${candidate_branch}, not from ${release_branch}, which is still ${prev_tag}:
 
 Mark the pull request ready for review and merge it once the release is final,
 then tag ${release_branch} and merge it back into ${maint_line} and
-forward to main, so the tag stays reachable from a live branch.
+forward to main, so the tag stays reachable from a live branch. Merge with
+--no-commit and check that ## [${version}] in the CHANGELOG still matches the
+tag before committing (docs/release-automation.md, step 6, says why).
 EOF
     fi
 }

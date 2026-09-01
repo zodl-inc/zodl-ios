@@ -181,6 +181,24 @@ the script's closing message and the pull request body name the exact branch
 cherry-pick: a tag that is not reachable from a live branch stops being part of
 the history it shipped from, and the `Release Merged Back` check reports it.
 
+Make each of these merges with `--no-commit` and check the CHANGELOG before
+committing. Entries added to `## [Unreleased]` on the target branch during the
+release cycle merge **cleanly** into the published `## [3.8.0]` section — the
+promotion inserted its heading above them, so git files them below it without
+raising a conflict. The published section must be exactly what the tag shipped;
+move anything newer back under `## [Unreleased]`:
+
+```bash
+VERSION=3.8.0
+git switch maint/v3.8.x &&
+  git pull --ff-only upstream maint/v3.8.x &&
+  git merge --no-ff --no-commit release/$VERSION   # --no-ff: a fast-forward would skip the pause
+git diff $VERSION -- CHANGELOG.md                  # ## [$VERSION] must match the tag exactly
+git commit && git push upstream maint/v3.8.x
+```
+
+and the same again to forward the maintenance line to `main`.
+
 #### Submitting to App Review with `--submit-review`
 
 After the build is uploaded and App Store Connect has processed it, you can submit it for review:
