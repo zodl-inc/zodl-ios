@@ -116,3 +116,57 @@ extension DelegationDiagnosis {
         return .rebuildIsSafe
     }
 }
+
+extension DelegationDiagnosis {
+    /// Reads the signals for one round and classifies it.
+    ///
+    /// Used where an incomplete-setup error surfaces and the round is known,
+    /// so the voter is told which of the several causes they actually hit
+    /// instead of the one message that used to cover all of them.
+    ///
+    /// - Parameter voteServiceAnswered: whether the caller's own check with
+    ///   the voting service completed. Pass `false` for a failed OR
+    ///   inconclusive check: the two are the same thing here, and conflating
+    ///   "inconclusive" with "not delegated" is what routed voters into the
+    ///   destructive rebuild in the first place.
+    static func forRound(
+        _ roundId: String,
+        bundleIndex: UInt32 = 0,
+        voteServiceAnswered: Bool,
+        escrow: DelegationEscrowClient,
+        crypto: VotingCryptoClient
+    ) async -> DelegationDiagnosis {
+        let escrowHoldsSecrets = await escrow.holdsDelegation(roundId)
+
+        // Both reads are best-effort. A failure to read a signal is not
+        // evidence about that signal, and every unknown resolves toward the
+        // protective answer rather than the permissive one.
+        // `VotingTxHashLookup` already distinguishes "recorded" from "not
+        // recorded"; a THROW is a third thing, and must not be read as
+        // `.notFound`. Treating a failed read as "nothing was broadcast" is
+        // the same mistake, one layer down, that this taxonomy exists to
+        // undo -- so it resolves to true, the protective answer.
+        let hasTxHash: Bool
+        do {
+            hasTxHash = try await crypto.getDelegationTxHash(roundId, bundleIndex) != .notFound
+        } catch {
+            hasTxHash = true
+        }
+
+        let hasLocalSecret: Bool
+        do {
+            hasLocalSecret = try await crypto.getBundleCount(roundId) > 0
+        } catch {
+            hasLocalSecret = false
+        }
+
+        return diagnose(
+            Signals(
+                hasLocalSecret: hasLocalSecret,
+                hasDelegationTxHash: hasTxHash,
+                escrowHoldsSecrets: escrowHoldsSecrets,
+                voteServiceAnswered: voteServiceAnswered
+            )
+        )
+    }
+}
