@@ -5414,23 +5414,6 @@
         }
       }
     },
-    "coinVote.store.userError.delegationSetupIncomplete" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
-          }
-        }
-      }
-    },
     "coinVote.store.userError.http5" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5546,6 +5529,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This wallet has already been registered for this voting round. If you have this wallet on multiple devices, please use the device where you originally started the voting process."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationSetupIncomplete" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
           }
         }
       }
