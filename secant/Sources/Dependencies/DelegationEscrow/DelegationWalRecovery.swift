@@ -86,6 +86,11 @@ enum DelegationWalRecovery {
         case govComm = 14
         case totalNoteValue = 15
         case addressIndex = 16
+        /// Written by `store_delegation_tx_hash`, a LATER statement than the
+        /// one that writes the rest of this list, so a row image captured at
+        /// delegation-build time has it NULL. Legitimately absent whenever the
+        /// delegation was never broadcast.
+        case delegationTxHash = 23
     }
 
     /// Number of columns in `bundles`; a record with fewer is not one of ours.
@@ -248,6 +253,19 @@ enum DelegationWalRecovery {
         let vanCommRand: Data
         let van: Data
         let totalNoteValue: UInt64
+        /// Hash of the transaction that broadcast this delegation, when the
+        /// carved row generation carried one.
+        ///
+        /// Optional by nature, not by weakness. `store_delegation_tx_hash`
+        /// runs only after `submitDelegation` returns, so nil means one of:
+        /// the delegation was built but never broadcast (in which case there
+        /// is nothing to resume and re-delegating is correct), or the app died
+        /// in the window between broadcast and persistence (in which case the
+        /// transaction is on chain and has to be found there).
+        ///
+        /// Never gate escrow admission on it: the blinding factor is the
+        /// irreplaceable part and is worth keeping without this.
+        let delegationTxHash: String?
         let origin: Origin
         /// False when the record decoded but its tail did not, `gov_comm` or
         /// `total_note_value` having been truncated by overflow. The blinding
@@ -360,8 +378,40 @@ enum DelegationWalRecovery {
             let allReleased = versions.allSatisfy { $0.origin == .databaseFreeSpace }
             guard distinct.count > 1 || allReleased else { continue }
 
+            // The transaction hash is taken from ANY generation of this
+            // bundle that carried one, not from `original`.
+            //
+            // Those two selections genuinely conflict. `original` is the
+            // OLDEST generation, because that is the delegation the user
+            // broadcast and the rebuild's is the impostor. But
+            // `store_delegation_tx_hash` runs after `store_delegation_data`,
+            // so the hash only ever appears in a NEWER generation than the
+            // secrets it belongs to -- reading it off `original` finds nil
+            // every time.
+            //
+            // Sound because the field is write-once at the source: the UPDATE
+            // carries `AND (delegation_tx_hash IS NULL OR delegation_tx_hash =
+            // :tx_hash)`, so the generations of one bundle can hold at most one
+            // distinct hash and there is nothing to choose between. Restricted
+            // to versions sharing the original's `van_comm_rand`, so a rebuilt
+            // generation's hash can never be attributed to the broadcast one.
+            let txHash = versions
+                .first { $0.vanCommRand == original.vanCommRand && $0.delegationTxHash != nil }?
+                .delegationTxHash
+
+            let recovered = RecoveredBundle(
+                roundId: original.roundId,
+                bundleIndex: original.bundleIndex,
+                vanCommRand: original.vanCommRand,
+                van: original.van,
+                totalNoteValue: original.totalNoteValue,
+                delegationTxHash: original.delegationTxHash ?? txHash,
+                origin: original.origin,
+                isComplete: original.isComplete
+            )
+
             replacements.append(
-                Replacement(original: original, current: allReleased ? nil : newest)
+                Replacement(original: recovered, current: allReleased ? nil : newest)
             )
         }
 
@@ -545,12 +595,40 @@ enum DelegationWalRecovery {
     /// oldest origin so `plan` sees the earliest surviving copy of a value.
     private static func deduplicated(_ rows: [RecoveredBundle]) -> [RecoveredBundle] {
         var best: [String: RecoveredBundle] = [:]
+        // The transaction hash is MERGED across generations rather than taken
+        // from the winning row, because it arrives in a later write than the
+        // rest of the bundle: `store_delegation_data` leaves it NULL and
+        // `store_delegation_tx_hash` fills it in afterwards. Picking one row
+        // wholesale would drop it whenever the generation that survived is the
+        // build-time one -- and a stale WAL frame can outrank a live row here,
+        // since `Origin` orders the log above the file.
+        //
+        // Merging is sound because the source makes the field write-once: the
+        // UPDATE carries `AND (delegation_tx_hash IS NULL OR
+        // delegation_tx_hash = :tx_hash)`, so a bundle can never hold two
+        // different non-nil hashes and there is nothing to choose between.
+        var hashes: [String: String] = [:]
         for row in rows {
             let key = "\(row.roundId)/\(row.bundleIndex)/\(row.vanCommRand.hexString)"
+            if hashes[key] == nil, let hash = row.delegationTxHash {
+                hashes[key] = hash
+            }
             if let existing = best[key], existing.origin <= row.origin { continue }
             best[key] = row
         }
-        return best.values.sorted {
+        return best.map { key, row in
+            RecoveredBundle(
+                roundId: row.roundId,
+                bundleIndex: row.bundleIndex,
+                vanCommRand: row.vanCommRand,
+                van: row.van,
+                totalNoteValue: row.totalNoteValue,
+                delegationTxHash: row.delegationTxHash ?? hashes[key],
+                origin: row.origin,
+                isComplete: row.isComplete
+            )
+        }
+        .sorted {
             ($0.bundleIndex, $0.origin) < ($1.bundleIndex, $1.origin)
         }
     }
@@ -604,7 +682,18 @@ enum DelegationWalRecovery {
                 if let roundId, bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
                     continue
                 }
-                let key = "\(bundle.roundId)/\(bundle.bundleIndex)/\(bundle.vanCommRand.hexString)"
+                // Keyed on the transaction hash as well as the secret,
+                // because one bundle legitimately appears in the log TWICE
+                // with the same `van_comm_rand`: once as
+                // `store_delegation_data` wrote it, and again once
+                // `store_delegation_tx_hash` filled in the hash afterwards.
+                // Keying on the secret alone keeps whichever frame came first
+                // -- always the one WITHOUT the hash -- and the later
+                // generation is dropped here, before `deduplicated` or `plan`
+                // can merge it. Both generations must survive the scan for
+                // that merge to have anything to work with.
+                let key = "\(bundle.roundId)/\(bundle.bundleIndex)/"
+                    + "\(bundle.vanCommRand.hexString)/\(bundle.delegationTxHash ?? "")"
                 if seen.insert(key).inserted {
                     recovered.append(bundle)
                 }
@@ -663,12 +752,22 @@ enum DelegationWalRecovery {
             isComplete = false
         }
 
+        // Absence is normal here, so it does not touch `isComplete`: a
+        // delegation that was never broadcast has no hash to carry, and the
+        // blinding factor is still worth escrowing.
+        var txHash: String?
+        if case let .text(stored) = columns[BundleColumn.delegationTxHash.rawValue],
+           stored.isEmpty == false {
+            txHash = stored
+        }
+
         return RecoveredBundle(
             roundId: roundId.lowercased(),
             bundleIndex: UInt32(bundleIndex),
             vanCommRand: rand,
             van: van,
             totalNoteValue: weight,
+            delegationTxHash: txHash,
             origin: origin,
             isComplete: isComplete
         )

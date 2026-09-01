@@ -24,6 +24,12 @@ extension VotingRecoveryEndToEndTests {
             String(repeating: String(format: "%02x", UInt8(0xE0 &+ UInt8(index & 0x0F))), count: 32)
         }
 
+        /// The delegation transaction hash for one bundle, as
+        /// `store_delegation_tx_hash` would have stored it after broadcast.
+        static func txHash(_ index: Int) -> String {
+            String(repeating: String(format: "%02x", UInt8(0xD0 &+ UInt8(index & 0x0F))), count: 32)
+        }
+
         static func byte(_ value: UInt8) -> String {
             String(repeating: String(format: "%02x", value), count: 31) + "01"
         }
@@ -67,6 +73,11 @@ extension VotingRecoveryEndToEndTests {
         ///   alone on freshly allocated ones.
         init(
             rebuildAfterClearing: Bool,
+            /// Whether the delegation reached the chain before the wipe. False
+            /// models a round that was built but never broadcast, where no
+            /// `delegation_tx_hash` was ever written -- and where there is
+            /// correspondingly nothing to resume.
+            storeTxHash: Bool = true,
             updateAfterCheckpoint: Bool = false,
             notesPerBundle: Int = 1,
             otherRounds: Int = 0,
@@ -128,6 +139,25 @@ extension VotingRecoveryEndToEndTests {
                     phase: 3, rands: Fixture.originalRand, notesPerBundle: notesPerBundle
                 )
             )
+            // The delegation is broadcast and its transaction hash lands in a
+            // SEPARATE, LATER statement, exactly as `store_delegation_tx_hash`
+            // does in the crate. Modelling it as its own write is the point:
+            // the row image written at delegation-build time has this column
+            // NULL, so recovering the hash means merging two generations of
+            // the same row rather than reading whichever one happens to
+            // survive.
+            if storeTxHash {
+                for index in 0..<Fixture.bundleCount {
+                    try Self.exec(
+                        database,
+                        """
+                        UPDATE bundles SET delegation_tx_hash = '\(Fixture.txHash(index))'
+                        WHERE round_id = '\(Fixture.roundId)' AND bundle_index = \(index);
+                        """
+                    )
+                }
+            }
+
             // An ordinary commit, so the bundles page is rewritten and the
             // pre-incident image becomes a superseded frame rather than the
             // newest one.

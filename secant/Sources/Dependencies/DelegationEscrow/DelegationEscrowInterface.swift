@@ -31,6 +31,21 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
     let van: Data
     /// Bundle weight in zatoshi, the third VAN preimage element.
     let totalNoteValue: UInt64
+    /// Hash of the transaction that broadcast this delegation, when it had
+    /// been broadcast by the time the secrets were captured.
+    ///
+    /// Present so this entry carries everything `import_delegation_capability`
+    /// needs -- it inserts a bundle from exactly `(round_id, wallet_id,
+    /// bundle_index, van_comm_rand, gov_comm, total_note_value, address_index,
+    /// delegation_tx_hash)` and leaves every other column NULL by design.
+    ///
+    /// Nil is a legitimate state, not a partial capture: the hash is stored
+    /// only after the delegation is broadcast, so nil generally means nothing
+    /// was broadcast and there is nothing to resume.
+    ///
+    /// Decoding an escrow written before this field existed yields nil, which
+    /// is why it is optional rather than a schema-version bump.
+    let delegationTxHash: String?
     let createdAt: Date
 }
 

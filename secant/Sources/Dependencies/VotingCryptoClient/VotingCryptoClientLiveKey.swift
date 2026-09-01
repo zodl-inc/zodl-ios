@@ -264,6 +264,15 @@ extension VotingCryptoClient: DependencyKey {
                             vanCommRand: vanCommRand,
                             van: van,
                             totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value },
+                            // Nil, necessarily: this runs while the PCZT is
+                            // being built, and the hash only exists once
+                            // `submitDelegation` has returned and
+                            // `storeDelegationTxHash` has run. A live capture
+                            // therefore never carries one, so an escrow entry
+                            // written here is not yet a complete capability
+                            // record -- only the carved path can supply it
+                            // today.
+                            delegationTxHash: nil,
                             createdAt: Date()
                         )
                     )

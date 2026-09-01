@@ -159,5 +159,61 @@ import SQLite3
         let after = try corrupted.allURLs.map { try Data(contentsOf: $0) }
         #expect(before == after)
     }
+
+    // MARK: - Delegation transaction hash
+
+    /// The hash must come back with the secrets, because without it the
+    /// escrow is not a capability record: `import_delegation_capability`
+    /// inserts from `(round_id, wallet_id, bundle_index, van_comm_rand,
+    /// gov_comm, total_note_value, address_index, delegation_tx_hash)`, and
+    /// the hash is the field that ties the recovered opening to the
+    /// transaction actually broadcast.
+    ///
+    /// It is written by a LATER statement than the secrets, so this is really
+    /// a test that the carver merges two generations of one row rather than
+    /// reporting whichever generation survived.
+    @Test func recoversTheDelegationTransactionHashAlongsideTheSecrets() throws {
+        let corrupted = try CorruptedDatabase(rebuildAfterClearing: true)
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
+
+        let recovered = plan.replacements
+            .sorted { $0.original.bundleIndex < $1.original.bundleIndex }
+        #expect(recovered.count == Fixture.bundleCount)
+
+        for (index, replacement) in recovered.enumerated() {
+            #expect(
+                replacement.original.delegationTxHash == Fixture.txHash(index),
+                "bundle \(index) lost the transaction hash that identifies its broadcast"
+            )
+        }
+    }
+
+    /// Absent is a legitimate answer, and must not be reported as a value.
+    ///
+    /// A delegation that was built but never broadcast has no hash anywhere in
+    /// the file, and the carver must say so rather than pick up a neighbouring
+    /// bundle's or invent one. The secrets are still recovered: the blinding
+    /// factor is the irreplaceable part and is worth keeping either way.
+    @Test func reportsNoHashWhenTheDelegationWasNeverBroadcast() throws {
+        let corrupted = try CorruptedDatabase(
+            rebuildAfterClearing: true, storeTxHash: false
+        )
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
+
+        #expect(plan.replacements.isEmpty == false, "the secrets should still be recovered")
+        for replacement in plan.replacements {
+            #expect(replacement.original.delegationTxHash == nil)
+            // The point of the recovery is unaffected.
+            #expect(replacement.original.vanCommRand.isEmpty == false)
+        }
+    }
 }
 #endif

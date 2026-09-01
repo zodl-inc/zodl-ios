@@ -373,6 +373,7 @@ extension DelegationRecoveryClient: DependencyKey {
                                 vanCommRand: original.vanCommRand,
                                 van: original.van,
                                 totalNoteValue: original.totalNoteValue,
+                                delegationTxHash: original.delegationTxHash,
                                 createdAt: Date()
                             )
                         )
