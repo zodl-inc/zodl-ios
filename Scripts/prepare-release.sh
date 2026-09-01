@@ -83,7 +83,7 @@ EOF
 # arriving cold knows what they are looking at and why the base branch looks
 # the way it does.
 start_pr_body() {
-    local version="$1" prev_tag="$2" issue="$3"
+    local version="$1" prev_tag="$2" issue="$3" maint_line="$4"
     if [ -n "$issue" ]; then
         printf 'Release tracking issue: #%s.\n\n' "$issue"
     fi
@@ -112,13 +112,13 @@ Fixes found in testing land on \`candidate/${version}\` and appear here. This
 pull request stays a **draft** while builds are in progress; marking it ready
 for review is part of declaring the release final, and merging it is what makes
 it final. Tag \`release/${version}\` afterwards, then merge it back into
-\`maint/v${version%.*}.x\` and forward to \`main\` so the tag stays reachable.
+\`${maint_line}\` and forward to \`main\` so the tag stays reachable.
 EOF
 }
 
 cmd_start() {
     local previous="" issue="" build="1" remote version revision rev_sha prev_tag newest_tag
-    local release_branch candidate_branch b today pr_body_file changelog_at_rev
+    local release_branch candidate_branch b today pr_body_file changelog_at_rev maint_line
     local -a positional
     positional=()
 
@@ -221,6 +221,11 @@ cmd_start() {
         die "${version} does not come after ${prev_tag}."
     fi
 
+    # Resolved from the remote's refs (just fetched), so the merge-back
+    # instructions name a branch that exists -- the repo has carried both
+    # maint/X.Y.x and maint/vX.Y.x spellings.
+    maint_line="$(maint_line_for_version "$remote" "$version")"
+
     release_branch="release/${version}"
     candidate_branch="candidate/${version}"
     for b in "$release_branch" "$candidate_branch"; do
@@ -274,6 +279,7 @@ cmd_start() {
     echo
     echo "  ${release_branch}    <- ${prev_tag}  (PR base)"
     echo "  ${candidate_branch}  <- ${revision}  (release prep goes here)"
+    echo "  merge back into ${maint_line}, then forward to main, once the release is final"
 
     step "Creating ${release_branch} from ${prev_tag}"
     run_cmd git branch "$release_branch" "refs/tags/${prev_tag}"
@@ -336,7 +342,7 @@ cmd_start() {
 
     step "Opening the pull request"
     pr_body_file="$(mktemp)"
-    start_pr_body "$version" "$prev_tag" "$issue" > "$pr_body_file"
+    start_pr_body "$version" "$prev_tag" "$issue" "$maint_line" > "$pr_body_file"
     if [ "$DRY_RUN" = "true" ]; then
         echo "  would open a draft PR ${candidate_branch} -> ${release_branch} on ${GH_REPO}"
         [ -n "$issue" ] && echo "  body would reference issue #${issue}"
@@ -387,7 +393,7 @@ ${candidate_branch}, not from ${release_branch}, which is still ${prev_tag}:
       --version ${version} --build ${build}
 
 Mark the pull request ready for review and merge it once the release is final,
-then tag ${release_branch} and merge it back into maint/v${version%.*}.x and
+then tag ${release_branch} and merge it back into ${maint_line} and
 forward to main, so the tag stays reachable from a live branch.
 EOF
     fi

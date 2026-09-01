@@ -236,6 +236,23 @@ require_version_tool() {
     fi
 }
 
+# The maintenance branch for a version's X.Y line, as the remote actually
+# spells it: the repository has carried both maint/X.Y.x and maint/vX.Y.x, so
+# whichever remote-tracking ref exists wins (canonical v spelling first when
+# both do). When neither exists -- a new line -- the canonical maint/vX.Y.x
+# is the name to create. Reads refs/remotes, so fetch the remote first.
+maint_line_for_version() {
+    local remote="$1" version="$2" xy line
+    xy="${version%.*}"
+    for line in "maint/v${xy}.x" "maint/${xy}.x"; do
+        if git rev-parse -q --verify "refs/remotes/${remote}/${line}" >/dev/null; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done
+    printf 'maint/v%s.x\n' "$xy"
+}
+
 # The repository a remote points at. Everything reaching GitHub goes through
 # this rather than a hardcoded slug, so a rehearsal against a fork stays inside
 # the fork instead of reaching the canonical repository.

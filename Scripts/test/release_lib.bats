@@ -101,6 +101,30 @@ make_tag_repo() {
   [ "$(repo_slug_from_url 'ssh://git@github.com/zodl-inc/zodl-ios.git')" = "zodl-inc/zodl-ios" ]
 }
 
+# --- maintenance line naming ---------------------------------------------
+
+@test "maint_line_for_version matches the remote's spelling of the line" {
+  make_tag_repo
+  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/3.10.x HEAD
+  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/v3.11.x HEAD
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.10.4"
+  [ "$status" -eq 0 ]
+  [ "$output" = "maint/3.10.x" ]
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.11.2"
+  [ "$output" = "maint/v3.11.x" ]
+  # A line that exists nowhere yet is named canonically, to be created.
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.12.0"
+  [ "$output" = "maint/v3.12.x" ]
+}
+
+@test "maint_line_for_version prefers the canonical v spelling when both exist" {
+  make_tag_repo
+  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/3.10.x HEAD
+  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/v3.10.x HEAD
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.10.4"
+  [ "$output" = "maint/v3.10.x" ]
+}
+
 # --- CHANGELOG --------------------------------------------------------------
 
 write_changelog() {

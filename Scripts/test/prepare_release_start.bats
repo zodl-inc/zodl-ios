@@ -67,11 +67,23 @@ sandbox_commit() {
   # carrying both branches, after all local work, then a draft PR.
   [[ "$output" == *"would run: git push --atomic -u upstream release/0.2.0 candidate/0.2.0"* ]] || false
   [[ "$output" == *"would open a draft PR candidate/0.2.0 -> release/0.2.0"* ]] || false
+  # The plan names the merge-back line; no 0.2 line exists, so canonical v.
+  [[ "$output" == *"merge back into"*"maint/v0.2.x"* ]] || false
   # Nothing mutated: no branches, tree clean, HEAD still on main.
   [ -z "$(git status --porcelain)" ]
   [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ]
   run git rev-parse -q --verify refs/heads/release/0.2.0
   [ "$status" -ne 0 ]
+}
+
+@test "the merge-back line matches the remote's existing spelling" {
+  # The sandbox's remote is itself, so a local maint branch is what the
+  # script's own fetch turns into refs/remotes/upstream/maint/0.1.x.
+  git branch maint/0.1.x
+  run "$START" start --dry-run upstream 0.1.5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"merge back into"*"maint/0.1.x"* ]] || false
+  [[ "$output" != *"maint/v0.1.x"* ]] || false
 }
 
 @test "the empty-Unreleased guard reads the revision, not the working tree" {

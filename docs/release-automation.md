@@ -175,7 +175,9 @@ git switch release/3.8.0 &&
   git push upstream refs/tags/3.8.0      # firing linear-release.yml is the last step
 ```
 
-Then merge `release/3.8.0` into `maint/v3.8.x` and forward to `main`. Do not
+Then merge `release/3.8.0` into its maintenance line and forward to `main` —
+the script's closing message and the pull request body name the exact branch
+(`maint/v3.8.x`, or the line's existing spelling). Do not
 cherry-pick: a tag that is not reachable from a live branch stops being part of
 the history it shipped from, and the `Release Merged Back` check reports it.
 
