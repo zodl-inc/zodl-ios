@@ -58,6 +58,19 @@ mkcommit() {
   [[ "$output" == *"All 1 tagged release branches are merged back"* ]] || false
 }
 
+@test "a commit after the tag does not unmark a released branch" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  mkcommit "post-tag fix"; TIP="$SHA"
+  git update-ref refs/remotes/origin/release/3.10.2 "$TIP"
+  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/main "$BASE"
+  run "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"no release tag"* ]] || false
+  [[ "$output" == *'`release/3.10.2` (`3.10.2`) is **not** merged back into `maint/3.10.x`'* ]] || false
+}
+
 @test "non-release tags neither elect a maintenance line nor mark a release" {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"

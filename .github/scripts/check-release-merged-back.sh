@@ -10,12 +10,15 @@
 #             branches as they stand.
 #   pr-ref    the pending change; defaults to HEAD (refs/pull/N/merge in CI).
 #
-# A release/X.Y.Z branch counts as released only once a release-shaped tag
-# (X.Y.Z) points at its tip that is not older than the version in the branch
-# name. A branch prepare-release.sh has freshly cut still points at the
+# A release/X.Y.Z branch counts as released once a release-shaped tag (X.Y.Z)
+# not older than the version in the branch name is reachable from its tip --
+# reachable, not at the tip, so commits landing after the tag do not unmark
+# the branch. A branch prepare-release.sh has freshly cut reaches only the
 # PREVIOUS release's tag, so it is skipped as in-flight until its own tag
-# lands. The maintenance line comes from the tag rather than the branch name,
-# and both maint/X.Y.x and maint/vX.Y.x spellings of a line are recognised.
+# lands. A release/ branch with no version in its name is released only while
+# a release tag points at its tip. The maintenance line comes from the tag
+# rather than the branch name, and both maint/X.Y.x and maint/vX.Y.x
+# spellings of a line are recognised.
 #
 # Branches resolve under refs/remotes/$REMOTE, which defaults to origin -- what
 # CI checks out. Set REMOTE to run this against a local clone whose canonical
@@ -135,19 +138,31 @@ while IFS= read -r rel; do
   # Only release-shaped tags mark a release: the repo also multi-tags commits
   # with build tags (0.0.1-42-mainnet) and the odd pre-release, and those must
   # not elect a maintenance line. Of several, the newest wins.
-  tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"
-  if [ -z "$tag" ]; then
-    say ":grey_question: \`${rel}\` has no release tag at its tip; not a released branch, skipped."
-    continue
-  fi
-
-  # A branch prepare-release.sh has cut but not yet released still points at
-  # the previous release's tag: every release tag at its tip is older than the
-  # version in its own name. It has released nothing yet, so skip it.
   branch_ver="${rel#release/}"
   if printf '%s\n' "$branch_ver" | grep -qE "$RELEASE_TAG_RE"; then
+    # A version-named branch is released once its release tag is reachable
+    # from the tip. Reachable, not at the tip: a commit landing after the tag
+    # must not unmark the branch -- an unreachable tag behind a moved tip is
+    # exactly the state this check exists to catch.
+    tag="$(release_tags_merged_into "$ref" | tail -1)"
+    if [ -z "$tag" ]; then
+      say ":grey_question: \`${rel}\` has no release tag in its history; not yet released, skipped."
+      continue
+    fi
+    # A branch prepare-release.sh has cut but not yet released reaches only
+    # the previous release's tag, older than the version in its own name. It
+    # has released nothing yet, so skip it.
     if [ "$tag" != "$branch_ver" ] && version_le "$tag" "$branch_ver"; then
       say ":grey_question: \`${rel}\` is freshly cut from \`${tag}\` and not yet released; skipped."
+      continue
+    fi
+  else
+    # A branch with no version in its name has no tag of its own to wait for;
+    # only a release tag at its tip marks it released. Reachability would let
+    # any branch cut above a release inherit that release's obligation.
+    tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"
+    if [ -z "$tag" ]; then
+      say ":grey_question: \`${rel}\` has no release tag at its tip; not a released branch, skipped."
       continue
     fi
   fi
