@@ -14,20 +14,20 @@ setup() {
 @test "--help exits 0 and lists the subcommands" {
   run "$PREPARE" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh <subcommand>"* ]]
-  [[ "$output" == *"start"* ]]
+  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh <subcommand>"* ]] || false
+  [[ "$output" == *"start"* ]] || false
 }
 
 @test "no subcommand exits non-zero with usage" {
   run "$PREPARE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh <subcommand>"* ]]
+  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh <subcommand>"* ]] || false
 }
 
 @test "an unknown subcommand is named in the error" {
   run "$PREPARE" finish upstream 3.11.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown subcommand 'finish'"* ]]
+  [[ "$output" == *"unknown subcommand 'finish'"* ]] || false
 }
 
 # --- start ------------------------------------------------------------------
@@ -35,34 +35,34 @@ setup() {
 @test "start --help exits 0 and documents the arguments" {
   run "$PREPARE" start --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh start"* ]]
-  [[ "$output" == *"<remote>"* ]]
-  [[ "$output" == *"--previous"* ]]
+  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh start"* ]] || false
+  [[ "$output" == *"<remote>"* ]] || false
+  [[ "$output" == *"--previous"* ]] || false
 }
 
 @test "start with no arguments asks for a remote and a version" {
   run "$PREPARE" start
   [ "$status" -ne 0 ]
-  [[ "$output" == *"start needs a remote and a version"* ]]
+  [[ "$output" == *"start needs a remote and a version"* ]] || false
 }
 
 @test "start with only a remote asks for a version" {
   run "$PREPARE" start upstream
   [ "$status" -ne 0 ]
-  [[ "$output" == *"start needs a remote and a version"* ]]
+  [[ "$output" == *"start needs a remote and a version"* ]] || false
 }
 
 @test "an unknown option is named in the error" {
   run "$PREPARE" start --bogus x upstream 3.11.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option '--bogus'"* ]]
+  [[ "$output" == *"unknown option '--bogus'"* ]] || false
 }
 
 @test "a version that is not X.Y.Z is rejected" {
   for bad in 3.11 3.11.0-rc.1 three 3.11.0.1; do
     run "$PREPARE" start upstream "$bad"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"is not in X.Y.Z form"* ]]
+    [[ "$output" == *"is not in X.Y.Z form"* ]] || false
   done
 }
 
@@ -74,8 +74,8 @@ setup() {
 @test "a leading v is stripped rather than rejected" {
   run "$PREPARE" start --dry-run bats-no-such-remote v3.11.0
   [ "$status" -ne 0 ]
-  [[ "$output" != *"is not in X.Y.Z form"* ]]
-  [[ "$output" == *"Checking preconditions"* ]]
+  [[ "$output" != *"is not in X.Y.Z form"* ]] || false
+  [[ "$output" == *"Checking preconditions"* ]] || false
 }
 
 # Confirm the rejection message names the value actually checked, not the
@@ -83,33 +83,33 @@ setup() {
 @test "a rejected version is reported without its stripped v" {
   run "$PREPARE" start upstream v3.11
   [ "$status" -ne 0 ]
-  [[ "$output" == *"version '3.11' is not in X.Y.Z form"* ]]
+  [[ "$output" == *"version '3.11' is not in X.Y.Z form"* ]] || false
 }
 
 @test "a non-integer build number is rejected" {
   run "$PREPARE" start --build one upstream 3.11.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"build 'one' is not an integer"* ]]
+  [[ "$output" == *"build 'one' is not an integer"* ]] || false
 }
 
 @test "an option missing its value is rejected rather than swallowing the next argument" {
   run "$PREPARE" start --issue
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--issue needs an issue number"* ]]
+  [[ "$output" == *"--issue needs an issue number"* ]] || false
 
   run "$PREPARE" start --previous
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--previous needs a tag"* ]]
+  [[ "$output" == *"--previous needs a tag"* ]] || false
 
   run "$PREPARE" start --build
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--build needs a build number"* ]]
+  [[ "$output" == *"--build needs a build number"* ]] || false
 }
 
 @test "a fourth positional argument is rejected" {
   run "$PREPARE" start bats-no-such-remote 3.11.0 HEAD stray
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unexpected argument 'stray'"* ]]
+  [[ "$output" == *"unexpected argument 'stray'"* ]] || false
 }
 
 @test "options after the positional arguments are parsed, not dropped" {
@@ -117,15 +117,15 @@ setup() {
   # loop silently discarded everything past the third positional.
   run "$PREPARE" start bats-no-such-remote 3.11.0 --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh start"* ]]
+  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh start"* ]] || false
 
   run "$PREPARE" start bats-no-such-remote 3.11.0 HEAD --bogus
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option '--bogus'"* ]]
+  [[ "$output" == *"unknown option '--bogus'"* ]] || false
 }
 
 @test "a value option after the positionals still requires its value" {
   run "$PREPARE" start bats-no-such-remote 3.11.0 --previous
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--previous needs a tag"* ]]
+  [[ "$output" == *"--previous needs a tag"* ]] || false
 }

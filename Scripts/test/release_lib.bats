@@ -181,8 +181,8 @@ EOF
   run promote_changelog "$FIXTURE" 3.11.0 2026-08-27
   [ "$status" -eq 0 ]
   run cat "$FIXTURE"
-  [[ "$output" == *"## [Unreleased]"* ]]
-  [[ "$output" == *"## [3.11.0] - 2026-08-27"* ]]
+  [[ "$output" == *"## [Unreleased]"* ]] || false
+  [[ "$output" == *"## [3.11.0] - 2026-08-27"* ]] || false
   # The entries stay where they are; only a heading is inserted above them.
   [ "$(grep -n '## \[3.11.0\]' "$FIXTURE" | cut -d: -f1)" -lt \
     "$(grep -n 'MOB-1' "$FIXTURE" | cut -d: -f1)" ]
@@ -277,8 +277,8 @@ EOF
 
   DRY_RUN=true
   run run_cmd echo hello
-  [[ "$output" == *"would run: echo hello"* ]]
-  [[ "$output" != "hello" ]]
+  [[ "$output" == *"would run: echo hello"* ]] || false
+  [[ "$output" != "hello" ]] || false
 }
 
 # The library must not define a function named `run`: bats provides its own,
@@ -296,9 +296,9 @@ EOF
   DRY_RUN=true
   run die_unless_dry_run "not fatal here"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: not fatal here"* ]]
+  [[ "$output" == *"warning: not fatal here"* ]] || false
 
   run bash -c ". '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; DRY_RUN=false; die_unless_dry_run 'fatal here'"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"error: fatal here"* ]]
+  [[ "$output" == *"error: fatal here"* ]] || false
 }

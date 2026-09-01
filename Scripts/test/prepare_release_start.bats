@@ -36,8 +36,8 @@ sandbox_commit() {
   git -c user.name=t -c user.email=t@t commit -q --allow-empty -m ahead
   run "$START" start --dry-run upstream 0.2.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"newest release tag is 0.1.1"* ]]
-  [[ "$output" == *"not reachable"* ]]
+  [[ "$output" == *"newest release tag is 0.1.1"* ]] || false
+  [[ "$output" == *"not reachable"* ]] || false
 }
 
 @test "--previous must be an ancestor of the revision" {
@@ -48,14 +48,14 @@ sandbox_commit() {
   git -c user.name=t -c user.email=t@t commit -q --allow-empty -m ahead
   run "$START" start --dry-run --previous 0.1.1 upstream 0.2.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--previous 0.1.1 is not an ancestor of HEAD"* ]]
+  [[ "$output" == *"--previous 0.1.1 is not an ancestor of HEAD"* ]] || false
 }
 
 @test "a clean dry run rehearses the whole cut and changes nothing" {
   run "$START" start --dry-run upstream 0.2.0
   [ "$status" -eq 0 ]
-  [[ "$output" == *"newest release reachable from HEAD: 0.1.0"* ]]
-  [[ "$output" == *"Dry run: nothing was changed"* ]]
+  [[ "$output" == *"newest release reachable from HEAD: 0.1.0"* ]] || false
+  [[ "$output" == *"Dry run: nothing was changed"* ]] || false
   # Nothing mutated: no branches, tree clean, HEAD still on main.
   [ -z "$(git status --porcelain)" ]
   [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ]
@@ -73,7 +73,7 @@ sandbox_commit() {
   sandbox_commit "entries again"
   run "$START" start --dry-run upstream 0.2.0 "$EMPTY_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Unreleased section of CHANGELOG.md at ${EMPTY_SHA} has no entries"* ]]
+  [[ "$output" == *"Unreleased section of CHANGELOG.md at ${EMPTY_SHA} has no entries"* ]] || false
 }
 
 @test "the existing-heading guard reads the revision, not the working tree" {
@@ -86,5 +86,5 @@ sandbox_commit() {
   sandbox_commit "heading gone"
   run "$START" start --dry-run upstream 0.2.0 "$HAS_SHA"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"already carries a heading for 0.2.0"* ]]
+  [[ "$output" == *"already carries a heading for 0.2.0"* ]] || false
 }
