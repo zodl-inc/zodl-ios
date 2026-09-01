@@ -18330,6 +18330,105 @@
         }
       }
     },
+    "settings.recoverDelegation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recover Poll Delegation"
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.failed.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The preserved polling database could not be read. Nothing was changed. Please try again, or send us feedback if it keeps happening."
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.failed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could Not Complete Recovery"
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.noSnapshot.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No preserved copy of the polling database was found on this device, so there is nothing to recover from."
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.noSnapshot.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to Check"
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.nothing.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your polls are intact. No delegation was replaced, so there is nothing to restore."
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.nothing.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to Recover"
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.recovered.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored the original delegation for %lld voting bundle(s) across %lld poll(s). Reopen the poll to continue voting in it."
+          }
+        }
+      }
+    },
+    "settings.recoverDelegation.alert.recovered.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegation Recovered"
+          }
+        }
+      }
+    },
     "settings.recoveryPhrase" : {
       "extractionState" : "manual",
       "localizations" : {

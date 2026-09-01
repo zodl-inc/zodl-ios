@@ -1,6 +1,18 @@
 import SwiftUI
 import ComposableArchitecture
 
+
+/// Whether "Send Us Feedback" still needs its separator.
+///
+/// It is the last row only when the voting build has not added the delegation
+/// recovery row beneath it. Hoisted to file scope because `#if` is not valid
+/// inside an argument list.
+#if VOTING_ENABLED
+private let feedbackRowHasDivider = true
+#else
+private let feedbackRowHasDivider = false
+#endif
+
 struct SettingsView: View {
     @Environment(\.colorScheme) var colorScheme
     
@@ -67,10 +79,25 @@ struct SettingsView: View {
                             ActionRow(
                                 icon: Asset.Assets.Icons.messageSmile.image,
                                 title: String(localizable: .settingsFeedback),
-                                divider: false
+                                divider: feedbackRowHasDivider
                             ) {
                                 store.send(.sendUsFeedbackTapped)
                             }
+
+                            #if VOTING_ENABLED
+                            // Reads the preserved and live voting databases as
+                            // bytes and re-escrows any delegation an older
+                            // build replaced. Never opens them through SQLite:
+                            // that would checkpoint the log it reads from.
+                            ActionRow(
+                                icon: Asset.Assets.Icons.magicWand.image,
+                                title: String(localizable: .settingsRecoverDelegation),
+                                divider: false
+                            ) {
+                                store.send(.recoverDelegationTapped)
+                            }
+                            .disabled(store.isRecoveringDelegation)
+                            #endif
                         }
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Asset.Colors.background.color)
@@ -106,6 +133,12 @@ struct SettingsView: View {
                 .applyScreenBackground()
                 .zashiBack() { store.send(.backToHomeTapped) }
                 .screenTitle(String(localizable: .settingsTitle))
+                #if VOTING_ENABLED
+                .alert($store.scope(
+                    state: \.delegationRecoveryAlert,
+                    action: \.delegationRecoveryAlert
+                ))
+                #endif
             } destination: { store in
                 switch store.case {
                 case let .about(store):
