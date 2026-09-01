@@ -3,8 +3,11 @@
 # cherry-picked back leaves its tag unreachable from any live branch, so the
 # released commit stops being part of the history it shipped from.
 #
-# Advisory only: the check step carries continue-on-error, so findings never
-# block. Read the detail in the run summary.
+# Advisory only for findings: the check step maps the script's findings exit
+# (1) to success, so findings never block -- read them in the run summary.
+# An infrastructure failure (exit 2: refs unreadable, script broken) does
+# fail the job, because a check that could not run must not pass as a green
+# run that checked nothing.
 #
 # Only missing from its OWN maint line fails; not having reached main yet is a
 # warning, since the merge-forward jobs already track that.
@@ -51,10 +54,17 @@ jobs:
           persist-credentials: false
       - name: Check release branches
         timeout-minutes: 5
-        # Advisory: findings must never block a PR -- but only findings. On
-        # the job this would also swallow a broken checkout or a fetch
-        # failure, leaving a green run that checked nothing.
-        continue-on-error: true
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: ./.github/scripts/check-release-merged-back.sh "${BASE_REF}"
+        # Findings (exit 1) are advisory and map to success -- read them in
+        # the run summary. Anything else non-zero means the check itself
+        # broke, and must fail the job rather than pass as a green run that
+        # checked nothing. (continue-on-error would swallow both alike.)
+        run: |
+          rc=0
+          ./.github/scripts/check-release-merged-back.sh "${BASE_REF}" || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "advisory findings reported; see the run summary"
+            exit 0
+          fi
+          exit "$rc"

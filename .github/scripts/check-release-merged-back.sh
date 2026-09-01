@@ -21,7 +21,10 @@
 # CI checks out. Set REMOTE to run this against a local clone whose canonical
 # remote has another name, and run `git fetch` first.
 #
-# Exits 1 when a tagged release is missing from a branch it should be in.
+# Exit codes: 0 = every checked branch is merged back; 1 = advisory findings
+# (a tagged release missing from a branch it should be in); 2 = the check
+# could not run at all -- refs unreadable, git failing -- which callers must
+# not report as a clean result.
 
 set -euo pipefail
 
@@ -41,20 +44,53 @@ say() {
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
 }
 
+# An infrastructure failure: the check could not run. Distinct from findings
+# (exit 1) so a caller that treats findings as advisory does not also
+# swallow a broken run as green.
+infra_fail() {
+  say ":stop_sign: the merged-back check could not run: $1"
+  echo "error: $1" >&2
+  exit 2
+}
+
+# Is $1 an ancestor of $2? Status 1 means genuinely not an ancestor; anything
+# above 1 means git could not answer (an unresolvable ref, a broken repo),
+# which must not be mistaken for a finding.
+in_branch() {
+  local rc=0
+  git merge-base --is-ancestor "$1" "$2" || rc=$?
+  [ "$rc" -le 1 ] || infra_fail "git merge-base --is-ancestor '$1' '$2' failed (exit ${rc})"
+  return "$rc"
+}
+
+# The pending change, resolved once up front: a bad ref argument is an
+# infrastructure problem, not a property of any release branch.
+PR_SHA=''
+if [ -n "$PR_BASE" ]; then
+  if ! PR_SHA="$(git rev-parse -q --verify "${PR_REF}^{commit}")"; then
+    infra_fail "cannot resolve pr-ref '${PR_REF}'"
+  fi
+fi
+
 # Maintenance lines in version order, then main. The repo has carried both
 # maint/X.Y.x and maint/vX.Y.x spellings, so every maint/* branch is collected
 # and ordered by the version it carries, v or no v.
+# Enumerated through a checked substitution: a for-each-ref failure must be a
+# loud infrastructure error, not an empty chain.
+if ! maint_refs="$(git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/maint/*")"; then
+  infra_fail "listing refs/remotes/${REMOTE}/maint/* failed"
+fi
+sorted_maint="$(printf '%s\n' "$maint_refs" | while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  key="${b#maint/}"
+  key="${key#v}"
+  printf '%s %s\n' "$key" "$b"
+done | sort -k1,1 -V | cut -d' ' -f2)"
 CHAIN=()
 while IFS= read -r ref; do
+  [ -n "$ref" ] || continue
   CHAIN+=("$ref")
-done < <(
-  git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/maint/*" |
-    while IFS= read -r b; do
-      key="${b#maint/}"
-      key="${key#v}"
-      printf '%s %s\n' "$key" "$b"
-    done | sort -k1,1 -V | cut -d' ' -f2
-)
+done <<< "$sorted_maint"
 CHAIN+=('main')
 
 # The chain entry that is the maintenance line for X.Y ($1), whichever
@@ -76,11 +112,15 @@ line_for() {
 # Resolve a chain branch, substituting the pending change when it targets it.
 resolve() {
   if [ -n "$PR_BASE" ] && [ "$1" = "$PR_BASE" ]; then
-    git rev-parse "$PR_REF"
+    printf '%s\n' "$PR_SHA"
   else
     printf '%s/%s\n' "$REMOTE" "$1"
   fi
 }
+
+if ! release_refs="$(git for-each-ref --sort=v:refname --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/release/*")"; then
+  infra_fail "listing refs/remotes/${REMOTE}/release/* failed"
+fi
 
 say '## Release branches merged back'
 say ''
@@ -139,12 +179,12 @@ while IFS= read -r rel; do
 
   lagging=()
   for b in ${downstream[@]+"${downstream[@]}"}; do
-    if ! git merge-base --is-ancestor "$ref" "$(resolve "$b")"; then
+    if ! in_branch "$ref" "$(resolve "$b")"; then
       lagging+=("$b")
     fi
   done
 
-  if ! git merge-base --is-ancestor "$ref" "$(resolve "$own")"; then
+  if ! in_branch "$ref" "$(resolve "$own")"; then
     failed=1
     say ":x: \`${rel}\` (\`${tag}\`) is **not** merged back into \`${own}\`."
   elif [ "${#lagging[@]}" -ne 0 ]; then
@@ -153,10 +193,7 @@ while IFS= read -r rel; do
   else
     say ":white_check_mark: \`${rel}\` (\`${tag}\`) is in \`${own}\` and downstream."
   fi
-done < <(
-  git for-each-ref --sort=v:refname --format='%(refname:lstrip=3)' \
-    "refs/remotes/${REMOTE}/release/*"
-)
+done <<< "$release_refs"
 
 say ''
 

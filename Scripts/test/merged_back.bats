@@ -102,3 +102,37 @@ mkcommit() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'is in `maint/3.9.x` but has not reached maint/v3.10.x, maint/3.11.x, main yet'* ]] || false
 }
+
+@test "a git failure is an infrastructure error, not a clean run" {
+  mkdir -p "$BATS_TEST_TMPDIR/notarepo"
+  cd "$BATS_TEST_TMPDIR/notarepo"
+  run "$CHECK"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"could not run"* ]] || false
+  [[ "$output" != *"No tagged release branches to check"* ]] || false
+}
+
+@test "an unresolvable chain ref is an infrastructure error, not a finding" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  git update-ref refs/remotes/origin/maint/3.10.x "$REL"
+  # origin/main deliberately absent: the chain still ends in main, and the
+  # old code reported this as a confident (false) verdict about main.
+  run "$CHECK"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"could not run"* ]] || false
+  [[ "$output" != *"has not reached"* ]] || false
+  [[ "$output" != *"is **not** merged back"* ]] || false
+}
+
+@test "an unresolvable pr-ref is an infrastructure error" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  git update-ref refs/remotes/origin/maint/3.10.x "$REL"
+  git update-ref refs/remotes/origin/main "$REL"
+  run "$CHECK" maint/3.10.x no-such-ref
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"cannot resolve pr-ref"* ]] || false
+}
