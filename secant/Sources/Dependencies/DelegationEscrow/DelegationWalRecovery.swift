@@ -535,6 +535,10 @@ enum DelegationWalRecovery {
             guard let (payloadLength, lengthBytes) = varint(page, cellOffset) else { continue }
             guard let (_, rowidBytes) = varint(page, cellOffset + lengthBytes) else { continue }
 
+            // Same trap as the record header: a varint payload length can
+            // exceed `Int.max`, and a cell claiming one is not ours.
+            guard payloadLength <= UInt64(Int.max) else { continue }
+
             let body = cellOffset + lengthBytes + rowidBytes
             let local = localPayloadSize(payloadLength: Int(payloadLength), usable: usable)
             let end = min(body + local, page.count)
@@ -571,8 +575,12 @@ enum DelegationWalRecovery {
     /// columns we need sit near the front, so a missing tail is not fatal.
     static func decodeRecord(_ payload: [UInt8]) -> [RecordValue]? {
         guard let (headerLength, headerBytes) = varint(payload, 0) else { return nil }
+        // Compare before converting. A varint carries up to 64 bits, so a
+        // corrupt header length exceeds `Int.max` and `Int(_:)` traps on it.
+        // These bytes come from released space and are arbitrary.
+        guard headerLength <= UInt64(payload.count) else { return nil }
         let headerEnd = Int(headerLength)
-        guard headerEnd >= headerBytes, headerEnd <= payload.count else { return nil }
+        guard headerEnd >= headerBytes else { return nil }
 
         var serialTypes: [UInt64] = []
         var cursor = headerBytes
@@ -586,9 +594,19 @@ enum DelegationWalRecovery {
         var body = headerEnd
         for serial in serialTypes {
             let width = serialWidth(serial)
-            guard body + width <= payload.count else {
+            // Measure the room left rather than summing. `width` comes from
+            // the record header, so on carved bytes it can be `Int.max`, and
+            // `body + width` would overflow and trap.
+            //
+            // `body` is only ever advanced by a width that fitted, or pinned
+            // to the end, so `payload.count - body` cannot go negative.
+            let remaining = payload.count - body
+            guard width <= remaining else {
+                // The tail is out of reach. Pin `body` rather than advancing
+                // it past the end, so the remaining columns read as
+                // unavailable without the addition ever overflowing.
                 values.append(.unavailable)
-                body += width
+                body = payload.count
                 continue
             }
             values.append(serialValue(serial, Array(payload[body..<(body + width)])))
@@ -626,7 +644,13 @@ enum DelegationWalRecovery {
         case 1, 2, 3, 4: return Int(serial)
         case 5: return 6
         case 6, 7: return 8
-        default: return Int((serial - 12) / 2)
+        default:
+            // Fits `Int64` by a margin of six for the largest serial a varint
+            // can encode, which is too close to rely on. Saturate instead: any
+            // width past the payload is unusable anyway, and the caller treats
+            // it as an unavailable column.
+            let width = (serial - Format.firstVariableLengthSerial) / 2
+            return width > UInt64(Int.max) ? Int.max : Int(width)
         }
     }
 
