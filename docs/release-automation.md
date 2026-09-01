@@ -65,7 +65,7 @@ brew install bats-core
 ```
 
 `bats-core` is "Bash Automated Testing System" — it provides the `bats` command
-used to run `Scripts/test/release_args.bats`. It is **only** needed to run those
+used to run the suites under `Scripts/test/`. It is **only** needed to run those
 tests; you do not need it to build or ship.
 
 ### B. Secrets and inputs (per machine, but not committed)
@@ -148,7 +148,14 @@ pull request — then rebuild with the next build number:
 ./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --version 3.8.0 --build 2
 ```
 
-**4. Ship to the App Store** when you're happy:
+**4. Update What's New** before the App Store build. The App Store "What's
+New" copy does **not** come from `CHANGELOG.md` — it lives in
+`secant/Resources/WhatsNew/whatsNew*.json`: run `/update-whatsnew` for 3.8.0
+and commit the result on `candidate/3.8.0`. `--submit-review` refuses in
+preflight when a localization has no entry for the version, so a missing entry
+blocks the submission — with `--ref`, before the build even starts.
+
+**5. Ship to the App Store** when you're happy:
 
 ```bash
 ./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1
@@ -157,12 +164,15 @@ pull request — then rebuild with the next build number:
 `appstore` is its own App Store Connect app, so its build numbers are a separate
 sequence — start from wherever that app left off.
 
-**5. Finish the release.** Merge the pull request, then tag and merge back:
+**6. Finish the release.** Mark the pull request ready for review and merge it,
+then tag and merge back — as a single chain, so a failed switch or pull cannot
+put the tag on the wrong branch:
 
 ```bash
-git switch release/3.8.0 && git pull --ff-only upstream release/3.8.0
-git tag -s 3.8.0 -m "Release 3.8.0"
-git push upstream refs/tags/3.8.0        # this fires linear-release.yml
+git switch release/3.8.0 &&
+  git pull --ff-only upstream release/3.8.0 &&
+  git tag -s 3.8.0 -m "Release 3.8.0" &&
+  git push upstream refs/tags/3.8.0      # firing linear-release.yml is the last step
 ```
 
 Then merge `release/3.8.0` into `maint/v3.8.x` and forward to `main`. Do not
@@ -175,7 +185,7 @@ After the build is uploaded and App Store Connect has processed it, you can subm
 
 With `--ref` (build in one go, then submit):
 ```bash
-./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1 --submit-review
+./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1 --submit-review
 ```
 
 Without `--ref` (submit an already-uploaded build):
@@ -202,7 +212,9 @@ two branches a release runs on and opens the pull request between them:
 - **`candidate/X.Y.Z`** starts at the revision being released (`HEAD` by
   default), and gets the CHANGELOG promotion and the version bump on top.
 
-The pull request is `candidate/X.Y.Z → release/X.Y.Z`. Basing it on the previous
+The pull request is `candidate/X.Y.Z → release/X.Y.Z`, opened as a **draft**;
+marking it ready for review is part of declaring the release final (and is when
+the E2E smoke suite runs, once). Basing it on the previous
 tag is the whole point: **its diff is exactly what users receive relative to the
 last release**, rather than the intervening development history. A release
 branch cut from `main` would produce a diff against nothing anyone shipped.
@@ -212,19 +224,24 @@ build and what reviewers read. `release/X.Y.Z` is not touched again until the
 pull request merges — which is what declares the release final.
 
 The script does, in order: check the tree, remote, `gh` login and version tool;
-fetch tags; find the previous release tag reachable from the revision; refuse if
+fetch tags; find the previous release tag reachable from the revision — refusing
+when a newer release tag exists that the revision does not contain; refuse if
 either branch already exists locally or on the remote; refuse if the CHANGELOG's
-`## [Unreleased]` section is empty or already carries a heading for this version;
-create and push `release/X.Y.Z`; create `candidate/X.Y.Z`; promote the CHANGELOG;
-set `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` across every non-test
-target; push; open the pull request.
+`## [Unreleased]` section *at the revision* is empty or already carries a
+heading for this version. Only then does it do the local work — create
+`release/X.Y.Z` and `candidate/X.Y.Z`, promote the CHANGELOG, set
+`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` across every non-test
+target — and finish by pushing both branches in a single atomic push and opening
+the draft pull request. A failure anywhere before that push leaves the remote
+untouched.
 
 ```
 Scripts/prepare-release.sh start [options] <remote> <version> [<revision>]
-  --issue <N>       release tracking issue; the PR body closes it
+  --issue <N>       release tracking issue, referenced from the PR body
   --build <N>       build number to record (default: 1)
   --previous <tag>  base the release branch on this tag instead of the detected one
   --dry-run         print what would happen and change nothing
+  -h, --help
 ```
 
 **The version bump needs macOS.** It runs
@@ -234,9 +251,11 @@ rather than refusing, so the plan can be rehearsed anywhere.
 
 `--previous` is for the case where the newest tag reachable from the revision is
 not the release you are following — a patch cut from a maintenance line while a
-newer version has already shipped from `main`.
+newer version has already shipped from `main`. The tag must be an **ancestor**
+of the revision: cutting a patch requires that line's previous release to have
+been merged back into it first.
 
-Tagging and the back-merge are steps 5 above, done by hand. The
+Tagging and the back-merge are step 6 above, done by hand. The
 `Release Merged Back` check (`.github/workflows/release-merged-back.yml`) runs on
 every pull request into a maintenance branch or `main` and reports any tagged
 release branch that has not been merged back into its line. It is advisory and
@@ -252,11 +271,12 @@ Add `--dry-run` to run every preflight check and print the reconciliation summar
 **without building** — the cheap way to confirm your intent is correct:
 
 ```bash
-./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 1 --dry-run
+./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 1 --dry-run
 ```
 
 The preflight blocks the build if: the version doesn't match the project's
-`MARKETING_VERSION` or the `release/X.Y.Z` branch; the build number duplicates or
+`MARKETING_VERSION` or the version in the `release/X.Y.Z` / `candidate/X.Y.Z`
+branch name; the build number duplicates or
 is lower than the variant's latest on App Store Connect; the ref isn't on
 `origin`; `PartnerKeys.plist` is missing/invalid; Xcode doesn't match
 `.xcode-version`; or no distribution signing identity is present. It *warns* (but
@@ -403,7 +423,7 @@ Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n> [opti
 Scripts/bump.sh --version <X.Y.Z> --build <n>
 
 Scripts/prepare-release.sh start [options] <remote> <version> [<revision>]
-  --issue <N>       release tracking issue; the PR body closes it
+  --issue <N>       release tracking issue, referenced from the PR body
   --build <N>       build number to record (default: 1)
   --previous <tag>  base the release branch on this tag instead of the detected one
   --dry-run         print what would happen and change nothing
@@ -418,7 +438,7 @@ Use `bump.sh` only outside a release cut.
 
 | Message | Fix |
 |---|---|
-| `version … does not match project MARKETING_VERSION …` | Run `bump` first, or pass the version the project is actually at. |
+| `version … does not match project MARKETING_VERSION …` | During a release cycle you are probably building from `release/X.Y.Z`, which is still the *previous* release — pass `--ref candidate/X.Y.Z`. Outside a cut, run `bump` or pass the version the project is actually at. |
 | `build N already exists` / `is lower than the latest build` | Pick a higher number — check that variant's app in App Store Connect / TestFlight. With `--submit-review`, you can instead drop `--ref` to submit that already-uploaded build. |
 | `ref is not on origin` | `git push` the branch or commit first. |
 | `Could not resolve ref …` | The branch/tag/commit isn't on `origin` or locally — push or fetch it. |
@@ -443,10 +463,13 @@ validation, and the full reconciliation). The app's own tests are the Swift
 `zodlTests` suite and are unrelated.
 
 The `Scripts/test/*.bats` files are the same thing for the shell side:
-`release_args.bats` and `prepare_release_args.bats` cover argument parsing, and
+`release_args.bats` and `prepare_release_args.bats` cover argument parsing,
+`prepare_release_start.bats` covers the start flow against sandbox repositories,
 `release_lib.bats` covers the text transforms and predicates in
 `Scripts/lib/release-lib.sh` — version ordering, the CHANGELOG promotion, remote
-URL parsing. None of them need a network, a git remote, or a GitHub token.
+URL parsing — and `merged_back.bats` covers the Release Merged Back check
+against fixture repositories. None of them need a network, a git remote, or a
+GitHub token.
 
 These tests are **not run automatically** today — there is no CI hook for them yet
 (a possible future addition). Run them by hand:
