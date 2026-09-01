@@ -51,8 +51,7 @@ Arguments:
               (default: current HEAD)
 
 Options:
-  --issue <N>       release tracking issue; the PR body gets a closing keyword
-                    for it.
+  --issue <N>       release tracking issue, referenced from the PR body.
   --build <N>       build number to record alongside the version (default: 1).
                     Build numbers are a per-variant App Store Connect sequence,
                     and Scripts/release.sh passes its own --build at archive
@@ -72,7 +71,7 @@ EOF
 start_pr_body() {
     local version="$1" prev_tag="$2" issue="$3"
     if [ -n "$issue" ]; then
-        printf 'Closes #%s\n\n' "$issue"
+        printf 'Release tracking issue: #%s.\n\n' "$issue"
     fi
     cat <<EOF
 Release \`${version}\`, following \`${prev_tag}\`.
@@ -95,10 +94,11 @@ TestFlight and App Store builds for this release are made from
     ./Scripts/release.sh --variant internal-testnet --ref candidate/${version} \\
         --version ${version} --build <n>
 
-Fixes found in testing land on \`candidate/${version}\` and appear here. Merging
-this pull request is what declares the release final; tag \`release/${version}\`
-afterwards, then merge it back into \`maint/v${version%.*}.x\` and forward to
-\`main\` so the tag stays reachable.
+Fixes found in testing land on \`candidate/${version}\` and appear here. This
+pull request stays a **draft** while builds are in progress; marking it ready
+for review is part of declaring the release final, and merging it is what makes
+it final. Tag \`release/${version}\` afterwards, then merge it back into
+\`maint/v${version%.*}.x\` and forward to \`main\` so the tag stays reachable.
 EOF
 }
 
@@ -206,18 +206,21 @@ cmd_start() {
     for b in "$release_branch" "$candidate_branch"; do
         if git rev-parse -q --verify "refs/heads/${b}" >/dev/null; then
             die "branch ${b} already exists locally." \
-                "This usually means a previous 'start' for ${version} got partway through." \
-                "Delete ${release_branch} and ${candidate_branch} locally and re-run, or, if" \
-                "both are already pushed to ${remote} and only the pull request is missing," \
-                "open it by hand (see start_pr_body for the body text)."
+                "This usually means a previous 'start' for ${version} stopped before its" \
+                "single push near the end -- nothing is on ${remote} until then. Delete the" \
+                "local leftovers and re-run:" \
+                "" \
+                "  git branch -D ${release_branch} ${candidate_branch}"
         fi
-        # Checked separately from the local branches: a run that pushed and then
-        # failed leaves the branch on the remote whether or not this checkout
-        # still has it, and re-running would then die at the push instead of here.
+        # Checked separately from the local branches: this checkout no longer
+        # having them says nothing about the remote, where a completed (or
+        # merely PR-less) run leaves both.
         if git ls-remote --exit-code --heads "$remote" "refs/heads/${b}" >/dev/null 2>&1; then
             die "branch ${b} already exists on ${remote}." \
-                "A previous 'start' for ${version} pushed it. Delete it there, or finish" \
-                "that attempt by hand rather than starting a second one."
+                "A previous 'start' for ${version} pushed it -- the branches are pushed" \
+                "together, so its twin is there too. If only the pull request is missing," \
+                "open it by hand (see start_pr_body for the body text); otherwise delete" \
+                "both branches on ${remote} and re-run."
         fi
     done
 
@@ -246,12 +249,11 @@ cmd_start() {
     echo "  the Unreleased section has entries to promote"
 
     echo
-    echo "  ${release_branch}    <- ${prev_tag}  (PR base, pushed to ${remote})"
+    echo "  ${release_branch}    <- ${prev_tag}  (PR base)"
     echo "  ${candidate_branch}  <- ${revision}  (release prep goes here)"
 
     step "Creating ${release_branch} from ${prev_tag}"
     run_cmd git branch "$release_branch" "refs/tags/${prev_tag}"
-    run_cmd git push "$remote" "${release_branch}:${release_branch}"
 
     step "Creating ${candidate_branch} from ${revision}"
     run_cmd git switch -c "$candidate_branch" "$rev_sha"
@@ -262,7 +264,9 @@ cmd_start() {
         echo "  would insert '## [${version}] - ${today}' below '## [Unreleased]'"
     else
         if ! promote_changelog CHANGELOG.md "$version" "$today"; then
-            die "CHANGELOG.md has no '## [Unreleased]' heading to promote."
+            die "CHANGELOG.md has no '## [Unreleased]' heading to promote." \
+                "Nothing has been pushed. To retry: git switch -, then" \
+                "git branch -D ${release_branch} ${candidate_branch}, fix, and re-run."
         fi
         echo "  ## [${version}] - ${today}"
     fi
@@ -272,42 +276,61 @@ cmd_start() {
     step "Recording version ${version} (${build})"
     if [ "$DRY_RUN" = "true" ]; then
         echo "  would set MARKETING_VERSION and CURRENT_PROJECT_VERSION for every non-test target"
-    elif ! set_project_version "$version" "$build"; then
-        # Leave the tree as the CHANGELOG commit left it, so a re-run after
-        # fixing the project starts from a clean tree rather than dying at
-        # require_clean_tree.
-        git checkout -- "$PBXPROJ"
-        die "${SET_VERSION_TOOL} failed; ${PBXPROJ} is unchanged." \
-            "Its own message above says which target or key is at fault."
+    else
+        if ! set_project_version "$version" "$build"; then
+            # Leave the tree as the CHANGELOG commit left it, so the re-run
+            # described below starts clean.
+            git checkout -- "$PBXPROJ"
+            die "${SET_VERSION_TOOL} failed; ${PBXPROJ} is unchanged." \
+                "Its own message above says which target or key is at fault." \
+                "Nothing has been pushed. To retry: git switch -, then" \
+                "git branch -D ${release_branch} ${candidate_branch}, fix, and re-run."
+        fi
+        if git diff --quiet -- "$PBXPROJ"; then
+            # set_version.py rewrites unconditionally and reports success even
+            # when every value already matched; committing nothing would kill
+            # the script with only git's own "nothing to commit" as a clue.
+            die "the project is already at ${version} (${build}); there is no bump to commit." \
+                "The revision already carries this release's version -- re-releasing a prior" \
+                "candidate's content needs a fresh version or build number." \
+                "Nothing has been pushed. To retry: git switch -, then" \
+                "git branch -D ${release_branch} ${candidate_branch}."
+        fi
     fi
     run_cmd git add "$PBXPROJ"
     run_cmd git commit -m "Bump version to ${version} (${build})"
 
-    step "Pushing ${candidate_branch}"
-    run_cmd git push -u "$remote" "$candidate_branch"
+    step "Pushing ${release_branch} and ${candidate_branch}"
+    # One atomic push, only after every piece of local work has succeeded:
+    # either both branches land on ${remote} or neither does, so no failure
+    # above or below leaves the remote half-prepared.
+    run_cmd git push --atomic -u "$remote" "$release_branch" "$candidate_branch"
 
     step "Opening the pull request"
+    pr_body_file="$(mktemp)"
+    start_pr_body "$version" "$prev_tag" "$issue" > "$pr_body_file"
     if [ "$DRY_RUN" = "true" ]; then
-        echo "  would open a PR ${candidate_branch} -> ${release_branch} on ${GH_REPO}"
-        [ -n "$issue" ] && echo "  body would close issue #${issue}"
-    elif ! start_pr_body "$version" "$prev_tag" "$issue" |
-        gh pr create --repo "$GH_REPO" \
+        echo "  would open a draft PR ${candidate_branch} -> ${release_branch} on ${GH_REPO}"
+        [ -n "$issue" ] && echo "  body would reference issue #${issue}"
+        rm -f "$pr_body_file"
+    elif gh pr create --repo "$GH_REPO" \
             --base "$release_branch" --head "$candidate_branch" \
             --title "Release ${version}" \
-            --body-file -; then
+            --draft \
+            --body-file "$pr_body_file"; then
+        rm -f "$pr_body_file"
+    else
         # Opening the pull request is the last step; both branches are already
         # on the remote by this point. Detect the failure explicitly, rather
         # than letting set -e abort with only gh's own output, so the operator
         # knows not to re-push and can open it by hand.
-        pr_body_file="$(mktemp)"
-        start_pr_body "$version" "$prev_tag" "$issue" > "$pr_body_file"
         die "opening the pull request failed." \
             "${release_branch} and ${candidate_branch} are already pushed to ${remote} --" \
             "they do not need re-pushing. Open the pull request by hand:" \
             "" \
             "  gh pr create --repo ${GH_REPO} \\" \
             "      --base ${release_branch} --head ${candidate_branch} \\" \
-            "      --title \"Release ${version}\" \\" \
+            "      --title \"Release ${version}\" --draft \\" \
             "      --body-file ${pr_body_file}" \
             "" \
             "(the PR body is already written out at ${pr_body_file})"
@@ -320,13 +343,13 @@ Dry run: nothing was changed. ${release_branch} and ${candidate_branch} were
 not created, nothing was pushed to ${remote}, and no pull request was opened.
 The working tree is untouched -- ${candidate_branch} is not checked out.
 
-A real run would leave a pull request open whose diff is exactly what users get
-over ${prev_tag}.
+A real run would leave a draft pull request open whose diff is exactly what
+users get over ${prev_tag}.
 EOF
     else
         cat <<EOF
 
-Done. ${release_branch} and ${candidate_branch} are on ${remote}, the pull
+Done. ${release_branch} and ${candidate_branch} are on ${remote}, a draft pull
 request is open, and ${candidate_branch} is checked out here.
 
 Review the PR diff: it is exactly what users get over ${prev_tag}. Build from
@@ -335,9 +358,9 @@ ${candidate_branch}, not from ${release_branch}, which is still ${prev_tag}:
   ./Scripts/release.sh --variant internal-testnet --ref ${candidate_branch} \\
       --version ${version} --build ${build}
 
-Merge the pull request once the release is final, then tag ${release_branch} and
-merge it back into maint/v${version%.*}.x and forward to main, so the tag stays
-reachable from a live branch.
+Mark the pull request ready for review and merge it once the release is final,
+then tag ${release_branch} and merge it back into maint/v${version%.*}.x and
+forward to main, so the tag stays reachable from a live branch.
 EOF
     fi
 }

@@ -56,6 +56,10 @@ sandbox_commit() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"newest release reachable from HEAD: 0.1.0"* ]] || false
   [[ "$output" == *"Dry run: nothing was changed"* ]] || false
+  # The rehearsal must describe the atomic shape of a real run: one push
+  # carrying both branches, after all local work, then a draft PR.
+  [[ "$output" == *"would run: git push --atomic -u upstream release/0.2.0 candidate/0.2.0"* ]] || false
+  [[ "$output" == *"would open a draft PR candidate/0.2.0 -> release/0.2.0"* ]] || false
   # Nothing mutated: no branches, tree clean, HEAD still on main.
   [ -z "$(git status --porcelain)" ]
   [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ]
