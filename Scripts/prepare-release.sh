@@ -16,6 +16,15 @@
 
 set -euo pipefail
 
+# DRY_RUN is not an interface: only --dry-run selects a rehearsal. An
+# environment value used to be half-honoured (only the literal "true"
+# rehearsed; DRY_RUN=1 cut a release for real), so any value is refused
+# outright rather than guessed at.
+if [ -n "${DRY_RUN:-}" ]; then
+    echo "error: DRY_RUN in the environment has no effect; use --dry-run." >&2
+    exit 1
+fi
+
 # Resolve everything relative to this script, not the caller's directory: the
 # script edits and pushes the repository it lives in whichever checkout is
 # invoked, and a failed rev-parse would otherwise become `cd ""`, which

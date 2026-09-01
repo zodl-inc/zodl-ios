@@ -92,6 +92,18 @@ setup() {
   [[ "$output" == *"build 'one' is not an integer"* ]] || false
 }
 
+# DRY_RUN is not an interface: only --dry-run selects a rehearsal. An
+# environment value used to be half-honoured -- only the literal "true"
+# rehearsed, and DRY_RUN=1 cut a release for real -- so any value at all is
+# now refused outright rather than guessed at.
+@test "DRY_RUN in the environment is refused, whatever its value" {
+  for v in 1 true yes false; do
+    run env DRY_RUN="$v" "$PREPARE" start --dry-run bats-no-such-remote 3.11.0
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DRY_RUN in the environment has no effect; use --dry-run."* ]] || false
+  done
+}
+
 @test "an option missing its value is rejected rather than swallowing the next argument" {
   run "$PREPARE" start --issue
   [ "$status" -ne 0 ]

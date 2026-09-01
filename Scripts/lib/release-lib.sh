@@ -19,8 +19,10 @@ PBXPROJ="secant.xcodeproj/project.pbxproj"
 # sed over the pbxproj would preserve.
 SET_VERSION_TOOL=".claude/skills/update-app-version/scripts/set_version.py"
 
-# Set by each subcommand's argument parsing.
-DRY_RUN="${DRY_RUN:-false}"
+# Set only by each subcommand's --dry-run flag. Deliberately not seeded from
+# the environment: half-honouring an env var is how DRY_RUN=1 once meant a
+# real run. prepare-release.sh refuses to start when the environment sets it.
+DRY_RUN=false
 
 # ------------------------------------------------------------------ output
 

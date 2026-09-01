@@ -336,3 +336,9 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"error: fatal here"* ]] || false
 }
+
+@test "sourcing the library ignores DRY_RUN from the environment" {
+  run env DRY_RUN=1 bash -c ". '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; printf '%s' \"\$DRY_RUN\""
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+}
