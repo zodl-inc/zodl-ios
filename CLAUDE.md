@@ -93,16 +93,19 @@ The app ships a complete design system — reusable SwiftUI components (`secant/
 
 ## CHANGELOG discipline
 
-`CHANGELOG.md` exists for the people who use ZODL, and nothing else. It is also
-where the App Store "What's New" copy comes from, so treat every entry as text a
-user will read.
+`CHANGELOG.md` exists for the people who use ZODL, and nothing else. Treat
+every entry as text a user will read. (The App Store "What's New" copy is a
+separate artifact — `secant/Resources/WhatsNew/whatsNew*.json`, maintained with
+`/update-whatsnew` — not this file.)
 
 - Update it for any **user-visible** change: a feature, a fix, a change in
   behaviour, or something removed. The entry **must** be part of the same commit
   that makes the change, not a follow-up. Treat it as part of "done", and add it
   without waiting to be asked.
 - Add the entry under `## [Unreleased]`, in the matching `### Added` /
-  `### Changed` / `### Fixed` / `### Removed` subsection.
+  `### Changed` / `### Fixed` / `### Removed` subsection — creating the
+  subsection if it isn't there: promotion moves the subsections wholesale, so
+  each cycle starts from a completely empty `## [Unreleased]`.
 - Prefix every line with its issue identifier in brackets, e.g.
   `- [MOB-1321] Short, user-facing description of the change.`
 - Entries carry **only** what a user needs: what is different for them, where
@@ -121,6 +124,9 @@ user will read.
   `## X.Y.Z build N (DATE)` ones, whose tag exists. Those are the historical
   record of what that release shipped, and must not be altered even to clarify
   or correct. New information goes under `## [Unreleased]`.
+- A fix that lands on `candidate/X.Y.Z` after the CHANGELOG was promoted but
+  before the release ships belongs under `## [X.Y.Z]` — that heading is not
+  published history until its tag exists.
 - Do **not** add a separate "Breaking changes" section. `### Changed` already is
   it: a user meets everything under that heading as something that used to work
   differently.

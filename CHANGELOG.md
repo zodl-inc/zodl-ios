@@ -1,8 +1,9 @@
 # Changelog
 All notable changes to this application will be documented in this file.
 
-Please be aware that this changelog primarily focuses on user-related modifications, emphasizing changes that can 
-directly impact users rather than highlighting other crucial architectural updates. 
+This changelog is for the people who use ZODL: it records user-visible changes
+— what is different, where you will meet it, and what to do about it. Developer
+tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
