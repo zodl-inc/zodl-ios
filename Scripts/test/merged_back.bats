@@ -30,7 +30,7 @@ mkcommit() {
   run "$CHECK"
   [ "$status" -eq 0 ]
   [[ "$output" == *'is in `maint/3.10.x` and downstream'* ]] || false
-  [[ "$output" != *"no longer exists"* ]] || false
+  [[ "$output" != *"does not exist"* ]] || false
 }
 
 @test "a released branch missing from its own line fails" {
@@ -135,4 +135,27 @@ mkcommit() {
   run "$CHECK" maint/3.10.x no-such-ref
   [ "$status" -eq 2 ]
   [[ "$output" == *"cannot resolve pr-ref"* ]] || false
+}
+
+@test "a release whose line does not exist warns on main, never fails" {
+  mkcommit "release 3.11.0"; REL="$SHA"
+  git tag 3.11.0 "$REL"
+  git update-ref refs/remotes/origin/release/3.11.0 "$REL"
+  git update-ref refs/remotes/origin/main "$BASE"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'belongs to `maint/v3.11.x`, which does not exist'* ]] || false
+  [[ "$output" == *'has not reached `main` yet'* ]] || false
+  [[ "$output" != *':x:'* ]] || false
+}
+
+@test "a release whose line does not exist and is in main is green" {
+  mkcommit "release 3.11.0"; REL="$SHA"
+  git tag 3.11.0 "$REL"
+  git update-ref refs/remotes/origin/release/3.11.0 "$REL"
+  mkcommit "merge forward"
+  git update-ref refs/remotes/origin/main "$SHA"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'is in `main`'* ]] || false
 }

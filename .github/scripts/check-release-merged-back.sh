@@ -161,7 +161,7 @@ while IFS= read -r rel; do
   # Its own line is the obligation. Anything downstream of it is merge-forward
   # lag, which the merge-forward jobs already track, so it warns rather than
   # fails; otherwise the merge-back PR itself would report red for main.
-  # A retired line is simply absent from the chain.
+  # A line absent from the chain is handled below: main is checked, warning only.
   own=''
   downstream=()
   seen=0
@@ -169,13 +169,20 @@ while IFS= read -r rel; do
     if [ "$b" = "$maint" ]; then seen=1; own="$b"; continue; fi
     if [ "$seen" -eq 1 ]; then downstream+=("$b"); fi
   done
-  if [ "$seen" -eq 0 ]; then
-    own='main'
-    downstream=()
-    say ":grey_question: \`${rel}\` (\`${tag}\`) belongs to \`${maint}\`, which no longer exists; checking main only."
-  fi
-
   checked=$((checked + 1))
+
+  if [ "$seen" -eq 0 ]; then
+    # The line was never created, or has been retired. There is no own-line
+    # obligation to enforce; whether the release has flowed to main is
+    # merge-forward lag, which is a warning by policy, never a failure.
+    say ":grey_question: \`${rel}\` (\`${tag}\`) belongs to \`${maint}\`, which does not exist; checking main only."
+    if in_branch "$ref" "$(resolve main)"; then
+      say ":white_check_mark: \`${rel}\` (\`${tag}\`) is in \`main\`."
+    else
+      say ":warning: \`${rel}\` (\`${tag}\`) has not reached \`main\` yet; create \`${maint}\` (or merge the release back) so the tag stays reachable."
+    fi
+    continue
+  fi
 
   lagging=()
   for b in ${downstream[@]+"${downstream[@]}"}; do
