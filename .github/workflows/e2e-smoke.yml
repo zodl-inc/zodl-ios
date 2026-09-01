@@ -318,7 +318,12 @@ jobs:
   e2e-ios:
     needs: build
     # Same draft-PR guard as `build` — keep it explicit on the expensive job.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # !cancelled() + the explicit build result replace the implicit success(),
+    # which a transitively skipped build_ffi (remote SDK mode) poisons even
+    # when build itself succeeds — without this the whole matrix silently
+    # skips on every remote-mode PR. Draft PRs still skip: validate_sdk_pin
+    # skips on drafts, so build never reaches 'success'.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: macos-26
     # Cold-cache phase 2 runs spend ~25-30 min on the
     # restore-existing-wallet sync alone (chain-tip catchup from the
