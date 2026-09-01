@@ -309,7 +309,7 @@ One header line, then one line per build, then optional changelog lines:
 
 ```
 /make-builds
-release/3.8.0 3.8.0 2
+candidate/3.8.0 3.8.0 2
 internal-testnet
 appstore submit-review
 - Sending now works while a migration is running
@@ -368,7 +368,7 @@ Builds: internal-testnet, appstore (→ App Review)
 ```
 _iOS TestFlight Build (internal-testnet)_ — 3.8.0 (2)
 
-App: `release/3.8.0@54812f81`
+App: `candidate/3.8.0@54812f81`
 SDK: `candidate/4.1.0@cafca07a (tag: 4.1.0-rc.1)`
 ```
 
