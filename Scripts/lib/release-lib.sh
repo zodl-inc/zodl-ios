@@ -11,6 +11,7 @@
 # Written for bash 3.2, which is what macOS ships.
 
 # Paths, relative to the repository root.
+# shellcheck disable=SC2034  # PBXPROJ is consumed by the sourcing scripts.
 PBXPROJ="secant.xcodeproj/project.pbxproj"
 # The version bump is delegated rather than reimplemented. This script selects
 # non-test targets from the project's object graph instead of by name, edits
@@ -60,7 +61,12 @@ die_unless_dry_run() {
 # every assertion in its own test suite.
 run_cmd() {
     if [ "$DRY_RUN" = "true" ]; then
-        echo "  would run: $*"
+        # %q per argument, so the description is the command: `git commit -m
+        # Bump version ...` unquoted names a different command than the one a
+        # real run executes.
+        printf '  would run:'
+        printf ' %q' "$@"
+        printf '\n'
     else
         "$@"
     fi
@@ -146,7 +152,10 @@ promote_changelog() {
         rm -f "$tmp"
         return 1
     fi
-    mv "$tmp" "$file"
+    # Overwrite in place rather than mv: mktemp files are 0600, and the
+    # CHANGELOG keeps whatever mode it already has.
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
 }
 
 # True when the file already carries a heading for this version, in either the
@@ -162,13 +171,6 @@ changelog_has_version() {
 }
 
 # ------------------------------------------------------------------ project
-
-# The marketing version the project currently declares. Every non-test target
-# carries the same value, so the first is representative.
-project_marketing_version() {
-    sed -n -E 's/^[[:space:]]*MARKETING_VERSION = ([^;]+);.*/\1/p' "${1:-$PBXPROJ}" \
-        | head -1
-}
 
 # Set MARKETING_VERSION and CURRENT_PROJECT_VERSION for every non-test target.
 set_project_version() {

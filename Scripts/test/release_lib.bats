@@ -256,16 +256,17 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-# --- project versions -------------------------------------------------------
+@test "promote_changelog preserves the file's permissions" {
+  write_changelog <<'EOF'
+## [Unreleased]
 
-@test "project_marketing_version reads the value from a pbxproj" {
-  cat > "$BATS_TEST_TMPDIR/project.pbxproj" <<'EOF'
-		buildSettings = {
-			CURRENT_PROJECT_VERSION = 1;
-			MARKETING_VERSION = 3.10.2;
-		};
+- [MOB-1] entry
 EOF
-  [ "$(project_marketing_version "$BATS_TEST_TMPDIR/project.pbxproj")" = "3.10.2" ]
+  chmod 664 "$FIXTURE"
+  before="$(ls -l "$FIXTURE" | cut -c1-10)"
+  promote_changelog "$FIXTURE" 3.11.0 2026-08-27
+  [ "$(ls -l "$FIXTURE" | cut -c1-10)" = "$before" ]
+  [ "$before" = "-rw-rw-r--" ]
 }
 
 # --- dry-run plumbing -------------------------------------------------------
@@ -278,7 +279,23 @@ EOF
   DRY_RUN=true
   run run_cmd echo hello
   [[ "$output" == *"would run: echo hello"* ]] || false
-  [[ "$output" != "hello" ]] || false
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+# The one regression the description cannot reveal: describing AND executing.
+# Asserted through a side effect rather than the output, which the describe
+# line's own text would always satisfy.
+@test "run_cmd under DRY_RUN does not execute the command" {
+  DRY_RUN=true
+  run run_cmd touch "$BATS_TEST_TMPDIR/executed"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/executed" ]
+}
+
+@test "run_cmd describes arguments re-runnably, with quoting intact" {
+  DRY_RUN=true
+  run run_cmd git commit -m "Bump version to 3.11.0 (1)"
+  [[ "$output" == *'git commit -m Bump\ version\ to\ 3.11.0\ \(1\)'* ]] || false
 }
 
 # The library must not define a function named `run`: bats provides its own,
