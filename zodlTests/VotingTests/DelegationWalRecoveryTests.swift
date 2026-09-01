@@ -4,212 +4,63 @@ import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
 
-/// Fixture location and availability, deliberately OUTSIDE
-/// `DelegationWalRecoveryTests`.
+/// Carver behaviour against a database this test builds with real SQLite.
 ///
-/// A `@Suite(.enabled(if:))` condition cannot reach into the type its macro is
-/// attached to — expanding the macro would require the type the expansion
-/// defines — so this cannot live on the suite as a static.
+/// Everything here once ran against binary fixtures generated out of band by
+/// `Fixtures/make_fixtures.py`, git-ignored, with the suite SKIPPING until
+/// somebody produced them. On a clean checkout it proved nothing, and it went
+/// unnoticed long enough that the file stopped compiling.
 ///
-/// The directory names repeat `DelegationWalRecoveryTests.Fixture`'s raw
-/// values for the same reason: that enum is nested in the suite and is
-/// unreachable from here. Keep the two in step.
-enum RecoveryFixtures {
-    /// Read from the source tree rather than a test bundle, so the binary
-    /// fixtures never ship inside an app or test bundle. The simulator shares
-    /// the host filesystem, so this resolves locally and in CI.
-    static var directory: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures", isDirectory: true)
-    }
+/// It now shares `CorruptedDatabase` with the other suites, so there is ONE
+/// implementation of the fixture rather than a Swift one and two Python ones
+/// that had to be kept in step by hand.
+@Suite struct DelegationWalRecoveryTests {
+    private typealias Fixture = VotingRecoveryEndToEndTests.Fixture
+    private typealias Corrupted = VotingRecoveryEndToEndTests.CorruptedDatabase
 
-    /// `make_fixtures.py` has been run and both fixture sets are on disk.
-    static var areGenerated: Bool {
-        ["post-clear", "pre-clear"].allSatisfy { name in
-            FileManager.default.fileExists(
-                atPath: directory
-                    .appendingPathComponent(name, isDirectory: true)
-                    .appendingPathComponent("voting.sqlite3-wal")
-                    .path
-            )
-        }
-    }
-}
-
-/// End-to-end recovery of a cleared round's delegation secrets, run on the
-/// simulator against a full `voting.sqlite3` / `-wal` / `-shm` set injected
-/// into a Documents-style directory exactly as the three files sit on device.
-///
-/// Two fixtures, mirroring the captured reproduction pair:
-///
-/// - `post-clear` — the round was deleted and rebuilt, so each bundle appears
-///   twice in the WAL and the originals must be recovered.
-/// - `pre-clear` — the same round, untouched. Recovery must do nothing.
-///
-/// The fixture binaries are generated, never committed — see
-/// `Fixtures/make_fixtures.py`. Until they are generated this suite skips
-/// rather than fails, so a clean checkout is green.
-///
-/// The recovery itself was validated against the real affected database shared
-/// by the team: run blind against the post-clear capture, it reproduced all
-/// three bundles' original secrets exactly, and returned an empty plan for the
-/// pre-clear capture. Those captures hold live voting material and are not in
-/// this repository.
-@Suite(.enabled(if: RecoveryFixtures.areGenerated))
-struct DelegationWalRecoveryTests {
-    enum Fixture: String {
-        case postClear = "post-clear"
-        case preClear = "pre-clear"
-    }
-
-    enum Expected {
-        static let roundId = String(repeating: "4a", count: 32)
-        static let bundleCount = 3
-
-        /// Generation 0 — what the user actually broadcast.
-        static let originalVanCommRand = [
-            String(repeating: "a0", count: 31) + "00",
-            String(repeating: "a1", count: 31) + "01",
-            String(repeating: "a2", count: 31) + "02"
-        ]
-
-        /// Generation 1 — what `prepareFreshRound` regenerated.
-        static let rebuiltVanCommRand = [
-            String(repeating: "a0", count: 31) + "08",
-            String(repeating: "a1", count: 31) + "09",
-            String(repeating: "a2", count: 31) + "0a"
-        ]
-
-        static let originalGovComm = [
-            String(repeating: "c0", count: 31) + "00",
-            String(repeating: "c1", count: 31) + "01",
-            String(repeating: "c2", count: 31) + "02"
-        ]
-
-        static let weights: [UInt64] = [130_000_000, 130_000_000, 26_000_000]
-    }
-
-    // MARK: - Recovery from the WAL
-
-    @Test func recoversEveryClearedBundleFromTheWriteAheadLog() throws {
-        let injected = try InjectedDatabase(.postClear)
-
-        let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-
-        #expect(plan.needsRecovery)
-        #expect(plan.replacements.count == Expected.bundleCount)
-
-        for (index, replacement) in plan.replacements.enumerated() {
-            #expect(replacement.original.bundleIndex == UInt32(index))
-            #expect(replacement.original.vanCommRand.hexString == Expected.originalVanCommRand[index])
-            #expect(replacement.original.van.hexString == Expected.originalGovComm[index])
-            #expect(replacement.original.totalNoteValue == Expected.weights[index])
-            // The rebuild is what SQL would return today; it is not what we restore.
-            #expect(replacement.current?.vanCommRand.hexString == Expected.rebuiltVanCommRand[index])
-        }
-    }
-
-    /// The recovered value must come from an image written before the wipe, not
-    /// the newest one — that is the whole point of reading superseded state.
-    @Test func restoresTheOlderImageNotTheRebuiltOne() throws {
-        let injected = try InjectedDatabase(.postClear)
-
-        let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-
-        for replacement in plan.replacements {
-            let current = try #require(replacement.current)
-            #expect(replacement.original.origin < current.origin)
-            #expect(replacement.original.vanCommRand != current.vanCommRand)
-        }
-    }
-
-    @Test func recoveredBlindingFactorsAreCanonicalPallasElements() throws {
-        let injected = try InjectedDatabase(.postClear)
-
-        let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-
-        #expect(plan.replacements.isEmpty == false)
-        for replacement in plan.replacements {
-            #expect(DelegationWalRecovery.isCanonicalPallasElement(replacement.original.vanCommRand))
-        }
-    }
-
-    // MARK: - Idempotence
-
-    /// A round that was never cleared must produce an empty plan. Its bundles
-    /// appear in the WAL once each, however often their page was rewritten.
-    @Test func doesNothingWhenTheRoundWasNeverCleared() throws {
-        let injected = try InjectedDatabase(.preClear)
-
-        let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-
-        #expect(plan.needsRecovery == false)
-        #expect(plan.replacements.isEmpty)
-    }
-
-    /// The pre-clear fixture is only meaningful if the bundles really are in
-    /// its WAL — an empty plan for the wrong reason would pass silently.
-    @Test func untouchedRoundStillHasItsBundlesInTheLog() throws {
-        let injected = try InjectedDatabase(.preClear)
-
-        let recovered = try DelegationWalRecovery.recover(
-            walURL: injected.walURL,
-            roundId: Expected.roundId
-        )
-
-        #expect(recovered.count == Expected.bundleCount)
-        for (index, bundle) in recovered.sorted(by: { $0.bundleIndex < $1.bundleIndex }).enumerated() {
-            #expect(bundle.vanCommRand.hexString == Expected.originalVanCommRand[index])
-        }
-    }
+    // MARK: - Selecting a round
 
     @Test func planIsStableAcrossRepeatedRuns() throws {
-        let injected = try InjectedDatabase(.postClear)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
 
-        let first = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-        let second = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
+        let first = try DelegationWalRecovery.plan(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
+        let second = try DelegationWalRecovery.plan(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
 
         #expect(first == second)
     }
 
     @Test func ignoresRoundsOtherThanTheOneAsked() throws {
-        let injected = try InjectedDatabase(.postClear)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
 
         let plan = try DelegationWalRecovery.plan(
-            walURL: injected.walURL,
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
             roundId: String(repeating: "0", count: 64)
         )
 
         #expect(plan.needsRecovery == false)
     }
 
-    // MARK: - Non-destructiveness
-
-    /// Recovery must never write to the files it reads. Opening the database
-    /// through SQLite would checkpoint the WAL and destroy the very frames the
-    /// recovery depends on, so this pins all three files on both sides.
-    @Test func leavesTheInjectedFilesByteForByteIdentical() throws {
-        let injected = try InjectedDatabase(.postClear)
-
-        let databaseBefore = try Data(contentsOf: injected.databaseURL)
-        let walBefore = try Data(contentsOf: injected.walURL)
-        let shmBefore = try Data(contentsOf: injected.shmURL)
-
-        _ = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
-
-        #expect(try Data(contentsOf: injected.databaseURL) == databaseBefore)
-        #expect(try Data(contentsOf: injected.walURL) == walBefore)
-        #expect(try Data(contentsOf: injected.shmURL) == shmBefore)
-    }
-
     // MARK: - Escrow hand-off
 
-    /// Recovery only reads; escrowing the result is what makes the secret
-    /// survive the next wipe.
+    /// Recovery only reads. Escrowing what it finds is what makes the secret
+    /// survive the next wipe, so the hand-off is pinned here rather than left
+    /// to the launch path alone.
     @Test func recoveredBundlesAreEscrowedForLaterReimport() async throws {
-        let injected = try InjectedDatabase(.postClear)
-        let plan = try DelegationWalRecovery.plan(walURL: injected.walURL, roundId: Expected.roundId)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
+        )
 
         let escrowed = LockIsolated<[DelegationEscrowEntry]>([])
         let escrow = DelegationEscrowClient(
@@ -221,84 +72,86 @@ struct DelegationWalRecoveryTests {
         )
 
         for replacement in plan.replacements {
+            let original = replacement.original
             try await escrow.record(
                 DelegationEscrowEntry(
-                    roundId: replacement.original.roundId,
-                    bundleIndex: replacement.original.bundleIndex,
-                    vanCommRand: replacement.original.vanCommRand,
-                    van: replacement.original.van,
-                    totalNoteValue: replacement.original.totalNoteValue,
-                    createdAt: Date(timeIntervalSince1970: 0)
+                    roundId: original.roundId,
+                    bundleIndex: original.bundleIndex,
+                    vanCommRand: original.vanCommRand,
+                    van: original.van,
+                    totalNoteValue: original.totalNoteValue,
+                    createdAt: Date()
                 )
             )
         }
 
-        #expect(await escrow.holdsDelegation(Expected.roundId))
-        let stored = try await escrow.entries(Expected.roundId).sorted { $0.bundleIndex < $1.bundleIndex }
-        #expect(stored.count == Expected.bundleCount)
-        for (index, entry) in stored.enumerated() {
-            #expect(entry.vanCommRand.hexString == Expected.originalVanCommRand[index])
+        let entries = try await escrow.entries(Fixture.roundId)
+            .sorted { $0.bundleIndex < $1.bundleIndex }
+        #expect(entries.count == Fixture.bundleCount)
+        for (index, entry) in entries.enumerated() {
+            #expect(entry.vanCommRand.hexString == Fixture.originalRand[index])
         }
     }
 
     // MARK: - Database-file carving
 
-    /// The database file covers what the WAL cannot: a clean close checkpoints
-    /// and unlinks the WAL, and from then on the only surviving copies are the
+    /// The database file covers what the log cannot: a clean close checkpoints
+    /// and unlinks the log, and from then on the only surviving copies are the
     /// deleted cells left in the database itself.
     @Test func carvesTheDatabaseFileWhenTheLogIsGone() throws {
-        let injected = try InjectedDatabase(.postClear)
-        try FileManager.default.removeItem(at: injected.walURL)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
 
-        let rows = try DelegationWalRecovery.recover(
-            databaseURL: injected.databaseURL,
-            roundId: Expected.roundId
+        let rows = DelegationWalRecovery.recover(
+            databaseBytes: [UInt8](try Data(contentsOf: corrupted.databaseURL)),
+            roundId: Fixture.roundId
         )
 
-        // Whatever it finds must be well-formed; the point of this test is that
-        // the database path runs at all and never invents rows.
+        // Whatever it finds must be well formed. The point is that the
+        // database path runs at all and never invents rows.
         for row in rows {
             #expect(row.vanCommRand.count == 32)
-            #expect(row.roundId == Expected.roundId)
+            #expect(row.roundId == Fixture.roundId)
             #expect(row.origin == .databaseLive || row.origin == .databaseFreeSpace)
         }
     }
 
     /// Reading both files must never lose what reading the log alone found.
     @Test func combiningBothFilesIsASupersetOfTheLogAlone() throws {
-        let injected = try InjectedDatabase(.postClear)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
 
         let logOnly = try DelegationWalRecovery.recover(
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
         )
         let both = try DelegationWalRecovery.recover(
-            databaseURL: injected.databaseURL,
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
         )
 
         for row in logOnly {
             #expect(
-                both.contains { $0.bundleIndex == row.bundleIndex && $0.vanCommRand == row.vanCommRand },
+                both.contains {
+                    $0.bundleIndex == row.bundleIndex && $0.vanCommRand == row.vanCommRand
+                },
                 "combining the two files dropped bundle \(row.bundleIndex)"
             )
         }
     }
 
-    /// The combined plan must reach the same verdict as the log-only plan on a
-    /// round the log fully covers — adding a source must not change the answer.
+    /// Adding a source must not change the verdict on a round the log already
+    /// covers completely.
     @Test func combinedPlanAgreesWithTheLogOnlyPlan() throws {
-        let injected = try InjectedDatabase(.postClear)
+        let corrupted = try Corrupted(rebuildAfterClearing: true)
 
         let logOnly = try DelegationWalRecovery.plan(
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
         )
         let both = try DelegationWalRecovery.plan(
-            databaseURL: injected.databaseURL,
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            databaseURL: corrupted.databaseURL,
+            walURL: corrupted.walURL,
+            roundId: Fixture.roundId
         )
 
         #expect(both.needsRecovery == logOnly.needsRecovery)
@@ -311,12 +164,12 @@ struct DelegationWalRecoveryTests {
     /// Idempotence must survive the extra source: an untouched round stays a
     /// no-op when the database file is carved as well.
     @Test func combinedPlanStillDoesNothingForAnUntouchedRound() throws {
-        let injected = try InjectedDatabase(.preClear)
+        let healthy = try Corrupted(rebuildAfterClearing: false)
 
         let plan = try DelegationWalRecovery.plan(
-            databaseURL: injected.databaseURL,
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            databaseURL: healthy.databaseURL,
+            walURL: healthy.walURL,
+            roundId: Fixture.roundId
         )
 
         #expect(plan.needsRecovery == false)
@@ -324,17 +177,19 @@ struct DelegationWalRecoveryTests {
 
     /// A missing log is the normal state after a clean close, not an error.
     @Test func toleratesAnAbsentWriteAheadLog() throws {
-        let injected = try InjectedDatabase(.preClear)
-        try FileManager.default.removeItem(at: injected.walURL)
+        let healthy = try Corrupted(rebuildAfterClearing: false)
+        try FileManager.default.removeItem(at: healthy.walURL)
 
         let plan = try DelegationWalRecovery.plan(
-            databaseURL: injected.databaseURL,
-            walURL: injected.walURL,
-            roundId: Expected.roundId
+            databaseURL: healthy.databaseURL,
+            walURL: healthy.walURL,
+            roundId: Fixture.roundId
         )
 
         #expect(plan.needsRecovery == false)
     }
+
+    // MARK: - Pure properties
 
     /// Origin ordering is what lets `plan` pick the original without a clock:
     /// released space predates live rows, and both predate the log.
@@ -345,55 +200,12 @@ struct DelegationWalRecoveryTests {
     }
 
     @Test func rejectsBytesThatAreNotADatabase() {
-        let rows = DelegationWalRecovery.recover(databaseBytes: [UInt8](repeating: 0x41, count: 8_192))
-
-        #expect(rows.isEmpty)
-    }
-}
-
-// MARK: - Fixture injection
-
-extension DelegationWalRecoveryTests {
-    /// Copies one fixture's `voting.sqlite3` triple into a fresh directory,
-    /// mirroring the on-device layout. Each instance gets its own directory so
-    /// the suite stays safe under Swift Testing's parallel execution, and the
-    /// directory is removed on teardown.
-    final class InjectedDatabase {
-        let directory: URL
-        let databaseURL: URL
-        let walURL: URL
-        let shmURL: URL
-
-        init(_ fixture: Fixture) throws {
-            directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("voting-recovery-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-            databaseURL = directory.appendingPathComponent("voting.sqlite3")
-            walURL = directory.appendingPathComponent("voting.sqlite3-wal")
-            shmURL = directory.appendingPathComponent("voting.sqlite3-shm")
-
-            let source = Self.fixtureDirectory.appendingPathComponent(
-                fixture.rawValue,
-                isDirectory: true
-            )
-            for (name, destination) in [
-                ("voting.sqlite3", databaseURL),
-                ("voting.sqlite3-wal", walURL),
-                ("voting.sqlite3-shm", shmURL)
-            ] {
-                try FileManager.default.copyItem(
-                    at: source.appendingPathComponent(name),
-                    to: destination
-                )
-            }
-        }
-
-        deinit {
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        static var fixtureDirectory: URL { RecoveryFixtures.directory }
+        #expect(DelegationWalRecovery.recover(databaseBytes: []).isEmpty)
+        #expect(DelegationWalRecovery.recover(walBytes: []).isEmpty)
+        #expect(
+            DelegationWalRecovery
+                .recover(databaseBytes: Array(repeating: 0xFF, count: 4096)).isEmpty
+        )
     }
 }
 #endif

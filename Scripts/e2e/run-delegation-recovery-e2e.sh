@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # End-to-end test of the delegation recovery path on a simulator.
 #
-# Builds a corrupted voting database, plants it in the app's own data container
-# exactly as an affected device would hold it, and runs the on-device suite
-# that OPENS THE APP and asserts the broadcast secrets came back.
+# Runs the on-device suite that OPENS THE APP against a corrupted voting
+# database and asserts the broadcast secrets came back.
+#
+# The suite builds and plants that database itself, using the same builder the
+# in-process tests use, so this script only has to stand up a simulator and
+# report honestly on what the run did.
 #
 # Recovery has no user-facing trigger: it runs off the launch action the app
 # delegate sends, invisibly. So the suite drives `Root` through
@@ -49,7 +52,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 WORK="$(mktemp -d)"
-FIXTURES="$WORK/fixtures"
 # Kept across runs so CI and repeat local runs do not rebuild from scratch.
 # `build/` is already gitignored.
 DERIVED="${DERIVED:-$REPO_ROOT/build/e2e-derived-data}"
@@ -66,12 +68,7 @@ trap cleanup EXIT
 
 say() { printf '\n==> %s\n' "$1"; }
 
-# --- 1. The corrupted database -------------------------------------------
-
-say "Building the corrupted voting database"
-python3 Scripts/e2e/make_corrupted_voting_db.py "$FIXTURES"
-
-# --- 2. A booted simulator ------------------------------------------------
+# --- 1. A booted simulator ------------------------------------------------
 
 say "Booting simulator: $DEVICE"
 UDID="$(xcrun simctl list devices available \
@@ -121,33 +118,18 @@ CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
 DOCUMENTS="$CONTAINER/Documents"
 mkdir -p "$DOCUMENTS"
 
-say "Planting the corrupted database into $DOCUMENTS/voting_recovery"
-
-# `VotingDatabaseSnapshot.capture` is idempotent: it does nothing when a
-# preserved copy already holds data. A stale one left here would be kept and
-# the freshly planted log checkpointed away on first open, so clear it.
-rm -rf "$DOCUMENTS/voting_recovery"
-mkdir -p "$DOCUMENTS/voting_recovery"
-
-# All three files together. `-shm` is rebuildable, but `-wal` holds every
-# committed frame that was never checkpointed, which here is the entire point.
-for name in voting.sqlite3 voting.sqlite3-wal voting.sqlite3-shm; do
-    if [ -f "$FIXTURES/post-clear/$name" ]; then
-        cp "$FIXTURES/post-clear/$name" "$DOCUMENTS/voting_recovery/$name"
-    fi
-done
-
-# Start from no escrow so the run's counts mean what they say.
+# The suite builds and plants its own corrupted database, with the SAME
+# builder the in-process tests use, so there is one implementation of the
+# fixture rather than a Swift one and a Python one kept in step by hand. That
+# also removes the marker file this script used to plant to switch the suite
+# from "skip" to "assert": a suite that builds its own data has nothing to gate
+# on.
+#
+# Only the escrow is cleared here, so the counts the run reports mean what they
+# say from a known-empty start.
 rm -f "$DOCUMENTS/voting-delegation-escrow.json"
 
-# The marker is what switches the on-device suite from "skip" to "assert". It
-# travels with the fixture through this same copy, so the gate can never
-# disagree with the data it guards.
-touch "$DOCUMENTS/voting_recovery/.e2e-marker"
-
-ls -l "$DOCUMENTS/voting_recovery"
-
-# --- 5. Drive the recovery ------------------------------------------------
+# --- 4. Drive the recovery ------------------------------------------------
 
 say "Running the on-device recovery suite"
 set +e
@@ -163,11 +145,7 @@ xcodebuild \
 STATUS=${PIPESTATUS[0]}
 set -e
 
-if [ "$KEEP" -eq 0 ]; then
-    rm -f "$DOCUMENTS/voting_recovery/.e2e-marker"
-fi
-
-# --- 6. Report ------------------------------------------------------------
+# --- 5. Report ------------------------------------------------------------
 
 if [ "$STATUS" -ne 0 ]; then
     say "FAILED: recovery did not restore the broadcast delegation"

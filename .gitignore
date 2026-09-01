@@ -98,9 +98,6 @@ PartnerKeys.plist
 .plans
 .notes
 
-# Generated voting recovery fixtures - never commit database binaries
-zodlTests/VotingTests/Fixtures/post-clear/
-zodlTests/VotingTests/Fixtures/pre-clear/
 
 # Python bytecode from helper scripts
 __pycache__/

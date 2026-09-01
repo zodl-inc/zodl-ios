@@ -58,6 +58,7 @@ extension VotingRecoveryEndToEndTests {
             let database = try Self.open(liveURL)
             defer { sqlite3_close(database) }
 
+            // Both pragmas mirror `Store::open`; see the note on `schema`.
             try Self.exec(database, "PRAGMA journal_mode=WAL;")
             try Self.exec(database, "PRAGMA foreign_keys=ON;")
             try Self.exec(database, Self.schema)
@@ -76,7 +77,11 @@ extension VotingRecoveryEndToEndTests {
             )
 
             if rebuildAfterClearing {
-                // Exactly what `clear_round` does — `bundles` cascades away.
+                // Byte for byte the statement `clear_round` issues:
+                // <https://github.com/valargroup/zcash_voting/blob/4db47293736ed0c06dee512d59f08a65ca11e11f/zcash_voting/src/storage/queries.rs#L598-L601>
+                // `bundles` goes with it through ON DELETE CASCADE (see
+                // `schema`), which is the whole incident: `van_comm_rand` is
+                // destroyed by a statement that never mentions it.
                 try Self.exec(
                     database,
                     """
@@ -213,8 +218,30 @@ extension VotingRecoveryEndToEndTests {
             return sql
         }
 
-        /// `rounds` and `bundles` from `001_init.sql`. Column order is part of
-        /// the contract: records are decoded positionally.
+        /// `rounds` and `bundles`, copied VERBATIM from the voting crate's
+        /// first migration. Column order is part of the contract: the carver
+        /// decodes records positionally, so a reordering upstream silently
+        /// changes which column it reads as `van_comm_rand`.
+        ///
+        /// Source, pinned to the commit this was taken from:
+        /// <https://github.com/valargroup/zcash_voting/blob/4db47293736ed0c06dee512d59f08a65ca11e11f/zcash_voting/src/storage/migrations/001_init.sql>
+        /// `rounds` is lines 1-14, `bundles` lines 16-43. Only `rounds` has
+        /// ever gained a column (at schema v13), so this `bundles` layout is
+        /// valid for every version the app has shipped.
+        ///
+        /// The pragmas below match what the crate sets when it opens a
+        /// database, and both matter to what this fixture reproduces:
+        /// <https://github.com/valargroup/zcash_voting/blob/4db47293736ed0c06dee512d59f08a65ca11e11f/zcash_voting/src/storage/mod.rs#L94>
+        ///
+        ///     PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+        ///
+        /// `journal_mode=WAL` is why superseded page images exist to recover
+        /// at all, and `foreign_keys=ON` is what makes the round delete
+        /// CASCADE into `bundles` and take `van_comm_rand` with it. Without
+        /// the second, the incident this fixture reproduces cannot happen.
+        ///
+        /// The delete being reproduced is `clear_round`:
+        /// <https://github.com/valargroup/zcash_voting/blob/4db47293736ed0c06dee512d59f08a65ca11e11f/zcash_voting/src/storage/queries.rs#L600>
         static let schema = """
             CREATE TABLE rounds (
                 round_id            TEXT NOT NULL,

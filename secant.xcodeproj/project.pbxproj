@@ -1374,8 +1374,6 @@
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.25.5;
 			};
-			traits = (
-			);
 		};
 		34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */ = {
 			isa = XCRemoteSwiftPackageReference;
