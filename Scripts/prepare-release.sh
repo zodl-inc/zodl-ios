@@ -103,7 +103,7 @@ EOF
 }
 
 cmd_start() {
-    local previous="" issue="" build="1" remote version revision rev_sha prev_tag
+    local previous="" issue="" build="1" remote version revision rev_sha prev_tag newest_tag
     local release_branch candidate_branch b today pr_body_file
     local -a positional
     positional=()
@@ -172,12 +172,27 @@ cmd_start() {
         if ! git rev-parse -q --verify "refs/tags/${prev_tag}" >/dev/null; then
             die "no such tag '${prev_tag}'."
         fi
+        # The release branch starts at this tag and the PR diff is everything
+        # between it and the revision -- meaningless, and silently destructive
+        # in the merge, unless the tag is part of the revision's history.
+        if ! git merge-base --is-ancestor "refs/tags/${prev_tag}" "$rev_sha"; then
+            die "--previous ${prev_tag} is not an ancestor of ${revision}." \
+                "The release branch must start from a commit the revision builds on." \
+                "Merge the ${prev_tag} release back into the line you are cutting from first."
+        fi
         echo "  using --previous ${prev_tag}"
     else
         prev_tag="$(release_tags_merged_into "$rev_sha" | tail -1)"
         if [ -z "$prev_tag" ]; then
             die "no release tags are reachable from ${revision}." \
                 "Pass --previous <tag> to say which release this follows."
+        fi
+        newest_tag="$(newest_release_tag)"
+        if [ "$newest_tag" != "$prev_tag" ]; then
+            die "the newest release tag is ${newest_tag}, but it is not reachable from ${revision}." \
+                "Cutting over ${prev_tag} would silently drop what ${newest_tag} shipped." \
+                "Merge release/${newest_tag} back into its line first (the Release Merged" \
+                "Back check reports this), or pass --previous to choose the base deliberately."
         fi
         echo "  newest release reachable from ${revision}: ${prev_tag}"
     fi
