@@ -62,3 +62,29 @@ sandbox_commit() {
   run git rev-parse -q --verify refs/heads/release/0.2.0
   [ "$status" -ne 0 ]
 }
+
+@test "the empty-Unreleased guard reads the revision, not the working tree" {
+  # First commit: CHANGELOG whose Unreleased section is empty.
+  printf '# Changelog\n\n## [Unreleased]\n\n### Added\n' > CHANGELOG.md
+  sandbox_commit "empty unreleased"
+  EMPTY_SHA="$(git rev-parse HEAD)"
+  # HEAD moves on; the checkout has entries again.
+  printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- [MOB-2] newer entry\n' > CHANGELOG.md
+  sandbox_commit "entries again"
+  run "$START" start --dry-run upstream 0.2.0 "$EMPTY_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unreleased section of CHANGELOG.md at ${EMPTY_SHA} has no entries"* ]]
+}
+
+@test "the existing-heading guard reads the revision, not the working tree" {
+  # First commit: CHANGELOG that already carries the version being cut.
+  printf '# Changelog\n\n## [Unreleased]\n\n- [MOB-1] entry\n\n## [0.2.0] - 2026-01-01\n- old\n' > CHANGELOG.md
+  sandbox_commit "already has 0.2.0"
+  HAS_SHA="$(git rev-parse HEAD)"
+  # HEAD moves on; the checkout no longer mentions 0.2.0.
+  printf '# Changelog\n\n## [Unreleased]\n\n- [MOB-1] entry\n' > CHANGELOG.md
+  sandbox_commit "heading gone"
+  run "$START" start --dry-run upstream 0.2.0 "$HAS_SHA"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already carries a heading for 0.2.0"* ]]
+}

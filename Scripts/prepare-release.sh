@@ -104,7 +104,7 @@ EOF
 
 cmd_start() {
     local previous="" issue="" build="1" remote version revision rev_sha prev_tag newest_tag
-    local release_branch candidate_branch b today pr_body_file
+    local release_branch candidate_branch b today pr_body_file changelog_at_rev
     local -a positional
     positional=()
 
@@ -222,15 +222,27 @@ cmd_start() {
     done
 
     step "Checking the CHANGELOG"
-    if changelog_has_version CHANGELOG.md "$version"; then
-        die "CHANGELOG.md already carries a heading for ${version}." \
+    # Both guards read CHANGELOG.md as it stands at the revision being
+    # released -- the content the promotion will operate on -- never the
+    # working tree, which is an unrelated checkout when <revision> is explicit
+    # (and under --dry-run is never switched at all).
+    changelog_at_rev="$(mktemp)"
+    if ! git show "${rev_sha}:CHANGELOG.md" > "$changelog_at_rev" 2>/dev/null; then
+        rm -f "$changelog_at_rev"
+        die "CHANGELOG.md does not exist at ${revision}."
+    fi
+    if changelog_has_version "$changelog_at_rev" "$version"; then
+        rm -f "$changelog_at_rev"
+        die "CHANGELOG.md at ${revision} already carries a heading for ${version}." \
             "Published headings are the historical record of what shipped;" \
             "a second one for the same version must not be added."
     fi
-    if ! changelog_unreleased_nonempty CHANGELOG.md; then
-        die "the Unreleased section of CHANGELOG.md has no entries." \
+    if ! changelog_unreleased_nonempty "$changelog_at_rev"; then
+        rm -f "$changelog_at_rev"
+        die "the Unreleased section of CHANGELOG.md at ${revision} has no entries." \
             "Every user-visible change needs one before release."
     fi
+    rm -f "$changelog_at_rev"
     echo "  the Unreleased section has entries to promote"
 
     echo
