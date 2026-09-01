@@ -182,6 +182,11 @@ enum DelegationWalRecovery {
         let van: Data
         let totalNoteValue: UInt64
         let origin: Origin
+        /// False when the record decoded but its tail did not, `gov_comm` or
+        /// `total_note_value` having been truncated by overflow. The blinding
+        /// factor is still the recovered one; what is missing is the
+        /// commitment that would verify it.
+        let isComplete: Bool
     }
 
     /// One bundle whose secrets a wipe destroyed.
@@ -238,9 +243,24 @@ enum DelegationWalRecovery {
     }
 
     static func plan(bundles: [RecoveredBundle]) -> Plan {
-        var byBundle: [String: [RecoveredBundle]] = [:]
+        // Keyed on a STRUCT, not the rendered string. A string key sorts
+        // bundle 10 before bundle 2, while `deduplicated` sorts numerically,
+        // so the two would disagree about the order of the same bundles.
+        struct BundleKey: Hashable, Comparable {
+            let roundId: String
+            let bundleIndex: UInt32
+
+            static func < (lhs: Self, rhs: Self) -> Bool {
+                (lhs.roundId, lhs.bundleIndex) < (rhs.roundId, rhs.bundleIndex)
+            }
+        }
+
+        var byBundle: [BundleKey: [RecoveredBundle]] = [:]
         for bundle in bundles {
-            byBundle["\(bundle.roundId)/\(bundle.bundleIndex)", default: []].append(bundle)
+            byBundle[
+                BundleKey(roundId: bundle.roundId, bundleIndex: bundle.bundleIndex),
+                default: []
+            ].append(bundle)
         }
 
         var replacements: [Replacement] = []
@@ -298,7 +318,12 @@ enum DelegationWalRecovery {
 
         if let walURL, FileManager.default.fileExists(atPath: walURL.path) {
             let wal = try Data(contentsOf: walURL, options: .mappedIfSafe)
-            rows += recover(walBytes: [UInt8](wal), roundId: roundId)
+            // The reserved-region size lives in the database header, so the
+            // log can only be read correctly alongside its own database.
+            let reserved = database.count > Format.reservedSizeOffset
+                ? Int(database[Format.reservedSizeOffset])
+                : 0
+            rows += recover(walBytes: [UInt8](wal), roundId: roundId, reservedPerPage: reserved)
         }
 
         return deduplicated(rows)
@@ -457,7 +482,17 @@ enum DelegationWalRecovery {
         }
     }
 
-    static func recover(walBytes: [UInt8], roundId: String? = nil) -> [RecoveredBundle] {
+    /// - Parameter reservedPerPage: bytes reserved at the end of every page,
+    ///   from the DATABASE header. A write-ahead log has no header of its own
+    ///   carrying it, so the value has to come from the database it belongs
+    ///   to; the database path already subtracts it and this one did not, so
+    ///   the two disagreed about the usable size of the same page whenever a
+    ///   reserved region existed.
+    static func recover(
+        walBytes: [UInt8],
+        roundId: String? = nil,
+        reservedPerPage: Int = 0
+    ) -> [RecoveredBundle] {
         guard walBytes.count > Format.walHeaderLength else { return [] }
 
         let magic = readUInt32(walBytes, 0)
@@ -465,6 +500,9 @@ enum DelegationWalRecovery {
 
         let pageSize = Int(readUInt32(walBytes, Format.walPageSizeOffset))
         guard isPlausiblePageSize(pageSize) else { return [] }
+
+        let usable = pageSize - reservedPerPage
+        guard usable > Format.maxLocalReserve else { return [] }
 
         var recovered: [RecoveredBundle] = []
         var seen: Set<String> = []
@@ -479,7 +517,15 @@ enum DelegationWalRecovery {
         while offset + frameLength <= walBytes.count {
             let imageStart = offset + Format.walFrameHeaderLength
             let page = Array(walBytes[imageStart..<(imageStart + pageSize)])
-            for (columns, _) in bundleRecords(inPage: page, usable: pageSize) {
+            // The frame header names the page this image belongs to, and page
+            // 1 carries the 100-byte database header before its b-tree header.
+            // Reading it at offset 0, as this did, walks the file header as
+            // though it were a b-tree.
+            let pageNumber = Int(readUInt32(walBytes, offset))
+            let headerOffset = pageNumber == 1 ? Format.fileHeaderLength : 0
+            for (columns, _) in bundleRecords(
+                inPage: page, usable: usable, headerOffset: headerOffset
+            ) {
                 guard let bundle = makeBundle(columns: columns, origin: .walFrame(frame))
                 else { continue }
                 if let roundId, bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
@@ -522,15 +568,26 @@ enum DelegationWalRecovery {
         }
 
         let van: Data
-        if case let .blob(stored) = columns[BundleColumn.govComm.rawValue], stored.count == fieldElementLength {
+        // `gov_comm` and `total_note_value` sit past several variable-length
+        // blobs, so a payload cut short by overflow can yield the blinding
+        // factor and lose them. Still worth recovering, the blinding factor
+        // being the irreplaceable part, but the caller has to be able to tell:
+        // `van` is what would otherwise verify it.
+        var isComplete = true
+
+        if case let .blob(stored) = columns[BundleColumn.govComm.rawValue],
+           stored.count == fieldElementLength {
             van = stored
         } else {
             van = Data()
+            isComplete = false
         }
 
         var weight: UInt64 = 0
         if case let .integer(stored) = columns[BundleColumn.totalNoteValue.rawValue], stored >= 0 {
             weight = UInt64(stored)
+        } else {
+            isComplete = false
         }
 
         return RecoveredBundle(
@@ -539,7 +596,8 @@ enum DelegationWalRecovery {
             vanCommRand: rand,
             van: van,
             totalNoteValue: weight,
-            origin: origin
+            origin: origin,
+            isComplete: isComplete
         )
     }
 

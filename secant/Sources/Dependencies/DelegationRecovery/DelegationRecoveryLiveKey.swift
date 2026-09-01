@@ -88,41 +88,69 @@ extension DelegationRecoveryClient: DependencyKey {
         return sources
     }
 
-    /// Files under `root` that are a voting database rather than one of its
-    /// sidecars, something the SDK owns, or an unrelated store.
+    /// Files under `root` that really are a voting database.
     ///
-    /// Matched on the name containing "voting" and NOT ending in `-wal` or
-    /// `-shm`, which keeps `ZcashSdk_mainnet_data.db`, `Cache.db` and
-    /// `submit_plans_1.db` out. A sidecar is found through its database, never
-    /// on its own.
+    /// Two limits, both learned from a test that carved a file it had just
+    /// moved aside:
+    ///
+    /// - DEPTH. Only the Documents root and one level below it. A voting
+    ///   database lives beside the app's own files or in a directory someone
+    ///   made to hold a copy; nothing legitimate buries one deeper, and an
+    ///   unbounded walk turns every stray file in the container into a
+    ///   recovery source.
+    /// - CONTENT. The name only selects candidates; the SQLite magic decides.
+    ///   Matching on a name alone means anything called `voting-something.db`
+    ///   is carved, whatever it actually is.
+    ///
+    /// `-wal` and `-shm` are excluded so a sidecar is only ever reached
+    /// through its own database.
     static func votingDatabases(under root: URL) -> [URL] {
         let fileManager = FileManager.default
-        guard let walker = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
+
+        func candidates(in directory: URL) -> [URL] {
+            (try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
         }
 
         var found: [URL] = []
-        for case let url as URL in walker {
+        var toInspect = candidates(in: root)
+        for url in candidates(in: root) where isDirectory(url) {
+            toInspect += candidates(in: url)
+        }
+
+        for url in toInspect {
             let name = url.lastPathComponent.lowercased()
             guard name.contains("voting"),
-                  name.contains("sqlite") || name.contains(".db"),
+                  name.contains("sqlite") || name.hasSuffix(".db"),
                   !name.hasSuffix("-wal"),
                   !name.hasSuffix("-shm"),
-                  !name.hasSuffix(".json")
+                  !isDirectory(url),
+                  looksLikeSQLite(url)
             else {
-                continue
-            }
-            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?
-                .isRegularFile == true else {
                 continue
             }
             found.append(url)
         }
         return found
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+    }
+
+    /// Reads the 16-byte SQLite magic, and nothing more. A name is a guess; a
+    /// header is evidence.
+    private static func looksLikeSQLite(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: DelegationWalRecovery.Format.magic.count)
+        else {
+            return false
+        }
+        return Array(head) == DelegationWalRecovery.Format.magic
     }
 
     /// A short, stable label naming WHICH file a log line is about: the path

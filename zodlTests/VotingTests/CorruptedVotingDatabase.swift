@@ -39,7 +39,15 @@ extension VotingRecoveryEndToEndTests {
 
         /// - Parameter rebuildAfterClearing: when false, the round is never
         ///   cleared, producing the healthy database the idempotence tests use.
-        init(rebuildAfterClearing: Bool) throws {
+        /// - Parameter updateAfterCheckpoint: rewrites a bundle row AFTER the
+        ///   rows have been checkpointed into the database file, which is what
+        ///   the real delegation lifecycle does repeatedly as `alpha`, `rk`,
+        ///   `rseed_signed`, `pczt_sighash` and `delegation_tx_hash` are
+        ///   filled in. Each rewrite leaves the previous cell in freed space
+        ///   with an IDENTICAL `van_comm_rand`, so the same value ends up both
+        ///   live and released. A healthy round in that state must still read
+        ///   as healthy.
+        init(rebuildAfterClearing: Bool, updateAfterCheckpoint: Bool = false) throws {
             directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("voting-e2e-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -91,6 +99,27 @@ extension VotingRecoveryEndToEndTests {
                 )
                 // …and what `prepareFreshRound` does next.
                 try Self.exec(database, Self.insertRound(phase: 0, rands: Fixture.rebuiltRand))
+            }
+
+            if updateAfterCheckpoint {
+                // Land the rows in the database file, then rewrite one. The
+                // update writes a new cell and releases the old one, and the
+                // second checkpoint makes both visible in the file.
+                try Self.exec(database, "PRAGMA wal_checkpoint(FULL);")
+                // Must GROW the record. An integer-to-integer update of the
+                // same width is rewritten in place, leaving no freed cell, so
+                // it cannot produce the live-and-released state at all. Filling
+                // a NULL column with 32 bytes forces a new cell and releases
+                // the old one, which is what the delegation lifecycle does when
+                // it writes `alpha`, `rk` and `pczt_sighash`.
+                try Self.exec(
+                    database,
+                    """
+                    UPDATE bundles SET rk = X'\(String(repeating: "dd", count: 32))'
+                     WHERE round_id = '\(Fixture.roundId)' AND bundle_index = 0;
+                    """
+                )
+                try Self.exec(database, "PRAGMA wal_checkpoint(FULL);")
             }
 
             // Capture the trio while the connection is still open. SQLite has

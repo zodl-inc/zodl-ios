@@ -185,6 +185,64 @@ import ComposableArchitecture
         #expect(plan.needsRecovery == false)
     }
 
+    // MARK: - A rewritten row is not a wiped one
+
+    /// The lifecycle case that reads as damage if `plan` is not careful.
+    ///
+    /// Bundle rows are rewritten repeatedly as `alpha`, `rk`, `rseed_signed`,
+    /// `pczt_sighash` and `delegation_tx_hash` are filled in. Every rewrite
+    /// releases the previous cell, and this build of SQLite does not zero it,
+    /// so the SAME `van_comm_rand` ends up both live and in released space.
+    ///
+    /// The carver must not read that as "deleted and never rebuilt". Getting
+    /// it wrong would report a healthy, fully delegated round as damaged, and
+    /// recovery would act on a round nothing ever harmed.
+    @Test func aRowRewrittenAfterCheckpointIsNotAWipedRow() throws {
+        let healthy = try Corrupted(rebuildAfterClearing: false, updateAfterCheckpoint: true)
+
+        let plan = try DelegationWalRecovery.plan(
+            databaseURL: healthy.databaseURL,
+            walURL: healthy.walURL,
+            roundId: Fixture.roundId
+        )
+
+        #expect(
+            plan.needsRecovery == false,
+            "a rewritten row was mistaken for a wiped one"
+        )
+    }
+
+    /// Why the test above cannot fail for the reason it guards against, which
+    /// is worth pinning rather than assuming.
+    ///
+    /// Growing a row forces SQLite to write a new cell and release the old
+    /// one, so the same `van_comm_rand` is briefly present twice. The released
+    /// copy does NOT come back as a decodable row: freed cells are coalesced
+    /// into a freeblock, which destroys the record framing the carver matches
+    /// on. Commit 9fd79239 measured the same thing from the other direction,
+    /// finding that database-file carving recovers nothing a checkpointed log
+    /// could not.
+    ///
+    /// This is load-bearing for the verdict logic. `plan` treats "every
+    /// surviving copy sits in released space" as evidence of a wipe, and that
+    /// rule is only safe while an ordinary rewrite cannot manufacture such a
+    /// copy. If a future SQLite, page size or column layout makes freed cells
+    /// decodable again, this test fails and the verdict rule has to be
+    /// revisited before the carver reports healthy rounds as damaged.
+    @Test func arewrittenRowLeavesNoDecodableCopyInReleasedSpace() throws {
+        let healthy = try Corrupted(rebuildAfterClearing: false, updateAfterCheckpoint: true)
+
+        let rows = DelegationWalRecovery.recover(
+            databaseBytes: [UInt8](try Data(contentsOf: healthy.databaseURL)),
+            roundId: Fixture.roundId
+        )
+
+        #expect(
+            rows.contains { $0.origin == .databaseFreeSpace } == false,
+            "a freed cell decoded; `plan`'s all-released rule needs revisiting"
+        )
+    }
+
     // MARK: - Pure properties
 
     /// Origin ordering is what lets `plan` pick the original without a clock:
