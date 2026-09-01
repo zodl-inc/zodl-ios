@@ -24,77 +24,126 @@ extension DelegationRecoveryClient: DependencyKey {
         }
     }
 
-    /// Every copy worth carving, best first.
+    /// Every copy of the voting database on the device, best first.
     ///
-    /// 1. The preserved set under `voting_recovery/`. Copied before anything
-    ///    opened the database, so its write-ahead log is the only place a
-    ///    freshly cleared round survives whole.
-    /// 2. Any further `*.sqlite3` preserved alongside it. Only one set is kept
-    ///    today, but a build that ever keeps more should not need a change
-    ///    here to have them read.
-    /// 3. The live `Documents/voting.sqlite3`. Its log has almost certainly
-    ///    been checkpointed away by now, but a checkpoint does not zero the
-    ///    cells it releases: this build of SQLite is not compiled with
-    ///    `SQLITE_SECURE_DELETE`, so deleted rows survive in freed pages, in
-    ///    freeblocks, and in the unallocated gap.
+    /// Copies are discovered under Documents rather than listed, so a `.bak`
+    /// beside the live file or a set kept under another name is carved too.
     ///
-    /// A database restored from an iCloud or device backup needs no case of
-    /// its own: both the preserved set and the live database are deliberately
-    /// left backup-eligible, so a migrated device presents them at exactly
-    /// these paths.
+    /// The order is trust: how likely the copy still holds the superseded
+    /// page images, which is decided by how much SQLite has done to it since.
+    ///
+    /// 1. `voting_recovery/`, copied before anything opened the database.
+    /// 2. Any other copy under Documents. Older than the live file, and
+    ///    unopened since it was made.
+    /// 3. The live `Documents/voting.sqlite3` last. Its log has almost
+    ///    certainly been checkpointed, but this SQLite is not built with
+    ///    `SQLITE_SECURE_DELETE`, so deleted rows survive in freed pages,
+    ///    freeblocks and the unallocated gap.
+    ///
+    /// A database restored from a backup needs no case of its own: the
+    /// preserved set and the live database are both backup-eligible, so a
+    /// migrated device presents them at these same paths.
     static func sources(includingAbsent: Bool) -> [Source] {
-        var sources: [Source] = []
         let fileManager = FileManager.default
-
-        if let root = try? VotingDatabaseSnapshot.recoveryDirectory() {
-            let preserved = root
-                .appendingPathComponent(VotingDatabaseSnapshot.databaseName)
-            sources.append(Source(name: "preserved", databaseURL: preserved))
-
-            // Sorted so a run is reproducible, and so the report's counts do
-            // not depend on directory enumeration order.
-            let siblings = (try? fileManager.contentsOfDirectory(
-                at: root,
-                includingPropertiesForKeys: nil
-            )) ?? []
-            for url in siblings.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-            where url.pathExtension == "sqlite3" && url != preserved {
-                sources.append(
-                    Source(name: "preserved/\(url.lastPathComponent)", databaseURL: url)
-                )
-            }
+        guard let documents = fileManager
+            .urls(for: .documentDirectory, in: .userDomainMask)
+            .first
+        else {
+            return []
         }
 
-        if let documents = fileManager
-            .urls(for: .documentDirectory, in: .userDomainMask)
-            .first {
-            sources.append(
-                Source(
-                    name: "live",
-                    databaseURL: documents.appendingPathComponent("voting.sqlite3")
-                )
+        let preservedRoot = try? VotingDatabaseSnapshot.recoveryDirectory()
+        let live = documents.appendingPathComponent(VotingDatabaseSnapshot.databaseName)
+
+        var seen: Set<String> = []
+        var sources: [Source] = []
+
+        func add(_ url: URL, name: String) {
+            // Two paths can name one file, so compare resolved paths.
+            let key = url.standardizedFileURL.path
+            guard seen.insert(key).inserted else { return }
+            sources.append(Source(name: name, databaseURL: url))
+        }
+
+        // 1. The preserved set, canonical name first.
+        if let preservedRoot {
+            add(
+                preservedRoot.appendingPathComponent(VotingDatabaseSnapshot.databaseName),
+                name: "preserved"
             )
         }
+
+        // 2. Everything else that looks like a voting database, anywhere under
+        //    Documents. Sorted so a run is reproducible and the log reads the
+        //    same twice.
+        for url in votingDatabases(under: documents).sorted(by: {
+            $0.standardizedFileURL.path < $1.standardizedFileURL.path
+        }) where url.standardizedFileURL.path != live.standardizedFileURL.path {
+            add(url, name: label(for: url, relativeTo: documents))
+        }
+
+        // 3. The live database last.
+        add(live, name: "live")
 
         return sources
     }
 
-    /// Copies that actually hold data. `run` uses this; the diagnostics screen
-    /// asks for the unfiltered list so it can show what is missing too.
-    static func sources() -> [Source] {
-        sources(includingAbsent: true)
-            .filter { VotingDatabaseSnapshot.holdsData(at: $0.databaseURL) }
+    /// Files under `root` that are a voting database rather than one of its
+    /// sidecars, something the SDK owns, or an unrelated store.
+    ///
+    /// Matched on the name containing "voting" and NOT ending in `-wal` or
+    /// `-shm`, which keeps `ZcashSdk_mainnet_data.db`, `Cache.db` and
+    /// `submit_plans_1.db` out. A sidecar is found through its database, never
+    /// on its own.
+    static func votingDatabases(under root: URL) -> [URL] {
+        let fileManager = FileManager.default
+        guard let walker = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        var found: [URL] = []
+        for case let url as URL in walker {
+            let name = url.lastPathComponent.lowercased()
+            guard name.contains("voting"),
+                  name.contains("sqlite") || name.contains(".db"),
+                  !name.hasSuffix("-wal"),
+                  !name.hasSuffix("-shm"),
+                  !name.hasSuffix(".json")
+            else {
+                continue
+            }
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?
+                .isRegularFile == true else {
+                continue
+            }
+            found.append(url)
+        }
+        return found
     }
 
+    /// A short, stable label naming WHICH file a log line is about: the path
+    /// relative to Documents, so `voting_recovery/voting.sqlite3.bak` reads as
+    /// itself rather than as an anonymous "copy 3".
+    static func label(for url: URL, relativeTo documents: URL) -> String {
+        let full = url.standardizedFileURL.path
+        let base = documents.standardizedFileURL.path
+        if full.hasPrefix(base + "/") {
+            return String(full.dropFirst(base.count + 1))
+        }
+        return url.lastPathComponent
+    }
 
 
     /// Every line this subsystem emits carries the same prefix, so the whole
     /// run can be isolated in the Xcode console by filtering on "poll-recovery".
     ///
-    /// Values are logged ELIDED, exactly as they are shown on screen. These
-    /// logs reach os_log and the app's own log export, and `van_comm_rand` is
-    /// the one secret in the system that cannot be regenerated, so it must not
-    /// be written out in full.
+    /// Values are logged ELIDED. These lines reach os_log and the app's own
+    /// log export, and `van_comm_rand` is the one secret in the system that
+    /// cannot be regenerated, so it must not be written out in full.
     static func log(_ message: String) {
         LoggerProxy.info("[poll-recovery] \(message)")
     }
@@ -102,9 +151,8 @@ extension DelegationRecoveryClient: DependencyKey {
     /// Keeps both ends of a hex value and drops the middle.
     ///
     /// Not only for brevity: the two generations in the test fixtures differ
-    /// in the LAST byte, so an elision that kept only a prefix would render
-    /// them identical and make the screen useless for the thing it exists to
-    /// show.
+    /// in the LAST byte, so an elision keeping only a prefix would render them
+    /// identical and make the log useless for telling them apart.
     static func elide(_ data: Data) -> String {
         let hex = data.hexString
         guard hex.count > 16 else { return hex }
@@ -119,6 +167,47 @@ extension DelegationRecoveryClient: DependencyKey {
         }
     }
 
+    /// Byte size, or 0 when the file is not there. For the log only, so a
+    /// missing file reads as 0 rather than failing a run.
+    static func fileSize(_ url: URL) -> Int {
+        guard let attributes = try? FileManager.default
+            .attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber
+        else {
+            return 0
+        }
+        return size.intValue
+    }
+
+    /// The copies that actually hold data, which is what a run carves.
+    /// `sources(includingAbsent:)` keeps the empty ones too, so a caller can
+    /// report what is missing rather than silently omitting it.
+    static func sources() -> [Source] {
+        sources(includingAbsent: true)
+            .filter { VotingDatabaseSnapshot.holdsData(at: $0.databaseURL) }
+    }
+
+    /// When `VotingDatabaseSnapshot` took the preserved set, read from the
+    /// marker it writes beside the copy.
+    ///
+    /// The capture stores the database under a FIXED name and records the time
+    /// in a separate `captured-yyyyMMdd-HHmmss.txt` marker, so the age of the
+    /// copy is knowable only from that file. Age is the fact worth having, and
+    /// it reads backwards: the copy is taken before anything opens the
+    /// database, so an OLD capture is good news, being the one closest to the
+    /// incident and least likely to have been checkpointed.
+    static func captureTime(inPreservedDirectory root: URL) -> String? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        guard let marker = names
+            .filter({ $0.hasPrefix("captured-") && $0.hasSuffix(".txt") })
+            .sorted()
+            .last
+        else {
+            return nil
+        }
+        return String(marker.dropFirst("captured-".count).dropLast(".txt".count))
+    }
+
     static var liveValue: Self {
         Self(
             run: {
@@ -130,7 +219,28 @@ extension DelegationRecoveryClient: DependencyKey {
                     log("RUN aborted: no voting database holds data")
                     return DelegationRecoveryReport(outcome: .noSnapshot)
                 }
-                log("RUN over \(sources.count) copy/copies: \(sources.map(\.name).joined(separator: ", "))")
+                log("RUN over \(sources.count) copy/copies, best first:")
+                let preservedRoot = try? VotingDatabaseSnapshot.recoveryDirectory()
+                for source in sources {
+                    let wal = fileSize(source.walURL)
+                    // Only a preserved set carries a capture marker, and its
+                    // age is the useful fact: the copy is taken before
+                    // anything opens the database, so an OLD one is the good
+                    // one, closest to the incident.
+                    let captured = preservedRoot.flatMap { root -> String? in
+                        source.databaseURL.standardizedFileURL.path
+                            .hasPrefix(root.standardizedFileURL.path + "/")
+                            ? captureTime(inPreservedDirectory: root)
+                            : nil
+                    }
+                    log(
+                        "  - \(source.name): db \(fileSize(source.databaseURL))B, wal \(wal)B"
+                        + (captured.map { ", captured \($0) UTC" } ?? "")
+                        + (wal <= DelegationWalRecovery.Format.walHeaderLength
+                            ? " (log header-only: nothing superseded left in it)"
+                            : "")
+                    )
+                }
 
                 // The cheap early-out. A wallet that never opened a poll has no
                 // round, so nothing can have been lost and there is no reason to
@@ -194,9 +304,15 @@ extension DelegationRecoveryClient: DependencyKey {
                         // First writer wins: sources are in descending trust.
                         if originals[key] == nil {
                             originals[key] = original
-                            log("    take \(key) from \(describe(original.origin))")
+                            log(
+                                "    take \(key) from [\(source.name)] "
+                                + describe(original.origin)
+                            )
                         } else {
-                            log("    skip \(key), a more trusted copy already supplied it")
+                            log(
+                                "    skip \(key) in [\(source.name)], "
+                                + "a more trusted copy already supplied it"
+                            )
                         }
                     }
                 }
