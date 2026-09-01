@@ -96,8 +96,6 @@ PartnerKeys.plist
 # Design docs, implementation plans, and other working notes. These are
 # conversation artifacts rather than repository history.
 .plans
-.notes
-
 
 # Python bytecode from helper scripts
 __pycache__/
