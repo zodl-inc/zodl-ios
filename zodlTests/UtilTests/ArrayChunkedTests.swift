@@ -25,6 +25,20 @@ import Testing
         #expect([Int]().chunked(into: 3) == [])
     }
 
+    @Test func chunkedWithZeroSizeReturnsWholeArrayInsteadOfTrapping() {
+        // `stride(from:to:by: 0)` traps at runtime; the guard must return the
+        // whole array as a single chunk rather than crash.
+        #expect([1, 2, 3].chunked(into: 0) == [[1, 2, 3]])
+    }
+
+    @Test func chunkedWithNegativeSizeReturnsWholeArray() {
+        #expect([1, 2, 3].chunked(into: -1) == [[1, 2, 3]])
+    }
+
+    @Test func chunkedEmptyArrayWithZeroSizeReturnsEmpty() {
+        #expect([Int]().chunked(into: 0) == [])
+    }
+
     @Test func removingDuplicatesKeepsFirstOccurrencePreservingOrder() {
         let items = [
             Item(id: 1, tag: "a"),

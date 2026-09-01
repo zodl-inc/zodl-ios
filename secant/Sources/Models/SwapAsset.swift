@@ -57,6 +57,7 @@ struct SwapAsset: Equatable, Codable, Identifiable, Hashable {
         case "ada": return "Cardano"
         case "ltc": return "Litecoin"
         case "bch": return "Bitcoin Cash"
+        case "dash": return "Dash"
         default: return token
         }
     }
@@ -111,7 +112,7 @@ extension SwapAsset {
     /// Deliberately excludes "zec": Zcash is recognized automatically from the
     /// address, not a manually-pickable contact chain.
     static func curatedChains() -> [SwapAsset] {
-        ["arb", "avax", "base", "bsc", "btc", "eth", "ltc", "near", "pol", "sol", "sui", "tron", "xrp"].map {
+        ["arb", "avax", "base", "bch", "bsc", "btc", "dash", "eth", "ltc", "near", "pol", "sol", "sui", "tron", "xrp"].map {
             SwapAsset(provider: "", chain: $0, token: "", assetId: "", usdPrice: 0, decimals: 0)
         }
     }

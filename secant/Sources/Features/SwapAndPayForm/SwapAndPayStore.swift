@@ -987,7 +987,7 @@ struct SwapAndPay {
             case .swapAssetsLoaded(let swapAssets):
                 state.swapAssetFailedWithRetry = nil
                 state.swapAssetFailedCounter = 0
-                state.zecAsset = swapAssets.first { $0.token.lowercased() == "zec" }
+                state.zecAsset = swapAssets.first { $0.idWithoutProvider == Constants.zecAsset }
                 if state.selectedAsset == nil && state.selectedContact == nil {
                     if let lastUsedAssetId = userMetadataProvider.lastUsedAssetHistory().first {
                         state.selectedAsset = swapAssets.first { $0.id == lastUsedAssetId }
