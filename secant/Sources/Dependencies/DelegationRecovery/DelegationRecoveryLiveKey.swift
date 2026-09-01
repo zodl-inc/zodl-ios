@@ -405,7 +405,7 @@ extension DelegationRecoveryClient: DependencyKey {
                 }
 
                 log(
-                    "RUN finished over \(scanned) source(s): outcome=\(report.outcome), "
+                    "RUN finished over \(report.sourcesScanned) source(s): outcome=\(report.outcome), "
                     + "escrowed=\(report.bundlesEscrowed) across \(report.rounds) round(s), "
                     + "rejected=\(report.bundlesRejected), "
                     + "withoutCommitment=\(report.bundlesWithoutVan)"
