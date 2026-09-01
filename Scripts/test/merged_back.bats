@@ -1,0 +1,91 @@
+#!/usr/bin/env bats
+#
+# Tests for .github/scripts/check-release-merged-back.sh against fixture
+# repositories. Remote-tracking refs are planted with git update-ref, so
+# nothing here needs a network or a real remote.
+
+setup() {
+  CHECK="$BATS_TEST_DIRNAME/../../.github/scripts/check-release-merged-back.sh"
+  REPO="$BATS_TEST_TMPDIR/repo"
+  git init -q -b main "$REPO"
+  cd "$REPO"
+  git config tag.gpgsign false
+  git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+  BASE="$(git rev-parse HEAD)"
+}
+
+# One empty commit on the current branch; its sha lands in $SHA.
+mkcommit() {
+  git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$1"
+  SHA="$(git rev-parse HEAD)"
+}
+
+@test "a maintenance line without the v prefix is the release's own line" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  mkcommit "merge back"
+  git update-ref refs/remotes/origin/maint/3.10.x "$SHA"
+  git update-ref refs/remotes/origin/main "$SHA"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'is in `maint/3.10.x` and downstream'* ]] || false
+  [[ "$output" != *"no longer exists"* ]] || false
+}
+
+@test "a released branch missing from its own line fails" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/main "$BASE"
+  run "$CHECK"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'is **not** merged back into `maint/3.10.x`'* ]] || false
+}
+
+@test "a freshly cut release branch still pointing at the previous tag is skipped" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.11.0 "$REL"
+  mkcommit "merge back"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$SHA"
+  git update-ref refs/remotes/origin/main "$SHA"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'`release/3.11.0` is freshly cut from `3.10.2`'* ]] || false
+  [[ "$output" == *"All 1 tagged release branches are merged back"* ]] || false
+}
+
+@test "non-release tags neither elect a maintenance line nor mark a release" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git tag 0.0.1-42-mainnet "$REL"
+  git tag beta4-rc2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  mkcommit "wip"; W="$SHA"
+  git tag beta5-rc1 "$W"
+  git update-ref refs/remotes/origin/release/experimental "$W"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$W"
+  git update-ref refs/remotes/origin/main "$W"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'(`3.10.2`)'* ]] || false
+  [[ "$output" != *"vbeta"* ]] || false
+  [[ "$output" != *"v0.0.x"* ]] || false
+  [[ "$output" == *'`release/experimental` has no release tag at its tip'* ]] || false
+}
+
+@test "a pending merge-back PR into its line is evaluated as merged" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/main "$BASE"
+  git checkout -q -b prmerge "$REL"
+  mkcommit "pr merge"
+  run "$CHECK" maint/3.10.x prmerge
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'is in `maint/3.10.x` but has not reached main'* ]] || false
+}

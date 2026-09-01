@@ -10,10 +10,12 @@
 #             branches as they stand.
 #   pr-ref    the pending change; defaults to HEAD (refs/pull/N/merge in CI).
 #
-# A release/ branch counts as released only when a tag points at its tip, so
-# in-flight release branches are skipped. The maintenance line comes from the
-# TAG, not the branch name: in the Swift SDK, release/3.0.0 is tagged 2.8.0-rc.1
-# and belongs to maint/v2.8.x.
+# A release/X.Y.Z branch counts as released only once a release-shaped tag
+# (X.Y.Z) points at its tip that is not older than the version in the branch
+# name. A branch prepare-release.sh has freshly cut still points at the
+# PREVIOUS release's tag, so it is skipped as in-flight until its own tag
+# lands. The maintenance line comes from the tag rather than the branch name,
+# and both maint/X.Y.x and maint/vX.Y.x spellings of a line are recognised.
 #
 # Branches resolve under refs/remotes/$REMOTE, which defaults to origin -- what
 # CI checks out. Set REMOTE to run this against a local clone whose canonical
@@ -27,21 +29,49 @@ PR_BASE="${1:-}"
 PR_REF="${2:-HEAD}"
 REMOTE="${REMOTE:-origin}"
 
+# RELEASE_TAG_RE, version_sort and version_le come from the release library,
+# so the tag shapes this check recognises are the ones the release tooling
+# actually cuts.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=Scripts/lib/release-lib.sh
+. "${SCRIPT_DIR}/../../Scripts/lib/release-lib.sh"
+
 say() {
   printf '%s\n' "$*"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
 }
 
-# Maintenance lines in version order, then main. v:refname sorts v2.10.x after
-# v2.9.x.
+# Maintenance lines in version order, then main. The repo has carried both
+# maint/X.Y.x and maint/vX.Y.x spellings, so every maint/* branch is collected
+# and ordered by the version it carries, v or no v.
 CHAIN=()
 while IFS= read -r ref; do
   CHAIN+=("$ref")
 done < <(
-  git for-each-ref --sort=v:refname --format='%(refname:lstrip=3)' \
-    "refs/remotes/${REMOTE}/maint/v*"
+  git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/maint/*" |
+    while IFS= read -r b; do
+      key="${b#maint/}"
+      key="${key#v}"
+      printf '%s %s\n' "$key" "$b"
+    done | sort -k1,1 -V | cut -d' ' -f2
 )
 CHAIN+=('main')
+
+# The chain entry that is the maintenance line for X.Y ($1), whichever
+# spelling the branch uses; the canonical maint/vX.Y.x when the line is gone.
+line_for() {
+  local want="$1" b key
+  for b in ${CHAIN[@]+"${CHAIN[@]}"}; do
+    case "$b" in maint/*) ;; *) continue ;; esac
+    key="${b#maint/}"
+    key="${key#v}"
+    if [ "$key" = "${want}.x" ]; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
+  printf 'maint/v%s.x\n' "$want"
+}
 
 # Resolve a chain branch, substituting the pending change when it targets it.
 resolve() {
@@ -62,22 +92,32 @@ while IFS= read -r rel; do
   [ -n "$rel" ] || continue
   ref="${REMOTE}/${rel}"
 
-  tags="$(git tag --points-at "$ref" | tr '\n' ' ')"
-  tags="${tags% }"
-  if [ -z "$tags" ]; then
-    say ":grey_question: \`${rel}\` has no tag at its tip; not a released branch, skipped."
+  # Only release-shaped tags mark a release: the repo also multi-tags commits
+  # with build tags (0.0.1-42-mainnet) and the odd pre-release, and those must
+  # not elect a maintenance line. Of several, the newest wins.
+  tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"
+  if [ -z "$tag" ]; then
+    say ":grey_question: \`${rel}\` has no release tag at its tip; not a released branch, skipped."
     continue
   fi
 
-  # [v]MAJOR.MINOR.PATCH[-anything] -> maint/vMAJOR.MINOR.x. The optional
-  # trailing part covers both a pre-release suffix (2.8.0-rc.1) and the build
-  # number some repos append (3.9.3-2393).
-  tag="${tags%% *}"
+  # A branch prepare-release.sh has cut but not yet released still points at
+  # the previous release's tag: every release tag at its tip is older than the
+  # version in its own name. It has released nothing yet, so skip it.
+  branch_ver="${rel#release/}"
+  if printf '%s\n' "$branch_ver" | grep -qE "$RELEASE_TAG_RE"; then
+    if [ "$tag" != "$branch_ver" ] && version_le "$tag" "$branch_ver"; then
+      say ":grey_question: \`${rel}\` is freshly cut from \`${tag}\` and not yet released; skipped."
+      continue
+    fi
+  fi
+
+  # [v]MAJOR.MINOR.PATCH[-anything] -> its maintenance line.
   ver="${tag#v}"
   major="${ver%%.*}"
   rest="${ver#*.}"
   minor="${rest%%.*}"
-  maint="maint/v${major}.${minor}.x"
+  maint="$(line_for "${major}.${minor}")"
 
   # Its own line is the obligation. Anything downstream of it is merge-forward
   # lag, which the merge-forward jobs already track, so it warns rather than
