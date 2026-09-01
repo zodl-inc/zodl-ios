@@ -18,5 +18,11 @@
 	<array>
 		<string>iCloud.com.electriccoinco.zashi</string>
 	</array>
+	<!-- Auto-update: outbound network for GitHub releases API + artifact download -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Auto-update: helper process needs to launch a new copy of the app -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

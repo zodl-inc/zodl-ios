@@ -34,6 +34,13 @@ struct zodlmac_internalApp: App {
         // the split view had already restored the stale width on frame 1 — so launch showed
         // remembered-width → slam-to-240, the visible sidebar pop.
         MacSidebarDefaults.purgeRememberedWidths()
+        // Check for updates at launch — runs regardless of wallet onboarding state
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            Updater.checkAndUpdate(log: { msg in
+                NSLog("[Updater] %@", msg)
+                print("[Updater] \(msg)")
+            })
+        }
     }
 
     var body: some Scene {
@@ -77,6 +84,7 @@ struct zodlmac_internalApp: App {
                 didFinishLaunching = true
                 rootStore.send(.initialization(.appDelegate(.didFinishLaunching)))
                 MacMenuSimplifier.simplifyDeferred()
+                // Update check runs from init() — do not call again here
             }
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
@@ -88,6 +96,10 @@ struct zodlmac_internalApp: App {
                     // that drops transactions and balance.
                     if didEnterBackgroundOnce {
                         rootStore.send(.initialization(.appDelegate(.willEnterForeground)))
+                        // Also check for updates on foreground
+                        DispatchQueue.global().async {
+                            Updater.checkAndUpdate(log: { msg in NSLog("[Updater] %@", msg) })
+                        }
                     }
                 case .background:
                     didEnterBackgroundOnce = true
