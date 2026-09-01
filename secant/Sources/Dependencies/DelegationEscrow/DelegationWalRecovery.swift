@@ -2,13 +2,74 @@
 import Foundation
 
 /// Recovers `bundles` rows that `clear_round` deleted, by carving the voting
-/// database's write-ahead log.
+/// database and its write-ahead log.
 ///
-/// In WAL mode SQLite appends a fresh image of every modified page to the
-/// `-wal` file on each commit, so a page written by several commits appears in
-/// the WAL several times. The frames written before the delete still hold the
-/// intact row, including the 32-byte VAN blinding factor that exists nowhere
-/// else and cannot be recomputed.
+/// THE FILE FORMAT, since every function below works at one of these levels.
+/// Reference: <https://www.sqlite.org/fileformat.html>
+/// Write-ahead log, section 4: <https://www.sqlite.org/fileformat.html#wal_file_format>
+///
+///     database file
+///     +--------------+--------------+--------------+----  pages, fixed size
+///     |   page 1     |   page 2     |   page 3     | ...   (4096 by default)
+///     +--------------+--------------+--------------+----
+///      ^ first 100 bytes are the FILE header:
+///        magic "SQLite format 3\0", page size at 16, reserved byte at 20.
+///        Only page 1 carries it, which is why `headerOffset` is 100 there
+///        and 0 everywhere else.
+///
+///     one page (a table b-tree LEAF, type byte 0x0D)
+///     +------+-------------------+###############+---------------------+
+///     | hdr  | cell pointer array|   free space  |  cells, growing <-- |
+///     +------+-------------------+###############+---------------------+
+///      0    8                                                     4096
+///
+///     hdr: type(1) freeblock(2) CELL COUNT(2) content start(2) frag(1)
+///          = 8 bytes on a leaf; an interior page adds a 4-byte right-most
+///          pointer, making 12. This parser only ever walks leaves.
+///
+///     Cells are appended from the END of the page downwards, and the pointer
+///     array grows from the front. They meet in the middle; what is between
+///     them is free. A DELETED row is unlinked from the pointer array and its
+///     space joins a freeblock list, but the bytes are NOT zeroed unless
+///     SQLite was built with SQLITE_SECURE_DELETE, and this build was not.
+///     That is the whole reason carving works: deleted means unreferenced,
+///     not erased.
+///
+///     one cell (table leaf)
+///     +--------------+--------+-------------------+------------------+
+///     | payload len  | rowid  |   payload         | overflow page no |
+///     |   varint     | varint |   (local part)    |   4 bytes, only  |
+///     +--------------+--------+-------------------+   when spilled   +
+///
+///     one payload (a record)
+///     +-------------+----------+----------+-----+--------+--------+----
+///     | header len  | serial 0 | serial 1 | ... | value0 | value1 | ...
+///     |   varint    |  varint  |  varint  |     |        |        |
+///     +-------------+----------+----------+-----+--------+--------+----
+///     |<------------- header --------------->|<-------- body --------
+///
+///     A serial type encodes type AND length: 0 is NULL, 1-6 are integers of
+///     1/2/3/4/6/8 bytes, 7 is a float, 8 and 9 are the constants 0 and 1
+///     costing no body bytes, N>=12 even is a BLOB of (N-12)/2 bytes and
+///     N>=13 odd is TEXT of (N-13)/2.
+///
+///     So a `bundles` record always opens with the serial for `round_id`,
+///     TEXT of length 64: 2*64+13 = 141, the varint 0x81 0x0D. That pair is
+///     the signature the sweep scans for, and it is how a row is found once
+///     nothing points at it any more.
+///
+/// In WAL mode SQLite appends a fresh image of every modified page on each
+/// commit, so a page rewritten by several commits appears several times. The
+/// frames written before a delete still hold the intact row, including the
+/// 32-byte VAN blinding factor that exists nowhere else and cannot be
+/// recomputed.
+///
+///     write-ahead log
+///     +----------+---------------+---------------+---------------+---
+///     | 32-byte  | frame hdr(24) | frame hdr(24) | frame hdr(24) |
+///     |  header  | + page image  | + page image  | + page image  |
+///     +----------+---------------+---------------+---------------+---
+///                 ^ the frame header names WHICH page this image is.
 ///
 /// Nothing here opens a SQLite connection. Opening one would run WAL recovery
 /// and checkpoint, which is precisely what overwrites the frames being read.
@@ -50,6 +111,7 @@ enum DelegationWalRecovery {
     /// change behaviour, it makes the parser wrong.
     enum Format {
         // Database header, spec section 1.3.
+        // <https://www.sqlite.org/fileformat.html#the_database_header>
 
         /// The database file header occupies the first 100 bytes of page 1,
         /// ahead of that page's b-tree header. No other page carries it.
@@ -68,6 +130,7 @@ enum DelegationWalRecovery {
         static let largestPageSizeSentinel = 1
 
         // B-tree page header, spec section 1.6.
+        // <https://www.sqlite.org/fileformat.html#b_tree_pages>
         //
         // | offset | size | meaning                                   |
         // | ------ | ---- | ----------------------------------------- |
@@ -92,6 +155,7 @@ enum DelegationWalRecovery {
         static let cellPointerWidth = 2
 
         // Cell payload overflow for a TABLE LEAF page, spec section 1.6.
+        // <https://www.sqlite.org/fileformat.html#cell_payload_overflow_pages>
         //
         // With U the usable page size and P the payload length:
         //     X = U - 35                      most payload that may stay local
@@ -119,12 +183,14 @@ enum DelegationWalRecovery {
         static let overflowPointerLength = 4
 
         // Record format, spec section 2.1.
+        // <https://www.sqlite.org/fileformat.html#record_format>
 
         /// Serial types 12 and above encode length in the type itself: even
         /// N is a BLOB of `(N-12)/2` bytes, odd N a TEXT of `(N-13)/2`.
         static let firstVariableLengthSerial: UInt64 = 12
 
         // Varint, spec section 2.1.
+        // <https://www.sqlite.org/fileformat.html#varint>
 
         /// A varint is at most 9 bytes: the first 8 contribute 7 bits each,
         /// the 9th contributes all 8.
@@ -132,7 +198,8 @@ enum DelegationWalRecovery {
         static let varintContinuationBit: UInt8 = 0x80
         static let varintPayloadMask: UInt8 = 0x7F
 
-        // Write-ahead log, spec section 4.
+        // Write-ahead log, spec section 4.1.
+        // <https://www.sqlite.org/fileformat.html#wal_file_format>
 
         /// The WAL header is 32 bytes, then a run of frames.
         static let walHeaderLength = 32
@@ -210,6 +277,12 @@ enum DelegationWalRecovery {
 
 
     /// Page sizes are powers of two between 512 and 65536, per spec 1.3.
+    /// <https://www.sqlite.org/fileformat.html#the_database_header>
+    ///
+    /// Takes the DECODED size. The database header stores 65536 as the
+    /// 16-bit value 1, and `geometry` maps that sentinel before it calls
+    /// this. The WAL header stores the size in 32 bits with no sentinel, so
+    /// its readers pass the field through unchanged.
     private static func isPlausiblePageSize(_ pageSize: Int) -> Bool {
         pageSize >= Format.smallestPageSize
             && pageSize <= Format.largestPageSize
@@ -665,6 +738,7 @@ enum DelegationWalRecovery {
         return records
     }
 
+
     private static func tableLeafPayloads(
         page: [UInt8],
         usable: Int,
@@ -699,6 +773,21 @@ enum DelegationWalRecovery {
     }
 
     /// Bytes of a table-leaf payload held in-page before overflow begins.
+    ///
+    /// The remainder, if any, lives in a chain of overflow pages that this
+    /// parser does NOT follow, and does not need to. `van_comm_rand` is column
+    /// 5 of 24, ahead of every variable-length blob except two that scale with
+    /// the note count, and `smartBundles` caps a bundle at FIVE notes
+    /// (`VotingHelpers.swift`). So the secret sits roughly 300 bytes into the
+    /// record whatever the wallet holds, well inside even the pessimistic
+    /// minimum local payload of `((U-12)*32/255)-23`, which is 489 bytes at
+    /// the usual 4096-byte page.
+    ///
+    /// It is written in one statement with every other large column
+    /// (`queries.rs`, the UPDATE that sets `van_comm_rand`), so there is no
+    /// state where the blinding factor exists in a row too large to reach it.
+    /// If that cap or that column order ever changes, this assumption has to
+    /// be revisited and the chain followed.
     private static func localPayloadSize(payloadLength: Int, usable: Int) -> Int {
         let maxLocal = usable - Format.maxLocalReserve
         if payloadLength <= maxLocal { return payloadLength }
@@ -766,6 +855,7 @@ enum DelegationWalRecovery {
     }
 
     /// Bytes on disk for one record serial type, per spec section 2.1.
+    /// <https://www.sqlite.org/fileformat.html#record_format>
     ///
     /// | serial        | type                     | bytes      |
     /// | ------------- | ------------------------ | ---------- |

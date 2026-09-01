@@ -18,6 +18,12 @@ extension VotingRecoveryEndToEndTests {
 
         /// A 32-byte value whose most significant byte is small, so it is below
         /// the Pallas modulus and could genuinely have been a blinding factor.
+        /// A distinct round id for the neighbour rounds that create page
+        /// pressure, so they cannot be confused with the round under test.
+        static func otherRoundId(_ index: Int) -> String {
+            String(repeating: String(format: "%02x", UInt8(0xE0 &+ UInt8(index & 0x0F))), count: 32)
+        }
+
         static func byte(_ value: UInt8) -> String {
             String(repeating: String(format: "%02x", value), count: 31) + "01"
         }
@@ -47,7 +53,21 @@ extension VotingRecoveryEndToEndTests {
         ///   with an IDENTICAL `van_comm_rand`, so the same value ends up both
         ///   live and released. A healthy round in that state must still read
         ///   as healthy.
-        init(rebuildAfterClearing: Bool, updateAfterCheckpoint: Bool = false) throws {
+        /// - Parameter notesPerBundle: scales the per-note blobs, which is
+        ///   what makes a real record large. The fixture's default of one note
+        ///   produces a row of a few hundred bytes; a real bundle at
+        ///   `delegationConstructed` carries 8 bytes of position and 32 bytes
+        ///   of identity hash PER NOTE, ahead of `van_comm_rand` in column 5,
+        ///   plus everything `build_pczt` writes after it.
+        /// - Parameter otherRounds: unrelated rounds inserted alongside, so the
+        ///   bundles of interest share pages with neighbours instead of sitting
+        ///   alone on freshly allocated ones.
+        init(
+            rebuildAfterClearing: Bool,
+            updateAfterCheckpoint: Bool = false,
+            notesPerBundle: Int = 1,
+            otherRounds: Int = 0
+        ) throws {
             directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("voting-e2e-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -75,7 +95,23 @@ extension VotingRecoveryEndToEndTests {
             // which is precisely why the originals survived.
             try Self.exec(database, "PRAGMA wal_checkpoint(TRUNCATE);")
 
-            try Self.exec(database, Self.insertRound(phase: 3, rands: Fixture.originalRand))
+            for other in 0..<otherRounds {
+                try Self.exec(
+                    database,
+                    Self.insertRound(
+                        phase: 3,
+                        rands: Fixture.originalRand,
+                        notesPerBundle: notesPerBundle,
+                        roundId: Fixture.otherRoundId(other)
+                    )
+                )
+            }
+            try Self.exec(
+                database,
+                Self.insertRound(
+                    phase: 3, rands: Fixture.originalRand, notesPerBundle: notesPerBundle
+                )
+            )
             // An ordinary commit, so the bundles page is rewritten and the
             // pre-incident image becomes a superseded frame rather than the
             // newest one.
@@ -98,7 +134,12 @@ extension VotingRecoveryEndToEndTests {
                     """
                 )
                 // …and what `prepareFreshRound` does next.
-                try Self.exec(database, Self.insertRound(phase: 0, rands: Fixture.rebuiltRand))
+                try Self.exec(
+                    database,
+                    Self.insertRound(
+                        phase: 0, rands: Fixture.rebuiltRand, notesPerBundle: notesPerBundle
+                    )
+                )
             }
 
             if updateAfterCheckpoint {
@@ -223,24 +264,57 @@ extension VotingRecoveryEndToEndTests {
         }
 
         /// Blob values go in as hex literals so no statement binding is needed.
-        private static func insertRound(phase: Int, rands: [String]) -> String {
+        /// Blob literal of `bytes` bytes, filled with `fill`.
+        private static func blob(_ fill: String, _ bytes: Int) -> String {
+            "X'\(String(repeating: fill, count: max(bytes, 1)))'"
+        }
+
+        /// One round and its bundles, with every column `build_pczt` writes
+        /// populated, so the record is the size a real one would be.
+        ///
+        /// `van_comm_rand` is column 5, BEHIND `note_positions_blob` and
+        /// `note_identity_hashes_blob`. Both scale with the note count, so a
+        /// bundle holding enough notes pushes the secret past the page's local
+        /// payload and into an overflow page, which the carver does not follow.
+        /// That boundary is what `DelegationRecordSizeTests` measures.
+        private static func insertRound(
+            phase: Int,
+            rands: [String],
+            notesPerBundle: Int = 1,
+            roundId: String = Fixture.roundId
+        ) -> String {
+            let notes = max(notesPerBundle, 1)
             var sql = """
                 INSERT INTO rounds
                     (round_id, wallet_id, network, snapshot_height,
                      ea_pk, nc_root, nullifier_imt_root, phase, created_at)
                 VALUES
-                    ('\(Fixture.roundId)', '\(Fixture.walletId)', 'testnet', 4245460,
+                    ('\(roundId)', '\(Fixture.walletId)', 'testnet', 4245460,
                      X'01', X'02', X'03', \(phase), 0);
 
                 """
             for (index, rand) in rands.enumerated() {
                 sql += """
                     INSERT INTO bundles
-                        (round_id, wallet_id, bundle_index, note_positions_blob,
-                         van_comm_rand, gov_comm, total_note_value, address_index)
+                        (round_id, wallet_id, bundle_index,
+                         note_positions_blob, note_identity_hashes_blob,
+                         van_comm_rand, dummy_nullifiers, rho_signed,
+                         padded_note_data, nf_signed, cmx_new, alpha,
+                         rseed_signed, rseed_output, gov_comm,
+                         total_note_value, address_index, rk,
+                         gov_nullifiers_blob, padded_note_secrets, pczt_sighash,
+                         tx1_effects)
                     VALUES
-                        ('\(Fixture.roundId)', '\(Fixture.walletId)', \(index), X'11',
-                         X'\(rand)', X'\(Fixture.govComm)', 130000000, 0);
+                        ('\(roundId)', '\(Fixture.walletId)', \(index),
+                         \(blob("aa", 8 * notes)), \(blob("bb", 32 * notes)),
+                         X'\(rand)', \(blob("cc", 32 * notes)), \(blob("dd", 32)),
+                         \(blob("ee", 64 * notes)), \(blob("ff", 32)),
+                         \(blob("11", 32)), \(blob("22", 32)),
+                         \(blob("33", 32)), \(blob("44", 32)),
+                         X'\(Fixture.govComm)',
+                         130000000, 0, \(blob("55", 32)),
+                         \(blob("66", 32 * notes)), \(blob("77", 64 * notes)),
+                         \(blob("88", 32)), \(blob("99", 512)));
 
                     """
             }
