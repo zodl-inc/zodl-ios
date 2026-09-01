@@ -260,8 +260,9 @@ been merged back into it first.
 Tagging and the back-merge are step 6 above, done by hand. The
 `Release Merged Back` check (`.github/workflows/release-merged-back.yml`) runs on
 every pull request into a maintenance branch or `main` and reports any tagged
-release branch that has not been merged back into its line. It is advisory and
-never blocks; run it locally with:
+release branch that has not been merged back into its line. Findings are advisory
+and never block; only the check itself failing to run (unreadable refs, a broken
+checkout) fails the job. Run it locally with:
 
 ```bash
 REMOTE=upstream ./.github/scripts/check-release-merged-back.sh

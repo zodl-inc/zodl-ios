@@ -12,7 +12,7 @@ live) or as a pinned remote package. The two are reported in the same shape:
     <branch-or-version>@<sha8>[ (tag: X)][ (dirty)]
 
 Usage:
-    build-refs.py --ref release/3.10.1 --sha 54812f81 [--repo /path/to/repo]
+    build-refs.py --ref candidate/3.10.1 --sha 54812f81 [--repo /path/to/repo]
 
 Prints one or two lines to stdout, ready to paste into the reply. The SDK line
 is omitted entirely when no SDK reference can be resolved; the reason goes to
