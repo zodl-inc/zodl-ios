@@ -180,6 +180,14 @@ struct SmartBanner {
             isScanProgressComplete && spendableBalance.amount > 0
         }
 
+        var isSyncComplete: Bool {
+            if case .upToDate = synchronizerStatusSnapshot.syncStatus {
+                return true
+            }
+
+            return false
+        }
+
         var hasPendingShieldingTransaction: Bool {
             transactions.isAnyShieldingPending()
         }

@@ -1362,7 +1362,7 @@
 /* Begin XCLocalSwiftPackageReference section */
 		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../zodl-swift-wallet-sdk";
+			relativePath = ".ci/zodl-swift-wallet-sdk";
 		};
 /* End XCLocalSwiftPackageReference section */
 

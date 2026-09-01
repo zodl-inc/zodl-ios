@@ -25,8 +25,10 @@ import Testing
 //
 // `.initialSetups` logs through the process-global `LoggerProxy`, and the effects under test
 // mutate TCA `@Shared` in-memory state (`walletStatus`, `walletAccounts`), so this suite is
-// serialized per repo convention.
-@Suite(.serialized) @MainActor struct RootInitializeSDKSingleFlightTests {
+// serialized per repo convention. `.timeLimit` records a genuinely-never-arriving prepare as a
+// failure — the event-driven wait below has no deadline of its own (see
+// MigrationSweepBannerFreshnessTests' header for why wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootInitializeSDKSingleFlightTests {
     /// Resumable gate the mocked `prepareWith` suspends on, keeping the first prepare
     /// "in flight" for as long as the test needs the race window held open.
     private final class PrepareGate: @unchecked Sendable {
@@ -71,7 +73,7 @@ import Testing
     /// real SDK reports while a `prepare` call is still in flight. Every `prepareWith` call
     /// suspends on `gate` until the test opens it.
     private func makeStore(
-        prepareModes: LockIsolated<[String]>,
+        prepareModes: SignalledRecords<String>,
         gate: PrepareGate
     ) -> TestStore<Root.State, Root.Action> {
         let seedDerivedAccount = Self.seedDerivedAccount
@@ -126,7 +128,7 @@ import Testing
                 prepareWith: { _, _, _, _ in
                     // The SDK derives the init flow itself now, so there is no mode to record; what this
                     // test asserts is that exactly ONE prepare is dispatched per launch.
-                    prepareModes.withValue { $0.append("prepare") }
+                    prepareModes.record("prepare")
                     await gate.wait()
                     return .success
                 },
@@ -139,11 +141,12 @@ import Testing
         return store
     }
 
-    /// Polls until `condition` holds or the timeout elapses; the launch chain under test hops
-    /// between effects, so there is no single action to `receive` on deterministically with
-    /// exhaustivity off. Also used with an unmet condition as a bounded settle window when
-    /// proving an action does NOT happen.
-    private func waitUntil(iterations: Int = 200, _ condition: @escaping @Sendable () -> Bool) async {
+    /// Bounded SETTLE WINDOW for the negative check only ("a second prepare does NOT arrive") —
+    /// a non-event has no completion signal to await, so a window is the honest shape; under
+    /// load its failure mode is a false PASS (the late second dispatch lands after the window),
+    /// never a spurious red. Positive waits in this suite are event-driven
+    /// (`SignalledRecords.countReached`) and must not come back to this helper.
+    private func settleWindow(iterations: Int = 50, _ condition: @escaping @Sendable () -> Bool) async {
         for _ in 0..<iterations where !condition() {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -158,13 +161,13 @@ import Testing
     }
 
     @Test func foregroundWhileUnpreparedDoesNotDispatchSecondPrepare() async throws {
-        let prepareModes = LockIsolated<[String]>([])
+        let prepareModes = SignalledRecords<String>()
         let gate = PrepareGate()
         let store = makeStore(prepareModes: prepareModes, gate: gate)
 
         await store.send(.initialization(.appDelegate(.didFinishLaunching)))
-        await waitUntil { prepareModes.value.count >= 1 }
-        #expect(prepareModes.value == ["prepare"], "launch must reach exactly one prepareWith")
+        await prepareModes.countReached(1)
+        #expect(prepareModes.values == ["prepare"], "launch must reach exactly one prepareWith")
 
         // The first prepare is now suspended on the gate and the synchronizer still reports
         // `.unprepared` — as it does for the entire duration of a real in-flight prepare — so
@@ -174,9 +177,9 @@ import Testing
 
         // Bounded settle window: before the fix the second prepareWith arrived within a few
         // milliseconds of the re-entry, so a second dispatch would be observed here.
-        await waitUntil(iterations: 50) { prepareModes.value.count >= 2 }
+        await settleWindow { prepareModes.count >= 2 }
         #expect(
-            prepareModes.value == ["prepare"],
+            prepareModes.values == ["prepare"],
             "a foreground re-entry must not dispatch another prepareWith while one is in flight"
         )
 

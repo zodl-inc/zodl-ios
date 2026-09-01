@@ -11,8 +11,30 @@
 //  retires.
 //
 //  Fixture conventions mirror MigrationSnapshotFreshnessTests (fixed-bytes AccountUUID, the tip/
-//  activation pair, `withDependencies`, `waitUntil` real-time polling, `.serialized` because the
-//  wallet-wide candidate set rides `@Shared(.inMemory(...))`).
+//  activation pair, `withDependencies`, `.serialized` because the wallet-wide candidate set rides
+//  `@Shared(.inMemory(...))`) — including its event-driven waits: `firstSnapshot(of:matching:
+//  storingIn:afterSubscribing:)` suspends until the expected snapshot is actually published, and
+//  `MigrationManagerImpl.awaitSnapshotRepublishIdle(for:)` suspends until the republish coalescer
+//  itself clears. An earlier version of THIS suite polled both conditions against a wall-clock
+//  deadline (`waitUntil`, 10 s) — the very pattern that sibling had already retired — and CI
+//  re-proved why: at the contended tail of a full parallel run a coalesced build that takes 0.07 s
+//  uncontended lost the fixed 10 s budget, so the precondition read `banner == nil` while the
+//  build was still queued (unit_tests runs 33360721267 and 33367930400, same failure on two
+//  branches). The event-driven waits scale with however long the build actually takes under load.
+//
+//  `.timeLimit` is a hang RECORDER, not a deadline the tests race: the waits themselves have no
+//  budget, so a coalescer that genuinely never publishes or never idles is reported as a failure
+//  at the limit instead of the run sitting in-progress until the CI job's own timeout. Two minutes
+//  where the sibling records at one: the immediate-sweep chain crosses two writer edges plus
+//  `reconcile()`, so a starved runner stacks more sequential builds into one test here.
+//
+//  One clock remains outside this file's control (the sibling documents the same for its lock
+//  test): `recordTransferBroadcast`'s awaited republish carries the PRODUCTION
+//  `lockRepublishTimeoutNanoseconds` bound (10 s), so under starvation extreme enough that bound
+//  can expire and the chain returns early by design — `theSweepSuccessChainOutrunsItsOwnRepublish`
+//  reads the banner immediately after the chain on purpose and would see the stale residual then.
+//  A recurrence there is that production bound doing its job under an even worse runner, not a
+//  deadline these waits reintroduce.
 //
 
 import Foundation
@@ -22,7 +44,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) struct MigrationSweepBannerFreshnessTests {
+@Suite(.serialized, .timeLimit(.minutes(2))) struct MigrationSweepBannerFreshnessTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x5A, count: 16))
     private static let activationHeight: BlockHeight = 4_134_000
     private static let tip: BlockHeight = 4_200_000
@@ -106,13 +128,25 @@ import ComposableArchitecture
         return MigrationScheduleStorage(userDefaults: defaults)
     }
 
-    private static func waitUntil(
-        timeoutNanoseconds: UInt64 = 10_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
+    /// Suspends until `publisher` emits a snapshot matching `predicate`, resumed by the emission
+    /// itself instead of polled against a wall-clock deadline — the sibling
+    /// MigrationSnapshotFreshnessTests' helper, replicated per this file's self-contained fixture
+    /// convention; see its header for why the deadline version proved flaky under CI load.
+    /// `afterSubscribing` runs the writer edge expected to produce the match from INSIDE the same
+    /// synchronous setup `withCheckedContinuation` runs, so the subscription is always live before
+    /// that edge's build can possibly publish.
+    private static func firstSnapshot(
+        of publisher: AnyPublisher<MigrationViewSnapshot?, Never>,
+        matching predicate: @escaping @Sendable (MigrationViewSnapshot?) -> Bool,
+        storingIn cancellables: inout Set<AnyCancellable>,
+        afterSubscribing trigger: () -> Void
+    ) async -> MigrationViewSnapshot? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<MigrationViewSnapshot?, Never>) in
+            publisher
+                .first(where: predicate)
+                .sink { snapshot in continuation.resume(returning: snapshot) }
+                .store(in: &cancellables)
+            trigger()
         }
     }
 
@@ -135,19 +169,23 @@ import ComposableArchitecture
         } operation: {
             let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
 
-            let received = LockIsolated<MigrationViewSnapshot?>(nil)
             var cancellables = Set<AnyCancellable>()
-            manager.migrationSnapshotEvents(accountUUID: Self.accountUUID)
-                .sink { snapshot in received.setValue(snapshot) }
-                .store(in: &cancellables)
-
-            manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
-            await Self.waitUntil { received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) }
+            let preSweepSnapshot = await Self.firstSnapshot(
+                of: manager.migrationSnapshotEvents(accountUUID: Self.accountUUID),
+                matching: { $0?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) },
+                storingIn: &cancellables
+            ) {
+                manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
+            }
             #expect(
-                received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
+                preSweepSnapshot?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
                 "precondition: the pre-sweep snapshot advertises the residual"
             )
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            // Two builds are queued above (the subscription's, and the refresh's coalesced
+            // follow-up); the wait above lands on the first publish, so the second can still be
+            // running. Suspend until the coalescer itself clears — the sweep below must start
+            // UNCONTENDED, or its awaited republish would coalesce into a pre-sweep build.
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             // The sweep broadcast lands — from here on the SDK reports the immediate run.
             isSwept.setValue(true)
@@ -159,11 +197,9 @@ import ComposableArchitecture
             )
             await manager.reconcile()
 
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
-            #expect(
-                manager.isSnapshotRepublishIdle(for: Self.accountUUID),
-                "quiescence precondition timed out — raise waitUntil's deadline before suspecting the product"
-            )
+            // Quiescence before the published-value reads: resumed by the coalescer's own idle
+            // transition, so there is no deadline to time out under load.
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             let published = manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)
             #expect(
@@ -209,19 +245,19 @@ import ComposableArchitecture
         } operation: {
             let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
 
-            let received = LockIsolated<MigrationViewSnapshot?>(nil)
             var cancellables = Set<AnyCancellable>()
-            manager.migrationSnapshotEvents(accountUUID: Self.accountUUID)
-                .sink { snapshot in received.setValue(snapshot) }
-                .store(in: &cancellables)
-
-            manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
-            await Self.waitUntil { received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) }
+            let preSweepSnapshot = await Self.firstSnapshot(
+                of: manager.migrationSnapshotEvents(accountUUID: Self.accountUUID),
+                matching: { $0?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) },
+                storingIn: &cancellables
+            ) {
+                manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
+            }
             #expect(
-                received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
+                preSweepSnapshot?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
                 "precondition: the pre-sweep snapshot advertises the residual"
             )
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             isSwept.setValue(true)
 
@@ -240,7 +276,7 @@ import ComposableArchitecture
             )
 
             // Drain the delayed build so it cannot leak into the next test.
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
         }
     }
 
@@ -269,19 +305,19 @@ import ComposableArchitecture
         } operation: {
             let manager = MigrationManagerImpl(scheduleStorage: Self.makeEmptyScheduleStorage())
 
-            let received = LockIsolated<MigrationViewSnapshot?>(nil)
             var cancellables = Set<AnyCancellable>()
-            manager.migrationSnapshotEvents(accountUUID: Self.accountUUID)
-                .sink { snapshot in received.setValue(snapshot) }
-                .store(in: &cancellables)
-
-            manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
-            await Self.waitUntil { received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) }
+            let preSweepSnapshot = await Self.firstSnapshot(
+                of: manager.migrationSnapshotEvents(accountUUID: Self.accountUUID),
+                matching: { $0?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)) },
+                storingIn: &cancellables
+            ) {
+                manager.refreshMigrationSnapshot(accountUUID: Self.accountUUID)
+            }
             #expect(
-                received.value?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
+                preSweepSnapshot?.banner == MigrationBannerVariant.residual(amount: Zatoshi(800_000)),
                 "precondition: the pre-sweep snapshot advertises the residual"
             )
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             isSwept.setValue(true)
 
@@ -291,7 +327,7 @@ import ComposableArchitecture
             )
             await manager.reconcile()
 
-            await Self.waitUntil { manager.isSnapshotRepublishIdle(for: Self.accountUUID) }
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             let reread = await manager.bannerVariant(accountUUID: Self.accountUUID)
             #expect(
