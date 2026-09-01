@@ -105,3 +105,27 @@ setup() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"--build needs a build number"* ]]
 }
+
+@test "a fourth positional argument is rejected" {
+  run "$PREPARE" start bats-no-such-remote 3.11.0 HEAD stray
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unexpected argument 'stray'"* ]]
+}
+
+@test "options after the positional arguments are parsed, not dropped" {
+  # --help after positionals must short-circuit to usage (exit 0); the old
+  # loop silently discarded everything past the third positional.
+  run "$PREPARE" start bats-no-such-remote 3.11.0 --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: ./Scripts/prepare-release.sh start"* ]]
+
+  run "$PREPARE" start bats-no-such-remote 3.11.0 HEAD --bogus
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown option '--bogus'"* ]]
+}
+
+@test "a value option after the positionals still requires its value" {
+  run "$PREPARE" start bats-no-such-remote 3.11.0 --previous
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--previous needs a tag"* ]]
+}

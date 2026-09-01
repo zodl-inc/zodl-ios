@@ -105,6 +105,8 @@ EOF
 cmd_start() {
     local previous="" issue="" build="1" remote version revision rev_sha prev_tag
     local release_branch candidate_branch b today pr_body_file
+    local -a positional
+    positional=()
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -114,17 +116,21 @@ cmd_start() {
             --dry-run)  DRY_RUN=true; shift ;;
             -h|--help)  usage_start; return 0 ;;
             --*)        usage_start >&2; die "unknown option '$1'" ;;
-            *)          break ;;
+            *)          positional+=("$1"); shift ;;
         esac
     done
 
-    if [ $# -lt 2 ]; then
+    if [ "${#positional[@]}" -lt 2 ]; then
         usage_start >&2
         die "start needs a remote and a version."
     fi
-    remote="$1"
-    version="${2#v}"
-    revision="${3:-HEAD}"
+    if [ "${#positional[@]}" -gt 3 ]; then
+        usage_start >&2
+        die "unexpected argument '${positional[3]}'."
+    fi
+    remote="${positional[0]}"
+    version="${positional[1]#v}"
+    revision="${positional[2]:-HEAD}"
 
     if ! printf '%s\n' "$version" | grep -qE "$RELEASE_TAG_RE"; then
         die "version '${version}' is not in X.Y.Z form."
