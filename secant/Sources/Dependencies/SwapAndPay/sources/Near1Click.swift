@@ -277,6 +277,12 @@ struct Near1Click {
             )
         }
 
+        // Dedupes on `SwapAsset.id` (provider.chain.token), so when /v0/tokens returns more than one
+        // row for a (blockchain, symbol) pair — a bridged and a native USDC, say — JSON order decides
+        // which row's `contractAddress` becomes canonical. Since cross-pay resolution matches an
+        // ERC-20 request on that exact address, a request naming the discarded variant resolves to
+        // nothing (reported to the user, never mis-resolved). Collapsing the picker to one row per
+        // symbol is deliberate; which variant wins is not, and is tracked as follow-up.
         return chainAssets.removingDuplicates()
     }
 }
