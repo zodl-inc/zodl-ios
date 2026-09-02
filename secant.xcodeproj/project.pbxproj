@@ -1364,8 +1364,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/zodl-inc/zodl-swift-wallet-sdk.git";
 			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 4.1.0;
+				kind = revision;
+				revision = d784165d6c61574610f3de86076e920a881f856b;
 			};
 		};
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
