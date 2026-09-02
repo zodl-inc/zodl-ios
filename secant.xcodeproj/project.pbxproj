@@ -1365,7 +1365,7 @@
 			repositoryURL = "https://github.com/zodl-inc/zodl-swift-wallet-sdk.git";
 			requirement = {
 				kind = revision;
-				revision = d784165d6c61574610f3de86076e920a881f856b;
+				revision = 7e44c48aed237202043010775ec7383c45c519fe;
 			};
 		};
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
