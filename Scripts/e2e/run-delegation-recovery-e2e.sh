@@ -43,9 +43,9 @@ SCHEME="${SCHEME:-zodl-internal}"
 PROJECT="secant.xcodeproj"
 KEEP=0
 # Tests in DelegationRecoveryDeviceE2ETests; bump with the suite.
-EXPECTED_TESTS=6
+EXPECTED_TESTS=10
 # Deliberately-disabled tests; see the skip check below.
-EXPECTED_SKIPS=1
+EXPECTED_SKIPS=1  # the .disabled vote-again step, and nothing else
 
 while getopts "d:k" opt; do
     case "$opt" in
@@ -141,6 +141,10 @@ rm -f "$DOCUMENTS/voting-delegation-escrow.json"
 
 say "Running the on-device recovery suite"
 set +e
+# TEST_RUNNER_-prefixed variables are forwarded from xcodebuild's ENVIRONMENT
+# into the test runner. Passed as an xcodebuild ARGUMENT they are silently
+# ignored and the whole suite skips, which the by-name check below catches.
+TEST_RUNNER_VOTING_DEVICE_E2E=1 \
 xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
@@ -185,7 +189,8 @@ for required in \
     openingTheAppDoesNotModifyThePlantedFiles \
     everyRecoveredSecretIsACanonicalPallasElement \
     theCorruptedDatabaseWasPlantedInTheContainer \
-    openingTheAppDeletesNothingItRecoveredFrom
+    openingTheAppDeletesNothingItRecoveredFrom \
+    theEscrowHoldsEverythingARestoreWillNeed
 do
     if ! grep -q "Test ${required}() passed" "$TEST_LOG"; then
         echo "Required test did not pass: ${required}" >&2

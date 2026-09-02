@@ -23,8 +23,17 @@ import ComposableArchitecture
 /// The HTTP layer is faked throughout: `VotingAPIClient` is stubbed with
 /// recorded responses, so nothing here touches a vote server, and the fake is
 /// already shaped for the vote step to use.
-@Suite(.serialized) @MainActor
-struct VoteAgainAfterRecoveryE2ETests {
+/// Nested inside `DelegationRecoveryDeviceE2ETests` deliberately. Both suites
+/// drive the REAL file-backed escrow, which lives at one fixed path in
+/// Documents, and Swift Testing runs separate suites in parallel -- `.serialized`
+/// only orders tests WITHIN a suite. Run side by side they raced over the same
+/// escrow file, and the neighbouring
+/// `openingTheAppTwiceLeavesTheEscrowUnchanged` failed because this suite
+/// cleared the escrow between its two launches. As a child of a serialized
+/// parent, these tests interleave with none of it.
+extension DelegationRecoveryDeviceE2ETests {
+@Suite(.serialized, .enabled(if: RecoveryDeviceE2E.isEnabled)) @MainActor
+struct VoteAgain {
     private typealias Expected = VotingRecoveryEndToEndTests.Fixture
 
     // MARK: - The faked vote server
@@ -177,6 +186,7 @@ struct VoteAgainAfterRecoveryE2ETests {
     /// The whole scaffold in one run: plant the incident, open the app, and
     /// find the broadcast secrets escrowed.
     @Test func openingTheAppAfterTheWipeRecoversTheBroadcastDelegation() async throws {
+        try await SharedLiveEscrow.exclusive {
         let documents = try #require(
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         )
@@ -191,6 +201,7 @@ struct VoteAgainAfterRecoveryE2ETests {
             .sorted { $0.bundleIndex < $1.bundleIndex }
         #expect(entries.count == Expected.bundleCount)
         #expect(entries.map(\.vanCommRand.hexString) == Expected.originalRand)
+        }
     }
 
     /// The escrow must hold everything the restore will need, not just the
@@ -206,6 +217,7 @@ struct VoteAgainAfterRecoveryE2ETests {
     /// This is the test that de-risks the pending stage: when the entry point
     /// lands, the inputs are already proven to be there.
     @Test func theEscrowHoldsEverythingARestoreWillNeed() async throws {
+        try await SharedLiveEscrow.exclusive {
         try plantTheIncident()
         await openTheApp(server: FakeVoteServer())
 
@@ -224,11 +236,13 @@ struct VoteAgainAfterRecoveryE2ETests {
                 "the transaction that ties this opening to what the chain saw"
             )
         }
+        }
     }
 
     /// The recovered opening must be usable as a blinding factor, not merely
     /// 32 bytes that decoded cleanly.
     @Test func everyRecoveredSecretIsACanonicalPallasElement() async throws {
+        try await SharedLiveEscrow.exclusive {
         try plantTheIncident()
         await openTheApp(server: FakeVoteServer())
 
@@ -236,6 +250,7 @@ struct VoteAgainAfterRecoveryE2ETests {
         #expect(entries.isEmpty == false)
         for entry in entries {
             #expect(DelegationWalRecovery.isCanonicalPallasElement(entry.vanCommRand))
+        }
         }
     }
 
@@ -274,5 +289,6 @@ struct VoteAgainAfterRecoveryE2ETests {
     func restoringTheCarvedDelegationLetsTheRoundBeVotedOn() async throws {
         Issue.record("unreachable while disabled")
     }
+}
 }
 #endif

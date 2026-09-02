@@ -14,10 +14,24 @@ enum RecoveryDeviceE2E {
             .first
     }
 
-    /// Always on. The suite builds the database it needs, so there is no
-    /// precondition to gate on, and an end-to-end test that quietly passes
-    /// because its data is missing is worse than no test at all.
-    static let isEnabled = true
+    /// On only under `Scripts/e2e/run-delegation-recovery-e2e.sh`, which sets
+    /// `TEST_RUNNER_VOTING_DEVICE_E2E=1`.
+    ///
+    /// Not a convenience gate. These tests plant files in the app's Documents
+    /// directory and assert on what survives a launch, so they need exclusive
+    /// ownership of that container. A full-target run cannot give them that:
+    /// Root's wallet-reset path deletes `voting.sqlite3`, calls
+    /// `VotingDatabaseSnapshot.reset()`, and removes the escrow file, and any
+    /// suite exercising a reset runs concurrently with these. That is what
+    /// made `openingTheAppTwiceLeavesTheEscrowUnchanged` see an empty escrow
+    /// on its second launch while passing whenever its suite ran alone.
+    ///
+    /// The usual objection to gating -- a test that quietly passes because its
+    /// data is missing -- does not apply, because the script does not trust
+    /// the gate. It requires each test BY NAME to have passed and fails on an
+    /// unexpected skip, so a suite that silently did not run is still caught.
+    static let isEnabled =
+        ProcessInfo.processInfo.environment["VOTING_DEVICE_E2E"] == "1"
 }
 
 /// Recovery driven THROUGH APP LAUNCH against a corrupted database planted in
@@ -206,6 +220,7 @@ struct DelegationRecoveryDeviceE2ETests {
     // MARK: - The recovery path, driven by opening the app
 
     @Test func openingTheAppRecoversTheBroadcastDelegationAndEscrowsIt() async throws {
+        try await SharedLiveEscrow.exclusive {
         let documents = try #require(RecoveryDeviceE2E.documents)
         let escrowFile = documents.appendingPathComponent(DelegationEscrowFile.name)
         // Start from a clean escrow, so what is on disk afterwards can only
@@ -237,11 +252,13 @@ struct DelegationRecoveryDeviceE2ETests {
                 "a rebuilt secret was escrowed as though it were the original"
             )
         }
+        }
     }
 
     /// The recovered value must be usable as a blinding factor, not merely
     /// 32 bytes that decoded cleanly.
     @Test func everyRecoveredSecretIsACanonicalPallasElement() async throws {
+        try await SharedLiveEscrow.exclusive {
         _ = try plantCorruptedDatabase()
         await openTheApp()
 
@@ -250,11 +267,13 @@ struct DelegationRecoveryDeviceE2ETests {
         for entry in entries {
             #expect(DelegationWalRecovery.isCanonicalPallasElement(entry.vanCommRand))
         }
+        }
     }
 
     /// Recovery runs on EVERY cold launch, so opening the app repeatedly must
     /// converge rather than accumulate or drift.
     @Test func openingTheAppTwiceLeavesTheEscrowUnchanged() async throws {
+        try await SharedLiveEscrow.exclusive {
         _ = try plantCorruptedDatabase()
         await openTheApp()
         let first = try await escrowedEntries().map(\.vanCommRand.hexString)
@@ -264,6 +283,7 @@ struct DelegationRecoveryDeviceE2ETests {
 
         #expect(first == second)
         #expect(second.sorted() == Expected.originalRand.sorted())
+        }
     }
 
     /// Reading is not writing: the preserved files must come out byte for byte
@@ -274,6 +294,7 @@ struct DelegationRecoveryDeviceE2ETests {
     /// SQLite connection, precisely so it cannot check point the log away. This
     /// test is what holds that property in place.
     @Test func openingTheAppDoesNotModifyThePlantedFiles() async throws {
+        try await SharedLiveEscrow.exclusive {
         let (preserved, _) = try plantCorruptedDatabase()
         let urls = ["voting.sqlite3", "voting.sqlite3-wal"]
             .map { preserved.appendingPathComponent($0) }
@@ -283,6 +304,7 @@ struct DelegationRecoveryDeviceE2ETests {
         let after = try urls.map { try Data(contentsOf: $0) }
 
         #expect(before == after)
+        }
     }
 
     /// Recovery must DELETE nothing.
@@ -300,6 +322,7 @@ struct DelegationRecoveryDeviceE2ETests {
     /// that could never be asked again — and every other test here would still
     /// be green, because they all re-plant a fresh fixture first.
     @Test func openingTheAppDeletesNothingItRecoveredFrom() async throws {
+        try await SharedLiveEscrow.exclusive {
         let (preserved, _) = try plantCorruptedDatabase()
 
         let listing: () throws -> [String] = {
@@ -326,6 +349,7 @@ struct DelegationRecoveryDeviceE2ETests {
             )
             let size = (try? Data(contentsOf: url).count) ?? 0
             #expect(size > 0, "\(name) was emptied by recovery")
+        }
         }
     }
 }
