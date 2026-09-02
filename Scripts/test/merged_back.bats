@@ -20,7 +20,7 @@ mkcommit() {
   SHA="$(git rev-parse HEAD)"
 }
 
-@test "a maintenance line without the v prefix is the release's own line" {
+@test "a wrongly-spelled maint branch is reported and is not the release's line" {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"
   git update-ref refs/remotes/origin/release/3.10.2 "$REL"
@@ -29,19 +29,36 @@ mkcommit() {
   git update-ref refs/remotes/origin/main "$SHA"
   run "$CHECK"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'is in `maint/3.10.x` and downstream'* ]] || false
-  [[ "$output" != *"does not exist"* ]] || false
+  [[ "$output" == *'`maint/3.10.x` does not match maint/vX.Y.x; not a maintenance line, ignored.'* ]] || false
+  [[ "$output" == *'belongs to `maint/v3.10.x`, which does not exist; checking main only'* ]] || false
+  [[ "$output" == *'is in `main`'* ]] || false
+}
+
+@test "a wrongly-spelled twin of the line neither fails nor lags the release" {
+  mkcommit "release 3.10.2"; REL="$SHA"
+  git tag 3.10.2 "$REL"
+  git update-ref refs/remotes/origin/release/3.10.2 "$REL"
+  mkcommit "merge back"
+  # Merged into maint/v3.10.x exactly as prepare-release.sh instructs; the
+  # stale wrongly-spelled twin must neither be the own-line obligation nor lag.
+  git update-ref refs/remotes/origin/maint/v3.10.x "$SHA"
+  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/main "$SHA"
+  run "$CHECK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'is in `maint/v3.10.x` and downstream'* ]] || false
+  [[ "$output" != *':warning:'* ]] || false
 }
 
 @test "a released branch missing from its own line fails" {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"
   git update-ref refs/remotes/origin/release/3.10.2 "$REL"
-  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$BASE"
   git update-ref refs/remotes/origin/main "$BASE"
   run "$CHECK"
   [ "$status" -eq 1 ]
-  [[ "$output" == *'is **not** merged back into `maint/3.10.x`'* ]] || false
+  [[ "$output" == *'is **not** merged back into `maint/v3.10.x`'* ]] || false
 }
 
 @test "a freshly cut release branch still pointing at the previous tag is skipped" {
@@ -63,12 +80,12 @@ mkcommit() {
   git tag 3.10.2 "$REL"
   mkcommit "post-tag fix"; TIP="$SHA"
   git update-ref refs/remotes/origin/release/3.10.2 "$TIP"
-  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$BASE"
   git update-ref refs/remotes/origin/main "$BASE"
   run "$CHECK"
   [ "$status" -eq 1 ]
   [[ "$output" != *"no release tag"* ]] || false
-  [[ "$output" == *'`release/3.10.2` (`3.10.2`) is **not** merged back into `maint/3.10.x`'* ]] || false
+  [[ "$output" == *'`release/3.10.2` (`3.10.2`) is **not** merged back into `maint/v3.10.x`'* ]] || false
 }
 
 @test "non-release tags neither elect a maintenance line nor mark a release" {
@@ -93,27 +110,27 @@ mkcommit() {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"
   git update-ref refs/remotes/origin/release/3.10.2 "$REL"
-  git update-ref refs/remotes/origin/maint/3.10.x "$BASE"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$BASE"
   git update-ref refs/remotes/origin/main "$BASE"
   git checkout -q -b prmerge "$REL"
   mkcommit "pr merge"
-  run "$CHECK" maint/3.10.x prmerge
+  run "$CHECK" maint/v3.10.x prmerge
   [ "$status" -eq 0 ]
-  [[ "$output" == *'is in `maint/3.10.x` but has not reached main'* ]] || false
+  [[ "$output" == *'is in `maint/v3.10.x` but has not reached main'* ]] || false
 }
 
-@test "maintenance lines are ordered by version across both spellings" {
+@test "maintenance lines are ordered by version, not lexically" {
   mkcommit "release 3.9.5"; REL="$SHA"
   git tag 3.9.5 "$REL"
   git update-ref refs/remotes/origin/release/3.9.5 "$REL"
   mkcommit "on the 3.9 line only"
-  git update-ref refs/remotes/origin/maint/3.9.x "$SHA"
+  git update-ref refs/remotes/origin/maint/v3.9.x "$SHA"
   git update-ref refs/remotes/origin/maint/v3.10.x "$BASE"
-  git update-ref refs/remotes/origin/maint/3.11.x "$BASE"
+  git update-ref refs/remotes/origin/maint/v3.11.x "$BASE"
   git update-ref refs/remotes/origin/main "$BASE"
   run "$CHECK"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'is in `maint/3.9.x` but has not reached maint/v3.10.x, maint/3.11.x, main yet'* ]] || false
+  [[ "$output" == *'is in `maint/v3.9.x` but has not reached maint/v3.10.x, maint/v3.11.x, main yet'* ]] || false
 }
 
 @test "a git failure is an infrastructure error, not a clean run" {
@@ -129,7 +146,7 @@ mkcommit() {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"
   git update-ref refs/remotes/origin/release/3.10.2 "$REL"
-  git update-ref refs/remotes/origin/maint/3.10.x "$REL"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$REL"
   # origin/main deliberately absent: the chain still ends in main, and the
   # old code reported this as a confident (false) verdict about main.
   run "$CHECK"
@@ -143,9 +160,9 @@ mkcommit() {
   mkcommit "release 3.10.2"; REL="$SHA"
   git tag 3.10.2 "$REL"
   git update-ref refs/remotes/origin/release/3.10.2 "$REL"
-  git update-ref refs/remotes/origin/maint/3.10.x "$REL"
+  git update-ref refs/remotes/origin/maint/v3.10.x "$REL"
   git update-ref refs/remotes/origin/main "$REL"
-  run "$CHECK" maint/3.10.x no-such-ref
+  run "$CHECK" maint/v3.10.x no-such-ref
   [ "$status" -eq 2 ]
   [[ "$output" == *"cannot resolve pr-ref"* ]] || false
 }

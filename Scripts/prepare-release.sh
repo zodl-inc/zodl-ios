@@ -224,10 +224,7 @@ cmd_start() {
         die "${version} does not come after ${prev_tag}."
     fi
 
-    # Resolved from the remote's refs (just fetched), so the merge-back
-    # instructions name a branch that exists -- the repo has carried both
-    # maint/X.Y.x and maint/vX.Y.x spellings.
-    maint_line="$(maint_line_for_version "$remote" "$version")"
+    maint_line="$(maint_line_for_version "$version")"
 
     release_branch="release/${version}"
     candidate_branch="candidate/${version}"

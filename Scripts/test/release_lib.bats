@@ -103,26 +103,16 @@ make_tag_repo() {
 
 # --- maintenance line naming ---------------------------------------------
 
-@test "maint_line_for_version matches the remote's spelling of the line" {
+@test "maint_line_for_version always names the canonical maint/vX.Y.x line" {
   make_tag_repo
+  # A wrongly-spelled branch on the remote does not change the answer.
   git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/3.10.x HEAD
-  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/v3.11.x HEAD
-  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.10.4"
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version 3.10.4"
   [ "$status" -eq 0 ]
-  [ "$output" = "maint/3.10.x" ]
-  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.11.2"
-  [ "$output" = "maint/v3.11.x" ]
-  # A line that exists nowhere yet is named canonically, to be created.
-  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.12.0"
-  [ "$output" = "maint/v3.12.x" ]
-}
-
-@test "maint_line_for_version prefers the canonical v spelling when both exist" {
-  make_tag_repo
-  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/3.10.x HEAD
-  git -C "$TAG_REPO" update-ref refs/remotes/origin/maint/v3.10.x HEAD
-  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version origin 3.10.4"
   [ "$output" = "maint/v3.10.x" ]
+  # A line that does not exist yet is named the same way, to be created.
+  run bash -c "set -euo pipefail; . '$BATS_TEST_DIRNAME/../lib/release-lib.sh'; cd '$TAG_REPO'; maint_line_for_version 3.12.0"
+  [ "$output" = "maint/v3.12.x" ]
 }
 
 # --- CHANGELOG --------------------------------------------------------------

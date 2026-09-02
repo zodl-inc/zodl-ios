@@ -76,14 +76,14 @@ sandbox_commit() {
   [ "$status" -ne 0 ]
 }
 
-@test "the merge-back line matches the remote's existing spelling" {
+@test "the merge-back line is canonical even when a wrongly-spelled branch exists" {
   # The sandbox's remote is itself, so a local maint branch is what the
   # script's own fetch turns into refs/remotes/upstream/maint/0.1.x.
   git branch maint/0.1.x
   run "$START" start --dry-run upstream 0.1.5
   [ "$status" -eq 0 ]
-  [[ "$output" == *"merge back into"*"maint/0.1.x"* ]] || false
-  [[ "$output" != *"maint/v0.1.x"* ]] || false
+  [[ "$output" == *"merge back into"*"maint/v0.1.x"* ]] || false
+  [[ "$output" != *"maint/0.1.x"* ]] || false
 }
 
 @test "the empty-Unreleased guard reads the revision, not the working tree" {

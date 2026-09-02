@@ -182,8 +182,8 @@ git switch release/3.8.0 &&
 ```
 
 Then merge `release/3.8.0` into its maintenance line and forward to `main` —
-the script's closing message and the pull request body name the exact branch
-(`maint/v3.8.x`, or the line's existing spelling). Do not
+a maintenance line is always named `maint/vX.Y.x` (`maint/v3.8.x` here), and
+the script's closing message and the pull request body name it. Do not
 cherry-pick: a tag that is not reachable from a live branch stops being part of
 the history it shipped from, and the `Release Merged Back` check reports it.
 
@@ -196,11 +196,12 @@ move anything newer back under `## [Unreleased]`:
 
 ```bash
 VERSION=3.8.0
-git switch maint/v3.8.x &&
-  git pull --ff-only upstream maint/v3.8.x &&
+MAINT=maint/v${VERSION%.*}.x
+git switch "$MAINT" &&
+  git pull --ff-only upstream "$MAINT" &&
   git merge --no-ff --no-commit release/$VERSION   # --no-ff: a fast-forward would skip the pause
 git diff $VERSION -- CHANGELOG.md                  # ## [$VERSION] must match the tag exactly
-git commit && git push upstream maint/v3.8.x
+git commit && git push upstream "$MAINT"
 ```
 
 and the same again to forward the maintenance line to `main`.

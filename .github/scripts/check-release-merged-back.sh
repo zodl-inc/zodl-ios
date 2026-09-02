@@ -17,8 +17,9 @@
 # PREVIOUS release's tag, so it is skipped as in-flight until its own tag
 # lands. A release/ branch with no version in its name is released only while
 # a release tag points at its tip. The maintenance line comes from the tag
-# rather than the branch name, and both maint/X.Y.x and maint/vX.Y.x
-# spellings of a line are recognised.
+# rather than the branch name and is always maint/vX.Y.x -- the shape the
+# release tooling names; a maint/ branch of any other shape is reported and
+# ignored.
 #
 # Branches resolve under refs/remotes/$REMOTE, which defaults to origin -- what
 # CI checks out. Set REMOTE to run this against a local clone whose canonical
@@ -35,9 +36,10 @@ PR_BASE="${1:-}"
 PR_REF="${2:-HEAD}"
 REMOTE="${REMOTE:-origin}"
 
-# RELEASE_TAG_RE, version_sort and version_le come from the release library,
-# so the tag shapes this check recognises are the ones the release tooling
-# actually cuts.
+# RELEASE_TAG_RE, version_sort, version_le, release_tags_merged_into and
+# maint_line_for_version come from the release library, so the tag shapes this
+# check recognises are the ones the release tooling actually cuts, and the
+# maintenance line it enforces is the branch that tooling names.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=Scripts/lib/release-lib.sh
 . "${SCRIPT_DIR}/../../Scripts/lib/release-lib.sh"
@@ -75,42 +77,31 @@ if [ -n "$PR_BASE" ]; then
   fi
 fi
 
-# Maintenance lines in version order, then main. The repo has carried both
-# maint/X.Y.x and maint/vX.Y.x spellings, so every maint/* branch is collected
-# and ordered by the version it carries, v or no v.
+# Maintenance lines in version order, then main. A line is always named
+# maint/vX.Y.x; a maint/ branch of any other shape is set aside and reported
+# below, never silently dropped.
 # Enumerated through a checked substitution: a for-each-ref failure must be a
 # loud infrastructure error, not an empty chain.
 if ! maint_refs="$(git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/maint/*")"; then
   infra_fail "listing refs/remotes/${REMOTE}/maint/* failed"
 fi
-sorted_maint="$(printf '%s\n' "$maint_refs" | while IFS= read -r b; do
+UNRECOGNISED=()
+pairs=()
+while IFS= read -r b; do
   [ -n "$b" ] || continue
-  key="${b#maint/}"
-  key="${key#v}"
-  printf '%s %s\n' "$key" "$b"
-done | sort -k1,1 -V | cut -d' ' -f2)"
+  if printf '%s\n' "$b" | grep -qE '^maint/v[0-9]+\.[0-9]+\.x$'; then
+    pairs+=("${b#maint/v} ${b}")
+  else
+    UNRECOGNISED+=("$b")
+  fi
+done <<< "$maint_refs"
+sorted_maint="$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | sort -k1,1 -V | cut -d' ' -f2)"
 CHAIN=()
 while IFS= read -r ref; do
   [ -n "$ref" ] || continue
   CHAIN+=("$ref")
 done <<< "$sorted_maint"
 CHAIN+=('main')
-
-# The chain entry that is the maintenance line for X.Y ($1), whichever
-# spelling the branch uses; the canonical maint/vX.Y.x when the line is gone.
-line_for() {
-  local want="$1" b key
-  for b in ${CHAIN[@]+"${CHAIN[@]}"}; do
-    case "$b" in maint/*) ;; *) continue ;; esac
-    key="${b#maint/}"
-    key="${key#v}"
-    if [ "$key" = "${want}.x" ]; then
-      printf '%s\n' "$b"
-      return 0
-    fi
-  done
-  printf 'maint/v%s.x\n' "$want"
-}
 
 # Resolve a chain branch, substituting the pending change when it targets it.
 resolve() {
@@ -127,6 +118,10 @@ fi
 
 say '## Release branches merged back'
 say ''
+
+for b in ${UNRECOGNISED[@]+"${UNRECOGNISED[@]}"}; do
+  say ":grey_question: \`${b}\` does not match maint/vX.Y.x; not a maintenance line, ignored."
+done
 
 failed=0
 checked=0
@@ -167,11 +162,10 @@ while IFS= read -r rel; do
     fi
   fi
 
-  # X.Y.Z -> its maintenance line.
-  major="${tag%%.*}"
-  rest="${tag#*.}"
-  minor="${rest%%.*}"
-  maint="$(line_for "${major}.${minor}")"
+  # X.Y.Z -> its maintenance line, named by the same library function that
+  # tells the operator where to merge, so the branch this check enforces is
+  # the branch the tooling instructed.
+  maint="$(maint_line_for_version "$tag")"
 
   # Its own line is the obligation. Anything downstream of it is merge-forward
   # lag, which the merge-forward jobs already track, so it warns rather than

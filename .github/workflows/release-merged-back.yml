@@ -22,9 +22,9 @@ name: Release Merged Back
 on:
   pull_request:
     branches:
-      # `maint/**` rather than `maint/v*` so the check also runs on pull
-      # requests into a maintenance branch cut before the maint/vX.Y.x naming
-      # was settled on.
+      # `maint/**` rather than `maint/v*`: a pull request into a wrongly-named
+      # maintenance branch still runs the check, which reports the branch as
+      # unrecognised instead of silently skipping it.
       - 'maint/**'
       - main
 
