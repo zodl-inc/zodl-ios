@@ -383,10 +383,13 @@ struct SendConfirmation {
             case let .sendFailed(error, isTxIdPresentInTheDB):
                 state.failedDescription = error?.localizedDescription ?? ""
                 // MOB-385: rustCreateToAddress is the typed SDK case for Rust creation failures.
-                // The anchor string comes from Rust (zcash_client_sqlite) — no typed sub-code exists yet.
-                // If the SDK ever adds one, replace the string check with it and drop the comment.
+                // The anchor string comes from Rust (zcash_client_sqlite). The SDK now classifies
+                // Rust failures into `RustErrorKind`, whose `.commitmentTreeFailed` is the likely
+                // typed replacement for this string check — matching it here would change which
+                // failures show the anchor message, so it stays a string match until MOB-385
+                // confirms the two cover the same condition.
                 if case let .rustCreateToAddress(rustError) = error {
-                    state.isAnchorError = rustError.localizedCaseInsensitiveContains("Unable to compute anchor")
+                    state.isAnchorError = rustError.message.localizedCaseInsensitiveContains("Unable to compute anchor")
                 } else {
                     state.isAnchorError = false
                 }
