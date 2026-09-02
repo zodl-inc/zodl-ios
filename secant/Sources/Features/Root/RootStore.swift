@@ -193,27 +193,18 @@ struct Root {
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
         }
 
-        /// True while the user is inside a UI flow that may contain an in-progress payment
-        /// or voting sequence. Read live at decision time — never stored anywhere. The
-        /// switch is exhaustive on purpose: a new `Path` case must be classified here
-        /// before the project compiles.
+        /// True while the user is inside a flow that can contain a payment or vote.
+        /// This is computed from live navigation state so a deferred candidate is
+        /// reconsidered as soon as the user leaves the flow.
         var isSensitiveFlowActive: Bool {
             if signWithKeystoneCoordFlowBinding { return true }
             guard let path else { return false }
             switch path {
-            // The voting flow has no `Path` case of its own — it is presented from inside Settings
-            // (`SettingsStore`'s `@Presents var votingCoordFlow`), so `path` stays `.settings` for its
-            // whole duration. Its broadcasts (submitVoteCommitment / submitDelegation / delegateShares /
-            // getTreeState) must not be interrupted by an automatic server switch, so `.settings` is
-            // classified sensitive to cover them. Do NOT declassify `.settings` while voting lives under
-            // it; if voting ever gets its own `Path` case, move the sensitivity there.
             case .settings:
+                // Voting is presented inside Settings and has no Root path of its own.
                 return true
-            // `.migrationCoordFlow` classifies SENSITIVE for the same reason as `.sendCoordFlow`:
-            // the manual lane broadcasts a real send-max transaction from inside it, and an
-            // automatic server switch mid-broadcast is exactly what must not happen. #1930
-            // classifies it identically.
-            case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow:
+            case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
+                 .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
@@ -221,7 +212,7 @@ struct Root {
             }
         }
 
-        /// Gate for applying an automatic server switch.
+        /// The local-snapshot read is completed before a candidate reaches this gate.
         var canApplyAutoServerSwitch: Bool {
             bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
         }
@@ -351,7 +342,7 @@ struct Root {
         case torSetup(TorSetup.Action)
         case backToHomeFromServerSwitchTapped
         case refreshAutomaticServer
-        case autoServerCandidateReady(LightWalletEndpoint)
+        case autoServerCandidateReady(LightWalletEndpoint, Date)
 
         // Transactions
         case observeTransactions
@@ -565,7 +556,7 @@ struct Root {
                     return .none
                 }
                 LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
-                return .send(.autoServerCandidateReady(pending.endpoint))
+                return .send(.autoServerCandidateReady(pending.endpoint, pending.benchmarkedAt))
             }
     }
 
@@ -610,26 +601,29 @@ struct Root {
 
             case .refreshAutomaticServer:
                 // Skip during a background task, and while the user is on the Server Setup
-                // screen (a manual Save owns that window). The benchmark itself still runs
-                // while a sensitive flow is on screen — it is read-only, and a candidate
-                // should be ready to apply the moment the user leaves the flow; the apply
-                // decision is gated in .autoServerCandidateReady. Correctness against a
-                // concurrent manual switch is guaranteed by TransactionGuard regardless:
-                // the manual Save uses switchWaiting (waits, then wins) while applySwitch
-                // uses switchIfIdle (skips if busy).
+                // screen (a manual Save owns that window). Benchmark the servers and read the
+                // durable local balances concurrently. A winner is not eligible until that read
+                // completes, so the UI has a concrete snapshot before networking is rebuilt.
                 guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
                 return .run { send in
-                    if let best = await autoServerSelection.findBestServer() {
-                        await send(.autoServerCandidateReady(best))
+                    async let candidate = autoServerSelection.findBestServer()
+                    async let localBalances = try? sdkSynchronizer.getLocalAccountBalances()
+                    let (best, snapshot) = await (candidate, localBalances)
+
+                    guard let best else { return }
+                    guard snapshot != nil else {
+                        LoggerProxy.event("[AutoServerSelection] Candidate dropped: local balance snapshot unavailable")
+                        return
                     }
+                    await send(.autoServerCandidateReady(best, date.now()))
                 }
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
 
-            case .autoServerCandidateReady(let candidate):
+            case .autoServerCandidateReady(let candidate, let benchmarkedAt):
                 guard state.canApplyAutoServerSwitch else {
                     state.pendingServerCandidate = State.PendingServerCandidate(
                         endpoint: candidate,
-                        benchmarkedAt: date.now()
+                        benchmarkedAt: benchmarkedAt
                     )
                     let hardGates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible)"
                     let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive)"

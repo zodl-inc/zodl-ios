@@ -290,6 +290,9 @@ struct SDKSynchronizerClient: Sendable {
     let getSaplingAddress: @Sendable (_ account: AccountUUID) async throws -> SaplingAddress?
     
     let getAccountsBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]
+    /// Returns the unmasked balance snapshot persisted in the wallet database.
+    /// `nil` means the synchronizer is not prepared or does not support this read.
+    let getLocalAccountBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]?
     
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
@@ -396,4 +399,3 @@ extension SDKSynchronizerClient {
         $migrationStoppedSyncForBroadcast.withLock { $0 = true }
     }
 }
-

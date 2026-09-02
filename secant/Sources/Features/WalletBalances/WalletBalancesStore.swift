@@ -94,7 +94,7 @@ struct WalletBalances {
     enum Action: Equatable {
         case availableBalanceTapped
         case balanceTapped
-        case balanceUpdated(AccountBalance?)
+        case balanceUpdated(AccountBalance)
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
         case onAppear
@@ -217,29 +217,39 @@ struct WalletBalances {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
+                // Use the unmasked local snapshot for display continuity. The SDK's visible
+                // balances can be spendable-masked until the new server reports a fresh tip.
+                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id]
                 return .run { send in
-                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.balanceUpdated(accountBalance))
-                    } else if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        await send(.balanceUpdated(accountBalance))
+                    if let cachedBalance {
+                        await send(.balanceUpdated(cachedBalance))
+                    }
+
+                    if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
+                       let freshBalance = localBalances[account.id],
+                       freshBalance != cachedBalance {
+                        await send(.balanceUpdated(freshBalance))
+                    } else if cachedBalance == nil,
+                              let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
+                        await send(.balanceUpdated(fallbackBalance))
                     }
                 }
                 
             case .balanceUpdated(let accountBalance):
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
                 // shielded pool) instead of hand-summing individual pools.
-                state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
-                state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
-                state.transparentBalance = accountBalance?.unshielded ?? .zero
-                state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
-                state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
+                state.shieldedBalance = accountBalance.shieldedSpendableValue
+                state.shieldedWithPendingBalance = accountBalance.shieldedTotal()
+                state.transparentBalance = accountBalance.unshielded
+                state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + accountBalance.awaitingResolution
+                state.saplingPoolBalance = accountBalance.saplingBalance.total()
 
                 // Display the SDK's pool summary without interpreting migration-engine status.
                 // The pinned SDK updates wallet accounting when it stores the transaction at the
                 // broadcast seam; confirmation only changes the balance's pending classifications.
-                state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
-                state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
-                state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
+                state.orchardPoolBalance = accountBalance.orchardBalance.total()
+                state.ironwoodPoolBalance = accountBalance.ironwoodBalance.total()
+                state.awaitingResolutionBalance = accountBalance.awaitingResolution
 
                 let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
                 || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
@@ -266,7 +276,12 @@ struct WalletBalances {
                     return .none
                 }
 
-                return .send(.balanceUpdated(latestState.data.accountsBalances[account.id]))
+                // An absent local entry means the synchronizer does not know the selected account
+                // yet. Keep the last concrete value until a durable snapshot arrives.
+                guard let accountBalance = latestState.data.localAccountsBalances[account.id] else {
+                    return .none
+                }
+                return .send(.balanceUpdated(accountBalance))
             }
         }
     }

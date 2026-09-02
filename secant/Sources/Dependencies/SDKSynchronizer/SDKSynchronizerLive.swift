@@ -292,6 +292,7 @@ extension SDKSynchronizerClient: DependencyKey {
             getTransparentAddress: { try await synchronizer.getTransparentAddress(accountUUID: $0) },
             getSaplingAddress: { try await synchronizer.getSaplingAddress(accountUUID: $0) },
             getAccountsBalances: { try await synchronizer.getAccountsBalances() },
+            getLocalAccountBalances: { try await synchronizer.getLocalAccountBalances() },
             wipe: { synchronizer.wipe() },
             switchToEndpoint: { endpoint in
                 try await synchronizer.switchTo(endpoint: endpoint)

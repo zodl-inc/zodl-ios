@@ -93,6 +93,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         getTransparentAddress: unimplemented("\(Self.self).getTransparentAddress", placeholder: nil),
         getSaplingAddress: unimplemented("\(Self.self).getSaplingAddress", placeholder: nil),
         getAccountsBalances: unimplemented("\(Self.self).getAccountsBalances", placeholder: [:]),
+        getLocalAccountBalances: unimplemented("\(Self.self).getLocalAccountBalances", placeholder: nil),
         wipe: unimplemented("\(Self.self).wipe", placeholder: nil),
         switchToEndpoint: unimplemented("\(Self.self).switchToEndpoint"),
         proposeTransfer: unimplemented("\(Self.self).proposeTransfer", placeholder: .testOnlyFakeProposal(totalFee: 0)),
@@ -192,6 +193,7 @@ extension SDKSynchronizerClient {
         getTransparentAddress: { _ in nil },
         getSaplingAddress: { _ in nil },
         getAccountsBalances: { [:] },
+        getLocalAccountBalances: { nil },
         wipe: { Empty<Void, Error>().eraseToAnyPublisher() },
         switchToEndpoint: { _ in },
         proposeTransfer: { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
@@ -370,6 +372,7 @@ extension SDKSynchronizerClient {
             )
         },
         getAccountsBalances: @escaping @Sendable () async -> [AccountUUID: AccountBalance] = { [:] },
+        getLocalAccountBalances: @escaping @Sendable () async -> [AccountUUID: AccountBalance]? = { nil },
         wipe: @escaping @Sendable () -> AnyPublisher<Void, Error>? = { Fail(error: "Error").eraseToAnyPublisher() },
         switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
         proposeTransfer:
@@ -464,6 +467,7 @@ extension SDKSynchronizerClient {
             getTransparentAddress: getTransparentAddress,
             getSaplingAddress: getSaplingAddress,
             getAccountsBalances: getAccountsBalances,
+            getLocalAccountBalances: getLocalAccountBalances,
             wipe: wipe,
             switchToEndpoint: switchToEndpoint,
             proposeTransfer: proposeTransfer,
