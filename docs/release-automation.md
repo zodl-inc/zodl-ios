@@ -157,10 +157,14 @@ the pull request is a draft — then rebuild with the next build number:
 
 **4. Update What's New** before the App Store build. The App Store "What's
 New" copy does **not** come from `CHANGELOG.md` — it lives in
-`secant/Resources/WhatsNew/whatsNew*.json`: run `/update-whatsnew` for 3.8.0
-and commit the result on `candidate/3.8.0`. `--submit-review` refuses in
-preflight when a localization has no entry for the version, so a missing entry
-blocks the submission — with `--ref`, before the build even starts.
+`secant/Resources/WhatsNew/whatsNew*.json`: from a `candidate/3.8.0` checkout,
+run `/update-whatsnew 3.8.0` with the changelog text and commit the result on
+that branch. Name the version: invoked without one, the skill reads the
+version from the checkout, and anywhere but the candidate branch that is
+still the *previous* release — whose existing What's New entry the run would
+replace. `--submit-review` refuses in preflight when a localization has no
+entry for the version, so a missing entry blocks the submission — with
+`--ref`, before the build even starts.
 
 **5. Ship to the App Store** when you're happy:
 
