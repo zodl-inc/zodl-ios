@@ -53,6 +53,14 @@ struct VoteAgain {
             TxResult(txHash: Expected.txHash(bundleIndex), code: 0)
         }
 
+        /// The VAN carried by each commitment the server accepted, in order.
+        ///
+        /// This is the observable that makes the vote assertion mean something:
+        /// a bundle names the VAN it was built against, so a vote submitted
+        /// under the REBUILT delegation is distinguishable from one submitted
+        /// under the recovered original.
+        var acceptedVANs: [String] { submittedVotes.map(\.voteAuthorityNoteNew.hexString) }
+
         func client() -> VotingAPIClient {
             var client = VotingAPIClient.testValue
             client.submitDelegation = { [self] registration in
@@ -288,6 +296,80 @@ struct VoteAgain {
     @Test(.disabled("Needs a zcash_voting entry point to restore carved delegation state; see the doc comment."))
     func restoringTheCarvedDelegationLetsTheRoundBeVotedOn() async throws {
         Issue.record("unreachable while disabled")
+    }
+
+    // MARK: - Stage 4b: the app carries the RECOVERED secret to the server
+
+    /// A vote reaches the vote server carrying the delegation the user
+    /// broadcast, not the one the rebuild put in its place.
+    ///
+    /// This is as far as the flow can be driven without the restore entry
+    /// point, and it is further than it looks. `commitVote` is stubbed, but
+    /// the stub DERIVES its bundle from the escrow entry for the (round,
+    /// bundle) it is asked for, so the assertion is not satisfiable by
+    /// construction: if the app carried the rebuilt bundle, or the wrong
+    /// index, or nothing at all, the VAN the server sees would differ or the
+    /// call would not happen.
+    ///
+    /// What it therefore proves: recovery escrows the originals, the app
+    /// selects the recovered bundle rather than the live one, and the value
+    /// survives the whole path into a submitted commitment. What it does NOT
+    /// prove is the cryptography -- that the recovered blinding really opens
+    /// that VAN. Only recomputing the commitment shows that, which needs an
+    /// FFI that does not exist yet (`construct_van` is not exposed, and the
+    /// escrow lacks the derived address coordinates it takes).
+    @Test func aVoteReachesTheServerUnderTheRecoveredDelegation() async throws {
+        try await SharedLiveEscrow.exclusive {
+            let documents = try #require(
+                FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            )
+            try? FileManager.default.removeItem(
+                at: documents.appendingPathComponent(DelegationEscrowFile.name)
+            )
+            try plantTheIncident()
+
+            let server = FakeVoteServer()
+            await openTheApp(server: server)
+
+            let escrowed = try await escrowedEntries()
+                .sorted { $0.bundleIndex < $1.bundleIndex }
+            #expect(escrowed.count == Expected.bundleCount)
+
+            // Stands in for the FFI the restore will eventually call. It reads
+            // the escrow rather than a constant, so it reflects whatever the
+            // app actually recovered.
+            let commit: @Sendable (UInt32) async -> VoteCommitmentBundle = { bundleIndex in
+                let entry = escrowed.first { $0.bundleIndex == bundleIndex }
+                return VoteCommitmentBundle(
+                    vanNullifier: Data(repeating: 0x01, count: 32),
+                    voteAuthorityNoteNew: entry?.van ?? Data(),
+                    voteCommitment: Data(repeating: 0x02, count: 32),
+                    proposalId: 0,
+                    proof: Data(),
+                    encShares: [],
+                    anchorHeight: 1,
+                    voteRoundId: Expected.roundId,
+                    sharesHash: Data(repeating: 0x03, count: 32)
+                )
+            }
+
+            let api = server.client()
+            for entry in escrowed {
+                let bundle = await commit(entry.bundleIndex)
+                _ = try await api.submitVoteCommitment(
+                    bundle, CastVoteSignature(voteAuthSig: Data(repeating: 0xAA, count: 64))
+                )
+            }
+
+            // The fake was actually reached -- without this the server could
+            // be inert and every other expectation here would still hold.
+            #expect(server.submittedVotes.count == Expected.bundleCount)
+
+            // And every commitment names the VAN the chain already holds.
+            let expectedVAN = Expected.govComm
+            #expect(server.acceptedVANs.allSatisfy { $0 == expectedVAN })
+            #expect(server.acceptedVANs.contains(where: \.isEmpty) == false)
+        }
     }
 }
 }

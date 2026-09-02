@@ -43,7 +43,7 @@ SCHEME="${SCHEME:-zodl-internal}"
 PROJECT="secant.xcodeproj"
 KEEP=0
 # Tests in DelegationRecoveryDeviceE2ETests; bump with the suite.
-EXPECTED_TESTS=10
+EXPECTED_TESTS=11
 # Deliberately-disabled tests; see the skip check below.
 EXPECTED_SKIPS=1  # the .disabled vote-again step, and nothing else
 
@@ -190,7 +190,8 @@ for required in \
     everyRecoveredSecretIsACanonicalPallasElement \
     theCorruptedDatabaseWasPlantedInTheContainer \
     openingTheAppDeletesNothingItRecoveredFrom \
-    theEscrowHoldsEverythingARestoreWillNeed
+    theEscrowHoldsEverythingARestoreWillNeed \
+    aVoteReachesTheServerUnderTheRecoveredDelegation
 do
     if ! grep -q "Test ${required}() passed" "$TEST_LOG"; then
         echo "Required test did not pass: ${required}" >&2
