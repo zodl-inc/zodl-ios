@@ -77,6 +77,7 @@ import ComposableArchitecture
                     van: original.van,
                     totalNoteValue: original.totalNoteValue,
                     delegationTxHash: original.delegationTxHash,
+                    source: .recovered,
                     createdAt: Date()
                 )
             )

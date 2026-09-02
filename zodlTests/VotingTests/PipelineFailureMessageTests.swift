@@ -20,14 +20,28 @@ import ComposableArchitecture
             + "bundle=0 (Invalid column type Null at index: 0, name: alpha)"]
     )
 
+    private func entry(_ source: DelegationEscrowEntry.Source) -> DelegationEscrowEntry {
+        DelegationEscrowEntry(
+            roundId: String(repeating: "4a", count: 32),
+            bundleIndex: 0,
+            vanCommRand: Data(repeating: 0xA0, count: 32),
+            van: Data(repeating: 0xC0, count: 32),
+            totalNoteValue: 130_000_000,
+            delegationTxHash: "d0",
+            source: source,
+            createdAt: Date()
+        )
+    }
+
     private func message(
         error: Error,
-        escrowHasSecrets: Bool,
+        escrowed: [DelegationEscrowEntry] = [],
         txHash: VotingTxHashLookup,
         bundleCount: UInt32
     ) async -> String {
         var escrow = DelegationEscrowClient.testValue
-        escrow.holdsDelegation = { _ in escrowHasSecrets }
+        escrow.entries = { _ in escrowed }
+        escrow.holdsDelegation = { _ in escrowed.isEmpty == false }
 
         var crypto = VotingCryptoClient.testValue
         crypto.getDelegationTxHash = { _, _ in txHash }
@@ -47,9 +61,9 @@ import ComposableArchitecture
     @Test func aWipedRoundWhoseSecretsWereRecoveredSaysSo() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowHasSecrets: true,
+            escrowed: [entry(.recovered)],
             txHash: .present("d0"),
-            bundleCount: 0
+            bundleCount: 3
         )
 
         #expect(shown == DelegationDiagnosis.secretsRecovered.message)
@@ -62,7 +76,7 @@ import ComposableArchitecture
     @Test func aBroadcastRoundWarnsAgainstReEnteringThePoll() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowHasSecrets: false,
+            escrowed: [entry(.liveCapture)],
             txHash: .present("d0"),
             bundleCount: 3
         )
@@ -77,7 +91,6 @@ import ComposableArchitecture
     @Test func aWipedRoundWithNothingRecoveredSaysItIsLost() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowHasSecrets: false,
             txHash: .present("d0"),
             bundleCount: 0
         )
@@ -91,7 +104,6 @@ import ComposableArchitecture
     @Test func noEvidenceOfABroadcastIsUndeterminedNotSafeToRebuild() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowHasSecrets: false,
             txHash: .notFound,
             bundleCount: 3
         )
@@ -110,11 +122,26 @@ import ComposableArchitecture
         )
 
         let shown = await message(
-            error: spent, escrowHasSecrets: true, txHash: .present("d0"), bundleCount: 0
+            error: spent, escrowed: [entry(.recovered)], txHash: .present("d0"), bundleCount: 0
         )
 
         #expect(shown == String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent))
         #expect(shown.contains("POLL-") == false)
+    }
+
+    /// The exact state a real affected device reported: wiped, rebuilt (so
+    /// rows exist), and recovery had already escrowed the original. It showed
+    /// POLL-02. It must show POLL-03.
+    @Test func theRealAffectedDeviceStateReportsRecovered() async {
+        let shown = await message(
+            error: incompleteSetup,
+            escrowed: [entry(.recovered)],
+            txHash: .present("16eef7eb"),
+            bundleCount: 1
+        )
+
+        #expect(shown.contains("POLL-03"))
+        #expect(shown.contains("POLL-02") == false)
     }
 }
 #endif

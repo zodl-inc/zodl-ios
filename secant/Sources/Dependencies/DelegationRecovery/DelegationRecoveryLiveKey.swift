@@ -374,6 +374,7 @@ extension DelegationRecoveryClient: DependencyKey {
                                 van: original.van,
                                 totalNoteValue: original.totalNoteValue,
                                 delegationTxHash: original.delegationTxHash,
+                                source: .recovered,
                                 createdAt: Date()
                             )
                         )
@@ -386,7 +387,12 @@ extension DelegationRecoveryClient: DependencyKey {
                         escrowFailed = true
                         continue
                     }
-                    log("    ESCROWED \(key) = \(elide(original.vanCommRand))")
+                    // The hash decides whether this entry is a complete
+                    // capability record, so a support log that omits it
+                    // cannot answer the first question anyone asks.
+                    let tx = original.delegationTxHash.map { "tx \($0.prefix(8))" }
+                        ?? "no tx hash"
+                    log("    ESCROWED \(key) = \(elide(original.vanCommRand)), \(tx)")
 
                     report.bundlesEscrowed += 1
                     if original.van.isEmpty {

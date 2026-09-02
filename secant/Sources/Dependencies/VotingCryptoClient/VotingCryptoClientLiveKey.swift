@@ -273,6 +273,7 @@ extension VotingCryptoClient: DependencyKey {
                             // record -- only the carved path can supply it
                             // today.
                             delegationTxHash: nil,
+                            source: .liveCapture,
                             createdAt: Date()
                         )
                     )

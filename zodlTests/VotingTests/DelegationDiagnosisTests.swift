@@ -14,15 +14,15 @@ import Foundation
     private typealias Diagnosis = DelegationDiagnosis
 
     private func signals(
-        hasLocalSecret: Bool = true,
+        roundHasBundles: Bool = true,
+        escrowHoldsRecoveredSecrets: Bool = false,
         hasDelegationTxHash: Bool = false,
-        escrowHoldsSecrets: Bool = false,
         voteServiceAnswered: Bool = true
     ) -> Diagnosis.Signals {
         Diagnosis.Signals(
-            hasLocalSecret: hasLocalSecret,
+            roundHasBundles: roundHasBundles,
+            escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
             hasDelegationTxHash: hasDelegationTxHash,
-            escrowHoldsSecrets: escrowHoldsSecrets,
             voteServiceAnswered: voteServiceAnswered
         )
     }
@@ -52,7 +52,7 @@ import Foundation
     /// After the wipe, with recovery having escrowed the originals.
     @Test func wipedButRecoveredReportsSecretsRecovered() {
         let diagnosis = Diagnosis.diagnose(
-            signals(hasLocalSecret: false, hasDelegationTxHash: true, escrowHoldsSecrets: true)
+            signals(escrowHoldsRecoveredSecrets: true, hasDelegationTxHash: true)
         )
 
         #expect(diagnosis == .secretsRecovered)
@@ -65,16 +65,48 @@ import Foundation
     /// delegation existed that the wiped database can no longer show.
     @Test func escrowedSecretsOutrankAMissingTransactionHash() {
         let diagnosis = Diagnosis.diagnose(
-            signals(hasLocalSecret: false, hasDelegationTxHash: false, escrowHoldsSecrets: true)
+            signals(escrowHoldsRecoveredSecrets: true, hasDelegationTxHash: false)
         )
 
         #expect(diagnosis == .secretsRecovered)
     }
 
+    /// The state a real affected device reported, and the regression this
+    /// exists to stop.
+    ///
+    /// Their round was wiped and REBUILT, so bundle rows exist; recovery had
+    /// carved the original back and escrowed it. They were shown POLL-02,
+    /// because the recovered case used to require an absence of rows, and the
+    /// rebuild had supplied them. The right answer is that their data was lost
+    /// and is back.
+    @Test func aWipedRoundWithRebuiltRowsStillReportsRecovered() {
+        let diagnosis = Diagnosis.diagnose(
+            signals(
+                roundHasBundles: true,
+                escrowHoldsRecoveredSecrets: true,
+                hasDelegationTxHash: true
+            )
+        )
+
+        #expect(diagnosis == .secretsRecovered)
+        #expect(diagnosis != .broadcastDoNotRebuild, "the misdiagnosis this test pins")
+    }
+
+    /// An ordinary live capture is not evidence of loss. Every delegation
+    /// build escrows one, so treating presence alone as recovery would tell
+    /// most users their data had been lost.
+    @Test func anOrdinaryLiveCaptureIsNotReportedAsRecovery() {
+        let diagnosis = Diagnosis.diagnose(
+            signals(escrowHoldsRecoveredSecrets: false, hasDelegationTxHash: true)
+        )
+
+        #expect(diagnosis == .broadcastDoNotRebuild)
+    }
+
     /// The wipe, with nothing recovered. The unrecoverable state.
     @Test func wipedWithNothingRecoveredReportsSecretsLost() {
         let diagnosis = Diagnosis.diagnose(
-            signals(hasLocalSecret: false, hasDelegationTxHash: true)
+            signals(roundHasBundles: false, hasDelegationTxHash: true)
         )
 
         #expect(diagnosis == .secretsLost)
@@ -101,14 +133,14 @@ import Foundation
     /// Exhaustive rather than sampled -- four booleans is sixteen cases, so
     /// there is no reason to approximate.
     @Test func neverPermitsARebuildWithoutPositiveEvidence() {
-        for secret in [true, false] {
+        for rows in [true, false] {
             for hash in [true, false] {
-                for escrow in [true, false] {
+                for recovered in [true, false] {
                     for answered in [true, false] {
                         let input = signals(
-                            hasLocalSecret: secret,
+                            roundHasBundles: rows,
+                            escrowHoldsRecoveredSecrets: recovered,
                             hasDelegationTxHash: hash,
-                            escrowHoldsSecrets: escrow,
                             voteServiceAnswered: answered
                         )
                         // A rebuild is permitted exactly when there is no
@@ -122,8 +154,13 @@ import Foundation
                         // `buildVotingPczt` escrows on every delegation build,
                         // well before any broadcast, so an escrow entry on its
                         // own is an ordinary state and cannot imply one.
+                        // Rebuilding is permitted only on positive evidence:
+                        // nothing was rescued, no broadcast is recorded, and
+                        // the service confirmed it. Whether rows exist does
+                        // not appear -- a round never set up has nothing to
+                        // lose, and a rebuilt one is covered by the first two.
                         let permitted = Diagnosis.diagnose(input).mayRebuildLocalState
-                        let expected = !hash && answered && !(escrow && !secret)
+                        let expected = !recovered && !hash && answered
                         #expect(
                             permitted == expected,
                             "wrong rebuild verdict for \(input)"

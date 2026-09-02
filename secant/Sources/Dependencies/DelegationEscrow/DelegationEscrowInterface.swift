@@ -46,7 +46,65 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
     /// Decoding an escrow written before this field existed yields nil, which
     /// is why it is optional rather than a schema-version bump.
     let delegationTxHash: String?
+    /// Where this entry came from.
+    ///
+    /// Inferring it was tried and does not work. A carved entry and a live
+    /// capture are otherwise identical on disk, and `delegationTxHash` is not
+    /// a reliable discriminator: a carve that found no hash leaves it nil,
+    /// exactly like a live capture. Recording the origin makes the difference
+    /// a fact rather than a guess, which is what lets a diagnosis say "your
+    /// data was lost and we have it back" only when that is true.
+    let source: Source
     let createdAt: Date
+
+    /// An escrow written before `source` existed decodes as a live capture.
+    ///
+    /// That is the conservative reading: it makes a diagnosis claim loss only
+    /// where an entry positively says it was recovered, so an older file can
+    /// never produce "your data was lost" on a round where nothing was.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        roundId = try container.decode(String.self, forKey: .roundId)
+        bundleIndex = try container.decode(UInt32.self, forKey: .bundleIndex)
+        vanCommRand = try container.decode(Data.self, forKey: .vanCommRand)
+        van = try container.decode(Data.self, forKey: .van)
+        totalNoteValue = try container.decode(UInt64.self, forKey: .totalNoteValue)
+        delegationTxHash = try container.decodeIfPresent(String.self, forKey: .delegationTxHash)
+        source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .liveCapture
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
+
+    init(
+        roundId: String,
+        bundleIndex: UInt32,
+        vanCommRand: Data,
+        van: Data,
+        totalNoteValue: UInt64,
+        delegationTxHash: String?,
+        source: Source,
+        createdAt: Date
+    ) {
+        self.roundId = roundId
+        self.bundleIndex = bundleIndex
+        self.vanCommRand = vanCommRand
+        self.van = van
+        self.totalNoteValue = totalNoteValue
+        self.delegationTxHash = delegationTxHash
+        self.source = source
+        self.createdAt = createdAt
+    }
+
+    enum Source: String, Equatable, Sendable, Codable {
+        /// Captured while the delegation was being built, before any
+        /// broadcast. Ordinary bookkeeping: its presence says nothing about
+        /// whether anything was lost.
+        case liveCapture
+        /// Carved back out of a wiped database. Its presence is evidence that
+        /// the round WAS cleared and rebuilt, because recovery escrows only
+        /// where it found a replacement for a secret the live copy no longer
+        /// holds.
+        case recovered
+    }
 }
 
 /// Durable, wallet-scoped escrow for delegation secrets that `clear_round`

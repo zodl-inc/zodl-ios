@@ -70,7 +70,32 @@ private actor DelegationEscrowStore {
 
     func record(_ entry: DelegationEscrowEntry) throws {
         var entries = try loadAll()
-        entries.removeAll { $0.roundId == entry.roundId && $0.bundleIndex == entry.bundleIndex }
+
+        // A live capture must never displace a recovered one.
+        //
+        // Overwriting is right for the ordinary case this was written for:
+        // re-running a delegation samples fresh randomness and the newest
+        // sample is the one the chain will see. That reasoning fails exactly
+        // where it matters most. For a round whose delegation is ALREADY on
+        // chain, the chain holds the OLD commitment, the rescued secret is its
+        // only opening, and a rebuild's fresh sample is worthless against it.
+        //
+        // So a rebuild of an already-broadcast round would otherwise overwrite
+        // the one copy recovery just carved out of a wiped database -- the
+        // second, quieter version of the loss this whole mechanism exists to
+        // undo.
+        let existing = entries.first {
+            $0.roundId.caseInsensitiveCompare(entry.roundId) == .orderedSame
+                && $0.bundleIndex == entry.bundleIndex
+        }
+        if existing?.source == .recovered && entry.source == .liveCapture {
+            return
+        }
+
+        entries.removeAll {
+            $0.roundId.caseInsensitiveCompare(entry.roundId) == .orderedSame
+                && $0.bundleIndex == entry.bundleIndex
+        }
         entries.append(entry)
         entries.sort { ($0.roundId, $0.bundleIndex) < ($1.roundId, $1.bundleIndex) }
         try persist(entries)

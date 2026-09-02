@@ -67,14 +67,26 @@ enum DelegationDiagnosis: String, Equatable, Sendable, CaseIterable {
 extension DelegationDiagnosis {
     /// What the app can observe about one round's delegation state.
     struct Signals: Equatable, Sendable {
-        /// A `van_comm_rand` is present in `bundles` for this round.
-        let hasLocalSecret: Bool
+        /// The round has bundle rows at all.
+        ///
+        /// Named for what it measures. It is NOT "the broadcast secret is
+        /// present": after a wipe the round is REBUILT, so rows exist while
+        /// the original secret is gone. Reading it as secret-presence is what
+        /// made a recovered user read as `broadcastDoNotRebuild` instead of
+        /// `secretsRecovered` -- protective, but wrong, and misleading to
+        /// whoever they showed it to.
+        let roundHasBundles: Bool
+        /// The escrow holds an entry this round's recovery CARVED, as opposed
+        /// to one the ordinary live capture stored.
+        ///
+        /// This is the loss signal. Recovery escrows only where it found a
+        /// replacement for a secret the live copy no longer holds, so a
+        /// `.recovered` entry is evidence the round was cleared and rebuilt.
+        let escrowHoldsRecoveredSecrets: Bool
         /// `delegation_tx_hash` is present, so this device recorded a
         /// broadcast. Absent does NOT prove nothing was broadcast: the hash is
         /// stored only after `submitDelegation` returns.
         let hasDelegationTxHash: Bool
-        /// The escrow holds recovered secrets for this round.
-        let escrowHoldsSecrets: Bool
         /// The voting service answered, so "no delegation recorded" can be
         /// trusted. False whenever the check failed OR was inconclusive.
         let voteServiceAnswered: Bool
@@ -89,14 +101,18 @@ extension DelegationDiagnosis {
     static func diagnose(_ signals: Signals) -> DelegationDiagnosis {
         // Recovery already rescued them; restoring is the next step, and
         // rebuilding would overwrite what was just saved.
-        if signals.escrowHoldsSecrets && !signals.hasLocalSecret {
+        //
+        // Checked without reference to whether rows exist. They do exist after
+        // a wipe -- the rebuild made them -- so requiring their absence here
+        // is what hid this case behind `broadcastDoNotRebuild`.
+        if signals.escrowHoldsRecoveredSecrets {
             return .secretsRecovered
         }
 
-        // Gone locally, nothing escrowed. Only call it lost when there is
-        // evidence something was actually submitted; otherwise the round was
-        // simply never set up, which is not an error state.
-        if !signals.hasLocalSecret && signals.hasDelegationTxHash {
+        // No rows and nothing rescued. Only call it lost where something was
+        // actually submitted; otherwise the round was simply never set up,
+        // which is not an error state.
+        if !signals.roundHasBundles && signals.hasDelegationTxHash {
             return .secretsLost
         }
 
@@ -136,7 +152,15 @@ extension DelegationDiagnosis {
         escrow: DelegationEscrowClient,
         crypto: VotingCryptoClient
     ) async -> DelegationDiagnosis {
-        let escrowHoldsSecrets = await escrow.holdsDelegation(roundId)
+        // Asks for the ORIGIN, not merely for presence: an ordinary live
+        // capture is not evidence that anything was lost.
+        let escrowHoldsRecoveredSecrets: Bool
+        do {
+            escrowHoldsRecoveredSecrets = try await escrow.entries(roundId)
+                .contains { $0.source == .recovered }
+        } catch {
+            escrowHoldsRecoveredSecrets = false
+        }
 
         // Both reads are best-effort. A failure to read a signal is not
         // evidence about that signal, and every unknown resolves toward the
@@ -153,18 +177,18 @@ extension DelegationDiagnosis {
             hasTxHash = true
         }
 
-        let hasLocalSecret: Bool
+        let roundHasBundles: Bool
         do {
-            hasLocalSecret = try await crypto.getBundleCount(roundId) > 0
+            roundHasBundles = try await crypto.getBundleCount(roundId) > 0
         } catch {
-            hasLocalSecret = false
+            roundHasBundles = false
         }
 
         return diagnose(
             Signals(
-                hasLocalSecret: hasLocalSecret,
+                roundHasBundles: roundHasBundles,
+                escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
                 hasDelegationTxHash: hasTxHash,
-                escrowHoldsSecrets: escrowHoldsSecrets,
                 voteServiceAnswered: voteServiceAnswered
             )
         )
