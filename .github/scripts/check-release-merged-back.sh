@@ -170,7 +170,7 @@ while IFS= read -r rel; do
   # Its own line is the obligation. Anything downstream of it is merge-forward
   # lag, which the merge-forward jobs already track, so it warns rather than
   # fails; otherwise the merge-back PR itself would report red for main.
-  # A line absent from the chain is handled below: main is checked, warning only.
+  # When the line does not exist, main takes over as the obligation below.
   own=''
   downstream=()
   seen=0
@@ -181,14 +181,17 @@ while IFS= read -r rel; do
   checked=$((checked + 1))
 
   if [ "$seen" -eq 0 ]; then
-    # The line was never created, or has been retired. There is no own-line
-    # obligation to enforce; whether the release has flowed to main is
-    # merge-forward lag, which is a warning by policy, never a failure.
+    # The line was never created, or has been retired. With no line, main is
+    # the one permanent branch that can keep the tag reachable, so reaching
+    # main is this release's obligation -- the unreachable-tag hazard itself,
+    # not merge-forward lag. Every release that opens a new minor line passes
+    # through this state, since cutting a release creates no maint branch.
     say ":grey_question: \`${rel}\` (\`${tag}\`) belongs to \`${maint}\`, which does not exist; checking main only."
     if in_branch "$ref" "$(resolve main)"; then
       say ":white_check_mark: \`${rel}\` (\`${tag}\`) is in \`main\`."
     else
-      say ":warning: \`${rel}\` (\`${tag}\`) has not reached \`main\` yet; create \`${maint}\` (or merge the release back) so the tag stays reachable."
+      failed=1
+      say ":x: \`${rel}\` (\`${tag}\`) has no maintenance line and has not reached \`main\`; create \`${maint}\` from it (or merge it into \`main\`) so the tag stays reachable."
     fi
     continue
   fi
@@ -219,7 +222,7 @@ if [ "$checked" -eq 0 ]; then
 fi
 
 if [ "$failed" -eq 0 ]; then
-  say "All ${checked} tagged release branches are merged back into their line."
+  say "All ${checked} tagged release branches are merged back."
   exit 0
 fi
 

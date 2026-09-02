@@ -204,7 +204,13 @@ git diff $VERSION -- CHANGELOG.md                  # ## [$VERSION] must match th
 git commit && git push upstream "$MAINT"
 ```
 
-and the same again to forward the maintenance line to `main`.
+and the same again to forward the maintenance line to `main`. For the first
+release of a line, `$MAINT` does not exist yet — create it from the release
+instead, which leaves only the forward-to-`main` merge:
+
+```bash
+git switch -c "$MAINT" release/$VERSION && git push -u upstream "$MAINT"
+```
 
 #### Submitting to App Review with `--submit-review`
 

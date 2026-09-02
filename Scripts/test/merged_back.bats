@@ -167,16 +167,16 @@ mkcommit() {
   [[ "$output" == *"cannot resolve pr-ref"* ]] || false
 }
 
-@test "a release whose line does not exist warns on main, never fails" {
+@test "a release with no maintenance line must reach main" {
   mkcommit "release 3.11.0"; REL="$SHA"
   git tag 3.11.0 "$REL"
   git update-ref refs/remotes/origin/release/3.11.0 "$REL"
   git update-ref refs/remotes/origin/main "$BASE"
   run "$CHECK"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *'belongs to `maint/v3.11.x`, which does not exist'* ]] || false
-  [[ "$output" == *'has not reached `main` yet'* ]] || false
-  [[ "$output" != *':x:'* ]] || false
+  [[ "$output" == *':x:'*'has no maintenance line and has not reached `main`'* ]] || false
+  [[ "$output" != *'tagged release branches are merged back'* ]] || false
 }
 
 @test "a release whose line does not exist and is in main is green" {
