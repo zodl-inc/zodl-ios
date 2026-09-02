@@ -215,4 +215,33 @@ import Testing
         state.$toast.withLock { $0 = nil }
         return state
     }
+
+    // MARK: - Locale
+
+    @Test func prefilledAmountRoundTripsInEveryLocale() throws {
+        // A payment URI carries its amount in canonical en_US_POSIX form, but the amount field is
+        // read back in the device's locale. `applyScannedRequest` never handles the URI's US text:
+        // it converts to `Decimal` first, then formats with `conversionCrossPayFormatter`. This
+        // pins that the write and read formatters agree, so a `cs_CZ` device that is shown "0,015"
+        // gets 0.015 back out -- and that neither formatter can be moved to a fixed locale without
+        // failing here.
+        let write = SwapAndPay.State.initial.conversionCrossPayFormatter
+        let read = try #require(NumberFormatter.zcashNumberFormatter.copy() as? NumberFormatter)
+
+        let locales = ["en_US", "cs_CZ", "fr_FR", "de_DE", "pt_BR", "ar_SA", "fa_IR", "hi_IN", "ru_RU"]
+        let amounts = ["0.015", "1.23456789", "1234.5678", "0.00000001", "123456789.1234"]
+
+        for identifier in locales {
+            let locale = Locale(identifier: identifier)
+            write.locale = locale
+            read.locale = locale
+
+            for amount in amounts {
+                let expected = try #require(Decimal(string: amount, locale: Locale(identifier: "en_US_POSIX")))
+                let text = try #require(write.string(from: NSDecimalNumber(decimal: expected)))
+                let parsed = read.number(from: text)?.decimalValue
+                #expect(parsed == expected, "\(identifier) \(amount) formatted as \"\(text)\"")
+            }
+        }
+    }
 }
