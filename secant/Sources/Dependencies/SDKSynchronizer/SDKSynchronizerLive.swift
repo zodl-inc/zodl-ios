@@ -358,6 +358,15 @@ extension SDKSynchronizerClient: DependencyKey {
                     network: network
                 )
             },
+            evaluateServerSwitch: { current, candidates, fetchThreshold, nBlocks, network in
+                await synchronizer.evaluateServerSwitch(
+                    current: current,
+                    candidates: candidates,
+                    fetchThresholdSeconds: fetchThreshold,
+                    nBlocksToFetch: nBlocks,
+                    network: network
+                )
+            },
             walletAccounts: {
                 // get the Accounts and map it to WalletAccounts
                 var walletAccounts = try await synchronizer.listAccounts().map {

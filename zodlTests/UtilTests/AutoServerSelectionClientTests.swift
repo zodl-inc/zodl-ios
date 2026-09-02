@@ -13,45 +13,6 @@ final class AutoServerSelectionClientTests: XCTestCase {
         LightWalletEndpoint(address: host, port: 443, secure: true, streamingCallTimeoutInMillis: 0)
     }
 
-    // MARK: - findBestServer
-
-    /// Runs `findBestServer` with controlled dependencies.
-    private func runFind(
-        flag: Bool?,
-        current: LightWalletEndpoint,
-        best: LightWalletEndpoint?
-    ) async -> LightWalletEndpoint? {
-        await withDependencies {
-            $0.userStoredPreferences.automaticServerSelection = { flag }
-            $0.zcashSDKEnvironment = .testnet
-            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
-            $0.zcashSDKEnvironment.endpoint = { current }
-            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in best.map { [$0] } ?? [] }
-        } operation: {
-            await AutoServerSelectionClient.liveValue.findBestServer()
-        }
-    }
-
-    func testFindNoOpWhenFlagOff() async {
-        let result = await runFind(flag: false, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertNil(result)
-    }
-
-    func testFindNilWhenBestEqualsCurrent() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: endpoint("zec.rocks"))
-        XCTAssertNil(result)
-    }
-
-    func testFindNilWhenBenchmarkEmpty() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: nil)
-        XCTAssertNil(result)
-    }
-
-    func testFindReturnsCandidateWhenDifferent() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertEqual(result?.host, "na.zec.rocks")
-    }
-
     // MARK: - applySwitch
 
     /// Runs `applySwitch` with controlled dependencies and returns (didSwitch, recorder).

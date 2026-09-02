@@ -492,8 +492,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/zodl-inc/zodl-swift-wallet-sdk.git",
       "state" : {
-        "revision" : "e948e76a82f9814758e62f2c53eafbf086af5637",
-        "version" : "4.1.0"
+        "revision" : "7e44c48aed237202043010775ec7383c45c519fe"
       }
     }
   ],
