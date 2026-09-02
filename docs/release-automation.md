@@ -148,7 +148,8 @@ wherever it differs from the default `origin`.
 so building from it would ship the wrong code.
 
 **3. Need a fix?** Commit and push it on `candidate/3.8.0` — it appears in the
-pull request — then rebuild with the next build number:
+pull request, and every push runs the full unit-test and E2E suites even while
+the pull request is a draft — then rebuild with the next build number:
 
 ```bash
 ./Scripts/release.sh --variant internal-testnet --ref candidate/3.8.0 --remote upstream --version 3.8.0 --build 2

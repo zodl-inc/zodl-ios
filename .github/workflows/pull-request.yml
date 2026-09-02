@@ -26,8 +26,11 @@ env:
 jobs:
   validate_sdk_pin:
     # Cheap gate: an invalid .sdk-pin fails here in seconds instead of
-    # burning two macOS jobs. Same draft guard as unit_tests.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # burning two macOS jobs. Same draft guard as unit_tests, except release
+    # PRs: their candidate content ships to users before the PR merges, so a
+    # draft release PR gets full CI on every push while its draft state
+    # keeps guarding the merge.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -116,7 +119,8 @@ jobs:
           if-no-files-found: error
 
   unit_tests:
-    # Skip draft PRs — no tests run until a PR is marked ready for review
+    # Skip draft PRs — no tests run until a PR is marked ready for review —
+    # except release PRs, which are tested while still draft
     # (matches the e2e/smoke suite guard in e2e-smoke.yml).
     needs: [validate_sdk_pin, build_ffi]
     # build_ffi is skipped in remote mode; accept success OR skipped. The draft guard lives on validate_sdk_pin and propagates through needs.
