@@ -1,4 +1,4 @@
-#if VOTING_ENABLED
+#if RECOVERY_VOTING_ENABLED
 import Foundation
 import SQLite3
 @testable import zodl_internal

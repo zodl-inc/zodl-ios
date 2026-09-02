@@ -1,4 +1,4 @@
-#if VOTING_ENABLED
+#if RECOVERY_VOTING_ENABLED
 import Testing
 import Foundation
 import ComposableArchitecture

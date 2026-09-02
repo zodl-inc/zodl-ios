@@ -396,7 +396,7 @@ struct Root {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
-    #if VOTING_ENABLED
+    #if RECOVERY_VOTING_ENABLED
     @Dependency(\.delegationRecovery) var delegationRecovery
     #endif
     @Dependency(\.date) var date
@@ -749,9 +749,11 @@ extension Root {
             // The delegation escrow holds VAN blinding factors for this
             // wallet's rounds. It is as wallet-scoped as the database it
             // shadows, so it must not survive the reset boundary either.
+            #if RECOVERY_VOTING_ENABLED
             try? FileManager.default.removeItem(
                 at: documents.appendingPathComponent(DelegationEscrowFile.name)
             )
+            #endif
         }
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which

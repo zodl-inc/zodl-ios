@@ -20,39 +20,30 @@ import ComposableArchitecture
             + "bundle=0 (Invalid column type Null at index: 0, name: alpha)"]
     )
 
-    private func entry(_ source: DelegationEscrowEntry.Source) -> DelegationEscrowEntry {
-        DelegationEscrowEntry(
-            roundId: String(repeating: "4a", count: 32),
-            bundleIndex: 0,
-            vanCommRand: Data(repeating: 0xA0, count: 32),
-            van: Data(repeating: 0xC0, count: 32),
-            totalNoteValue: 130_000_000,
-            delegationTxHash: "d0",
-            source: source,
-            createdAt: Date()
-        )
-    }
-
+    /// Exercises the classifier through the message layer WITHOUT naming a
+    /// recovery type, so this suite keeps compiling once the recovery code is
+    /// deleted. `recovered` stands in for the signal the gated call site
+    /// gathers; when that call site goes, it is simply always false.
     private func message(
         error: Error,
-        escrowed: [DelegationEscrowEntry] = [],
+        recovered: Bool = false,
         txHash: VotingTxHashLookup,
         bundleCount: UInt32
     ) async -> String {
-        var escrow = DelegationEscrowClient.testValue
-        escrow.entries = { _ in escrowed }
-        escrow.holdsDelegation = { _ in escrowed.isEmpty == false }
+        guard VotingErrorMapper.isIncompleteDelegationSetup(error.localizedDescription) else {
+            return VotingErrorMapper.userFriendlyMessage(from: error)
+        }
 
         var crypto = VotingCryptoClient.testValue
         crypto.getDelegationTxHash = { _, _ in txHash }
         crypto.getBundleCount = { _ in bundleCount }
 
-        return await VotingCoordFlow.pipelineFailureMessage(
-            error: error,
-            roundId: String(repeating: "4a", count: 32),
-            escrow: escrow,
+        return await DelegationDiagnosis.forRound(
+            String(repeating: "4a", count: 32),
+            voteServiceAnswered: false,
+            escrowHoldsRecoveredSecrets: recovered,
             crypto: crypto
-        )
+        ).message
     }
 
     /// The state our affected user is in: the round was wiped and recovery
@@ -61,7 +52,7 @@ import ComposableArchitecture
     @Test func aWipedRoundWhoseSecretsWereRecoveredSaysSo() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowed: [entry(.recovered)],
+            recovered: true,
             txHash: .present("d0"),
             bundleCount: 3
         )
@@ -76,7 +67,7 @@ import ComposableArchitecture
     @Test func aBroadcastRoundWarnsAgainstReEnteringThePoll() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowed: [entry(.liveCapture)],
+            recovered: false,
             txHash: .present("d0"),
             bundleCount: 3
         )
@@ -122,7 +113,7 @@ import ComposableArchitecture
         )
 
         let shown = await message(
-            error: spent, escrowed: [entry(.recovered)], txHash: .present("d0"), bundleCount: 0
+            error: spent, recovered: true, txHash: .present("d0"), bundleCount: 0
         )
 
         #expect(shown == String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent))
@@ -135,7 +126,7 @@ import ComposableArchitecture
     @Test func theRealAffectedDeviceStateReportsRecovered() async {
         let shown = await message(
             error: incompleteSetup,
-            escrowed: [entry(.recovered)],
+            recovered: true,
             txHash: .present("16eef7eb"),
             bundleCount: 1
         )

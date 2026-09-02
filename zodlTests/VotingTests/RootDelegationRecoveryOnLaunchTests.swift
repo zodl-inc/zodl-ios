@@ -1,4 +1,4 @@
-#if VOTING_ENABLED
+#if RECOVERY_VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation

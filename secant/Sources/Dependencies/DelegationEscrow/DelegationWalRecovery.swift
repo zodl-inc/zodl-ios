@@ -1,4 +1,4 @@
-#if VOTING_ENABLED
+#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 /// Recovers `bundles` rows that `clear_round` deleted, by carving the voting

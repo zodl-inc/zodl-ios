@@ -352,7 +352,6 @@ struct VotingCoordFlow {
 
     @Dependency(\.backgroundTask) var backgroundTask
     @Dependency(\.databaseFiles) var databaseFiles
-    @Dependency(\.delegationEscrow) var delegationEscrow
     @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mnemonic) var mnemonic

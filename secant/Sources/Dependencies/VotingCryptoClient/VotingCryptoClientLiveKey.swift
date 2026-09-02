@@ -186,7 +186,9 @@ extension VotingCryptoClient: DependencyKey {
             },
             // swiftlint:disable:next line_length
             buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
+                #if RECOVERY_VOTING_ENABLED
                 @Dependency(\.delegationEscrow) var delegationEscrow
+                #endif
                 let backend = try await dbActor.backend()
                 let inputs: VotingDelegationInputs
                 let actualFvkBytes: [UInt8]
@@ -256,6 +258,7 @@ extension VotingCryptoClient: DependencyKey {
                 // already paid for, so this logs and continues; the guard in
                 // `prepareFreshRound` is the other half of the protection and
                 // does not depend on the escrow succeeding.
+                #if RECOVERY_VOTING_ENABLED
                 do {
                     try await delegationEscrow.record(
                         DelegationEscrowEntry(
@@ -282,6 +285,7 @@ extension VotingCryptoClient: DependencyKey {
                         "Delegation escrow write failed for round \(roundId) bundle \(bundleIndex): \(error)"
                     )
                 }
+                #endif
 
                 return VotingPcztResult(
                     pcztBytes: pcztBytes,

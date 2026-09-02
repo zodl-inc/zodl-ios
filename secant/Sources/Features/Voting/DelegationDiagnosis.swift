@@ -145,22 +145,20 @@ extension DelegationDiagnosis {
     ///   inconclusive check: the two are the same thing here, and conflating
     ///   "inconclusive" with "not delegated" is what routed voters into the
     ///   destructive rebuild in the first place.
+    /// - Parameter escrowHoldsRecoveredSecrets: supplied by the caller rather
+    ///   than read here, because the escrow lives behind
+    ///   `RECOVERY_VOTING_ENABLED` while this file does not. Passing the
+    ///   SIGNAL instead of the client keeps every recovery type out of the
+    ///   diagnosis, so the messages survive the day the recovery code is
+    ///   deleted -- with `secretsRecovered` simply becoming unreachable, which
+    ///   is correct once nothing recovers anything.
     static func forRound(
         _ roundId: String,
         bundleIndex: UInt32 = 0,
         voteServiceAnswered: Bool,
-        escrow: DelegationEscrowClient,
+        escrowHoldsRecoveredSecrets: Bool,
         crypto: VotingCryptoClient
     ) async -> DelegationDiagnosis {
-        // Asks for the ORIGIN, not merely for presence: an ordinary live
-        // capture is not evidence that anything was lost.
-        let escrowHoldsRecoveredSecrets: Bool
-        do {
-            escrowHoldsRecoveredSecrets = try await escrow.entries(roundId)
-                .contains { $0.source == .recovered }
-        } catch {
-            escrowHoldsRecoveredSecrets = false
-        }
 
         // Both reads are best-effort. A failure to read a signal is not
         // evidence about that signal, and every unknown resolves toward the

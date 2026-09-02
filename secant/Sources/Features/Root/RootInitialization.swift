@@ -113,7 +113,7 @@ extension Root {
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
-                #if VOTING_ENABLED
+                #if RECOVERY_VOTING_ENABLED
                 // Delegation recovery, on every cold launch, invisible to the
                 // user. An older build could delete a round's blinding factor
                 // and rebuild the round in its place, which makes that poll

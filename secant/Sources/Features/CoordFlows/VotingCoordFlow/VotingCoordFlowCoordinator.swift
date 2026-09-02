@@ -1151,7 +1151,6 @@ extension VotingCoordFlow {
                         message: await Self.pipelineFailureMessage(
                             error: error,
                             roundId: roundId,
-                            escrow: delegationEscrow,
                             crypto: votingCrypto
                         )
                     ))
@@ -4437,17 +4436,30 @@ extension VotingCoordFlow {
     static func pipelineFailureMessage(
         error: Error,
         roundId: String,
-        escrow: DelegationEscrowClient,
         crypto: VotingCryptoClient
     ) async -> String {
         guard VotingErrorMapper.isIncompleteDelegationSetup(error.localizedDescription) else {
             return VotingErrorMapper.userFriendlyMessage(from: error)
         }
 
+        // The only recovery-aware line in the message path, and the only one
+        // that has to disappear with the recovery code. Without it the
+        // diagnosis simply never reports `secretsRecovered`, which is the
+        // truth once nothing is recovering anything.
+        var escrowHoldsRecoveredSecrets = false
+        #if RECOVERY_VOTING_ENABLED
+        @Dependency(\.delegationEscrow) var delegationEscrow
+        // Asks for the ORIGIN, not merely for presence: an ordinary live
+        // capture is not evidence that anything was lost.
+        escrowHoldsRecoveredSecrets = (
+            try? await delegationEscrow.entries(roundId).contains { $0.source == .recovered }
+        ) ?? false
+        #endif
+
         let diagnosis = await DelegationDiagnosis.forRound(
             roundId,
             voteServiceAnswered: false,
-            escrow: escrow,
+            escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
             crypto: crypto
         )
         LoggerProxy.info("[poll-diagnosis] round=\(roundId) diagnosis=\(diagnosis.rawValue)")
