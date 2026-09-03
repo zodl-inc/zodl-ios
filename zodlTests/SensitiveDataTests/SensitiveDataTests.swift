@@ -7,7 +7,7 @@
 
 import Testing
 @preconcurrency import MnemonicSwift
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite struct SensitiveDataTests {

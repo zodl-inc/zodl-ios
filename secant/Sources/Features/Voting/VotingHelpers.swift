@@ -12,7 +12,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Empty placeholder used as the `senderSeed` parameter when the SDK call
 /// path doesn't need it (Keystone signing builds the PCZT externally).

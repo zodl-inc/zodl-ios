@@ -40,7 +40,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// What one `advance` call actually did — the session verdict of I2, and the driver's return value.
 ///

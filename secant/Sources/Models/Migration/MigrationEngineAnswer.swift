@@ -29,7 +29,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// What the engine answered, as the app routes on it. A verbatim re-expression of
 /// `MigrationAdvanceStep` — no case here means anything the engine did not say.

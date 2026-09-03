@@ -1,6 +1,6 @@
 #if VOTING_ENABLED
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Preserves the voting database files before anything opens them.
 ///

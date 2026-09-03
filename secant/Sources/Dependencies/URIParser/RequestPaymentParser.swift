@@ -7,7 +7,7 @@
 
 import Foundation
 import ZcashPaymentURI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct RequestPaymentParser {
     let network: NetworkType 

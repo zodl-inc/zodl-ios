@@ -14,13 +14,13 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 // Mutates the process-global `@Shared(.inMemory(.selectedWalletAccount))` slot.
 @Suite(.serialized) struct HomeReceiveRotationTests {
     private enum Const {
         /// Sentinel UAs built through the SDK's internal `init(validatedEncoding:networkType:)`
-        /// (reachable via `@testable import ZcashLightClientKit`) — the rotation logic treats
+        /// (reachable via `@testable import ZODLSwiftWalletSDK`) — the rotation logic treats
         /// addresses as opaque tokens, so no FFI validation is involved and the encodings only
         /// need to be distinct.
         static let previousVisitUA = UnifiedAddress(validatedEncoding: "u1previousvisitrotationfixture", networkType: .mainnet)

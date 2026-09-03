@@ -5,7 +5,7 @@
 //  Created by Lukáš Korba on 2025-06-18.
 //
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import Foundation
 
 struct SwapQuote: Codable, Equatable, Hashable {

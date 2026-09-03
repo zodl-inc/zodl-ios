@@ -25,7 +25,7 @@ import Foundation
 import Testing
 import ComposableArchitecture
 import XCTestDynamicOverlay
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct KeystoneFirmwareCoordFlowTests {

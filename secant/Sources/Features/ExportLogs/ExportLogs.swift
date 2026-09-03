@@ -7,7 +7,7 @@
 
 import ComposableArchitecture
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: Alerts
 

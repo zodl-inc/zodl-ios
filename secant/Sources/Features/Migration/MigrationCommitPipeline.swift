@@ -70,7 +70,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Failures `MigrationCommitPipeline`'s own logic raises, distinct from whatever the underlying SDK
 /// calls throw — callers that don't care about the payload can still map ANY of these to the same

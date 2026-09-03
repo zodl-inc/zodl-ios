@@ -11,7 +11,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// The three states a leftover Orchard balance can be in on a decision screen. "No dust at all"
 /// is deliberately NOT a case — a screen with nothing to decide never renders the decision pieces

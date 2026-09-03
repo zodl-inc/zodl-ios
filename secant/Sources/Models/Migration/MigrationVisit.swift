@@ -34,7 +34,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// What this app-open is for. See the file header for the rule and why it is decided up front.
 enum MigrationVisit: Equatable, Sendable {

@@ -9,7 +9,7 @@ import Foundation
 @preconcurrency import Combine
 import ComposableArchitecture
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @preconcurrency import KeystoneSDK
 
 private let slipstreamLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")

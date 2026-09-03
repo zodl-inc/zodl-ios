@@ -2,7 +2,7 @@ import UIKit
 import SwiftUI
 @preconcurrency import AVFoundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct Home {

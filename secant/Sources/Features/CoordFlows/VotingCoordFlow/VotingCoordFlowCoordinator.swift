@@ -6,7 +6,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension VotingCoordFlow {
     /// Handles all action dispatch. Matches the
