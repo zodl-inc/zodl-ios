@@ -10,6 +10,7 @@ setup() {
   git init -q -b main "$REPO"
   cd "$REPO"
   git config tag.gpgsign false
+  git config commit.gpgsign false
   git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
   BASE="$(git rev-parse HEAD)"
 }

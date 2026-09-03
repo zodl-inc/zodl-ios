@@ -59,6 +59,7 @@ make_tag_repo() {
   TAG_REPO="$BATS_TEST_TMPDIR/tagrepo"
   git init -q -b main "$TAG_REPO"
   git -C "$TAG_REPO" config tag.gpgsign false
+  git -C "$TAG_REPO" config commit.gpgsign false
   git -C "$TAG_REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
 }
 

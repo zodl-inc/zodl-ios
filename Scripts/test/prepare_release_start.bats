@@ -16,6 +16,7 @@ setup() {
   git init -q -b main "$SB"
   cd "$SB"
   git config tag.gpgsign false
+  git config commit.gpgsign false
   # `upstream` is this repository itself, reached through a relative path whose
   # derived slug parses as owner/repo, so the GitHub-shape preflight passes
   # offline: repo_slug_from_url strips through the first separator, leaving
