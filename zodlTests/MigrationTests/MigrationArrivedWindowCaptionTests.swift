@@ -76,12 +76,13 @@ import Testing
     /// passed window, so every one of them used to read "Ready now" — six invitations to act, five
     /// of which the engine refuses. They must now all read "Recomputing ETA…" instead.
     @Test func sixSleptThroughTransfersAllSayRecomputingRatherThanReadyNow() {
-        let statuses = (0..<6).map { index in
-            Self.transfer(
+        let statuses = (0..<6).map { index -> MigrationTransactionStatus in
+            // Every window passed, spread across the hours the wallet was closed.
+            let scheduledHeight: BlockHeight = Self.tip - BlockHeight(600 - index * 100)
+            return Self.transfer(
                 id: UInt32(index + 1),
                 crossing: index,
-                // Every window passed, spread across the hours the wallet was closed.
-                scheduledHeight: Self.tip - BlockHeight(600 - index * 100)
+                scheduledHeight: scheduledHeight
             )
         }
 

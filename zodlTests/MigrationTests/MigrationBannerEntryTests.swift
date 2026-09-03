@@ -34,7 +34,10 @@ import ComposableArchitecture
 /// Serialized: several tests here write `@Shared(.inMemory(.selectedWalletAccount))`, which is
 /// process-global — Swift Testing runs a suite's tests in parallel otherwise, and two of them
 /// installing/clearing the same account concurrently is a race, not a test.
-@Suite(.serialized) struct MigrationBannerEntryTests {
+/// `.timeLimit` records a republish that genuinely never lands as a failure — the idle wait in
+/// the reconcile test has no deadline of its own (see MigrationSweepBannerFreshnessTests' header
+/// for why wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) struct MigrationBannerEntryTests {
     private static let accountUUID = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
 
     /// Testnet NU6.3. The tip sits above it, as it does on any wallet that can see Ironwood at all.
@@ -301,20 +304,6 @@ import ComposableArchitecture
         )
     }
 
-    /// Short real-time polling for a condition driven by a concurrently-running `Task` — copied
-    /// from `MigrationSnapshotFreshnessTests`, and needed for the same reason: the republish
-    /// `reconcile()` schedules runs in a detached `Task`, so the test must wait for it to land
-    /// rather than assume it did. Sized generously for parallel test load.
-    private static func waitUntil(
-        timeoutNanoseconds: UInt64 = 10_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-    }
-
     /// MOB-1749 (fix wave): what the residual screen's "Got it" exit actually depends on.
     ///
     /// `bannerVariant` is a WINDOW onto the published snapshot — it serves
@@ -367,8 +356,11 @@ import ComposableArchitecture
 
             // (c) The writer edge. `reconcile()` pushes state, which republishes the snapshot off a
             // fresh `getAccountsBalances` — now the locked shape, whose unlocked Orchard is zero.
+            // The republish is CLAIMED (coalescer `inFlight`) synchronously inside `reconcile()`,
+            // so suspending on the coalescer's own idle transition here cannot pass early — and,
+            // unlike the retired deadline poll, it takes exactly as long as the build does.
             await manager.reconcile()
-            await Self.waitUntil { manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)?.banner == nil }
+            await manager.awaitSnapshotRepublishIdle(for: Self.accountUUID)
 
             let republished = manager.currentMigrationSnapshot(accountUUID: Self.accountUUID)
             #expect(republished != nil, "the republish must land a snapshot, not clear the channel")

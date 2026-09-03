@@ -444,7 +444,9 @@ private struct GateTestStubError: Error { }
 
 @MainActor
 private func waitForGateStore(
-    timeoutNanoseconds: UInt64 = 5_000_000_000,
+    // Generous ceiling: starved CI runners have inflated trivially-fast tests to 60-120 s
+    // (unit_tests run 33367909253); the poll exits the moment the condition lands.
+    timeoutNanoseconds: UInt64 = 60_000_000_000,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: @escaping @MainActor () -> Bool
 ) async {

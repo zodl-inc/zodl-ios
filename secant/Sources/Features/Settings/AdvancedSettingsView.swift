@@ -48,6 +48,7 @@ struct AdvancedSettingsView: View {
                         ) {
                             store.send(.operationAccessCheck(.exportPrivateData))
                         }
+                        .accessibilityIdentifier(AccessibilityID.AdvancedSettings.exportPrivateData)
 
                         ActionRow(
                             icon: Asset.Assets.Icons.file.image,

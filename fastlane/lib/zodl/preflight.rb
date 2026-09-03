@@ -13,7 +13,7 @@ module Zodl
     # phasing out of the standard library).
     Context = Struct.new(
       :variant, :requested_version, :requested_build, :project_version,
-      :branch_version, :latest_build, :ref_on_origin, :dirty_tree,
+      :branch_version, :latest_build, :remote, :ref_on_remote, :dirty_tree,
       :partner_keys_error, :xcode_ok, :signing_identity_ok, :local_packages,
       keyword_init: true
     )
@@ -44,7 +44,7 @@ module Zodl
       errors << bn.error if bn.error
       warnings << bn.warning if bn.warning
 
-      errors << "ref is not on origin — push it before releasing" unless ctx.ref_on_origin
+      errors << "ref is not on #{ctx.remote} — push it before releasing" unless ctx.ref_on_remote
       errors << ctx.partner_keys_error if ctx.partner_keys_error
       errors << "Xcode version does not match .xcode-version" unless ctx.xcode_ok
       errors << "no distribution signing identity found in the keychain" unless ctx.signing_identity_ok

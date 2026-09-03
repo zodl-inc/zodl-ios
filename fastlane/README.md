@@ -17,9 +17,13 @@ Xcode identity — no keys are stored in the repo or anywhere new.
 
 ## Commands
 
+Cut a release (branches, CHANGELOG promotion, version, draft PR) — see `docs/release-automation.md`:
+
+    ./Scripts/prepare-release.sh start <remote> <X.Y.Z>
+
 Build a variant:
 
-    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3
+    ./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 3
 
 `--variant` is one of `internal`, `testnet`, `appstore`, or `internal-testnet`
 (builds internal then testnet, running tests once). `--ref` is any branch, tag,
@@ -27,11 +31,11 @@ or commit.
 
 Dry run (all checks, no build):
 
-    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --dry-run
+    ./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 3 --dry-run
 
 Build, upload, and submit to App Review in one go (`appstore` only):
 
-    ./Scripts/release.sh --variant appstore --ref release/3.8.0 --version 3.8.0 --build 3 --submit-review
+    ./Scripts/release.sh --variant appstore --ref candidate/3.8.0 --version 3.8.0 --build 3 --submit-review
 
 Submit a build that is already on App Store Connect (omit `--ref`):
 
@@ -45,7 +49,7 @@ attaches the build (replacing a wrong one), and submits with manual release —
 you still press Release in App Store Connect after approval. It refuses to run
 when a version is already in review or approved-but-unreleased.
 
-Bump the marketing version + build (the deliberate version-change step, run in `main`):
+Bump the marketing version + build (outside a release cut — `Scripts/prepare-release.sh` records the version for you when cutting one):
 
     ./Scripts/bump.sh --version 3.8.0 --build 1
 
@@ -83,4 +87,4 @@ The first notification may prompt you to allow notifications for your terminal a
 ## Tests
 
     bundle exec rake test                 # Ruby preflight logic (minitest)
-    bats Scripts/test/release_args.bats   # wrapper arg parsing
+    bats Scripts/test/                    # wrapper scripts and the release library

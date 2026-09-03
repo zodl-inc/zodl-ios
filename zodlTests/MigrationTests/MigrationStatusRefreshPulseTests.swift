@@ -25,9 +25,12 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct MigrationStatusRefreshPulseTests {
+// `.timeLimit` records a pulse that genuinely never fires as a failure — the event-driven waits
+// below have no deadline of their own (see MigrationSweepBannerFreshnessTests' header for why
+// wall-clock budgets were retired).
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct MigrationStatusRefreshPulseTests {
     private static func store(
-        refreshCount: LockIsolated<Int>,
+        refreshCount: SignalledRecords<Void>,
         testClock: TestClock<Swift.Duration>
     ) -> TestStoreOf<MigrationStatus> {
         let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
@@ -38,7 +41,7 @@ import ComposableArchitecture
 
             var client = MigrationManagerClient.noOp
             client.refreshMigrationSnapshot = { _ in
-                refreshCount.withValue { $0 += 1 }
+                refreshCount.recordCall()
             }
             client.currentMigrationSnapshot = { _ in nil }
             client.migrationSnapshotEvents = { _ in Empty().eraseToAnyPublisher() }
@@ -50,44 +53,30 @@ import ComposableArchitecture
         return store
     }
 
-    /// Bounded real-time polling for a condition driven by the store's own in-flight effects —
-    /// advancing a `TestClock` resumes suspended sleepers but does not itself guarantee the
-    /// resulting action has propagated by the time `advance(by:)` returns. Same helper shape as
-    /// `RootMigrationTickLoopTests`.
-    private func waitUntil(
-        timeoutNanoseconds: UInt64 = 5_000_000_000,
-        condition: @escaping @Sendable () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-    }
-
     /// THE requirement (Michal, 2026-08-02): an OPEN progress screen re-derives on the pulse —
     /// never only on events, and never only on reopen. First pulse a full 30s after `onAppear`
     /// (whose own re-verify kick just ran; an immediate pulse would only race it), then every 30s
     /// for as long as the screen stays up.
     @Test func anOpenScreenReDerivesEveryThirtySeconds() async {
-        let refreshCount = LockIsolated(0)
+        let refreshCount = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = Self.store(refreshCount: refreshCount, testClock: testClock)
 
         await store.send(.onAppear)
-        await waitUntil { refreshCount.value == 1 }
-        #expect(refreshCount.value == 1, "onAppear's own re-verify kick, exactly once")
+        await refreshCount.countReached(1)
+        #expect(refreshCount.count == 1, "onAppear's own re-verify kick, exactly once")
 
         await testClock.advance(by: .seconds(29))
         try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(refreshCount.value == 1, "no pulse before a full 30s has elapsed")
+        #expect(refreshCount.count == 1, "no pulse before a full 30s has elapsed")
 
         await testClock.advance(by: .seconds(1))
-        await waitUntil { refreshCount.value == 2 }
-        #expect(refreshCount.value == 2, "the first pulse fires at 30s")
+        await refreshCount.countReached(2)
+        #expect(refreshCount.count == 2, "the first pulse fires at 30s")
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { refreshCount.value == 3 }
-        #expect(refreshCount.value == 3, "and keeps firing every 30s while the screen is open")
+        await refreshCount.countReached(3)
+        #expect(refreshCount.count == 3, "and keeps firing every 30s while the screen is open")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
@@ -98,22 +87,22 @@ import ComposableArchitecture
     /// was gone — hundreds of TCA missing-element warnings per session, and a busy-loop of loads
     /// for a screen nobody could see.
     @Test func onDisappearStopsThePulse() async {
-        let refreshCount = LockIsolated(0)
+        let refreshCount = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = Self.store(refreshCount: refreshCount, testClock: testClock)
 
         await store.send(.onAppear)
-        await waitUntil { refreshCount.value == 1 }
+        await refreshCount.countReached(1)
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { refreshCount.value == 2 }
-        #expect(refreshCount.value == 2, "the pulse runs while the screen is up")
+        await refreshCount.countReached(2)
+        #expect(refreshCount.count == 2, "the pulse runs while the screen is up")
 
         await store.send(.onDisappear)
 
         await testClock.advance(by: .seconds(120))
         try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(refreshCount.value == 2, "no pulse may fire after the screen has gone")
+        #expect(refreshCount.count == 2, "no pulse may fire after the screen has gone")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
@@ -122,13 +111,13 @@ import ComposableArchitecture
     /// The pulse belongs to the screen's lifecycle: before `onAppear`, no clock movement may ask
     /// for anything.
     @Test func noPulseBeforeTheScreenAppears() async {
-        let refreshCount = LockIsolated(0)
+        let refreshCount = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = Self.store(refreshCount: refreshCount, testClock: testClock)
 
         await testClock.advance(by: .seconds(600))
         try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(refreshCount.value == 0, "no screen, no pulse")
+        #expect(refreshCount.count == 0, "no screen, no pulse")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
@@ -139,7 +128,7 @@ import ComposableArchitecture
     /// captions age with the wall clock whether or not the automatic loop exists. If someone later
     /// wires the pulse to the switch, this is the test that names the decision they are reversing.
     @Test func thePulseStillFiresWithTheTickLoopSwitchedOff() async {
-        let refreshCount = LockIsolated(0)
+        let refreshCount = SignalledRecords<Void>()
         let testClock = TestClock()
         let store = TestStore(initialState: MigrationStatus.State(presentation: .resume)) {
             MigrationStatus()
@@ -150,7 +139,7 @@ import ComposableArchitecture
 
             var client = MigrationManagerClient.noOp
             client.refreshMigrationSnapshot = { _ in
-                refreshCount.withValue { $0 += 1 }
+                refreshCount.recordCall()
             }
             client.currentMigrationSnapshot = { _ in nil }
             client.migrationSnapshotEvents = { _ in Empty().eraseToAnyPublisher() }
@@ -161,11 +150,11 @@ import ComposableArchitecture
         store.exhaustivity = .off
 
         await store.send(.onAppear)
-        await waitUntil { refreshCount.value == 1 }
+        await refreshCount.countReached(1)
 
         await testClock.advance(by: .seconds(30))
-        await waitUntil { refreshCount.value == 2 }
-        #expect(refreshCount.value == 2, "the pulse is not the tick loop and must survive its off switch")
+        await refreshCount.countReached(2)
+        #expect(refreshCount.count == 2, "the pulse is not the tick loop and must survive its off switch")
 
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)

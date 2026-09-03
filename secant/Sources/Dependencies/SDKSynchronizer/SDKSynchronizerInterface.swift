@@ -290,6 +290,9 @@ struct SDKSynchronizerClient: Sendable {
     let getSaplingAddress: @Sendable (_ account: AccountUUID) async throws -> SaplingAddress?
     
     let getAccountsBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]
+    /// Returns the unmasked balance snapshot persisted in the wallet database.
+    /// `nil` means the synchronizer is not prepared or does not support this read.
+    let getLocalAccountBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]?
     
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
@@ -309,6 +312,11 @@ struct SDKSynchronizerClient: Sendable {
     var refreshExchangeRateUSD: @Sendable () -> Void
     
     var evaluateBestOf: @Sendable ([LightWalletEndpoint], Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_ in [] }
+
+    /// SDK-side automatic-switch decision: benchmarks the candidates, compares the winner
+    /// against the current endpoint, and returns the endpoint worth switching to — or nil
+    /// when staying is the right call. See `AutoServerSelectionClient.findBestServer`.
+    var evaluateServerSwitch: @Sendable (LightWalletEndpoint, [LightWalletEndpoint], Double, UInt64, NetworkType) async -> LightWalletEndpoint? = { _, _, _, _, _ in nil }
 
     var walletAccounts: @Sendable () async throws -> [WalletAccount] = { [] }
     
@@ -391,4 +399,3 @@ extension SDKSynchronizerClient {
         $migrationStoppedSyncForBroadcast.withLock { $0 = true }
     }
 }
-

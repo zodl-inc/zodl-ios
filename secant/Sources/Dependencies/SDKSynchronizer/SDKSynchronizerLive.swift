@@ -292,6 +292,7 @@ extension SDKSynchronizerClient: DependencyKey {
             getTransparentAddress: { try await synchronizer.getTransparentAddress(accountUUID: $0) },
             getSaplingAddress: { try await synchronizer.getSaplingAddress(accountUUID: $0) },
             getAccountsBalances: { try await synchronizer.getAccountsBalances() },
+            getLocalAccountBalances: { try await synchronizer.getLocalAccountBalances() },
             wipe: { synchronizer.wipe() },
             switchToEndpoint: { endpoint in
                 try await synchronizer.switchTo(endpoint: endpoint)
@@ -355,6 +356,15 @@ extension SDKSynchronizerClient: DependencyKey {
                     fetchThresholdSeconds: fetchThreshold,
                     nBlocksToFetch: nBlocks,
                     kServers: kServers,
+                    network: network
+                )
+            },
+            evaluateServerSwitch: { current, candidates, fetchThreshold, nBlocks, network in
+                await synchronizer.evaluateServerSwitch(
+                    current: current,
+                    candidates: candidates,
+                    fetchThresholdSeconds: fetchThreshold,
+                    nBlocksToFetch: nBlocks,
                     network: network
                 )
             },

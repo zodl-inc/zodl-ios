@@ -2,7 +2,7 @@
 //  WalletBalancesTests.swift
 //  zodlTests
 //
-//  Batch 3 — balances. Covers WalletBalances exchange-rate handling, nil-balance spendability,
+//  Batch 3 — balances. Covers WalletBalances exchange-rate handling, balance spendability,
 //  non-nil AccountBalance aggregation (including the Ironwood shielded pool), and computed props
 //  (Features/WalletBalances/WalletBalancesStore.swift).
 //
@@ -59,21 +59,6 @@ import ComposableArchitecture
 
         state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: 30, timestamp: 0) }
         #expect(!state.fiatValue(Zatoshi(100_000_000)).isEmpty)
-    }
-
-    // MARK: - balanceUpdated(nil)
-
-    @MainActor @Test func balanceUpdatedWithNilZerosBalancesAndMarksEverythingSpendable() async {
-        let store = TestStore(initialState: WalletBalances.State()) {
-            WalletBalances()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
-        }
-        store.exhaustivity = .off
-        await store.send(.balanceUpdated(nil))
-        #expect(store.state.shieldedBalance == .zero)
-        #expect(store.state.totalBalance == .zero)
-        #expect(store.state.spendability == .everything)
     }
 
     // Ironwood is a third shielded pool (NU6.3 / Orchard note-version V3). The reducer must
@@ -155,21 +140,187 @@ import ComposableArchitecture
         #expect(sum == store.state.totalBalance)
     }
 
-    @MainActor @Test func balanceUpdatedWithNilZeroesPoolBalances() async {
-        let store = TestStore(initialState: WalletBalances.State()) {
-            WalletBalances()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+    @MainActor @Test func synchronizerStateWithoutSelectedAccountEntryRetainsLastConcreteBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: 1, count: 16)),
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+            var state = WalletBalances.State()
+            state.$selectedWalletAccount.withLock { $0 = account }
+            let store = TestStore(initialState: state) {
+                WalletBalances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            let balance = fullPoolAccountBalance()
+            await store.send(.balanceUpdated(balance))
+            await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted))
+
+            #expect(store.state.saplingPoolBalance == balance.saplingBalance.total())
+            #expect(store.state.orchardPoolBalance == balance.orchardBalance.total())
+            #expect(store.state.ironwoodPoolBalance == balance.ironwoodBalance.total())
+            #expect(store.state.awaitingResolutionBalance == balance.awaitingResolution)
         }
-        store.exhaustivity = .off
+    }
 
-        await store.send(.balanceUpdated(fullPoolAccountBalance()))
-        await store.send(.balanceUpdated(nil))
+    @MainActor @Test func synchronizerStateUsesUnmaskedLocalBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: 2, count: 16)),
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+            let localBalance = fullPoolAccountBalance()
+            let maskedBalance = AccountBalance(
+                saplingBalance: .zero,
+                orchardBalance: .zero,
+                ironwoodBalance: .zero,
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            var snapshot = SynchronizerState.zero
+            snapshot.accountsBalances = [account.id: maskedBalance]
+            snapshot.localAccountsBalances = [account.id: localBalance]
 
-        #expect(store.state.saplingPoolBalance == .zero)
-        #expect(store.state.orchardPoolBalance == .zero)
-        #expect(store.state.ironwoodPoolBalance == .zero)
-        #expect(store.state.awaitingResolutionBalance == .zero)
+            var state = WalletBalances.State()
+            state.$selectedWalletAccount.withLock { $0 = account }
+            let store = TestStore(initialState: state) {
+                WalletBalances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.synchronizerStateChanged(snapshot.redacted))
+            await store.receive(\.balanceUpdated)
+
+            #expect(store.state.shieldedBalance == localBalance.shieldedSpendableValue)
+            #expect(store.state.shieldedBalance != .zero)
+        }
+    }
+
+    @MainActor @Test func updateBalancesPublishesCachedSnapshotBeforeDatabaseRefreshCompletes() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: 1, count: 16)),
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+            let cachedBalance = fullPoolAccountBalance()
+            let freshBalance = AccountBalance(
+                saplingBalance: PoolBalance(
+                    spendableValue: Zatoshi(400),
+                    changePendingConfirmation: .zero,
+                    valuePendingSpendability: .zero
+                ),
+                orchardBalance: PoolBalance(
+                    spendableValue: Zatoshi(500),
+                    changePendingConfirmation: .zero,
+                    valuePendingSpendability: .zero
+                ),
+                ironwoodBalance: PoolBalance(
+                    spendableValue: Zatoshi(600),
+                    changePendingConfirmation: .zero,
+                    valuePendingSpendability: .zero
+                ),
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            let accountUUID = account.id
+            var snapshot = SynchronizerState.zero
+            snapshot.localAccountsBalances = [accountUUID: cachedBalance]
+            let latestState = snapshot
+            let refreshGate = AsyncStream<Void>.makeStream()
+
+            var initialState = WalletBalances.State()
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            let store = TestStore(initialState: initialState) {
+                WalletBalances()
+            } withDependencies: {
+                $0.sdkSynchronizer = .mocked(
+                    latestState: { latestState },
+                    getLocalAccountBalances: {
+                        for await _ in refreshGate.stream { break }
+                        return [accountUUID: freshBalance]
+                    }
+                )
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalances)
+            await store.receive(\.balanceUpdated)
+            #expect(store.state.shieldedBalance == cachedBalance.shieldedSpendableValue)
+
+            refreshGate.continuation.yield(())
+            await store.receive(\.balanceUpdated)
+            #expect(store.state.shieldedBalance == freshBalance.shieldedSpendableValue)
+        }
+    }
+
+    @MainActor @Test func updateBalancesFallsBackToVisibleBalanceWithoutLocalSnapshot() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: 3, count: 16)),
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+            let visibleBalance = fullPoolAccountBalance()
+            let accountUUID = account.id
+            var initialState = WalletBalances.State()
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            let store = TestStore(initialState: initialState) {
+                WalletBalances()
+            } withDependencies: {
+                $0.sdkSynchronizer = .mocked(
+                    getAccountsBalances: { [accountUUID: visibleBalance] },
+                    getLocalAccountBalances: { nil }
+                )
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalances)
+            await store.receive(\.balanceUpdated)
+
+            #expect(store.state.shieldedBalance == visibleBalance.shieldedSpendableValue)
+        }
     }
 
     // MARK: - exchangeRateEvent

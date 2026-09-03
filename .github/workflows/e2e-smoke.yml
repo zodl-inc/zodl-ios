@@ -29,8 +29,11 @@ env:
 jobs:
   validate_sdk_pin:
     # Cheap gate: an invalid .sdk-pin fails here in seconds instead of
-    # burning two macOS jobs. Same draft guard as unit_tests.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # burning two macOS jobs. Same draft guard as unit_tests, except release
+    # PRs: their candidate content ships to users before the PR merges, so a
+    # draft release PR gets full CI on every push while its draft state
+    # keeps guarding the merge.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -123,8 +126,10 @@ jobs:
   # xcodebuild + SPM resolve in each phase job, paying ~7 min twice.
   build:
     # Skip draft PRs — the e2e/smoke suite is expensive (up to 75-min runs
-    # that spend real mainnet funds). Manual `workflow_dispatch` runs carry
-    # no pull_request context, so the guard lets them through.
+    # that spend real mainnet funds). Release PRs are the exception: their
+    # candidate content ships before the PR merges, which outweighs a few
+    # extra runs per cycle. Manual `workflow_dispatch` runs carry no
+    # pull_request context, so the guard lets them through.
     needs: [validate_sdk_pin, build_ffi]
     # build_ffi is skipped in remote mode; accept success OR skipped. The draft/dispatch guard lives on validate_sdk_pin and propagates through needs.
     if: ${{ !cancelled() && needs.validate_sdk_pin.result == 'success' && (needs.build_ffi.result == 'success' || needs.build_ffi.result == 'skipped') }}
@@ -133,16 +138,28 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Select latest Xcode
-        # macos-15 runners ship multiple Xcodes; default-selected may be 16.x.
-        # XCUITest from older Xcode driving an iOS 26 sim causes maestro tap/
-        # input quirks (empty seed fields). Pin to the newest Xcode available.
+      - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            echo "Selecting $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
+          # Xcode 26.5/26.6 both ship the iOS 26.5 Simulator runtime, which has a
+          # confirmed Maestro/XCUITest driver-stability bug (repeated e2e-smoke
+          # driver crashes/hangs; see mobile-dev-inc/maestro#3318, #3254). Pin to
+          # Xcode 26.3 (iOS 26.2 Simulator runtime) to sidestep it. Falls back to
+          # newest-available-with-iOS-runtime if 26.3 isn't on this runner image.
+          PINNED="/Applications/Xcode_26.3.app"
+          if [ -d "$PINNED" ]; then
+            sudo xcode-select -s "$PINNED/Contents/Developer"
+            echo "Selecting pinned $PINNED"
+          else
+            echo "::warning::Pinned Xcode 26.3 not found on this runner image, falling back to newest with an iOS runtime"
+            for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+              sudo xcode-select -s "$XCODE/Contents/Developer"
+              if xcrun simctl list runtimes available | grep -q 'iOS'; then
+                echo "Selecting $XCODE"
+                break
+              fi
+            done
           fi
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Checkout app
@@ -193,11 +210,15 @@ jobs:
 
       - name: Resolve packages
         run: |
-          xcodebuild -project secant.xcodeproj \
-            -scheme zodl-internal \
-            -resolvePackageDependencies \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH"
+          for attempt in 1 2 3; do
+            xcodebuild -project secant.xcodeproj \
+              -scheme zodl-internal \
+              -resolvePackageDependencies \
+              -derivedDataPath "$DERIVED_DATA_PATH" \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::Xcode package resolution failed on attempt $attempt; retrying."
+          done
 
       - name: Save Swift package cache
         if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
@@ -228,7 +249,7 @@ jobs:
           xcodebuild build \
             -project secant.xcodeproj \
             -scheme zodl-internal \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -derivedDataPath "$DERIVED_DATA_PATH" \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" \
             -skipPackagePluginValidation \
@@ -302,16 +323,24 @@ jobs:
   e2e-ios:
     needs: build
     # Same draft-PR guard as `build` — keep it explicit on the expensive job.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # !cancelled() + the explicit build result replace the implicit success(),
+    # which a transitively skipped build_ffi (remote SDK mode) poisons even
+    # when build itself succeeds — without this the whole matrix silently
+    # skips on every remote-mode PR. Draft PRs still skip (release PRs
+    # excepted): validate_sdk_pin skips them, so build never reaches 'success'.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/')) }}
     runs-on: macos-26
     # Cold-cache phase 2 runs spend ~25-30 min on the
     # restore-existing-wallet sync alone (chain-tip catchup from the
     # birthday height on the iOS sim — no inter-run cache like the
     # Android wrapper has via ~/.zodl-qa/cache). After sync we still
     # need ~30 min for the 7 tx + verification flows that follow.
-    # 75 min covers cold cases; warm-cache runs (when we add that)
-    # will land well under.
-    timeout-minutes: 75
+    # Keep phase 1 at 75 min. Phase 2 runs the restore plus every
+    # transaction/export verification flow; iOS 26 Maestro actions can
+    # settle slowly enough for a healthy run to exceed 75 min, so give
+    # that phase a 120-minute job envelope. Individual flow assertions
+    # retain their existing timeouts and still fail promptly.
+    timeout-minutes: ${{ matrix.phase == 2 && 120 || 75 }}
     permissions:
       contents: read
     strategy:
@@ -323,13 +352,62 @@ jobs:
         phase: [1, 2]
     name: e2e-ios (phase ${{ matrix.phase }})
     steps:
-      - name: Select latest Xcode
+      - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            sudo xcode-select -s "$LATEST/Contents/Developer"
+          # Xcode 26.5/26.6 both ship the iOS 26.5 Simulator runtime, which has a
+          # confirmed Maestro/XCUITest driver-stability bug (repeated e2e-smoke
+          # driver crashes/hangs; see mobile-dev-inc/maestro#3318, #3254). Pin to
+          # Xcode 26.3 (iOS 26.2 Simulator runtime) to sidestep it. Falls back to
+          # newest-available-with-iOS-runtime if 26.3 isn't on this runner image.
+          PINNED="/Applications/Xcode_26.3.app"
+          if [ -d "$PINNED" ]; then
+            sudo xcode-select -s "$PINNED/Contents/Developer"
+            echo "Selecting pinned $PINNED"
+          else
+            echo "::warning::Pinned Xcode 26.3 not found on this runner image, falling back to newest with an iOS runtime"
+            for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+              sudo xcode-select -s "$XCODE/Contents/Developer"
+              if xcrun simctl list runtimes available | grep -q 'iOS'; then
+                echo "Selecting $XCODE"
+                break
+              fi
+            done
           fi
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
+
+      - name: Pin simulator device to the iOS 26.2 runtime
+        run: |
+          # `xcode-select` above only pins the BUILD toolchain. CoreSimulator
+          # runtimes are registered system-wide across every installed Xcode,
+          # so the pre-existing "iPhone 17" device (created once by the runner
+          # image against whatever was newest at provisioning time) stays
+          # bound to iOS 26.5 regardless of which Xcode is selected, and
+          # `OS=latest`/a bare device-name boot silently keeps using it. Create
+          # a distinctly-named device explicitly bound to iOS 26.2 instead, so
+          # the actual test run — not just compilation — happens off the
+          # buggy runtime.
+          RUNTIME_ID="com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+          DEVICE_NAME="iPhone 17 (iOS 26.2 pinned)"
+
+          SIM_UDID=$(xcrun simctl list devices available -j | jq -r --arg rt "$RUNTIME_ID" --arg name "$DEVICE_NAME" '(.devices[$rt] // []) | map(select(.name == $name)) | .[0].udid // empty')
+
+          if [ -z "$SIM_UDID" ]; then
+            DEVICE_TYPE_ID=$(xcrun simctl list devicetypes -j | jq -r '.devicetypes[] | select(.name == "iPhone 17") | .identifier' | head -1)
+            if [ -z "$DEVICE_TYPE_ID" ]; then
+              echo '::error::Could not resolve the "iPhone 17" device type identifier'
+              exit 1
+            fi
+            SIM_UDID=$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE_ID" "$RUNTIME_ID")
+          fi
+
+          if [ -z "$SIM_UDID" ]; then
+            echo "::error::Could not create/resolve a simulator device on $RUNTIME_ID"
+            exit 1
+          fi
+
+          echo "Pinned simulator: $DEVICE_NAME ($SIM_UDID) on $RUNTIME_ID"
+          echo "ZODL_SIM_NAME=$SIM_UDID" >> "$GITHUB_ENV"
 
       - name: Checkout smoke tests
         uses: actions/checkout@v4
@@ -346,8 +424,8 @@ jobs:
 
       - name: Boot simulator and install app
         run: |
-          xcrun simctl boot "iPhone 17 Pro" || true
-          xcrun simctl bootstatus "iPhone 17 Pro" -b
+          xcrun simctl boot "$ZODL_SIM_NAME" || true
+          xcrun simctl bootstatus "$ZODL_SIM_NAME" -b
 
           # On CI the simulator defaults to "Connect Hardware Keyboard",
           # which hides the software keyboard and causes XCUITest typeText
@@ -383,7 +461,18 @@ jobs:
               || { echo "App $BUNDLE_ID not installed after simctl install"; exit 1; }
 
       - name: Install Maestro
+        # Pinned, not "latest" — the install script defaults to whatever's
+        # newest on the day the job happens to run. 2.7.0 is the version
+        # that was current during our last confirmed-green e2e run
+        # (2026-08-11) and shipped targeted iOS XCUITest driver-stability
+        # fixes (cleanup of leftover driver files, recovery from transient
+        # kAXErrorInvalidUIElement, app start/stop timeout handling). Newer
+        # releases (2.8.0, 2.9.0) carry no iOS-driver changelog entries, so
+        # there's no evidence they're better for this — only that they're
+        # unverified for us. Revisit this pin if a later release explicitly
+        # addresses mobile-dev-inc/maestro#3318 / #3254.
         run: |
+          export MAESTRO_VERSION=2.7.0
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
@@ -433,9 +522,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-
+            ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-
 
       - name: Run smoke tests
         env:
@@ -460,9 +549,9 @@ jobs:
           ZODL_TEST_CROSSPAY_TARGET_ADDRESS: ${{ vars.ZODL_TEST_CROSSPAY_TARGET_ADDRESS || '0xf90bd7c30fd538efde8729ea61fdf20920ed3171' }}
           ZODL_TEST_CROSSPAY_TARGET_NAME: ${{ vars.ZODL_TEST_CROSSPAY_TARGET_NAME || 'USDC Base' }}
           ZODL_TEST_CROSSPAY_CHAIN: ${{ vars.ZODL_TEST_CROSSPAY_CHAIN || 'BASE' }}
-          ZODL_TEST_CROSSPAY_USDC_AMOUNT: ${{ vars.ZODL_TEST_CROSSPAY_USDC_AMOUNT || '0.5' }}
-          ZODL_TEST_SWAP_ZEC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_ZEC_AMOUNT || '0.005' }}
-          ZODL_TEST_SWAP_RECV_USDC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_RECV_USDC_AMOUNT || '2.3' }}
+          ZODL_TEST_CROSSPAY_USDC_AMOUNT: ${{ vars.ZODL_TEST_CROSSPAY_USDC_AMOUNT || '1.85' }}
+          ZODL_TEST_SWAP_ZEC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_ZEC_AMOUNT || '0.002' }}
+          ZODL_TEST_SWAP_RECV_USDC_AMOUNT: ${{ vars.ZODL_TEST_SWAP_RECV_USDC_AMOUNT || '4.5' }}
           # Layer-2b: the wrapper auto-funds the reverse-swap deposit
           # address (USDC on Base) after swap-receive-usdc-to-zec.yaml
           # runs whenever ZODL_USDC_BASE_PRIVKEY is set. Same model
@@ -485,18 +574,25 @@ jobs:
           chmod +x zodl-qa/scripts/run-smoke-ios.sh
           ./zodl-qa/scripts/run-smoke-ios.sh
 
-      # Persist the SDK DB regardless of test outcome — partial sync
-      # progress is still useful for the next run's warm-resume. If
-      # the job is hard-killed by the 75-min timeout the save won't
-      # fire, but the prior run's cache entry stays in the pool and
-      # restore-keys will pick it up next time.
-      - name: Save Zcash SDK DB cache
+      - name: Check for a cacheable Zcash SDK DB
         if: ${{ always() && matrix.phase == 2 }}
+        id: sdk-db
+        shell: bash
+        run: |
+          if find "$HOME/.zodl-qa/cache" -type f -name '*.db' -size +0c -print -quit 2>/dev/null | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No SDK database was produced; skipping the empty cache."
+          fi
+
+      - name: Save Zcash SDK DB cache
+        if: ${{ always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ~/.zodl-qa/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload test results
         if: always()

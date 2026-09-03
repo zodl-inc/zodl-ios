@@ -1,3 +1,4 @@
+import Testing
 import XCTest
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
@@ -11,45 +12,6 @@ final class AutoServerSelectionClientTests: XCTestCase {
 
     private func endpoint(_ host: String) -> LightWalletEndpoint {
         LightWalletEndpoint(address: host, port: 443, secure: true, streamingCallTimeoutInMillis: 0)
-    }
-
-    // MARK: - findBestServer
-
-    /// Runs `findBestServer` with controlled dependencies.
-    private func runFind(
-        flag: Bool?,
-        current: LightWalletEndpoint,
-        best: LightWalletEndpoint?
-    ) async -> LightWalletEndpoint? {
-        await withDependencies {
-            $0.userStoredPreferences.automaticServerSelection = { flag }
-            $0.zcashSDKEnvironment = .testnet
-            $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
-            $0.zcashSDKEnvironment.endpoint = { current }
-            $0.sdkSynchronizer.evaluateBestOf = { _, _, _, _, _ in best.map { [$0] } ?? [] }
-        } operation: {
-            await AutoServerSelectionClient.liveValue.findBestServer()
-        }
-    }
-
-    func testFindNoOpWhenFlagOff() async {
-        let result = await runFind(flag: false, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertNil(result)
-    }
-
-    func testFindNilWhenBestEqualsCurrent() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: endpoint("zec.rocks"))
-        XCTAssertNil(result)
-    }
-
-    func testFindNilWhenBenchmarkEmpty() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: nil)
-        XCTAssertNil(result)
-    }
-
-    func testFindReturnsCandidateWhenDifferent() async {
-        let result = await runFind(flag: true, current: endpoint("zec.rocks"), best: endpoint("na.zec.rocks"))
-        XCTAssertEqual(result?.host, "na.zec.rocks")
     }
 
     // MARK: - applySwitch
@@ -140,71 +102,226 @@ final class AutoServerSelectionClientTests: XCTestCase {
     }
 }
 
-// MARK: - Root auto-switch gating
+@Suite(.serialized) @MainActor
+struct RootAutoServerCandidateTests {
+    @Test
+    func sensitiveFlowsDeferAutomaticSwitches() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = Root.State.initial
+            #expect(state.canApplyAutoServerSwitch)
 
-final class RootAutoServerGatingTests: XCTestCase {
-    // Note: the bgTask arm of canApplyAutoServerSwitch is not unit-tested — BGProcessingTask
-    // has no public initializer, so it cannot be constructed in tests.
-    func testNoFlowIsNotSensitive() {
-        let state = Root.State.initial
-        XCTAssertFalse(state.isSensitiveFlowActive)
-        XCTAssertTrue(state.canApplyAutoServerSwitch)
-    }
+            let sensitivePaths: [Root.State.Path] = [
+                .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
+                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
+            ]
+            for path in sensitivePaths {
+                state.path = path
+                #expect(state.isSensitiveFlowActive)
+                #expect(!state.canApplyAutoServerSwitch)
+            }
 
-    func testSensitivePathCases() {
-        var state = Root.State.initial
-        let sensitive: [Root.State.Path] = [
-            .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
-        ]
-        for path in sensitive {
-            state.path = path
-            XCTAssertTrue(state.isSensitiveFlowActive, "\(path) must be sensitive")
-            XCTAssertFalse(state.canApplyAutoServerSwitch, "\(path) must defer the auto switch")
+            state.path = nil
+            state.signWithKeystoneCoordFlowBinding = true
+            #expect(state.isSensitiveFlowActive)
+            #expect(!state.canApplyAutoServerSwitch)
         }
     }
 
-    func testNonSensitivePathCases() {
-        var state = Root.State.initial
-        let notSensitive: [Root.State.Path] = [
-            .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
-            .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
-        ]
-        for path in notSensitive {
-            state.path = path
-            XCTAssertFalse(state.isSensitiveFlowActive, "\(path) must not be sensitive")
+    @Test
+    func nonSensitivePathsRemainNonSensitive() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = Root.State.initial
+            let nonSensitivePaths: [Root.State.Path] = [
+                .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
+            ]
+            for path in nonSensitivePaths {
+                state.path = path
+                #expect(!state.isSensitiveFlowActive)
+            }
         }
     }
 
-    func testKeystoneSigningBindingIsSensitive() {
-        var state = Root.State.initial
-        state.signWithKeystoneCoordFlowBinding = true
-        XCTAssertTrue(state.isSensitiveFlowActive)
-        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    @Test
+    func serverSetupBlocksAutomaticSwitches() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = Root.State.initial
+            state.serverSetupViewBinding = true
+            #expect(!state.canApplyAutoServerSwitch)
+
+            state.serverSetupViewBinding = false
+            state.path = .serverSwitch
+            #expect(state.isServerSetupVisible)
+            #expect(!state.canApplyAutoServerSwitch)
+        }
     }
 
-    func testServerSetupVisibleBlocksApplyButIsNotSensitive() {
-        var state = Root.State.initial
-        state.serverSetupViewBinding = true
-        XCTAssertFalse(state.isSensitiveFlowActive)
-        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    @Test
+    func benchmarkWinnerRequiresACompletedLocalSnapshotRead() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let endpoint = LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            )
+            let didApply = LockIsolated(false)
+            let store = TestStore(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                $0.autoServerSelection = AutoServerSelectionClient(
+                    findBestServer: { endpoint },
+                    applySwitch: { _ in
+                        didApply.setValue(true)
+                        return true
+                    }
+                )
+                $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { nil })
+            }
+            store.exhaustivity = .off
+
+            await store.send(.refreshAutomaticServer)
+            await store.finish()
+
+            #expect(!didApply.value)
+        }
     }
 
-    func testServerSwitchPathBlocksApplyButIsNotSensitive() {
-        // The smart-banner entry presents Server Setup via path, not serverSetupViewBinding.
-        var state = Root.State.initial
-        state.path = .serverSwitch
-        XCTAssertTrue(state.isServerSetupVisible)
-        XCTAssertFalse(state.isSensitiveFlowActive)
-        XCTAssertFalse(state.canApplyAutoServerSwitch)
+    @Test
+    func benchmarkWinnerWaitsForLocalSnapshotReadToComplete() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let endpoint = LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            )
+            let benchmarkCompleted = AsyncStream<Void>.makeStream()
+            let snapshotReadStarted = AsyncStream<Void>.makeStream()
+            let snapshotReadRelease = AsyncStream<Void>.makeStream()
+            let didApply = LockIsolated(false)
+            let store = TestStore(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                $0.autoServerSelection = AutoServerSelectionClient(
+                    findBestServer: {
+                        benchmarkCompleted.continuation.yield(())
+                        return endpoint
+                    },
+                    applySwitch: { _ in
+                        didApply.setValue(true)
+                        return true
+                    }
+                )
+                $0.sdkSynchronizer = .mocked(
+                    getLocalAccountBalances: {
+                        snapshotReadStarted.continuation.yield(())
+                        for await _ in snapshotReadRelease.stream { break }
+                        return [:]
+                    }
+                )
+                $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.refreshAutomaticServer)
+            for await _ in benchmarkCompleted.stream { break }
+            for await _ in snapshotReadStarted.stream { break }
+            #expect(!didApply.value)
+
+            snapshotReadRelease.continuation.yield(())
+            await store.receive(\.autoServerCandidateReady)
+            await store.finish()
+
+            #expect(didApply.value)
+        }
     }
 
-    func testPendingCandidateExpiry() {
+    @Test
+    func emptyLocalSnapshotStillAllowsBenchmarkWinner() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let endpoint = LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            )
+            let benchmarkedAt = Date(timeIntervalSince1970: 1_000_000)
+            let didApply = LockIsolated(false)
+            let store = TestStore(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                $0.autoServerSelection = AutoServerSelectionClient(
+                    findBestServer: { endpoint },
+                    applySwitch: { _ in
+                        didApply.setValue(true)
+                        return true
+                    }
+                )
+                $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { [:] })
+                $0.date.now = { benchmarkedAt }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.refreshAutomaticServer)
+            await store.receive(\.autoServerCandidateReady)
+            await store.finish()
+
+            #expect(didApply.value)
+        }
+    }
+
+    @Test
+    func pendingCandidateExpiresAtFifteenMinutes() {
         let benchmarkedAt = Date(timeIntervalSince1970: 1_000_000)
         let candidate = Root.State.PendingServerCandidate(
-            endpoint: LightWalletEndpoint(address: "zec.rocks", port: 443, secure: true, streamingCallTimeoutInMillis: 0),
+            endpoint: LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            ),
             benchmarkedAt: benchmarkedAt
         )
-        XCTAssertFalse(candidate.isExpired(now: benchmarkedAt.addingTimeInterval(14 * 60)))
-        XCTAssertTrue(candidate.isExpired(now: benchmarkedAt.addingTimeInterval(15 * 60)))
+        #expect(!candidate.isExpired(now: benchmarkedAt.addingTimeInterval(14 * 60)))
+        #expect(candidate.isExpired(now: benchmarkedAt.addingTimeInterval(15 * 60)))
+    }
+
+    @Test
+    func deferredCandidateKeepsOriginalBenchmarkTimestamp() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = Root.State.initial
+            state.path = .sendCoordFlow
+            let endpoint = LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            )
+            let benchmarkedAt = Date(timeIntervalSince1970: 1_000_000)
+            let store = TestStore(initialState: state) {
+                Root()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.autoServerCandidateReady(endpoint, benchmarkedAt))
+
+            #expect(store.state.pendingServerCandidate?.benchmarkedAt == benchmarkedAt)
+            #expect(store.state.pendingServerCandidate?.endpoint.host == endpoint.host)
+        }
     }
 }

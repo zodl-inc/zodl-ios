@@ -105,6 +105,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
     struct SynchronizerStateWrapper: Equatable {
         var syncSessionID: UUID
         var accountsBalances: [AccountUUID: AccountBalance]
+        var localAccountsBalances: [AccountUUID: AccountBalance]
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
         var fullyScannedHeight: BlockHeight
@@ -116,6 +117,7 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         self.data = SynchronizerStateWrapper(
             syncSessionID: data.syncSessionID,
             accountsBalances: data.accountsBalances,
+            localAccountsBalances: data.localAccountsBalances,
             syncStatus: data.syncStatus,
             latestBlockHeight: data.latestBlockHeight,
             fullyScannedHeight: data.fullyScannedHeight

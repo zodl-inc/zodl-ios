@@ -9,12 +9,12 @@
       "files": [],
       "assertions": [
         "Both files updated; the new entry is at index 0 of releases (newest-first)",
-        "version equals zodl-production MARKETING_VERSION; date is DD-MM-YYYY; timestamp is an integer epoch",
+        "version equals zodl-production MARKETING_VERSION (no version was named in the invocation); date is DD-MM-YYYY; timestamp is an integer epoch",
         "Section titles are kept verbatim per language (Added:/Changed:/Fixed: and Añadido:/Cambiado:/Corregido:), not translated",
         "The 'Fixed:'/'Corregido:' section has two bulletpoints; the others have one",
         "Existing entries (3.6.0 and older) are byte-for-byte unchanged; output is valid JSON",
         "App Store text: one block per language, section title line then '* ' bullets, blank line between sections",
-        "If an entry for the version already exists, nothing is written and the user is warned (stop-and-warn)"
+        "If an entry for the version already exists, nothing is written and the user is asked to confirm the version first — with no version named and the checkout not on the release's candidate branch, an existing entry is the stale-checkout signature; replace-in-place without asking is right only for an explicit version or one read on its own candidate branch"
       ]
     }
   ]

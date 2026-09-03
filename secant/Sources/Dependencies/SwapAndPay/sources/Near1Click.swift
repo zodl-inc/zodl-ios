@@ -97,7 +97,11 @@ struct Near1Click {
             "nep141:arb.omft.near", // ETH@arb
             "nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L", // USDC@pol
             "nep141:xrp.omft.near", // XRP@xrp
-            "nep141:base.omft.near" // ETH@base
+            "nep141:base.omft.near", // ETH@base
+            "nep141:dash.omft.near", // DASH@dash
+            "nep141:bch.omft.near", // BCH@bch
+            "1cs_v1:sol:spl:A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS", // ZEC@sol
+            "1cs_v1:near:nep141:zec.omft.near" // ZEC@near
         ]
     }
     

@@ -26,8 +26,11 @@ env:
 jobs:
   validate_sdk_pin:
     # Cheap gate: an invalid .sdk-pin fails here in seconds instead of
-    # burning two macOS jobs. Same draft guard as unit_tests.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # burning two macOS jobs. Same draft guard as unit_tests, except release
+    # PRs: their candidate content ships to users before the PR merges, so a
+    # draft release PR gets full CI on every push while its draft state
+    # keeps guarding the merge.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -116,7 +119,8 @@ jobs:
           if-no-files-found: error
 
   unit_tests:
-    # Skip draft PRs — no tests run until a PR is marked ready for review
+    # Skip draft PRs — no tests run until a PR is marked ready for review —
+    # except release PRs, which are tested while still draft
     # (matches the e2e/smoke suite guard in e2e-smoke.yml).
     needs: [validate_sdk_pin, build_ffi]
     # build_ffi is skipped in remote mode; accept success OR skipped. The draft guard lives on validate_sdk_pin and propagates through needs.
@@ -139,19 +143,35 @@ jobs:
           name: ffi-localpackages
           path: ${{ steps.companion.outputs.sdk_abs_path }}/LocalPackages
 
-      - name: Select latest Xcode
+      - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
         # macos-26 runners ship multiple Xcodes; default-selected is 16.x
         # (Swift 6.0). The project is SWIFT_VERSION=6.0, and Swift 6.0 treats
         # some concurrency diagnostics as errors that 6.2+ relaxed back to
-        # warnings ("Approachable Concurrency"). Without this step CI fails
-        # on call sites that compile fine in newer Xcode locally. Pin to the
-        # newest Xcode the runner has so the compiler matches local builds.
+        # warnings ("Approachable Concurrency"). Without a pin CI fails on
+        # call sites that compile fine in newer Xcode locally — so pin to
+        # Xcode 26.3, which is new enough for that, but ships the iOS 26.2
+        # Simulator runtime rather than iOS 26.5. Xcode 26.5/26.6 both ship
+        # iOS 26.5, which has a confirmed Maestro/XCUITest driver-stability
+        # bug (repeated e2e-smoke driver crashes/hangs; see
+        # mobile-dev-inc/maestro#3318, #3254) that 26.3's older runtime
+        # sidesteps. Falls back to newest-available-with-iOS-runtime if
+        # 26.3 isn't on this runner image.
         run: |
-          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$LATEST" ]; then
-            echo "Selecting $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
+          PINNED="/Applications/Xcode_26.3.app"
+          if [ -d "$PINNED" ]; then
+            sudo xcode-select -s "$PINNED/Contents/Developer"
+            echo "Selecting pinned $PINNED"
+          else
+            echo "::warning::Pinned Xcode 26.3 not found on this runner image, falling back to newest with an iOS runtime"
+            for XCODE in $(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -Vr); do
+              sudo xcode-select -s "$XCODE/Contents/Developer"
+              if xcrun simctl list runtimes available | grep -q 'iOS'; then
+                echo "Selecting $XCODE"
+                break
+              fi
+            done
           fi
+          xcrun simctl list runtimes available | grep -q 'iOS' || { echo '::error::No installed iOS Simulator runtime'; exit 1; }
           xcodebuild -version
 
       - name: Compute Xcode cache key
@@ -172,11 +192,15 @@ jobs:
 
       - name: Resolve packages
         run: |
-          xcodebuild -project secant.xcodeproj \
-            -scheme zodl-internal \
-            -resolvePackageDependencies \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH"
+          for attempt in 1 2 3; do
+            xcodebuild -project secant.xcodeproj \
+              -scheme zodl-internal \
+              -resolvePackageDependencies \
+              -derivedDataPath "$DERIVED_DATA_PATH" \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::Xcode package resolution failed on attempt $attempt; retrying."
+          done
 
       - name: Save Swift package cache
         if: ${{ steps.spm-cache.outputs.cache-hit != 'true' }}
@@ -197,7 +221,7 @@ jobs:
           xcodebuild test \
             -project secant.xcodeproj \
             -scheme zodl-internal \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -resultBundlePath TestResults.xcresult \
             -derivedDataPath "$DERIVED_DATA_PATH" \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_PATH" \
