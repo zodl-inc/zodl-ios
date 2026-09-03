@@ -1,5 +1,5 @@
 {
-  "originHash" : "b2612a6a0bc02915e6150b178458ef13cd3f5128d3afa5c4bf7dc451ed6234a3",
+  "originHash" : "1f42aa29ba57793196fff5471193137b7f205c910e3a8fe44c59a43c4684939e",
   "pins" : [
     {
       "identity" : "base32",
@@ -485,14 +485,6 @@
       "state" : {
         "revision" : "798053ba8a2d80560b5e3f4899a8b35ac0c348bb",
         "version" : "1.0.1"
-      }
-    },
-    {
-      "identity" : "zodl-swift-wallet-sdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/zodl-inc/zodl-swift-wallet-sdk.git",
-      "state" : {
-        "revision" : "7e44c48aed237202043010775ec7383c45c519fe"
       }
     }
   ],

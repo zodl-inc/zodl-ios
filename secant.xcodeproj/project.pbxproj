@@ -8,8 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FB303C3A54005A09AD /* ZcashLightClientKit */; };
+		3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */; };
 		34982B6E3014A1C100FF9205 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34982B6D3014A1C100FF9205 /* ZcashLightClientKit */; };
-		34A95AC33046D1FA00A38CFA /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34A95AC23046D1FA00A38CFA /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
 		34AA771C2F857DBB00D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA771B2F857DBB00D244E2 /* ComposableArchitecture */; };
@@ -167,7 +167,7 @@
 				34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */,
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
-				34A95AC33046D1FA00A38CFA /* ZcashLightClientKit in Frameworks */,
+				3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
@@ -342,7 +342,7 @@
 				34AA779F2F8583BA00D244E2 /* BigDecimal */,
 				34AA77BB2F85861800D244E2 /* UInt128 */,
 				34B967642F8CC48700823B20 /* Atomics */,
-				34A95AC23046D1FA00A38CFA /* ZcashLightClientKit */,
+				3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */,
 			);
 			productName = "zodl-production";
 			productReference = 9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */;
@@ -431,7 +431,7 @@
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
 				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
-				34A95AC13046D1FA00A38CFA /* XCRemoteSwiftPackageReference "zodl-swift-wallet-sdk" */,
+				3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -1359,15 +1359,14 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		34A95AC13046D1FA00A38CFA /* XCRemoteSwiftPackageReference "zodl-swift-wallet-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/zodl-inc/zodl-swift-wallet-sdk.git";
-			requirement = {
-				kind = revision;
-				revision = 7e44c48aed237202043010775ec7383c45c519fe;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../zodl-swift-wallet-sdk";
 		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
 		34AA77122F857DA300D244E2 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/pointfreeco/swift-composable-architecture";
@@ -1489,13 +1488,13 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = ZcashLightClientKit;
 		};
-		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
+		3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
-		34A95AC23046D1FA00A38CFA /* ZcashLightClientKit */ = {
+		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 34A95AC13046D1FA00A38CFA /* XCRemoteSwiftPackageReference "zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 		34AA77172F857DB300D244E2 /* ComposableArchitecture */ = {

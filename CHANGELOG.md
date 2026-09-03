@@ -49,6 +49,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] The "Updating…" label and the "Balances as of ~N min ago" line have been removed from the Migration Progress screen. Both described how fresh ZODL's own reads were rather than anything you can act on, and neither was part of the design.
 
 ### Fixed
+- [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - [MOB-1800] Tapping Confirm when submitting a vote now responds immediately: the button disables and shows a spinner the instant it is tapped, extra taps can no longer interrupt and restart a submission already underway, and the screen no longer briefly re-enables mid-submission while the authorization work hands over. Cancelling the Face ID prompt cleanly returns the Confirm button.
 - [MOB-1803] Opening the Receive screen (and requesting a swap quote) no longer freezes for seconds while the wallet is catching up on sync. A fresh rotated address is prepared ahead of time so the screen opens instantly; in the rare case none is ready yet, the screen opens with a brief loading placeholder instead of blocking. Every visit still gets its own never-shown-before address.
 - [MOB-1800] Submitting coinholder-poll votes is significantly faster: preparing the vote proofs no longer runs at background priority (which pinned it to the efficiency cores), so the "Authorizing" step no longer stalls for minutes on the proving-key preparation.

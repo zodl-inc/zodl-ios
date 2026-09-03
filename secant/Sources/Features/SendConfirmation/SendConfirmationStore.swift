@@ -386,7 +386,7 @@ struct SendConfirmation {
                 // The anchor string comes from Rust (zcash_client_sqlite) — no typed sub-code exists yet.
                 // If the SDK ever adds one, replace the string check with it and drop the comment.
                 if case let .rustCreateToAddress(rustError) = error {
-                    state.isAnchorError = rustError.localizedCaseInsensitiveContains("Unable to compute anchor")
+                    state.isAnchorError = rustError.message.localizedCaseInsensitiveContains("Unable to compute anchor")
                 } else {
                     state.isAnchorError = false
                 }
