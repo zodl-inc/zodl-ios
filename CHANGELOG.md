@@ -135,6 +135,9 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
 - [MOB-1802] Keystone voting signing QR is now drawn on a white plate like the send-flow QR, so Keystone devices can scan it in dark mode.
 
+### Security
+- Cross-chain swap quotes are now verified against your request before the transaction is signed: the ZEC amount, payout and refund addresses, assets, and slippage tolerance must match what you requested, and the swap is refused on any mismatch. This protects against a malicious or tampered swap-provider response redirecting your funds.
+
 ## 3.7.3 build 1 (20026-07-12)
 
 ### Changed
