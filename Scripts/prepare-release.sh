@@ -122,6 +122,7 @@ EOF
 cmd_start() {
     local previous="" issue="" build="1" remote version revision rev_sha prev_tag newest_tag
     local release_branch candidate_branch b today pr_body_file changelog_at_rev maint_line
+    local rc start_branch return_cmd
     local -a positional
     positional=()
 
@@ -233,8 +234,9 @@ cmd_start() {
             die "branch ${b} already exists locally." \
                 "A previous 'start' for ${version} left it behind. Clean up and re-run:" \
                 "" \
-                "  git switch -      # a failed run can leave this checkout on ${candidate_branch}" \
-                "  git branch -D ${release_branch} ${candidate_branch}" \
+                "  git switch main   # or wherever you work; a failed run can leave this checkout on ${candidate_branch}" \
+                "  git branch -D ${release_branch}   # delete whichever of the two exists --" \
+                "  git branch -D ${candidate_branch} # a run that died early created only the first" \
                 "" \
                 "If that run got as far as its single push, both branches are on ${remote}" \
                 "too -- the re-run's remote check will then say so; either delete them there" \
@@ -242,14 +244,26 @@ cmd_start() {
         fi
         # Checked separately from the local branches: this checkout no longer
         # having them says nothing about the remote, where a completed (or
-        # merely PR-less) run leaves both.
-        if git ls-remote --exit-code --heads "$remote" "refs/heads/${b}" >/dev/null 2>&1; then
-            die "branch ${b} already exists on ${remote}." \
-                "A previous 'start' for ${version} pushed it -- the branches are pushed" \
-                "together, so its twin is there too. If only the pull request is missing," \
-                "open it by hand (see start_pr_body for the body text); otherwise delete" \
-                "both branches on ${remote} and re-run."
-        fi
+        # merely PR-less) run leaves both. ls-remote tells a branch that is
+        # absent (exit 2) apart from a remote that could not be queried (any
+        # other failure); only the former means the preflight is clean.
+        rc=0
+        git ls-remote --exit-code --heads "$remote" "refs/heads/${b}" >/dev/null 2>&1 || rc=$?
+        case "$rc" in
+            0)
+                die "branch ${b} already exists on ${remote}." \
+                    "A previous 'start' for ${version} pushed it -- the branches are pushed" \
+                    "together, so its twin is there too. If only the pull request is missing," \
+                    "open it by hand (see start_pr_body for the body text); otherwise delete" \
+                    "both branches on ${remote} and re-run."
+                ;;
+            2) ;;
+            *)
+                die "checking ${remote} for ${b} failed (git ls-remote exit ${rc})." \
+                    "The remote could not be queried, so whether the branch exists there" \
+                    "is unknown. Nothing has been created. Fix the connection and re-run."
+                ;;
+        esac
     done
 
     step "Checking the CHANGELOG"
@@ -281,6 +295,15 @@ cmd_start() {
     echo "  ${candidate_branch}  <- ${revision}  (release prep goes here)"
     echo "  merge back into ${maint_line}, then forward to main, once the release is final"
 
+    # The recovery instructions in the dies below must return this checkout
+    # to where the run began. 'git switch -' cannot: it needs a branch name,
+    # which a run started from a detached HEAD does not have.
+    if start_branch="$(git symbolic-ref -q --short HEAD)"; then
+        return_cmd="git switch ${start_branch}"
+    else
+        return_cmd="git switch --detach $(git rev-parse --short HEAD)"
+    fi
+
     step "Creating ${release_branch} from ${prev_tag}"
     run_cmd git branch "$release_branch" "refs/tags/${prev_tag}"
 
@@ -299,7 +322,7 @@ cmd_start() {
             git checkout -- CHANGELOG.md
             die "promoting CHANGELOG.md failed: no '## [Unreleased]' heading, or the file could not be written." \
                 "CHANGELOG.md has been restored." \
-                "Nothing has been pushed. To retry: git switch -, then" \
+                "Nothing has been pushed. To retry: ${return_cmd}, then" \
                 "git branch -D ${release_branch} ${candidate_branch}, fix, and re-run."
         fi
         echo "  ## [${version}] - ${today}"
@@ -317,7 +340,7 @@ cmd_start() {
             git checkout -- "$PBXPROJ"
             die "${SET_VERSION_TOOL} failed; ${PBXPROJ} is unchanged." \
                 "Its own message above says which target or key is at fault." \
-                "Nothing has been pushed. To retry: git switch -, then" \
+                "Nothing has been pushed. To retry: ${return_cmd}, then" \
                 "git branch -D ${release_branch} ${candidate_branch}, fix, and re-run."
         fi
         if git diff --quiet -- "$PBXPROJ"; then
@@ -327,7 +350,7 @@ cmd_start() {
             die "the project is already at ${version} (${build}); there is no bump to commit." \
                 "The revision already carries this release's version -- re-releasing a prior" \
                 "candidate's content needs a fresh version or build number." \
-                "Nothing has been pushed. To retry: git switch -, then" \
+                "Nothing has been pushed. To retry: ${return_cmd}, then" \
                 "git branch -D ${release_branch} ${candidate_branch}."
         fi
     fi
