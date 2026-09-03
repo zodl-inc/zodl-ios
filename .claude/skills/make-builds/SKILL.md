@@ -210,7 +210,7 @@ Example — a local SDK checkout sitting on a tagged commit, app not yet tagged:
 ```
 _iOS TestFlight Build (internal)_ — 3.10.1 (1)
 
-App: `release/3.10.1@54812f81`
+App: `candidate/3.10.1@54812f81`
 SDK: `candidate/4.1.0@cafca07a (tag: 4.1.0-rc.1)`
 ```
 

@@ -1,8 +1,8 @@
 ---
 name: update-whatsnew
-description: Prepare a ZODL release changelog. Reads the version from the zodl-production target, writes the release entry into every whatsNew*.json file (one per language) — prepending it, or replacing the existing entry if that version is already there — and prints the App Store changelog text for each language. Manual only — invoke with /update-whatsnew and paste the multi-language changelog.
+description: Prepare a ZODL release changelog. Takes the release version from the invocation, or reads it from the zodl-production target, writes the release entry into every whatsNew*.json file (one per language) — prepending it, or replacing the existing entry if that version is already there — and prints the App Store changelog text for each language. Manual only — invoke with /update-whatsnew and paste the multi-language changelog.
 disable-model-invocation: true
-argument-hint: <paste the multi-language changelog (language blocks with Added/Changed/Fixed sections)>
+argument-hint: [X.Y.Z] <paste the multi-language changelog (language blocks with Added/Changed/Fixed sections)>
 ---
 
 # Update What's New + App Store changelog
@@ -35,7 +35,9 @@ user's message:
 
 ARGUMENTS: $ARGUMENTS
 
-It is one block per language. Each block starts with a language name
+The argument may open with the release version (`X.Y.Z`) before the first
+language block; step 1 says how it is used. The changelog itself is one block
+per language. Each block starts with a language name
 (`English`, `Español`, …) and contains sections — a short header line ending in
 `:` (`Added:`, `Changed:`, `Fixed:`, `Removed:`, and their localized forms like
 `Añadido:`, `Cambiado:`, `Corregido:`) followed by one or more items.
@@ -47,10 +49,15 @@ changelog isn't in the argument or the message, ask the user to paste it.
 
 ## Workflow
 
-### 1. Read the release version
+### 1. Determine the release version
 
-Read `MARKETING_VERSION` from the **zodl-production** target (this is what ships
-to the App Store). It takes ~20s — that's normal:
+A version named in the invocation wins: a leading `X.Y.Z` before the changelog
+(`/update-whatsnew 3.11.0 …`), or one stated in the user's message, is the
+release version exactly as given.
+
+Only when no version was named, read `MARKETING_VERSION` from the
+**zodl-production** target (this is what ships to the App Store). It takes
+~20s — that's normal:
 
 ```bash
 xcodebuild -project secant.xcodeproj -target zodl-production \
@@ -64,6 +71,14 @@ version, so this is reliable in practice, just not target-specific):
 ```bash
 grep -m1 'MARKETING_VERSION' secant.xcodeproj/project.pbxproj | sed 's/.*= *//; s/;.*//'
 ```
+
+A checkout-derived version needs a cross-check: during a release cycle only
+`candidate/X.Y.Z` carries the new version, so every other checkout — `main`
+included — still reads the **previous** release. On a `candidate/X.Y.Z` or
+`release/X.Y.Z` branch (`git branch --show-current`), the version read must
+equal the version in the branch name — stop and report a mismatch. On any
+other checkout the version cannot be confirmed here; step 4's dry-run is the
+tripwire.
 
 ### 2. Determine date and timestamp — once, shared by all languages
 
@@ -122,10 +137,17 @@ Read what each dry-run reports:
 
 - **`would add`** — the version is new; it gets prepended.
 - **`would replace`** — the version already has an entry and it will be
-  overwritten in place. This is normal for an amended changelog; just carry on.
-  The entry keeps its original `date`/`timestamp` so an amendment doesn't look
-  like a re-release. **Mention the replacement to the user** when you report, and
-  if they want the date bumped to today, re-run that file with `--refresh-date`.
+  overwritten in place. When the version was named in the invocation, or was
+  read on the release's own candidate branch, this is normal for an amended
+  changelog; just carry on. The entry keeps its original `date`/`timestamp` so
+  an amendment doesn't look like a re-release. **Mention the replacement to the
+  user** when you report, and if they want the date bumped to today, re-run
+  that file with `--refresh-date`. But when the version was derived from a
+  checkout that is **not** the release's candidate branch, an existing entry
+  is the stale-checkout signature — a freshly cut release never already has
+  one, so this is almost certainly the previous release's version about to be
+  clobbered with the new copy. **Stop and ask the user to confirm the
+  version** before writing anything.
 - **`Unchanged`** — the on-disk entry already matches the payload byte for byte;
   nothing will be written. Expected when re-running with an unedited changelog.
 - **A language with no file yet** is a new language. Do **not** guess the
