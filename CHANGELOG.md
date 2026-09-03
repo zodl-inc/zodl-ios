@@ -7,6 +7,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-09-03
+
 ### Added
 - [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
 
