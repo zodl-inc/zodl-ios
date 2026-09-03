@@ -139,7 +139,9 @@ while IFS= read -r rel; do
     # from the tip. Reachable, not at the tip: a commit landing after the tag
     # must not unmark the branch -- an unreachable tag behind a moved tip is
     # exactly the state this check exists to catch.
-    tag="$(release_tags_merged_into "$ref" | tail -1)"
+    if ! tag="$(release_tags_merged_into "$ref" | tail -1)"; then
+      infra_fail "listing release tags merged into '${ref}' failed"
+    fi
     if [ -z "$tag" ]; then
       say ":grey_question: \`${rel}\` has no release tag in its history; not yet released, skipped."
       continue
@@ -155,7 +157,9 @@ while IFS= read -r rel; do
     # A branch with no version in its name has no tag of its own to wait for;
     # only a release tag at its tip marks it released. Reachability would let
     # any branch cut above a release inherit that release's obligation.
-    tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"
+    if ! tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"; then
+      infra_fail "listing tags at the tip of '${ref}' failed"
+    fi
     if [ -z "$tag" ]; then
       say ":grey_question: \`${rel}\` has no release tag at its tip; not a released branch, skipped."
       continue
