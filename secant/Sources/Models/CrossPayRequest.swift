@@ -146,6 +146,7 @@ struct CrossPayRequest: Equatable {
 
 enum CrossPayRequestParser {
     static func parse(_ value: String) -> CrossPayRequest? {
+        #if ZODL_INTERNAL || SECANT_TESTNET
         guard let request = try? PaymentURIParser.parse(value) else { return nil }
         switch request {
         case let .bitcoin(request):
@@ -166,6 +167,9 @@ enum CrossPayRequestParser {
         case .solanaTransaction:
             return nil
         }
+        #else
+        return nil
+        #endif
     }
 
     /// The SDK decodes `network` precisely so callers can reject non-mainnet requests. The app only
