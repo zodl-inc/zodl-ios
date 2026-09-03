@@ -286,6 +286,43 @@ import ComposableArchitecture
         }
     }
 
+    @MainActor @Test func updateBalancesFallsBackToVisibleBalanceWithoutLocalSnapshot() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = WalletAccount(
+                Account(
+                    id: AccountUUID(id: [UInt8](repeating: 3, count: 16)),
+                    name: "Zodl",
+                    keySource: nil,
+                    seedFingerprint: nil,
+                    hdAccountIndex: Zip32AccountIndex(0),
+                    ufvk: nil,
+                    uivk: nil
+                )
+            )
+            let visibleBalance = fullPoolAccountBalance()
+            let accountUUID = account.id
+            var initialState = WalletBalances.State()
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            let store = TestStore(initialState: initialState) {
+                WalletBalances()
+            } withDependencies: {
+                $0.sdkSynchronizer = .mocked(
+                    getAccountsBalances: { [accountUUID: visibleBalance] },
+                    getLocalAccountBalances: { nil }
+                )
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalances)
+            await store.receive(\.balanceUpdated)
+
+            #expect(store.state.shieldedBalance == visibleBalance.shieldedSpendableValue)
+        }
+    }
+
     // MARK: - exchangeRateEvent
 
     @MainActor @Test func exchangeRateValueSetsConversionAndClearsStale() async {

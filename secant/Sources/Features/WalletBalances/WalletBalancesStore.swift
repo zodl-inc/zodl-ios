@@ -226,11 +226,21 @@ struct WalletBalances {
                     }
 
                     if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
-                       let freshBalance = localBalances[account.id],
-                       freshBalance != cachedBalance {
-                        await send(.balanceUpdated(freshBalance))
-                    } else if cachedBalance == nil,
-                              let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
+                       let freshBalance = localBalances[account.id] {
+                        if freshBalance != cachedBalance {
+                            await send(.balanceUpdated(freshBalance))
+                        }
+                        return
+                    }
+
+                    // Do not let a masked visible balance replace a concrete local snapshot.
+                    // Use the established API only when no local value is available.
+                    guard cachedBalance == nil else { return }
+                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
+                        await send(.balanceUpdated(fallbackBalance))
+                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
+                        await send(.balanceUpdated(fallbackBalance))
+                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
                         await send(.balanceUpdated(fallbackBalance))
                     }
                 }
