@@ -7,6 +7,16 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Added
+- [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
+
+### Changed
+- [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
+
+### Fixed
+- [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
+- The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
+
 ## [3.10.3] - 2026-08-31
 
 ### Added
@@ -16,11 +26,9 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [Internal] On the Swap and Pay screens, in internal and testnet builds only, the amount field now has a "Max" button too. On Swap it fills in the largest amount of ZEC you can swap, net of the network fee (or its value in USD when you have switched the field to USD); on Pay it fills in what that amount is worth in the token you are paying with, and updates the accompanying USD value alongside it. The button is unavailable while your balance is still confirming or empty, or while a quote is being fetched, and a toast tells you when the amount could not be fetched or converted.
 
 ### Changed
-- Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
 - The paste-seed shortcut on the Secret Recovery Phrase screen (long-press the title) now works in internal and testnet builds — including TestFlight — instead of debug builds only. It stays excluded from the App Store build.
 
 ### Fixed
-- [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - [MOB-1800] Tapping Confirm when submitting a vote now responds immediately: the button disables and shows a spinner the instant it is tapped, extra taps can no longer interrupt and restart a submission already underway, and the screen no longer briefly re-enables mid-submission while the authorization work hands over. Cancelling the Face ID prompt cleanly returns the Confirm button.
 - [MOB-1803] Opening the Receive screen (and requesting a swap quote) no longer freezes for seconds while the wallet is catching up on sync. A fresh rotated address is prepared ahead of time so the screen opens instantly; in the rare case none is ready yet, the screen opens with a brief loading placeholder instead of blocking. Every visit still gets its own never-shown-before address.
 - [MOB-1800] Submitting coinholder-poll votes is significantly faster: preparing the vote proofs no longer runs at background priority (which pinned it to the efficiency cores), so the "Authorizing" step no longer stalls for minutes on the proving-key preparation.
