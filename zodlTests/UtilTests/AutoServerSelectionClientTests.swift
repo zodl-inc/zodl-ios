@@ -113,13 +113,35 @@ struct RootAutoServerCandidateTests {
             #expect(state.canApplyAutoServerSwitch)
 
             let sensitivePaths: [Root.State.Path] = [
-                .sendCoordFlow, .scanCoordFlow, .swapAndPayCoordFlow,
-                .transactionsCoordFlow, .settings
+                .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
+                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
             ]
             for path in sensitivePaths {
                 state.path = path
                 #expect(state.isSensitiveFlowActive)
                 #expect(!state.canApplyAutoServerSwitch)
+            }
+
+            state.path = nil
+            state.signWithKeystoneCoordFlowBinding = true
+            #expect(state.isSensitiveFlowActive)
+            #expect(!state.canApplyAutoServerSwitch)
+        }
+    }
+
+    @Test
+    func nonSensitivePathsRemainNonSensitive() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = Root.State.initial
+            let nonSensitivePaths: [Root.State.Path] = [
+                .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
+            ]
+            for path in nonSensitivePaths {
+                state.path = path
+                #expect(!state.isSensitiveFlowActive)
             }
         }
     }
@@ -170,6 +192,58 @@ struct RootAutoServerCandidateTests {
             await store.finish()
 
             #expect(!didApply.value)
+        }
+    }
+
+    @Test
+    func benchmarkWinnerWaitsForLocalSnapshotReadToComplete() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let endpoint = LightWalletEndpoint(
+                address: "zec.rocks",
+                port: 443,
+                secure: true,
+                streamingCallTimeoutInMillis: 0
+            )
+            let benchmarkCompleted = AsyncStream<Void>.makeStream()
+            let snapshotReadStarted = AsyncStream<Void>.makeStream()
+            let snapshotReadRelease = AsyncStream<Void>.makeStream()
+            let didApply = LockIsolated(false)
+            let store = TestStore(initialState: Root.State.initial) {
+                Root()
+            } withDependencies: {
+                $0.autoServerSelection = AutoServerSelectionClient(
+                    findBestServer: {
+                        benchmarkCompleted.continuation.yield(())
+                        return endpoint
+                    },
+                    applySwitch: { _ in
+                        didApply.setValue(true)
+                        return true
+                    }
+                )
+                $0.sdkSynchronizer = .mocked(
+                    getLocalAccountBalances: {
+                        snapshotReadStarted.continuation.yield(())
+                        for await _ in snapshotReadRelease.stream { break }
+                        return [:]
+                    }
+                )
+                $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.refreshAutomaticServer)
+            for await _ in benchmarkCompleted.stream { break }
+            for await _ in snapshotReadStarted.stream { break }
+            #expect(!didApply.value)
+
+            snapshotReadRelease.continuation.yield(())
+            await store.receive(\.autoServerCandidateReady)
+            await store.finish()
+
+            #expect(didApply.value)
         }
     }
 

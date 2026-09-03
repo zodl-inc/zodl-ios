@@ -431,7 +431,7 @@
 				34AA77B62F85860300D244E2 /* XCRemoteSwiftPackageReference "UInt128" */,
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
 				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
-				3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference ".ci/zodl-swift-wallet-sdk" */,
+				3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -1360,9 +1360,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference ".ci/zodl-swift-wallet-sdk" */ = {
+		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ".ci/zodl-swift-wallet-sdk";
+			relativePath = "../zodl-swift-wallet-sdk";
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -1490,7 +1490,7 @@
 		};
 		3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference ".ci/zodl-swift-wallet-sdk" */;
+			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
 		};
 		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
