@@ -71,15 +71,10 @@ struct ResyncWalletView: View {
     
     @ViewBuilder func bdBadge() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let attrText = try? AttributedString(
-                markdown: String(localizable: .resyncWalletCurrentHeightInfo(store.birthdayDate, store.birthdayBlocks)),
-                including: \.zashiApp
-            ) {
-                ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                    .zFont(.medium, size: 14, style: Design.Text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, Design.Spacing._xl)
-            }
+            ZashiText(markdown: String(localizable: .resyncWalletCurrentHeightInfo(store.birthdayDate, store.birthdayBlocks)), colorScheme: colorScheme)
+                .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, Design.Spacing._xl)
 
             ZashiButton(
                 String(localizable: .resyncWalletChange),

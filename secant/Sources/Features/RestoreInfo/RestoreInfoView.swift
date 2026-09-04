@@ -54,7 +54,7 @@ struct RestoreInfoView: View {
                 bulletpoint(String(localizable: .restoreInfoTip2))
                     .padding(.bottom, Design.Spacing._lg)
 
-                if let attrText = try? AttributedString(
+                ZashiText(
                     markdown: String(
                         localizable: store.isKeystoneFlow
                         ? .keepZodlOpenWarningHWWallet
@@ -62,18 +62,16 @@ struct RestoreInfoView: View {
                         ? .keepZodlOpenWarningResync
                         : .keepZodlOpenWarningRestore
                     ),
-                    including: \.zashiApp
-                ) {
-                    ZashiText(withAttributedString: attrText, colorScheme: colorScheme, textColor: Design.Utility.WarningYellow._900.color(colorScheme))
-                        .zFont(size: 14, style: Design.Utility.WarningYellow._900)
-                        .padding(.vertical, Design.Spacing._xl)
-                        .padding(.horizontal, Design.Spacing._2xl)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                                .fill(Design.Utility.WarningYellow._50.color(colorScheme))
-                            
-                        }
+                    colorScheme: colorScheme,
+                    textColor: Design.Utility.WarningYellow._900.color(colorScheme)
+                )
+                .zFont(size: 14, style: Design.Utility.WarningYellow._900)
+                .padding(.vertical, Design.Spacing._xl)
+                .padding(.horizontal, Design.Spacing._2xl)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._3xl)
+                        .fill(Design.Utility.WarningYellow._50.color(colorScheme))
                 }
                 
                 Spacer()

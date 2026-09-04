@@ -233,26 +233,21 @@ extension SwapAndPayForm {
                 Spacer()
 
                 if store.slippageInSheet < 2.0 {
-                    if let attrText = try? AttributedString(
+                    ZashiText(
                         markdown: String(localizable: .swapAndPaySmallSlippageWarn("\(SwapAndPay.Constants.defaultSlippage)", "\(SwapAndPay.Constants.defaultSlippage)")),
-                        including: \.zashiApp
-                    ) {
-                        ZashiText(
-                            withAttributedString: attrText,
-                            colorScheme: colorScheme,
-                            textColor: Design.Utility.WarningYellow._900.color(colorScheme),
-                            textSize: 12
-                        )
-                        .zFont(size: 12, style: Design.Utility.WarningYellow._900)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 16)
-                        .background {
-                            RoundedRectangle(cornerRadius: Design.Radius._lg)
-                                .fill(Design.Utility.WarningYellow._100.color(colorScheme))
-                        }
-                        .padding(.bottom, 24)
+                        colorScheme: colorScheme,
+                        textColor: Design.Utility.WarningYellow._900.color(colorScheme),
+                        textSize: 12
+                    )
+                    .zFont(size: 12, style: Design.Utility.WarningYellow._900)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background {
+                        RoundedRectangle(cornerRadius: Design.Radius._lg)
+                            .fill(Design.Utility.WarningYellow._100.color(colorScheme))
                     }
+                    .padding(.bottom, 24)
                 }
 
                 ZashiButton(String(localizable: .generalConfirm)) {
