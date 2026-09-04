@@ -6,7 +6,9 @@ import SQLite3
 extension VotingRecoveryEndToEndTests {
     /// The values the built database is seeded with.
     enum Fixture {
-        static let roundId = String(repeating: "4a", count: 32)
+        /// Canonical little-endian Pallas element: the top byte (last in hex)
+        /// is 0x01, so the crate's round-id validation accepts it.
+        static let roundId = String(repeating: "4a", count: 31) + "01"
         static let walletId = "wallet-e2e"
         static let bundleCount = 3
 

@@ -229,7 +229,7 @@ import base64, json, sys
 def secret(byte):
     return bytes([byte] * 31 + [0x01]).hex()
 
-round_id = "4a" * 32
+round_id = "4a" * 31 + "01"
 broadcast = {secret(b) for b in (0xA0, 0xA1, 0xA2)}
 rebuilt = {secret(b) for b in (0xB0, 0xB1, 0xB2)}
 
