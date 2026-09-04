@@ -3,22 +3,22 @@
 import Testing
 import Foundation
 import ComposableArchitecture
+import ZcashLightClientKit
 @testable import zodl_internal
 
 /// The incident, end to end, in the order a voter lived it: a poll whose
 /// delegation was broadcast, an error telling them to leave and re-enter, the
-/// wipe that advice caused, recovery on the next launch, and -- once the
-/// restore entry point exists -- voting again.
+/// wipe that advice caused, recovery on the next launch, and the restore that
+/// puts the delegation back where voting can use it.
 ///
 /// Runs on a simulator through `Scripts/e2e/run-delegation-recovery-e2e.sh`.
 ///
-/// WHAT THIS PROVES TODAY, and what it does not. Every stage up to and
-/// including the escrow being import-ready is asserted for real. The final
-/// stage -- restoring the carved delegation into `bundles` so the round can be
-/// voted on -- is `.disabled`, because `zcash_voting` exposes no entry point
-/// that can do it (see `restoringTheCarvedDelegationLetsTheRoundBeVotedOn`).
-/// It is written out rather than omitted so that the missing piece is visible
-/// in the suite instead of living in someone's head.
+/// WHAT THIS PROVES, and what it does not. Every stage up to and including
+/// the escrow being import-ready is asserted for real, and the final stage
+/// (`restoringTheCarvedDelegationLetsTheRoundBeVotedOn`) drives the escrow
+/// through the SDK's guarded restore into a real voting database. What it
+/// does not do is vote: the chain confirmation and the vote proof need a
+/// live tree, which no simulator run has.
 ///
 /// The HTTP layer is faked throughout: `VotingAPIClient` is stubbed with
 /// recorded responses, so nothing here touches a vote server, and the fake is
@@ -262,40 +262,113 @@ struct VoteAgain {
         }
     }
 
-    // MARK: - Stage 5: voting again (PENDING)
+    // MARK: - Stage 5: the recovered delegation goes back into the database
 
-    /// The step this suite exists to reach, and cannot yet run.
-    ///
-    /// BLOCKED ON: an entry point in `zcash_voting` that restores carved
-    /// delegation state into `bundles`. `import_delegation_capability` is the
-    /// closest thing and is the wrong tool:
-    ///
-    ///   - it is a capability-TRANSFER protocol, taking `capability_json` in
-    ///     an exact canonical encoding and returning a digest that
-    ///     acknowledges delivered bytes to a funds controller;
-    ///   - it validates the capability against a trusted voter context
-    ///     (`vote_chain_id`, network, round params, and the hotkey's own
-    ///     delegation target);
-    ///   - and `bundle_matches` requires the heavy columns to be NULL, so it
-    ///     rejects exactly our case -- the round was cleared AND REBUILT, so
-    ///     `bundles` holds rebuilt rows and the import reads as conflicting
-    ///     local state.
-    ///
-    /// What is needed instead is narrow: restore `(round_id, bundle_index,
-    /// van_comm_rand, gov_comm, total_note_value, delegation_tx_hash)` over
-    /// the rebuilt rows in one transaction, with preconditions written for
-    /// this incident. That is a `zcash_voting` change plus an FFI binding.
-    ///
-    /// WHEN THAT EXISTS, enable this and assert: restore from the escrow,
-    /// then drive a vote through `commitVote` and `submitVoteCommitment`
-    /// against `FakeVoteServer`, and check the committed bundle opens the VAN
-    /// the chain already holds -- i.e. the vote is accepted under the ORIGINAL
-    /// delegation rather than the rebuild's. `theEscrowHoldsEverythingARestoreWillNeed`
-    /// already proves the inputs are present, so only the restore call itself
-    /// is missing.
-    @Test(.disabled("Needs a zcash_voting entry point to restore carved delegation state; see the doc comment."))
-    func restoringTheCarvedDelegationLetsTheRoundBeVotedOn() async throws {
-        Issue.record("unreachable while disabled")
+    private static let restoreNetworkId: UInt32 = 1
+
+    private static var roundParams: VotingRoundParams {
+        VotingRoundParams(
+            voteRoundId: Data(bytes(fromHex: Expected.roundId)),
+            snapshotHeight: 1,
+            eaPK: Data(repeating: 0x07, count: 32),
+            ncRoot: Data(repeating: 0x07, count: 32),
+            nullifierIMTRoot: Data(repeating: 0x07, count: 32)
+        )
+    }
+
+    private static func bytes(fromHex hex: String) -> [UInt8] {
+        stride(from: 0, to: hex.count, by: 2).compactMap { offset in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            return UInt8(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)
+        }
+    }
+
+    /// A crypto client whose restore hits a real Rust backend.
+    private static func realCryptoClient(backend: VotingRustBackend) -> VotingCryptoClient {
+        var client = VotingCryptoClient.testValue
+        client.restoreRecoveredDelegation = { request in
+            let hotkey = try VotingRustBackend.hotkey(
+                fromStoredSecret: [UInt8](request.hotkeyStoredSecret),
+                networkId: request.networkId
+            )
+            let result = try backend.restoreRecoveredDelegation(
+                RecoveredDelegationRestoreRequest(
+                    roundId: request.roundParams.voteRoundId.hexString,
+                    snapshotHeight: request.roundParams.snapshotHeight,
+                    eaPublicKey: [UInt8](request.roundParams.eaPK),
+                    ncRoot: [UInt8](request.roundParams.ncRoot),
+                    nullifierImtRoot: [UInt8](request.roundParams.nullifierIMTRoot),
+                    voteChainId: request.voteChainId,
+                    hotkey: hotkey,
+                    bundles: request.bundles.map {
+                        RecoveredDelegationBundle(
+                            bundleIndex: $0.bundleIndex,
+                            totalNoteValue: $0.totalNoteValue,
+                            vanCommRand: [UInt8]($0.vanCommRand),
+                            delegationTxHash: $0.delegationTxHash
+                        )
+                    },
+                    sessionJson: request.sessionJson
+                )
+            )
+            return result == .restored ? .restored : .alreadyRestored
+        }
+        return client
+    }
+
+    /// The step this suite exists to reach: the escrow that launch-time
+    /// recovery wrote is enough, on its own, to put the broadcast delegation
+    /// back into a voting database through the SDK's guarded restore, and a
+    /// second pass recognises it and writes nothing.
+    @Test func restoringTheCarvedDelegationLetsTheRoundBeVotedOn() async throws {
+        try await SharedLiveEscrow.exclusive {
+        try plantTheIncident()
+        await openTheApp(server: FakeVoteServer())
+        let entries = try await escrowedEntries()
+        #expect(entries.count == Expected.bundleCount)
+
+        let backend = VotingRustBackend()
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restore-\(UUID().uuidString).sqlite3").path
+        try backend.open(path: path, networkId: Self.restoreNetworkId)
+        try backend.setWalletId(Expected.walletId)
+        defer {
+            backend.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let hotkey = try VotingRustBackend.generateHotkey(networkId: Self.restoreNetworkId)
+        let crypto = Self.realCryptoClient(backend: backend)
+
+        let first = await DelegationRestore.restoreIfNeeded(
+            roundId: Expected.roundId,
+            roundParams: Self.roundParams,
+            networkId: Self.restoreNetworkId,
+            hotkeyStoredSecret: Data(hotkey.storedSecret),
+            escrowEntries: entries,
+            expectedBundleCount: nil,
+            crypto: crypto
+        )
+        #expect(first == .restored(bundleCount: Expected.bundleCount))
+        #expect(try backend.getBundleCount(roundId: Expected.roundId) == UInt32(Expected.bundleCount))
+        for index in 0..<Expected.bundleCount {
+            #expect(
+                try backend.getDelegationTxHash(roundId: Expected.roundId, bundleIndex: UInt32(index))
+                    == Expected.txHash(index),
+                "bundle \(index) must carry the hash the chain saw"
+            )
+        }
+
+        let second = await DelegationRestore.restoreIfNeeded(
+            roundId: Expected.roundId,
+            roundParams: Self.roundParams,
+            networkId: Self.restoreNetworkId,
+            hotkeyStoredSecret: Data(hotkey.storedSecret),
+            escrowEntries: entries,
+            expectedBundleCount: UInt32(Expected.bundleCount),
+            crypto: crypto
+        )
+        #expect(second == .alreadyRestored)
+        }
     }
 
     // MARK: - Stage 4b: the app carries the RECOVERED secret to the server
