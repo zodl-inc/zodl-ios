@@ -194,6 +194,29 @@ import Testing
         }
     }
 
+    /// A checksum-valid frame naming page 4 billion must not make the replay
+    /// allocate 16 TB. The frame is carved like any other and the replay skips it.
+    @Test func aFrameNamingAnAbsurdPageIsCarvedButNeverReplayed() throws {
+        let page = databasePage(liveRecord: bundleRecord(van: acceptedVan, rand: originalRand))
+        let wal = walFile(frames: [
+            WalFixtureFrame(page: page, currentGeneration: true, pageNumber: UInt32.max, databasePageCount: UInt32.max)
+        ])
+
+        let report = try VotingDatabaseRecovery.recover(
+            databaseBytes: databasePage(),
+            walBytes: wal,
+            vanCmx: acceptedVan,
+            roundId: roundId
+        )
+
+        #expect(report.validWalFrameCount == 1)
+        #expect(report.candidates.count == 1)
+        if case .walCarved(frame: 0, currentGeneration: true, offset: _) = report.candidates[0].source {
+        } else {
+            Issue.record("expected a carved candidate, got \(report.candidates[0].source)")
+        }
+    }
+
     // MARK: - Deterministic SQLite fixtures
 
     private func bundleRecord(van: Data, rand: Data) -> [UInt8] {
@@ -337,6 +360,8 @@ import Testing
     private struct WalFixtureFrame {
         let page: [UInt8]
         let currentGeneration: Bool
+        var pageNumber: UInt32 = 1
+        var databasePageCount: UInt32 = 1
     }
 
     private func walFile(frames: [WalFixtureFrame]) -> [UInt8] {
@@ -358,8 +383,8 @@ import Testing
         var wal = header
         for fixture in frames {
             var frameHeader = [UInt8](repeating: 0, count: 24)
-            putUInt32(1, into: &frameHeader, at: 0)
-            putUInt32(1, into: &frameHeader, at: 4)
+            putUInt32(fixture.pageNumber, into: &frameHeader, at: 0)
+            putUInt32(fixture.databasePageCount, into: &frameHeader, at: 4)
             putUInt32(
                 fixture.currentGeneration ? salt1 : salt1 &+ 1,
                 into: &frameHeader,
