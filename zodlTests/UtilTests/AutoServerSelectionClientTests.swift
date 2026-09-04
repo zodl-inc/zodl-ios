@@ -33,6 +33,7 @@ final class AutoServerSelectionClientTests: XCTestCase {
             $0.sdkSynchronizer.switchToEndpoint = { recorder.switchedTo = $0 }
             $0.transactionGuard = TransactionGuardClient(
                 acquire: {},
+                acquireWithTimeout: { _ in },
                 tryAcquire: { !guardBusy },
                 release: {}
             )
@@ -89,6 +90,7 @@ final class AutoServerSelectionClientTests: XCTestCase {
             $0.sdkSynchronizer.switchToEndpoint = { _ in throw URLError(URLError.Code.timedOut) }
             $0.transactionGuard = TransactionGuardClient(
                 acquire: {},
+                acquireWithTimeout: { _ in },
                 tryAcquire: { true },
                 release: {}
             )

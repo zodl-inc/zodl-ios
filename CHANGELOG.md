@@ -11,6 +11,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
 
 ### Changed
+- [MOB-1858] Sending no longer waits behind unrelated network work. Preparing a payment now runs alongside other activity instead of blocking it, and if the wallet really is busy with something else, the send reports a failure you can retry instead of appearing to hang.
 - [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
 
 ### Fixed

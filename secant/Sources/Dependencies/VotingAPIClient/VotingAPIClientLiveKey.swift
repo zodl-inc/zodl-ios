@@ -1006,20 +1006,23 @@ extension VotingAPIClient: DependencyKey {
             },
             submitDelegation: { registration in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let body: [String: Any] = [
-                        "rk": registration.rk.base64EncodedString(),
-                        "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
-                        "sighash": registration.sighash.base64EncodedString(),
-                        "tx1_effects": registration.tx1Effects,
-                        "signed_note_nullifier": registration.signedNoteNullifier,
-                        "cmx_new": registration.cmxNew,
-                        "van_cmx": registration.vanCmx,
-                        "gov_nullifiers": registration.govNullifiers,
-                        "proof": registration.proof,
-                        "vote_round_id": registration.voteRoundId
-                    ]
-                    return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
+                let body: [String: Any] = [
+                    "rk": registration.rk.base64EncodedString(),
+                    "spend_auth_sig": registration.spendAuthSig.base64EncodedString(),
+                    "sighash": registration.sighash.base64EncodedString(),
+                    "tx1_effects": registration.tx1Effects,
+                    "signed_note_nullifier": registration.signedNoteNullifier,
+                    "cmx_new": registration.cmxNew,
+                    "van_cmx": registration.vanCmx,
+                    "gov_nullifiers": registration.govNullifiers,
+                    "proof": registration.proof,
+                    "vote_round_id": registration.voteRoundId
+                ]
+                // The guard is taken per attempt, not across the whole retry: the exponential
+                // back-off sleeps for seconds between attempts, and holding the guard through
+                // those sleeps blocked sends and server switches while nothing was in flight.
+                return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
+                    try await transactionGuard.withSubmission {
                         let json = try await postJSON("/shielded-vote/v1/delegate-vote", body: body)
                         return try parseTxResult(json)
                     }
@@ -1027,21 +1030,22 @@ extension VotingAPIClient: DependencyKey {
             },
             submitVoteCommitment: { bundle, signature in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    // voteRoundId is a hex string; chain expects base64-encoded bytes
-                    let roundIdBytes = dataFromHex(bundle.voteRoundId)
-                    let body: [String: Any] = [
-                        "van_nullifier": bundle.vanNullifier.base64EncodedString(),
-                        "vote_authority_note_new": bundle.voteAuthorityNoteNew.base64EncodedString(),
-                        "vote_commitment": bundle.voteCommitment.base64EncodedString(),
-                        "proposal_id": bundle.proposalId,
-                        "proof": bundle.proof.base64EncodedString(),
-                        "vote_round_id": roundIdBytes.base64EncodedString(),
-                        "vote_comm_tree_anchor_height": bundle.anchorHeight,
-                        "r_vpk": bundle.rVpkBytes.base64EncodedString(),
-                        "vote_auth_sig": signature.voteAuthSig.base64EncodedString()
-                    ]
-                    return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
+                // voteRoundId is a hex string; chain expects base64-encoded bytes
+                let roundIdBytes = dataFromHex(bundle.voteRoundId)
+                let body: [String: Any] = [
+                    "van_nullifier": bundle.vanNullifier.base64EncodedString(),
+                    "vote_authority_note_new": bundle.voteAuthorityNoteNew.base64EncodedString(),
+                    "vote_commitment": bundle.voteCommitment.base64EncodedString(),
+                    "proposal_id": bundle.proposalId,
+                    "proof": bundle.proof.base64EncodedString(),
+                    "vote_round_id": roundIdBytes.base64EncodedString(),
+                    "vote_comm_tree_anchor_height": bundle.anchorHeight,
+                    "r_vpk": bundle.rVpkBytes.base64EncodedString(),
+                    "vote_auth_sig": signature.voteAuthSig.base64EncodedString()
+                ]
+                // Guard per attempt, not across the back-off sleeps between them — see submitDelegation.
+                return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
+                    try await transactionGuard.withSubmission {
                         let json = try await postJSON("/shielded-vote/v1/cast-vote", body: body)
                         return try parseTxResult(json)
                     }
