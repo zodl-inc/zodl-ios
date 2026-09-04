@@ -46,15 +46,7 @@ enum DelegationRestore {
         guard let hotkeyStoredSecret else {
             return .notApplicable(reason: "no voting hotkey on this device")
         }
-        // The same check the SDK makes before it clears anything, made here
-        // per candidate so a damaged row image is passed over rather than
-        // refusing the whole restore.
-        let opens: (DelegationEscrowEntry) -> Bool = { entry in
-            let recomputed = try? crypto.vanCommitment(
-                hotkeyStoredSecret, networkId, roundId, entry.totalNoteValue, entry.vanCommRand
-            )
-            return recomputed == entry.van
-        }
+        let opens = opens(hotkeyStoredSecret: hotkeyStoredSecret, networkId: networkId, roundId: roundId, crypto: crypto)
         guard let bundles = package(from: escrowEntries, opens: opens) else {
             return .notApplicable(reason: "escrow holds no restorable delegation")
         }
@@ -89,6 +81,67 @@ enum DelegationRestore {
             LoggerProxy.error("[poll-restore] round=\(roundId) restore failed: \(description)")
             return .failed
         }
+    }
+
+    /// The same check the SDK makes before it clears anything, as a predicate
+    /// over escrow entries, so a damaged row image is passed over rather than
+    /// refusing the whole restore.
+    static func opens(
+        hotkeyStoredSecret: Data,
+        networkId: UInt32,
+        roundId: String,
+        crypto: VotingCryptoClient
+    ) -> (DelegationEscrowEntry) -> Bool {
+        { entry in
+            let recomputed = try? crypto.vanCommitment(
+                hotkeyStoredSecret, networkId, roundId, entry.totalNoteValue, entry.vanCommRand
+            )
+            return recomputed == entry.van
+        }
+    }
+
+    /// The substring the SDK's tree sync reports when a leaf is not the VAN
+    /// it recomputed from the stored blinding, preceded by `bundle N`. Read
+    /// from `zcash_voting` 3.0.0, `tree_sync.rs`.
+    static let leafMismatchMarker = "does not match its synced vote-tree leaf"
+
+    /// Marks the candidate the chain refused, so the next restore tries the
+    /// next-best one for that bundle. The SDK names the bundle in its
+    /// message; when it does not, every candidate the last restore offered
+    /// is marked, since none can be told apart. `opens` must be the predicate
+    /// the restore used, so the same candidates are found. Returns whether
+    /// `error` was a leaf mismatch at all.
+    static func rejectRestoredCandidates(
+        roundId: String,
+        error: Error,
+        escrow: DelegationEscrowClient,
+        opens: (DelegationEscrowEntry) -> Bool = { _ in true }
+    ) async -> Bool {
+        let description = error.localizedDescription
+        guard description.contains(leafMismatchMarker) else { return false }
+        let entries = (try? await escrow.entries(roundId)) ?? []
+        guard let offered = package(from: entries, opens: opens) else { return true }
+        let refused = refusedBundleIndex(in: description)
+            .map { index in offered.filter { $0.bundleIndex == index } } ?? offered
+        for bundle in refused {
+            try? await escrow.markRejected(roundId, bundle.bundleIndex, bundle.vanCommRand)
+        }
+        LoggerProxy.info(
+            "[poll-restore] round=\(roundId) chain refused \(refused.count) of \(offered.count) restored candidate(s)"
+        )
+        return true
+    }
+
+    /// The bundle the SDK's leaf-mismatch message names, if it names one.
+    static func refusedBundleIndex(in description: String) -> UInt32? {
+        guard let range = description.range(
+            of: "bundle [0-9]+ \(leafMismatchMarker)",
+            options: .regularExpression
+        ) else {
+            return nil
+        }
+        let digits = description[range].dropFirst("bundle ".count).prefix { $0.isNumber }
+        return UInt32(digits)
     }
 
     /// The longest run of bundles from index 0 the escrow can restore, or nil

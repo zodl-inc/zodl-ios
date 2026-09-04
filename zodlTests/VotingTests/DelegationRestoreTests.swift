@@ -273,5 +273,95 @@ import Foundation
 
         #expect(outcome == .failed)
     }
+
+    private final class RejectionRecorder: @unchecked Sendable {
+        var rejected: [(UInt32, Data)] = []
+    }
+
+    private struct SyncRefusal: LocalizedError {
+        let text: String
+        var errorDescription: String? { text }
+    }
+
+    /// The chain names the bundle it refused; only that bundle's candidate
+    /// is marked, so a correct neighbour is still offered next time.
+    @Test func aLeafMismatchRejectsOnlyTheBundleTheChainNamed() async {
+        let recorder = RejectionRecorder()
+        let offered = [entry(0), entry(1)]
+        var escrow = DelegationEscrowClient.testValue
+        escrow.entries = { _ in offered }
+        escrow.markRejected = { _, index, rand in recorder.rejected.append((index, rand)) }
+
+        let handled = await DelegationRestore.rejectRestoredCandidates(
+            roundId: roundId,
+            error: SyncRefusal(
+                text: "sync_vote_tree failed: confirmed delegation bundle 1 \(DelegationRestore.leafMismatchMarker)"
+            ),
+            escrow: escrow
+        )
+
+        #expect(handled)
+        #expect(recorder.rejected.map(\.0) == [1])
+        #expect(recorder.rejected.map(\.1.first) == [0xA1])
+    }
+
+    /// The candidate marked is the one the restore offered: the same
+    /// predicate picks it, not the best-ranked image regardless of opening.
+    @Test func theRejectedCandidateIsTheOneTheRestoreOffered() async {
+        let recorder = RejectionRecorder()
+        let genuine = Data(repeating: 0xC0, count: 32)
+        let offered = [entry(0, van: Data(repeating: 0xC1, count: 32), rand: 0xB0, rank: 4), entry(0, rand: 0xA0, rank: 0)]
+        var escrow = DelegationEscrowClient.testValue
+        escrow.entries = { _ in offered }
+        escrow.markRejected = { _, index, rand in recorder.rejected.append((index, rand)) }
+
+        _ = await DelegationRestore.rejectRestoredCandidates(
+            roundId: roundId,
+            error: SyncRefusal(
+                text: "confirmed delegation bundle 0 \(DelegationRestore.leafMismatchMarker)"
+            ),
+            escrow: escrow,
+            opens: { $0.van == genuine }
+        )
+
+        #expect(recorder.rejected.map(\.1.first) == [0xA0])
+    }
+
+    @Test func aLeafMismatchNamingNoBundleRejectsEveryOfferedCandidate() async {
+        let recorder = RejectionRecorder()
+        let offered = [entry(0), entry(1)]
+        var escrow = DelegationEscrowClient.testValue
+        escrow.entries = { _ in offered }
+        escrow.markRejected = { _, index, rand in recorder.rejected.append((index, rand)) }
+
+        let handled = await DelegationRestore.rejectRestoredCandidates(
+            roundId: roundId,
+            error: SyncRefusal(text: "sync_vote_tree failed: \(DelegationRestore.leafMismatchMarker)"),
+            escrow: escrow
+        )
+
+        #expect(handled)
+        #expect(recorder.rejected.map(\.0) == [0, 1])
+    }
+
+    @Test func theRefusedBundleIsReadFromTheSdkMessage() {
+        let marker = DelegationRestore.leafMismatchMarker
+        #expect(DelegationRestore.refusedBundleIndex(in: "confirmed delegation bundle 12 \(marker)") == 12)
+        #expect(DelegationRestore.refusedBundleIndex(in: "sync failed: bundle 3 \(marker), retry") == 3)
+        #expect(DelegationRestore.refusedBundleIndex(in: "bundle x \(marker)") == nil)
+        #expect(DelegationRestore.refusedBundleIndex(in: marker) == nil)
+    }
+
+    @Test func anUnrelatedSyncErrorRejectsNothing() async {
+        var escrow = DelegationEscrowClient.testValue
+        escrow.entries = { _ in [] }
+        escrow.markRejected = { _, _, _ in Issue.record("nothing may be rejected") }
+
+        let handled = await DelegationRestore.rejectRestoredCandidates(
+            roundId: roundId, error: Boom(), escrow: escrow
+        )
+
+        #expect(handled == false)
+    }
 }
 #endif

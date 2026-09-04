@@ -2096,7 +2096,13 @@ extension VotingCoordFlow {
                             continue
                         }
 
-                        let anchorHeight = try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
+                        let anchorHeight = try await Self.syncVoteTree(
+                            roundId: roundId,
+                            chainNodeUrl: chainNodeUrl,
+                            hotkeyStoredSecret: Data(hotkeySeed),
+                            networkId: networkId,
+                            votingCrypto: votingCrypto
+                        )
                         let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
 
                         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
@@ -4487,6 +4493,40 @@ extension VotingCoordFlow {
         )
         LoggerProxy.info("[poll-diagnosis] round=\(roundId) diagnosis=\(diagnosis.rawValue)")
         return diagnosis.message
+    }
+}
+
+extension VotingCoordFlow {
+    /// `syncVoteTree`, with one side effect on failure: when the chain
+    /// refuses a leaf that a restore put back, the escrow candidate it came
+    /// from is marked so the next restore tries the next-best one. The hotkey
+    /// lets the same candidate the restore offered be found again.
+    static func syncVoteTree(
+        roundId: String,
+        chainNodeUrl: String,
+        hotkeyStoredSecret: Data,
+        networkId: UInt32,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> UInt32 {
+        do {
+            return try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
+        } catch {
+            #if RECOVERY_VOTING_ENABLED
+            @Dependency(\.delegationEscrow) var delegationEscrow
+            _ = await DelegationRestore.rejectRestoredCandidates(
+                roundId: roundId,
+                error: error,
+                escrow: delegationEscrow,
+                opens: DelegationRestore.opens(
+                    hotkeyStoredSecret: hotkeyStoredSecret,
+                    networkId: networkId,
+                    roundId: roundId,
+                    crypto: votingCrypto
+                )
+            )
+            #endif
+            throw error
+        }
     }
 }
 
