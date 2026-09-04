@@ -1732,6 +1732,73 @@ extension SwapAndPay.State {
 // MARK: - CrossPay
 
 extension SwapAndPay.State {
+    /// Applies a scanned QR to the form. A payment request lands as a whole -- address, asset and
+    /// amount agreeing with one another -- or not at all, so a request naming an asset the app
+    /// can't pay never leaves a recipient address paired with a different asset than the one it
+    /// was addressed to. Every rejection is reported; none of them are silent.
+    mutating func applyScannedRequest(_ request: CrossPayRequest?, rawValue: String) {
+        // Swap and Swap-to-ZEC bind `address` to a different field entirely: in Swap-to-ZEC it is
+        // the user's own refund address, which `getQuote` sends as `refundTo`, so unwrapping a
+        // payment request's recipient into it would point a refunded swap at a third party. Those
+        // modes keep the raw-string behaviour they had before cross-pay parsing existed.
+        guard !isSwapExperienceEnabled, !isSwapToZecExperienceEnabled, let request else {
+            address = rawValue
+            return
+        }
+
+        guard let asset = request.resolveAsset(in: swapAssets, current: selectedAsset) else {
+            $toast.withLock { $0 = .top(String(localizable: .swapAndPayCrossPayAssetUnsupported)) }
+            return
+        }
+
+        address = request.address
+        selectedContact = nil
+        let assetChanged = selectedAsset != asset
+        selectedAsset = asset
+
+        guard let requestedAmount = request.resolvedAmount(for: asset) else {
+            // A static shop QR carries no amount. Only discard what the user already typed when the
+            // asset moved out from under it and the number no longer means what they entered.
+            if assetChanged {
+                clearAmountFields()
+            }
+            return
+        }
+
+        // Floored, never rounded, at the 8 fraction digits the field accepts: this string *is* the
+        // amount that gets paid (`getQuote` reads `amountText` back and scales it by the asset's
+        // decimals), so the formatter's half-even rounding would take 1.999999999999999999 to 2 and
+        // set the user up to overpay the request.
+        let amount = requestedAmount.roundedDown(scale: 8)
+
+        // Computed directly rather than read back through `payUsdLabel`, which derives from
+        // `assetAmount` and is `_XCTIsTesting`-poisoned to 0 -- same reason the Max path does.
+        guard
+            amount > 0,
+            let tokenValue = conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amount)),
+            let usdValue = conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amount * asset.usdPrice))
+        else {
+            clearAmountFields()
+            $toast.withLock { $0 = .top(String(localizable: .swapAndPayCrossPayAmountUnsupported)) }
+            return
+        }
+
+        // The same trio `.binding(\.amountAssetText)` writes when the user types an amount.
+        amountAssetText = tokenValue
+        amountUsdText = usdValue
+        amountText = tokenValue
+
+        if amount != requestedAmount {
+            $toast.withLock { $0 = .top(String(localizable: .swapAndPayCrossPayAmountRounded)) }
+        }
+    }
+
+    private mutating func clearAmountFields() {
+        amountAssetText = ""
+        amountUsdText = ""
+        amountText = ""
+    }
+
     var payZecLabel: String {
         guard let zecAsset else {
             return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"

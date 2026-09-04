@@ -222,7 +222,11 @@ extension Settings {
                 for element in state.path {
                     if element.is(\.addressBook) {
                         var addressBookState = AddressBook.State.initial
-                        addressBookState.address = address
+                        // This scanner's checkers fire `.foundString` exactly when the payload is
+                        // not a Zcash address, which is the cross-chain-URI case. Contacts match by
+                        // exact string equality, so storing the whole URI (query string included)
+                        // yields an address that can never match a real one.
+                        addressBookState.address = CrossPayRequestParser.parse(address)?.address ?? address
                         addressBookState.isNameFocused = true
                         addressBookState.context = .settings
                         state.path.append(.addressBookContact(addressBookState))

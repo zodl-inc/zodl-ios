@@ -20136,6 +20136,60 @@
         }
       }
     },
+    "swapAndPay.crossPayAmountRounded" : {
+      "comment" : "Toast shown after scanning a payment request whose amount carried more precision than the Pay amount field accepts, so the prefilled amount is slightly below what was requested.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The requested amount was adjusted to 8 decimal places."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El monto solicitado se ajustó a 8 decimales."
+          }
+        }
+      }
+    },
+    "swapAndPay.crossPayAmountUnsupported" : {
+      "comment" : "Toast shown after scanning a payment request whose amount is smaller than the Pay amount field can represent.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The requested amount is too small to pay here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El monto solicitado es demasiado pequeño para pagarlo aquí."
+          }
+        }
+      }
+    },
+    "swapAndPay.crossPayAssetUnsupported" : {
+      "comment" : "Toast shown after scanning a valid payment request for a coin or token the app cannot pay with.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This payment request is for an asset you can't pay with."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta solicitud de pago corresponde a un activo con el que no puedes pagar."
+          }
+        }
+      }
+    },
     "swapAndPay.custom" : {
       "extractionState" : "manual",
       "localizations" : {
