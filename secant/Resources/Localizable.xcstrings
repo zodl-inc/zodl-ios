@@ -5590,13 +5590,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and has been recovered from a backup copy. Voting cannot continue until it is restored. Please contact support with this code. (POLL-03)"
+            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and has been recovered from a backup copy. Voting cannot continue until it is restored. Please contact support with this code. (POLL-03)"
+            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
           }
         }
       }
