@@ -6,7 +6,7 @@ class ZodlPreflightTest < Minitest::Test
     base = {
       variant: "appstore", requested_version: "3.8.0", requested_build: 3,
       project_version: "3.8.0", branch_version: "3.8.0", latest_build: 2,
-      ref_on_origin: true, dirty_tree: false, partner_keys_error: nil,
+      remote: "origin", ref_on_remote: true, dirty_tree: false, partner_keys_error: nil,
       xcode_ok: true, signing_identity_ok: true
     }
     Zodl::Preflight::Context.new(**base.merge(overrides))
@@ -37,7 +37,7 @@ class ZodlPreflightTest < Minitest::Test
   end
 
   def test_unpushed_ref_blocks
-    report = Zodl::Preflight.check(facts(ref_on_origin: false))
+    report = Zodl::Preflight.check(facts(ref_on_remote: false))
     refute report.ok?
     assert(report.errors.any? { |e| e.include?("origin") })
   end

@@ -19,9 +19,15 @@ class ZodlVersionTest < Minitest::Test
     assert_equal "3.8.0", Zodl::Version.from_branch("release/3.8.0")
   end
 
+  def test_from_branch_extracts_candidate_version
+    assert_equal "3.8.0", Zodl::Version.from_branch("candidate/3.8.0")
+  end
+
   def test_from_branch_returns_nil_for_non_release
     assert_nil Zodl::Version.from_branch("main")
     assert_nil Zodl::Version.from_branch("feature/release/3.8.0")
+    assert_nil Zodl::Version.from_branch("feature/candidate/3.8.0")
     assert_nil Zodl::Version.from_branch("release/3.8")
+    assert_nil Zodl::Version.from_branch("candidate/3.8")
   end
 end

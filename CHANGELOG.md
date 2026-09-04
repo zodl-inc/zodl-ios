@@ -1,53 +1,33 @@
 # Changelog
 All notable changes to this application will be documented in this file.
 
-Please be aware that this changelog primarily focuses on user-related modifications, emphasizing changes that can 
-directly impact users rather than highlighting other crucial architectural updates. 
+This changelog is for the people who use ZODL: it records user-visible changes
+— what is different, where you will meet it, and what to do about it. Developer
+tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
 ### Added
 - [MOB-1751] The Pay screen's scanner now reads Bitcoin, Litecoin, Ethereum (including ERC-20) and Solana payment request QR codes, not just plain addresses — the recipient, the coin or token being asked for, and the requested amount are filled in for you. A request is only filled in as a whole: if it names an asset you cannot pay with, or an amount too small for the form to express, nothing on the form changes and a toast explains why. Requests carrying more decimal places than the amount field accepts are rounded down, never up, and you are told when that happens. Test-network requests, Solana links that ask the wallet to sign a prepared transaction, and requests naming an Ethereum name (.eth) instead of an address are refused. Scanning a payment request into the address book now saves just the address instead of the whole URI.
-- [Ironwood] Before opening the voting database, ZODL now preserves a copy of it under `voting_recovery`. If an earlier version already discarded a poll's delegation, that copy keeps what is needed to restore it later — even if you upgrade long after the poll was affected. It is taken only once, so the earliest and most complete copy is the one kept; it is included in device backups so it survives a migration, and is removed when the wallet is reset.
+- [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
+
+### Changed
+- [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
+
+### Fixed
+- [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
+- The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
+
+## [3.10.3] - 2026-08-31
+
+### Added
 - [MOB-1749] When a wallet that already holds Ironwood funds still has a small spendable amount of ZEC sitting in the Orchard pool — less than 0.01 ZEC but more than 0.0001 ZEC, typically after restoring a wallet that was migrated on another device or after moving funds yourself — the home screen shows a "… ZEC left in Orchard" banner once the wallet is fully synced (never over a figure that has not been verified). The banner ranks directly below the migration banners themselves — only connectivity and sync-error alerts and an actual migration outrank it — and it retires for good after two taps (lock or migrate), so the reminders it briefly covers return; an outstanding shielding reminder also no longer hides the reminders ranked below it. Tapping More opens a screen that shows what is in Ironwood, what is left in Orchard, what is still pending, and — when an earlier visit locked part of it — what is already locked, and lets you lock the leftover balance (recommended: moving an amount that specific could link your Ironwood funds back to your Orchard history) or migrate it anyway. Migrating anyway from an unlocked balance moves only the spendable leftover and never touches an amount you locked before; on a locked balance the same button is the way back — it unlocks the funds and moves them after all. A completed migration's screen always reports that run's own leftover, even when an earlier amount is still locked, and leaving the flow with a back-swipe is immediate. A migration that is still running, or a Migration Complete screen you have not reviewed yet, always takes precedence, and the banner disappears by itself once the balance is locked or migrated.
 - [MOB-1753] The vote submission screen now explains that submitting can take a few minutes and that wallets with more voting weight take longer to process.
-- [MOB-1466] Advanced Settings now offers "Restart Migration" while a migration is running. It shows how much has already migrated and how much is left, warns that restarting cancels the current plan for good, and asks for a separate confirmation before anything happens. Transfers that already went out are untouched — they stay migrated — and once the plan is cancelled you set up a new one for the remaining balance the same way you did the first time.
-- [MOB-1466] With a privacy migration in progress, keeping the app open now advances the migration automatically — transfers send on schedule without reopening the app.
-- [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
-- [Ironwood] Once ZODL sees that the Ironwood network upgrade is live on the network, it shows a short one-time screen introducing the change, with a link to a support article. It appears once per device — after you continue past it, it never comes back.
-- [MOB-1535] Tapping your balance on the home screen now opens a "Total Balance Across Pools" breakdown showing how much ZEC sits in each Zcash pool — Orchard, Sapling, Transparent and Ironwood — so you can see exactly where your funds are. When currency conversion is turned on, each pool also shows its value in your selected currency. Pools you hold nothing in are still listed, and with balances hidden every amount stays masked.
-- The hidden database debug screen (Settings → What's New → long-press the logo) now accepts a special "print_notifs" query that lists the migration reminder notifications currently scheduled on the device — their identifiers, fire times and accounts — instead of running SQL.
-- [Ironwood] Warn before confirming a send that has to spend Orchard funds: the confirmation screen now shows a sheet recommending migration first, with the option to continue or cancel.
 - [Internal] On the Send screen, in internal and testnet builds only, the Amount field now has a "Max" button that fills in the maximum amount you can send, net of the network fee — computed for the exact payment being set up, including its memo. The button is available only with a spendable balance and a valid recipient address, a result for an outdated address is discarded, and a toast tells you when the amount could not be fetched.
 - [Internal] On the Swap and Pay screens, in internal and testnet builds only, the amount field now has a "Max" button too. On Swap it fills in the largest amount of ZEC you can swap, net of the network fee (or its value in USD when you have switched the field to USD); on Pay it fills in what that amount is worth in the token you are paying with, and updates the accompanying USD value alongside it. The button is unavailable while your balance is still confirming or empty, or while a quote is being fetched, and a toast tells you when the amount could not be fetched or converted.
 
 ### Changed
-- Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
 - The paste-seed shortcut on the Secret Recovery Phrase screen (long-press the title) now works in internal and testnet builds — including TestFlight — instead of debug builds only. It stays excluded from the App Store build.
-- [MOB-1678] Coinholder Polling now loads its trusted configuration through the resilient voting config gateway, so a GitHub outage no longer blocks configuration loading while the mirrored copy is available.
-- [MOB-1466] Starting a migration now holds you on a "Scheduling…" screen while the schedule is confirmed and the first step is prepared, instead of leaving you on the plan under a spinning button for up to half a minute. The summary fills in with your real numbers the moment it is ready.
-- [MOB-1466] The migration split details sheet now scrolls when a split has more than five steps, so long splits stay readable and the sheet's total and "Got it" button stay reachable. Shorter splits are unchanged.
-- [MOB-1466] "Restart Migration" appears in Advanced Settings only while a migration is actually in progress, and no longer lingers once one has finished.
-- [MOB-1466] After restarting a migration, the home screen banner no longer keeps counting the cancelled run — it clears and offers the migration again for your remaining balance.
-- [MOB-1496] The balance-splitting transactions a migration prepares now go out in the same app session that prepares them, instead of waiting for the next 30-second check to pick them up. Preparing one and sending it are a single step by design, so a run's setup phase no longer stalls a step behind itself. Each one is also reported back to the migration engine as sent, so it is never announced to the network a second time from a later check.
-- [MOB-1496] Scheduled migration transfers are no longer delayed by a fixed waiting period after a sync. The app used to refuse to send for ten minutes (three on testnet) after every completed sync, and the SDK refused to sync for ten minutes after every migration broadcast, so a wallet could sit open doing nothing for long stretches while a transfer was ready to go. Both waits are gone: a fixed delay between a sync and a send is itself a recognisable pattern on the network rather than protection from one, so pacing is no longer done by the clock. Migration steps now run when they are actually due, and anything you ask for that needs a sync — pulling to refresh, starting a send — is never held back. The only remaining pause is the few seconds while a migration transaction is actually being submitted.
-- [Ironwood] Migration transactions are now labeled by what they do: the Activity list and the transaction detail screen show "Splitting Balance…"/"Balance Split"/"Split Failed" for note-preparation transactions and "Migrating…"/"Migrated"/"Migration Failed" for pool transfers, with a dedicated coins-swap icon. Their amount now shows the value being moved instead of the transaction fee, without a minus sign — migrations move funds inside your wallet, they don't spend them.
-- [Ironwood] In-progress migration transactions appear in the Activity list as soon as they are prepared, clearly labeled with their live state, instead of being hidden until mined.
-- [Ironwood] Coinholder Polling is available again and reappears in Settings, now that voting runs on the Ironwood network upgrade. Nothing was deleted while it was away — any rounds you had already taken part in are still there.
-- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
-- [MOB-1535] The "Total Balance Across Pools" breakdown now shows each pool's balance to its full precision (up to 8 decimal places) instead of flooring to 0.001 ZEC, so small amounts are no longer hidden, and the pools now appear in the order Ironwood, Orchard, Sapling, Transparent.
-- [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
-- [Ironwood] Migration plan previews now show sane value breakdowns: exact funding amounts are preserved, and a split that cannot be funded reports as deferred instead of complete.
-- [Ironwood] The migration reminder is now armed from the engine's own next-work answer as well as the schedule, so the "come back" notification lands at the earliest genuinely serviceable moment — and never inside the privacy buffer for send work.
-
-- [MOB-1466] Migration status text now says what is happening right now: while transfers are being prepared, or while one is being sent, the Migration Progress screen says so and asks you to keep ZODL open; the rest of the time it tells you we will notify you when it is your turn. The note above the Got it button follows the same state, so the screen and the home banner can no longer describe different things.
-- [MOB-1466] The Confirm Transfer Plan screens now explain the arrangement the same way in both cases — how long the run takes, that we notify you at each step, and that opening the app promptly keeps it on track. They no longer say the migration continues "in the background", which iOS does not allow.
-- [MOB-1466] The notifications request now explains why it matters: iOS will not let transfers send in the background, so local notifications are the only way ZODL can tell you when to open it and take the next step.
-- [MOB-1466] While ZODL is checking migration status on open, the migration banner no longer offers a button and the Migration Progress screen cannot be opened — until the check finishes, that screen would only show the previous session's numbers.
-- [MOB-1466] Migration banner states now stay on screen for at least half a second each, so a quick run of changes reads as separate states instead of a flicker you cannot follow. Rapid updates to the same state (for example a rising transfer count) update in place without adding delay.
-
-### Removed
-- [MOB-1466] The "Updating…" label and the "Balances as of ~N min ago" line have been removed from the Migration Progress screen. Both described how fresh ZODL's own reads were rather than anything you can act on, and neither was part of the design.
 
 ### Fixed
 - [MOB-1800] Tapping Confirm when submitting a vote now responds immediately: the button disables and shows a spinner the instant it is tapped, extra taps can no longer interrupt and restart a submission already underway, and the screen no longer briefly re-enables mid-submission while the authorization work hands over. Cancelling the Face ID prompt cleanly returns the Confirm button.
@@ -57,7 +37,6 @@ directly impact users rather than highlighting other crucial architectural updat
 - [Ironwood] Opening a poll no longer deletes and recreates it when its setup was interrupted. The round is reused where it already exists, so nothing a poll has accumulated can be discarded by opening it.
 - [MOB-1810] The polls list opens without waiting for vote-server health checks; checks now run in the background when entering a poll, and recovering share deliveries steer around servers that keep failing.
 - [MOB-1810] Fixed a crash when the voting service configuration lists the same server URL twice; such configurations are now rejected with a clear error.
-- Coinholder Polling now recovers an ambiguously submitted delegation or vote by checking its exact transaction hash, and reopening a poll no longer discards persisted delegation setup needed to retry safely.
 - [MOB-1798] Coinholder Polling now correctly reads delegation positions from older vote-server responses.
 - [MOB-1801] Coinholder Polling no longer becomes unavailable when the primary voting configuration service is unreachable or blocked (for example on networks that filter crypto-related domains). The app now verifies the same pinned configuration from a second, independent mirror and walks the configuration's own mirror list the same way, and configuration requests give up after 15 seconds instead of two minutes, so a dead route fails over quickly instead of locking you out of voting.
 - [MOB-1801] Coinholder Polling no longer becomes unavailable when the primary voting configuration service is unreachable or blocked (for example on networks that filter crypto-related domains). The app now verifies the same pinned configuration from a second, independent mirror and walks the configuration's own mirror list the same way, and configuration requests give up after 15 seconds instead of two minutes, so a dead route fails over quickly instead of locking you out of voting. The Default source in the voting configuration settings now also shows the mirror it may contact.
@@ -68,10 +47,71 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1755] A transparent deposit that arrives while ZODL is still syncing now produces the shielding offer as soon as the sync completes — previously the offer could be silently lost until the next app launch. When a shielding offer stops being valid just as it is about to appear, the banner now moves on to the next suggestion instead of showing nothing, and a completed shield no longer knocks down an unrelated banner that happened to be on screen.
 - [MOB-1755] The shielding suggestion no longer disappears for the whole session when the syncing or error banner takes its place — it returns once the wallet is back up to date. A banner being retracted at the exact moment another one is being shown can no longer knock down the new banner, the sync-error banner included, and a banner that was just retracted can no longer briefly reappear as an empty shell.
 - [MOB-1755] Switching accounts right when ZODL was mid-check for a shielding offer could leave the banner showing a balance left over from the account you switched away from. The check now always applies to whichever account is currently selected.
+- [MOB-1802] Keystone voting signing QR is now drawn on a white plate like the send-flow QR, so Keystone devices can scan it in dark mode.
+
+## [3.10.2] - 2026-08-27
+
+### Added
+- [Ironwood] Before opening the voting database, ZODL now preserves a copy of it under `voting_recovery`. If an earlier version already discarded a poll's delegation, that copy keeps what is needed to restore it later — even if you upgrade long after the poll was affected. It is taken only once, so the earliest and most complete copy is the one kept; it is included in device backups so it survives a migration, and is removed when the wallet is reset.
+
+### Fixed
+- Coinholder Polling now recovers an ambiguously submitted delegation or vote by checking its exact transaction hash, and reopening a poll no longer discards persisted delegation setup needed to retry safely.
+
+## [3.10.0] - 2026-08-24
+
+### Changed
+- [MOB-1678] Coinholder Polling now loads its trusted configuration through the resilient voting config gateway, so a GitHub outage no longer blocks configuration loading while the mirrored copy is available.
+- [Ironwood] Coinholder Polling is available again and reappears in Settings, now that voting runs on the Ironwood network upgrade. Nothing was deleted while it was away — any rounds you had already taken part in are still there.
+
+## [3.9.5] - 2026-08-18
+
+## [3.9.4] - 2026-08-17
+
+## [3.9.3] - 2026-08-13
+
+### Added
+- [Ironwood] Warn before confirming a send that has to spend Orchard funds: the confirmation screen now shows a sheet recommending migration first, with the option to continue or cancel.
+
+## [3.9.2] - 2026-08-11
+
+### Added
+- The hidden database debug screen (Settings → What's New → long-press the logo) now accepts a special "print_notifs" query that lists the migration reminder notifications currently scheduled on the device — their identifiers, fire times and accounts — instead of running SQL.
+
+### Fixed
 - [MOB-1630] The migration banner no longer offers a migration when the account's Orchard balance is below 0.01 ZEC/TAZ — the smallest amount a migration can move. Such an offer could never be fulfilled: tapping it always ended on a failure screen, and the "Migration Required" banner never went away.
 - [MOB-1581] A sent transaction no longer stays stuck showing "Sending…" after it has confirmed. ZODL no longer misses the confirmation signal when it arrives alongside other synchronizer events, keeps refreshing the transaction list after the app returns from the background (previously a single background/foreground cycle silently stopped the automatic refresh until the app was relaunched), and additionally re-checks pending transactions every 30 seconds as a safety net.
 - [MOB-1670] "Split Balance" rows in the migration plan and Migration Progress timelines now always show the coins-swap icon instead of sometimes borrowing a transfer's step number. A split row could previously appear as "1" — while its transaction was confirming, once its window had passed, or for the second and later rows of a balance that splits in several steps — which read as though it were the first transfer rather than the preparation step that comes before them.
 - [MOB-1670] The connecting line below the "Split Balance" row on the Confirm Transfer Plan screen is no longer drawn in black while the split is still waiting to run. The dark line marks the transfer that is currently up, so on a plan you had not started yet it made the split look already underway; every step now reads as the same neutral gray until something actually sends.
+
+## [3.9.1] - 2026-08-11
+
+### Added
+- [MOB-1466] Advanced Settings now offers "Restart Migration" while a migration is running. It shows how much has already migrated and how much is left, warns that restarting cancels the current plan for good, and asks for a separate confirmation before anything happens. Transfers that already went out are untouched — they stay migrated — and once the plan is cancelled you set up a new one for the remaining balance the same way you did the first time.
+- [MOB-1466] With a privacy migration in progress, keeping the app open now advances the migration automatically — transfers send on schedule without reopening the app.
+
+### Changed
+- [MOB-1466] Starting a migration now holds you on a "Scheduling…" screen while the schedule is confirmed and the first step is prepared, instead of leaving you on the plan under a spinning button for up to half a minute. The summary fills in with your real numbers the moment it is ready.
+- [MOB-1466] The migration split details sheet now scrolls when a split has more than five steps, so long splits stay readable and the sheet's total and "Got it" button stay reachable. Shorter splits are unchanged.
+- [MOB-1466] "Restart Migration" appears in Advanced Settings only while a migration is actually in progress, and no longer lingers once one has finished.
+- [MOB-1466] After restarting a migration, the home screen banner no longer keeps counting the cancelled run — it clears and offers the migration again for your remaining balance.
+- [MOB-1496] The balance-splitting transactions a migration prepares now go out in the same app session that prepares them, instead of waiting for the next 30-second check to pick them up. Preparing one and sending it are a single step by design, so a run's setup phase no longer stalls a step behind itself. Each one is also reported back to the migration engine as sent, so it is never announced to the network a second time from a later check.
+- [MOB-1496] Scheduled migration transfers are no longer delayed by a fixed waiting period after a sync. The app used to refuse to send for ten minutes (three on testnet) after every completed sync, and the SDK refused to sync for ten minutes after every migration broadcast, so a wallet could sit open doing nothing for long stretches while a transfer was ready to go. Both waits are gone: a fixed delay between a sync and a send is itself a recognisable pattern on the network rather than protection from one, so pacing is no longer done by the clock. Migration steps now run when they are actually due, and anything you ask for that needs a sync — pulling to refresh, starting a send — is never held back. The only remaining pause is the few seconds while a migration transaction is actually being submitted.
+- [Ironwood] Migration transactions are now labeled by what they do: the Activity list and the transaction detail screen show "Splitting Balance…"/"Balance Split"/"Split Failed" for note-preparation transactions and "Migrating…"/"Migrated"/"Migration Failed" for pool transfers, with a dedicated coins-swap icon. Their amount now shows the value being moved instead of the transaction fee, without a minus sign — migrations move funds inside your wallet, they don't spend them.
+- [Ironwood] In-progress migration transactions appear in the Activity list as soon as they are prepared, clearly labeled with their live state, instead of being hidden until mined.
+- [MOB-1466] The warning shown before a manual send during a scheduled migration is now more precise — it only appears when that specific send would actually spend Orchard funds the migration needs, instead of whenever any unmigrated Orchard balance remains in the account.
+- [MOB-1466] The "ready to run" step badge in the migration plan's Split Balance row now shows its step number instead of a checkmark, to avoid reading as already completed.
+- [Ironwood] Migration plan previews now show sane value breakdowns: exact funding amounts are preserved, and a split that cannot be funded reports as deferred instead of complete.
+- [Ironwood] The migration reminder is now armed from the engine's own next-work answer as well as the schedule, so the "come back" notification lands at the earliest genuinely serviceable moment — and never inside the privacy buffer for send work.
+- [MOB-1466] Migration status text now says what is happening right now: while transfers are being prepared, or while one is being sent, the Migration Progress screen says so and asks you to keep ZODL open; the rest of the time it tells you we will notify you when it is your turn. The note above the Got it button follows the same state, so the screen and the home banner can no longer describe different things.
+- [MOB-1466] The Confirm Transfer Plan screens now explain the arrangement the same way in both cases — how long the run takes, that we notify you at each step, and that opening the app promptly keeps it on track. They no longer say the migration continues "in the background", which iOS does not allow.
+- [MOB-1466] The notifications request now explains why it matters: iOS will not let transfers send in the background, so local notifications are the only way ZODL can tell you when to open it and take the next step.
+- [MOB-1466] While ZODL is checking migration status on open, the migration banner no longer offers a button and the Migration Progress screen cannot be opened — until the check finishes, that screen would only show the previous session's numbers.
+- [MOB-1466] Migration banner states now stay on screen for at least half a second each, so a quick run of changes reads as separate states instead of a flicker you cannot follow. Rapid updates to the same state (for example a rising transfer count) update in place without adding delay.
+
+### Removed
+- [MOB-1466] The "Updating…" label and the "Balances as of ~N min ago" line have been removed from the Migration Progress screen. Both described how fresh ZODL's own reads were rather than anything you can act on, and neither was part of the design.
+
+### Fixed
 - [MOB-1496] While a balance-splitting migration transaction is actually being sent, the app now knows it is busy: the keep-open banner shows for the duration of the send, exactly as it does for a migration transfer, and re-entering the migration flow mid-send is held off the same way. Previously the send ran with no visible state at all, so nothing asked you to keep ZODL open and backgrounding it at the wrong moment could stall the split until a later pass.
 - [MOB-1496] When the network permanently rejects one of the balance-splitting transactions a migration prepares (a validation verdict, not a connection problem), the migration engine is now told the real outcome instead of nothing. Previously the app treated every non-acceptance as a retryable network error, so it kept re-submitting the same doomed transaction every pass and every 30-second check until it expired — hours in the split phase with no failure surface. Now the run can re-evaluate and ask for your attention instead.
 - [MOB-1496] A migration transfer being sent can no longer collide with the automatic server switch: like every other send, the transfer now holds the submission guard for the duration of its broadcast, so a server change waits (or skips) instead of tearing down the connection while the transfer is still on the wire.
@@ -110,6 +150,39 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1466] Confirming a migration while the wallet is already fully synced now starts preparing the first transaction right away. Previously the run could sit at "Preparing…" indefinitely — the first proof only ran at a sync-completion moment that had already passed by the time the migration was confirmed, and nothing re-triggered it until the app was closed and reopened.
 - [MOB-1466] Scheduled migration transfers no longer get stuck behind the privacy buffer while the app stays open: when a transfer is ready to send, the wallet pauses syncing while the privacy quiet-period elapses — up to 10 minutes on mainnet — then sends the transfer automatically.
 - [MOB-1466] The Migration Progress screen now refreshes itself while open — transfer ETAs and statuses update every 30 seconds without closing and reopening the screen.
+- [MOB-1466] The migration plan review screen (before you confirm) now describes transfers in forward-looking terms — "Starts right away" / "Starts in ~N mins" / "Starts in ~N hours" — instead of "Ready now", so the screen doesn't read as if transfers are already under way before you've confirmed anything.
+- [MOB-1466] The migration plan review screen's action button now reads "Start migration" instead of "Confirm", making clear that tapping it is what actually starts your migration.
+- [MOB-1466] Leaving the migration plan review screen via the back button, before you've started the plan, now asks you to confirm first — "Your migration hasn't started yet. Leaving now won't schedule any transfers." — so you can't accidentally back out thinking your migration is already underway.
+- [MOB-1466] A successful migration transfer no longer wedges the wallet: the sync gate's refusal to start (part of the migration privacy protection) is now handled as the broadcast session it actually signals, instead of showing a fatal, unrecoverable initialization error.
+- [MOB-1466] The Migration Progress screen and banner now always show the engine's live state — the stale-cache layer that could show an outdated transfer/split status (or a pre-commit empty screen) while proving ran has been removed.
+- [MOB-1466] Opening the migration from the banner no longer flashes or stacks the mode-picker screen beneath the migration progress screen.
+- [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
+- The Confirm button on a migration transfer plan now keeps its loading indicator up until your transfers are prepared and presigned (the first delivery kicked off), then opens the Migration Scheduled screen — one tap, no dead first tap, and the Home banner reflects the committed run when you return. The Confirm button still can no longer be tapped again after a successful commit.
+- [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
+
+## [3.8.1] - 2026-07-31
+
+### Fixed
+- [MOB-1581] The Activity list now shows a sent transaction immediately after sending, regardless of how the send flow is closed, instead of waiting for the next sync cycle.
+- [MOB-1593] Transaction detail no longer shows an extra, empty message bubble on sent transactions, and "Send again" prefills the actual message text again.
+
+### Changed
+- [MOB-1580] A transaction sent to yourself — a manual send to your own address, or a migration transfer between your own pools — now always shows the network fee rather than an amount that could differ between devices or change once the transaction confirmed.
+
+## [3.8.0] - 2026-07-28
+
+### Added
+- [Ironwood] ZODL now recognizes funds held in the Ironwood shielded pool. Balances on the home screen, in the balances breakdown and in the shielding banner include Ironwood alongside Sapling and Orchard, so those funds are visible and counted as soon as the network upgrade activates.
+- [Ironwood] A transfer that moves funds into the Ironwood pool now shows the amount that actually moved, in both the transaction list and the transaction detail screen. Previously such a transfer displayed only its fee.
+- [Ironwood] Once ZODL sees that the Ironwood network upgrade is live on the network, it shows a short one-time screen introducing the change, with a link to a support article. It appears once per device — after you continue past it, it never comes back.
+- [MOB-1535] Tapping your balance on the home screen now opens a "Total Balance Across Pools" breakdown showing how much ZEC sits in each Zcash pool — Orchard, Sapling, Transparent and Ironwood — so you can see exactly where your funds are. When currency conversion is turned on, each pool also shows its value in your selected currency. Pools you hold nothing in are still listed, and with balances hidden every amount stays masked.
+
+### Changed
+- [Ironwood] Coinholder Polling is temporarily unavailable and no longer appears in Settings, while voting is brought up to date with the Ironwood network upgrade. No voting data is deleted — the feature returns in a later release.
+- [MOB-1510] Signing with a Keystone device now requires firmware 3.0.1 or newer — older or version-less firmware is blocked with an update prompt before anything is broadcast, and the prompt reports the firmware version exactly as your Keystone displays it.
+- [MOB-1535] The "Total Balance Across Pools" breakdown now shows each pool's balance to its full precision (up to 8 decimal places) instead of flooring to 0.001 ZEC, so small amounts are no longer hidden, and the pools now appear in the order Ironwood, Orchard, Sapling, Transparent.
+
+### Fixed
 - [Ironwood] The automatic recovery from another wallet's leftover data (see MOB-1512 below) keeps working with the updated Zcash SDK. The SDK now reports that mismatch as an error rather than a status, so ZODL maps it back onto the same recovery and the wallet still heals itself instead of stopping on an initialization error.
 - [MOB-140] On the Receive screen, the Zcash Sapling address (testnet debug builds only) now shows the same shield badge on its icon as the Zcash Shielded Address, instead of an incomplete badge that made the address look unshielded.
 - [#1948] The Syncing Error details now name the server ZODL is connected to and show both consensus branch IDs in hex (e.g. `0x37a5165b`) — the form used in ZIPs and other documentation — rather than unrecognizable decimal numbers, and the same information is included in the report sent to support. When the failure is a network-rules mismatch (ZCBPEO0011), where retrying can never succeed because either ZODL or the server is out of date, the sheet also offers a Switch server shortcut.
@@ -122,20 +195,8 @@ directly impact users rather than highlighting other crucial architectural updat
 - [MOB-1512] The "Wallet data replaced" notice now stays on screen after the healed wallet opens, instead of disappearing during the transition to the home screen.
 - [Keystone] Switching between the ZODL and Keystone accounts now always shows the selected account's transaction history — a slow in-flight refresh for the previous account can no longer overwrite it — and connecting a Keystone hardware wallet refreshes the transaction list and balance immediately.
 - [Keystone] The transaction list no longer gets stuck showing its loading placeholder when switching to an account whose transaction list turns out identical to the previous one — in practice, switching between two accounts that both have no transactions, such as right after connecting a Keystone.
-- [MOB-1581] The Activity list now shows a sent transaction immediately after sending, regardless of how the send flow is closed, instead of waiting for the next sync cycle.
-- [MOB-1593] Transaction detail no longer shows an extra, empty message bubble on sent transactions, and "Send again" prefills the actual message text again.
-- [MOB-1466] The migration plan review screen (before you confirm) now describes transfers in forward-looking terms — "Starts right away" / "Starts in ~N mins" / "Starts in ~N hours" — instead of "Ready now", so the screen doesn't read as if transfers are already under way before you've confirmed anything.
-- [MOB-1466] The migration plan review screen's action button now reads "Start migration" instead of "Confirm", making clear that tapping it is what actually starts your migration.
-- [MOB-1466] Leaving the migration plan review screen via the back button, before you've started the plan, now asks you to confirm first — "Your migration hasn't started yet. Leaving now won't schedule any transfers." — so you can't accidentally back out thinking your migration is already underway.
-- [MOB-1466] A successful migration transfer no longer wedges the wallet: the sync gate's refusal to start (part of the migration privacy protection) is now handled as the broadcast session it actually signals, instead of showing a fatal, unrecoverable initialization error.
-- [MOB-1466] The Migration Progress screen and banner now always show the engine's live state — the stale-cache layer that could show an outdated transfer/split status (or a pre-commit empty screen) while proving ran has been removed.
-- [MOB-1466] Opening the migration from the banner no longer flashes or stacks the mode-picker screen beneath the migration progress screen.
-- [MOB-1466] Swiping back off the very first screen shown when re-opening an in-progress migration now closes the migration flow, instead of leaving a blank, stuck screen with no way forward except quitting the app.
-- The Confirm button on a migration transfer plan now keeps its loading indicator up until your transfers are prepared and presigned (the first delivery kicked off), then opens the Migration Scheduled screen — one tap, no dead first tap, and the Home banner reflects the committed run when you return. The Confirm button still can no longer be tapped again after a successful commit.
-- [Ironwood] Accepting a migration plan on a large wallet no longer stalls for tens of minutes — plan commit completes promptly.
-- [MOB-1802] Keystone voting signing QR is now drawn on a white plate like the send-flow QR, so Keystone devices can scan it in dark mode.
 
-## 3.7.3 build 1 (20026-07-12)
+## 3.7.3 build 1 (2026-07-12)
 
 ### Changed
 - [MOB-1472] The assets you can swap are now a curated set of major coins and stablecoins across the supported chains (plus swapping to ZEC), instead of the full list from the swap provider, and the address-book chain picker is limited to those chains. Existing swaps in your history (including assets no longer offered) still display normally, and existing contacts on other chains are preserved.
@@ -244,14 +305,14 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Changed
 - Swap to ZEC's swap type updated to FLEX_INPUT, reducing number of occurences of INCOMPLETE_DEPOSIT states.
-- Tap to enlarge a QR code implemented for: Receive, Request ZEC, Swap to ZEC, Sign with Keystone. 
- 
+- Tap to enlarge a QR code implemented for: Receive, Request ZEC, Swap to ZEC, Sign with Keystone.
+
 ### Fixed
 - Transaction detail row corners.
 - Address font at several places.
 - Splash screen layout in different states.
 - Unresponsivness of the View transaction button.
-- Missing pending transaction in the list. 
+- Missing pending transaction in the list.
 - Missing Done button in a numberic keypad.
 
 ### Removed
@@ -274,7 +335,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Fixed
 - Missing back buttons at some flows starting from the Home screen.
 - Load of activities related to the current account.
-- Load of metadata after wallet restore. 
+- Load of metadata after wallet restore.
 
 ## 3.0.0 build 2 (2026-02-26)
 
@@ -381,7 +442,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - Zero confirmation transaction.
-- Transaction history cleared after account switches. 
+- Transaction history cleared after account switches.
 
 ## 2.4 build 2 (2025-10-01)
 
@@ -419,8 +480,8 @@ directly impact users rather than highlighting other crucial architectural updat
 * Copy on the Receive screen.
 * The animation on the Sending screen.
 
-### Fixed 
-* The issue with fetching USD conversion rate and made it more reliable. 
+### Fixed
+* The issue with fetching USD conversion rate and made it more reliable.
 
 ## 2.0.3 build 1 (2025-05-19)
 
@@ -430,17 +491,17 @@ directly impact users rather than highlighting other crucial architectural updat
 ## 2.0.2 build 1 (2025-05-08)
 
 ### Changed
-- When entering amount in USD in the Send or Request ZEC flow, we floor the Zatoshi amount automatically to the nearest 5000 Zatoshi to prevent creating unspendable dust notes in your wallet. 
+- When entering amount in USD in the Send or Request ZEC flow, we floor the Zatoshi amount automatically to the nearest 5000 Zatoshi to prevent creating unspendable dust notes in your wallet.
 - The privacy policy updated to be displayed in an in-app browser for better user experience.
 - Primary & secondary button position to follow UX best practices.
-- Receive screen design to better align with the app navigation change. 
+- Receive screen design to better align with the app navigation change.
 - Send and Receive screen icons across the app.
 - Copy in a few places.
 
 ### Fixed
 - Home buttons sizing across devices.
 - Padding on the Address Book screen.
-- Issue with word suggestions during Restore flow. 
+- Issue with word suggestions during Restore flow.
 - Issue with the Spendable bottom sheet getting auto-closed in certain edge cases.
 
 ## 2.0.1 build 1 (2025-04-30)
@@ -462,7 +523,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ## 1.5.3 build 1 (2025-04-14)
 
 ### Fixed
-- We fixed an issue with transaction flow getting stuck on the sending screen in case of failed biometric check. 
+- We fixed an issue with transaction flow getting stuck on the sending screen in case of failed biometric check.
 
 ## 1.5.2 build 1 (2025-04-09)
 
@@ -543,8 +604,8 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Added
 - Authentication for the app launch and cold starts after 15 minutes.
-- Send experience reworked to display a sending screen, followed by transaction result screens. 
-- You can now select any text you want from a memo directly in Zashi. 
+- Send experience reworked to display a sending screen, followed by transaction result screens.
+- You can now select any text you want from a memo directly in Zashi.
 
 ### Changed
 - Not enough free space screen has been redesigned.
@@ -593,7 +654,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Changed
 - The design of the Settings and Advanced Settings screens.
-- The design of the Server Switch screen has been fully updated to the new style. 
+- The design of the Server Switch screen has been fully updated to the new style.
 
 ## 1.1.5 build 1 (2024-08-22)
 
@@ -609,8 +670,8 @@ directly impact users rather than highlighting other crucial architectural updat
 ## 1.1.4 build 3 (2024-08-22)
 
 ### Added
-- We added ZEC/USD currency conversion to Zashi which doesn't compromise your IP address. 
-- You can now view your balances, and type in the transaction amount in both USD and ZEC. 
+- We added ZEC/USD currency conversion to Zashi which doesn't compromise your IP address.
+- You can now view your balances, and type in the transaction amount in both USD and ZEC.
 
 ### Changed
 - We adopted the latest Zcash SDK version 2.2.0, which brings ZIP 320 TEX address support and ZEC/USD currency conversion functionality.
@@ -626,7 +687,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - The unread transactions with memos are properly marked with a yellow icon again.
-- Sometimes, the memo was missing in the history, and sometimes it disappeared when the transaction state changed. Both cases have been fixed. 
+- Sometimes, the memo was missing in the history, and sometimes it disappeared when the transaction state changed. Both cases have been fixed.
 
 ## 1.1.2 build 1 (2024-06-14)
 
@@ -660,7 +721,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - Dark mode.
 - Scan QR code from an image stored in the library.
-- Hide the balances with an eye icon on the Account or Balances tabs. 
+- Hide the balances with an eye icon on the Account or Balances tabs.
 
 ### Changed
 - The confirmation button at recovery phrase screen changed its name from "I got it" to "I've saved it".
@@ -748,7 +809,7 @@ directly impact users rather than highlighting other crucial architectural updat
 ### Added
 - Pending values (changes) at the Balances tab.
 - Choose a Server feature: available at settings, pre-defined servers + custom server setup.
-- Account tab UI tweaks for no transactions available. 
+- Account tab UI tweaks for no transactions available.
 
 ### Fixed
 - Restore mode in the UI was missing when Zashi was deleted from an iPhone and reinstalled again.
@@ -790,7 +851,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - The export buttons are disabled when exporting of the private data is in progress.
-- The alert message and title for the failed transaction send.  
+- The alert message and title for the failed transaction send.
 
 ## 0.2.0 build 11 (2023-12-13)
 
@@ -803,7 +864,7 @@ directly impact users rather than highlighting other crucial architectural updat
 
 ### Fixed
 - Fixed a bug that caused spends to appear to be stuck.
-- The confirmation screen has been altered such that the message bubble is rendered only when the message is non-empty. 
+- The confirmation screen has been altered such that the message bubble is rendered only when the message is non-empty.
 
 ## 0.2.0 build 10 (2023-11-30)
 
@@ -813,7 +874,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - When the send button is tapped, the sending title + spinner is shown instead of just the spinner. Also, when the send is done, and redirect to the Account page is done, the sending transaction is already populated in the list. The lag between it was presented has been fixed.
 
 ### Removed
-- [testnet only] The sapling address and the QR of it has been removed from the receive screen. The only meaningful options are the UA and the transparent addresses. 
+- [testnet only] The sapling address and the QR of it has been removed from the receive screen. The only meaningful options are the UA and the transparent addresses.
 
 ### Added
 - Confirmation screen when sending funds. The initial screen is about filling in the address, amount and message (optional). The butoon `review` leads to a brand new screen where the summary of the transaction is presented. The send is confirmed by tapping the send button. Going back to update send data is possible via `go back` button.
@@ -821,8 +882,8 @@ directly impact users rather than highlighting other crucial architectural updat
 ## 0.2.0 build 9 (2023-11-14)
 
 ### Changed
-- Send (tab) redesigned: All the input fields are at the same screen. The screen is scrollable so it's usable on every possible iPhone.  
-- Complete redesign of transactions on the Account tab. Expandable transactions show details of it, including options to copy transaction IDs as well as addresses. 
+- Send (tab) redesigned: All the input fields are at the same screen. The screen is scrollable so it's usable on every possible iPhone.
+- Complete redesign of transactions on the Account tab. Expandable transactions show details of it, including options to copy transaction IDs as well as addresses.
 
 ### Added
 - The concept of read/unread transactions with the message (memo) implemented. The color of the icon of received transaction that holds message and hasn't been read yet is yellow. Once the transaction is expanded, the icon's color flips to the black and the state is persisted.
@@ -830,17 +891,17 @@ directly impact users rather than highlighting other crucial architectural updat
 ## 0.2.0 build 6 (2023-11-01)
 
 ### Added
-- Option to export private data: brand new screen accessible via Settings, where once consent acknowledged, a user can export a database of data. Important note: the data are sensitive because it holds some information about user's transactions and history but spending keys are not exported so lost of funds is not possible. 
+- Option to export private data: brand new screen accessible via Settings, where once consent acknowledged, a user can export a database of data. Important note: the data are sensitive because it holds some information about user's transactions and history but spending keys are not exported so lost of funds is not possible.
 
 ## 0.2.0 build 5 (2023-10-26)
 
 ### Changed
-- Settings screen has been redesigned and options on the screen changed. 
+- Settings screen has been redesigned and options on the screen changed.
 - Truncation of the balances changed from 8 floating points to the 3 only.
 - Restore from the seed flow and UI updated.
 
 ### Added
-- Option to copy the seed to the pasteboard when a new wallet is created and the seed presented.  
+- Option to copy the seed to the pasteboard when a new wallet is created and the seed presented.
 
 ## 0.2.0 build 4 (2023-10-13)
 
@@ -852,7 +913,7 @@ directly impact users rather than highlighting other crucial architectural updat
 - Recovery screen UI updated (the screen with the seed presented).
 
 ### Added
-- The security warning screen with that is presented when the new wallet is created now holds a link in the text that takes a user to the privacy policy.   
+- The security warning screen with that is presented when the new wallet is created now holds a link in the text that takes a user to the privacy policy.
 
 ## 0.2.0 build 3 (2023-10-05)
 
@@ -868,15 +929,15 @@ directly impact users rather than highlighting other crucial architectural updat
 - The send button is disabled until the spendable balance is not a zero.
 
 ### Added
-- The wallet now handles lifecycle events: when the app goes to the background and back to the foreground. That fixed lightwalletd errors.  
+- The wallet now handles lifecycle events: when the app goes to the background and back to the foreground. That fixed lightwalletd errors.
 
-# Previous Changelog records before we rethink the idea of the changelog and before Zashi design 
+# Previous Changelog records before we rethink the idea of the changelog and before Zashi design
 
 ## 0.0.1 build 52
 - [#709] Better error handling in tests (#713)
 
 ## 0.0.1 build 51
-- [#711] Transaction History not shown (#715) 
+- [#711] Transaction History not shown (#715)
 
 ## 0.0.1 build 50
 - [#707] Adopt latest SDK (#708)
@@ -924,7 +985,7 @@ Bugs fixed:
 # 0.0.1 build 45
 - [#635] Fix HomeTests
 - [#633] build and release from tag 0.0.1-45
-- [#611] Disable Send ZEC button when sync in progress 
+- [#611] Disable Send ZEC button when sync in progress
 - [#617] Use L10n for all the texts in the app (#627)
 - [#594] Don't Allow user to proceed to send funds if they are not available for spend (#629)
 - [#595] Visbility of fiat conversion on homeage depends on feature flag (#625)
@@ -933,7 +994,7 @@ Bugs fixed:
 - [#618] Use SwiftGen to generate L10n structure (#619)
 - [#609] Split birthday from the import seed phrase (#622)
 # 0.0.1 build 44
-This is the baseline build for iOS Re-Scoping epic. 
+This is the baseline build for iOS Re-Scoping epic.
 - [#819] build and release from tag 0.0.1-44
 - [#566] Change colors app-wide (#603)
 - [#613] Adopt ZcashLightClientKit version 0.19.0-beta (#616)
@@ -967,7 +1028,7 @@ This is the baseline build for iOS Re-Scoping epic.
 [#537] Flaky navigation issue (#567)
 [#545] Fix CI issues with PR builds (#548)
 [#544] Fix swiftlint warnings (#544)
-# 0.0.1 build 40 
+# 0.0.1 build 40
 - [#541] Adopt Latest main commit of SDK (#542)
 # 0.0.1 build 39
 - [#238] Add crash reporter to secant (#531)
@@ -1101,7 +1162,7 @@ issue for more details.
 - [#266]: Placeholder home screen/refactor previous home to debug screen
 - [#256]: [Recovery Phrase Display] Dark mode word chips' color does not match the designs
 - [#268]: [Critical] App get stuck after start #268
-- [#260]: Wrapped Derivation Tool 
+- [#260]: Wrapped Derivation Tool
 - [#254]: Testable and more readable structure for the AppReducer
 - [#231]: Wallet Storage unit tests vs. integration tests
 - [#253]: [Functional] Import wallet
