@@ -16,9 +16,10 @@ extension DependencyValues {
 /// derived from the wallet seed, so it cannot be recomputed. It reaches Swift
 /// exactly once, as `VotingPcztResult.vanCommRand`, and is otherwise persisted
 /// only in `voting.sqlite3`. Deleting a round takes `bundles` with it via
-/// `ON DELETE CASCADE`, and the FFI exposes no way to write the value back --
-/// so a wipe is terminal for that round's voting rights unless the value was
-/// copied out first. This is that copy.
+/// `ON DELETE CASCADE`, so a wipe is terminal for that round's voting rights
+/// unless the value was copied out first. This is that copy, and the SDK's
+/// guarded restore (`restoreRecoveredDelegation`) is the only way back in:
+/// it recomputes the commitment from this blinding before it writes anything.
 struct DelegationEscrowEntry: Equatable, Sendable, Codable {
     /// Canonical 64-character lowercase hex round identifier.
     let roundId: String

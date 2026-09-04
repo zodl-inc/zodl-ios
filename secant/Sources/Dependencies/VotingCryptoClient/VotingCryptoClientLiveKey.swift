@@ -498,6 +498,43 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.storeVanPosition(roundId: roundId, bundleIndex: bundleIndex, position: position)
             },
+            restoreRecoveredDelegation: { request in
+                let backend = try await dbActor.backend()
+                let roundIdHex = request.roundParams.voteRoundId.hexString
+                // The SDK wants the semantic hotkey, not bare secret bytes; the
+                // address it derives is what every VAN is recomputed from.
+                let hotkey = try VotingRustBackend.hotkey(
+                    fromStoredSecret: [UInt8](request.hotkeyStoredSecret),
+                    networkId: request.networkId
+                )
+                let result = try backend.restoreRecoveredDelegation(
+                    RecoveredDelegationRestoreRequest(
+                        roundId: roundIdHex,
+                        snapshotHeight: request.roundParams.snapshotHeight,
+                        eaPublicKey: [UInt8](request.roundParams.eaPK),
+                        ncRoot: [UInt8](request.roundParams.ncRoot),
+                        nullifierImtRoot: [UInt8](request.roundParams.nullifierIMTRoot),
+                        voteChainId: request.voteChainId,
+                        hotkey: hotkey,
+                        bundles: request.bundles.map {
+                            RecoveredDelegationBundle(
+                                bundleIndex: $0.bundleIndex,
+                                totalNoteValue: $0.totalNoteValue,
+                                vanCommRand: [UInt8]($0.vanCommRand),
+                                delegationTxHash: $0.delegationTxHash
+                            )
+                        },
+                        sessionJson: request.sessionJson
+                    )
+                )
+                switch result {
+                case .restored:
+                    publishState(backend: backend, roundId: roundIdHex)
+                    return .restored
+                case .alreadyRestored:
+                    return .alreadyRestored
+                }
+            },
             syncVoteTree: { roundId, nodeUrl in
                 let backend = try await dbActor.backend()
                 return try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
