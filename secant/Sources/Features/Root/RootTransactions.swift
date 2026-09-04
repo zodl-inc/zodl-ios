@@ -85,6 +85,7 @@ extension Root {
 
             case .fetchTransactionsForTheSelectedAccount:
                 guard let accountUUID = state.selectedWalletAccount?.id else {
+                    LoggerProxy.event("[RootTransactions] fetch skipped: no selected account yet")
                     return .none
                 }
                 // This id exists so an account switch can cancel whatever fetch is still running
@@ -108,10 +109,13 @@ extension Root {
                         // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
                         // rendered as an EMPTY transaction list with no trace anywhere, reading as
                         // data loss. The list keeps its previous contents; the error goes to the
-                        // log where the next investigation can find it. No user-facing alert: the
-                        // pending-transactions poller and the next synchronizer event both retry
-                        // this fetch.
+                        // log where the next investigation can find it. No user-facing alert:
+                        // `.transactionsFetchFailed` (below) still clears any list left showing its
+                        // loading placeholder and re-arms the reconciliation poller from the KEPT
+                        // rows, so together with the pending-transactions poller and the next
+                        // synchronizer event, this fetch gets retried.
                         LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
+                        await send(.transactionsFetchFailed(accountUUID: accountUUID))
                     }
                 }
                 .cancellable(id: state.CancelTransactionsFetchId)
@@ -126,26 +130,6 @@ extension Root {
                 guard accountUUID == state.selectedWalletAccount?.id else {
                     return .none
                 }
-
-                // ZIP 318 labels: Activity now PRESENTS migration transactions instead of hiding
-                // them — a stored-but-unmined row renders as "Migrating…"/"Splitting Balance…"
-                // with the coins-swap glyph (Figma "Transaction Statuses/Labels — Final Designs"),
-                // so the store-at-prove rows that once looked like phantom "Sending…" sends now
-                // tell the true in-flight story right on the list. This supersedes the M3 Part A
-                // filter that removed them. This is still the single canonical list build, so
-                // every consumer of the shared `$transactions` sees the same truth.
-                //
-                // M3 B2 (unchanged): the SAME rows are what the SDK's pending-balance lanes count
-                // for the whole prove→mine window, so their received value is still published
-                // beside the canonical list — one pass, one clock — for the balance-breakdown
-                // sheet to remove from its displayed "Pending" row. `totalReceived` is exactly a
-                // migration transaction's contribution to the pending lanes (all its real outputs
-                // are internal, and its spent side never enters them); a nil reads as zero, which
-                // under-corrects — conservative, never future-tense.
-                let unminedMigrationPending = transactions
-                    .filter { $0.isUnminedMigrationTransaction }
-                    .reduce(Zatoshi.zero) { $0 + ($1.totalReceived ?? Zatoshi.zero) }
-                state.$unminedMigrationPendingValue.withLock { $0 = unminedMigrationPending }
 
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
@@ -199,29 +183,60 @@ extension Root {
                 // a mined transaction rendered as "Sending…" forever). Re-read the local database
                 // every 30 seconds until nothing is pending — a cheap SQLite read, no network.
                 // Managed on every completed fetch, including ones whose payload equals the current
-                // state, so an unchanged list keeps the poller alive.
-                //
-                // Deliberately restricted to `.zcash` transactions, whose pending state is
-                // `minedHeight == nil` and therefore resolvable by exactly the local re-read this
-                // poller performs. For every other type `isPending` reports the SWAP status
-                // (`TransactionState.isPending`), which is owned by the swap provider's metadata and
-                // refreshed by `.autoUpdateCandidatesSwapDetails` in `RootSwaps` — re-reading the
-                // SDK database can never resolve it. Including those here would leave a swap parked
-                // in `.pending`/`.incomplete` (an abandoned or stalled swap never has to resolve)
-                // polling every 30 seconds for the rest of the session, with no state it could
-                // possibly settle.
-                let pendingTransactionsPoller: Effect<Root.Action>
-                if identifiedArray.contains(where: { $0.type == .zcash && $0.isPending }) {
-                    pendingTransactionsPoller = .run { send in
-                        while !Task.isCancelled {
-                            try await mainQueue.sleep(for: .seconds(30))
-                            await send(.fetchTransactionsForTheSelectedAccount)
-                        }
-                    }
-                    .cancellable(id: state.CancelPendingTxPollId, cancelInFlight: true)
-                } else {
-                    pendingTransactionsPoller = .cancel(id: state.CancelPendingTxPollId)
+                // state, so an unchanged list keeps the poller alive. Extracted into
+                // `reconciliationPoller(for:state:)` below so the ignored-empty-fetch and
+                // fetch-failure paths can arm it from the KEPT `state.transactions` instead of a
+                // fetch result they never apply.
+                let pendingTransactionsPoller = reconciliationPoller(for: identifiedArray, state: state)
+
+                // MOB-1855: a spurious empty fetch must never blank a list that already has rows.
+                // `getAllTransactions` can legitimately race a reorg/rescan window mid-sync and
+                // answer with zero rows for an account that plainly has transactions; only trust an
+                // empty result once the synchronizer itself reports `.upToDate`, or once a list is
+                // already invalidated and therefore has nothing correct left to lose. Tests the RAW
+                // fetched `transactions`, not `identifiedArray`: `mixedTransactions` above
+                // unconditionally appends one synthetic row per in-flight swap-to-ZEC, so a
+                // genuinely empty on-chain fetch would otherwise still produce a non-empty
+                // `identifiedArray` and defeat this guard for any user with such a swap pending.
+                // Both lists still get `transactionsUpdated` so one that WAS mid-load can clear its
+                // placeholder, and the poller is armed from the KEPT `state.transactions`, never
+                // from this fetch's result, so a still-pending kept row keeps its 30 s reconciler.
+                let listsAreInvalidated = state.homeState.transactionListState.isInvalidated
+                    || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+                if transactions.isEmpty && !state.transactions.isEmpty && !listsAreInvalidated && !isUpToDate(state.lastKnownSyncStatus) {
+                    LoggerProxy.event("[RootTransactions] ignored an empty fetch while sync is not up to date; kept \(state.transactions.count) rows")
+                    return .merge(
+                        reconciliationPoller(for: state.transactions, state: state),
+                        .send(.home(.transactionList(.transactionsUpdated))),
+                        .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                    )
                 }
+
+                // ZIP 318 labels: Activity now PRESENTS migration transactions instead of hiding
+                // them — a stored-but-unmined row renders as "Migrating…"/"Splitting Balance…"
+                // with the coins-swap glyph (Figma "Transaction Statuses/Labels — Final Designs"),
+                // so the store-at-prove rows that once looked like phantom "Sending…" sends now
+                // tell the true in-flight story right on the list. This supersedes the M3 Part A
+                // filter that removed them. This is still the single canonical list build, so
+                // every consumer of the shared `$transactions` sees the same truth.
+                //
+                // M3 B2 (unchanged): the SAME rows are what the SDK's pending-balance lanes count
+                // for the whole prove→mine window, so their received value is still published
+                // beside the canonical list — one pass, one clock — for the balance-breakdown
+                // sheet to remove from its displayed "Pending" row. `totalReceived` is exactly a
+                // migration transaction's contribution to the pending lanes (all its real outputs
+                // are internal, and its spent side never enters them); a nil reads as zero, which
+                // under-corrects — conservative, never future-tense.
+                //
+                // MOB-1855: computed here, AFTER the empty-fetch guard above, rather than at the
+                // top of this case -- an ignored spurious-empty fetch must not zero this figure for
+                // one tick either. `transactions` is unaffected by anything in between: the
+                // swap-relabeling loop above only mutates existing rows' `type`/`swapStatus`, never
+                // their count or `totalReceived`.
+                let unminedMigrationPending = transactions
+                    .filter { $0.isUnminedMigrationTransaction }
+                    .reduce(Zatoshi.zero) { $0 + ($1.totalReceived ?? Zatoshi.zero) }
+                state.$unminedMigrationPendingValue.withLock { $0 = unminedMigrationPending }
 
                 // Update transactions
                 if state.transactions != identifiedArray {
@@ -257,8 +272,66 @@ extension Root {
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
                 )
 
+            case .transactionsFetchFailed(let accountUUID):
+                // Same provenance guard as `.fetchedTransactions` above, and for the same reason:
+                // without it, a stale failure for an account the user has since switched away from
+                // would clear the NEWLY selected account's `isInvalidated` flags and re-arm the
+                // poller from ITS `state.transactions` -- which at that point may still be the
+                // PREVIOUS account's leftover rows -- marking the new account "loaded" while the
+                // wrong rows are still on screen.
+                guard accountUUID == state.selectedWalletAccount?.id else {
+                    return .none
+                }
+                // The list keeps its previous contents (nothing to overwrite here at all), but
+                // either list may already be showing its loading placeholder -- clear it exactly
+                // like every other completed-fetch path, and keep the reconciliation poller alive
+                // for whatever `state.transactions` still holds.
+                return .merge(
+                    reconciliationPoller(for: state.transactions, state: state),
+                    .send(.home(.transactionList(.transactionsUpdated))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                )
+
             default: return .none
             }
+        }
+    }
+
+    /// Builds the reconciliation-poller effect for `transactions`: while any `.zcash` row is
+    /// pending (`minedHeight == nil`), a 30 s local-database re-read backstops a lost push signal
+    /// (a dropped event, or a missed `.upToDate` tick) that would otherwise leave a mined
+    /// transaction rendered as "Sending…" forever; the poller cancels itself once nothing meets
+    /// that condition. Takes the transactions to inspect as a parameter, rather than always
+    /// reading `state.transactions` directly, so a caller that keeps the existing list -- on a
+    /// spurious empty fetch, or on a failed fetch -- can still arm the reconciler from those KEPT
+    /// rows instead of from a fetch result it never applies. Restricted to `.zcash` transactions,
+    /// whose pending state is resolvable by exactly the local re-read this poller performs; every
+    /// other type's `isPending` reports the SWAP status, owned by the swap provider's metadata and
+    /// refreshed elsewhere (`.autoUpdateCandidatesSwapDetails` in `RootSwaps`) -- re-reading the SDK
+    /// database can never resolve it, and an abandoned or stalled swap never has to resolve, so
+    /// arming this poller on one would poll forever against state it cannot possibly settle.
+    private func reconciliationPoller(for transactions: IdentifiedArrayOf<TransactionState>, state: Root.State) -> Effect<Root.Action> {
+        if transactions.contains(where: { $0.type == .zcash && $0.isPending }) {
+            return .run { send in
+                while !Task.isCancelled {
+                    try await mainQueue.sleep(for: .seconds(30))
+                    await send(.fetchTransactionsForTheSelectedAccount)
+                }
+            }
+            .cancellable(id: state.CancelPendingTxPollId, cancelInFlight: true)
+        } else {
+            return .cancel(id: state.CancelPendingTxPollId)
+        }
+    }
+
+    /// True only once the synchronizer itself has reported `.upToDate`; `nil` (nothing observed
+    /// yet this session, or just cleared at `.didEnterBackground`) is deliberately NOT up to date,
+    /// matching `Root.State.isSynchronizerIdleForSwitch`'s treatment of the same optional.
+    private func isUpToDate(_ status: SyncStatus?) -> Bool {
+        guard let status else { return false }
+        switch status {
+        case .upToDate: return true
+        case .unprepared, .syncing, .stopped, .error: return false
         }
     }
 }
