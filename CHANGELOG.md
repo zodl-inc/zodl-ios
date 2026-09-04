@@ -14,6 +14,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
 
 ### Fixed
+- [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.
 - [MOB-1856] The app stays responsive while it catches up on a long transaction history.
 - [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync.
 - [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself.

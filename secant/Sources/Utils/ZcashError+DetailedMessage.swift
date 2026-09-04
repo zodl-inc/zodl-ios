@@ -27,8 +27,12 @@ extension ZcashError {
     }
     
     var isInsufficientBalance: Bool {
-        detailedMessage.lowercased().contains("insufficient balance")
-        || detailedMessage.lowercased().contains("the transaction requires an additional change output of zatbalance")
+        if case .rustProposalInsufficientFunds = self {
+            return true
+        }
+        let text = detailedMessage.lowercased()
+        return text.contains("insufficient balance")
+            || text.contains("the transaction requires an additional change output of zatbalance")
     }
 
     /// Server-validation failures the SDK raises from `ValidateServerAction` on every sync attempt:
