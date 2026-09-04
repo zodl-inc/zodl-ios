@@ -97,6 +97,61 @@ struct RootDelegationRecoveryOnLaunchTests {
     /// The run is FIRE AND FORGET: it sends no action back, so a slow or
     /// failing carve cannot stall or alter launch. If someone later chains it
     /// into the reducer, this fails.
+    /// A wallet reset must not let a run that read the old wallet's files
+    /// finish afterwards: the reset cancels it, and the run notices.
+    ///
+    /// The effect registers its cancel id only once it is running, so the
+    /// reset is sent after the run reports that it has started; a reset that
+    /// lands earlier is covered by the escrow's lease instead.
+    @Test func resettingTheWalletCancelsARecoveryStillRunning() async {
+        let cancelled = LockIsolated(false)
+        let started = AsyncStream.makeStream(of: Void.self)
+
+        let store = TestStore(initialState: Self.launchState()) {
+            Root()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.sdkSynchronizer = .mocked()
+            $0.sdkSynchronizer.wipe = { nil }
+            $0.exchangeRate = .noOp
+            $0.autolockHandler = .noOp
+            $0.mnemonic = .noOp
+            $0.databaseFiles = .noOp
+            $0.databaseFiles.areDbFilesPresentFor = { _ in true }
+            $0.walletStorage = .noOp
+            $0.walletStorage.areKeysPresent = { true }
+            $0.walletStorage.exportWallet = { .placeholder }
+            $0.readTransactionsStorage = .noOp
+            $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
+            $0.userDefaults.objectForKey = { _ in nil }
+            $0.userDefaults.setValue = { _, _ in }
+            $0.userDefaults.remove = { _ in }
+            $0.addressBook.allLocalContacts = { _ in (AddressBookContacts.empty, .notAttempted) }
+            $0.userMetadataProvider.load = { _ in }
+            $0.shieldingProcessor = ShieldingProcessorClient(
+                observe: { Empty().eraseToAnyPublisher() },
+                shieldFunds: { }
+            )
+            $0.delegationRecovery = DelegationRecoveryClient(
+                run: {
+                    started.continuation.yield()
+                    // A carve that takes long enough for a reset to land.
+                    try? await Task.sleep(for: .seconds(5))
+                    cancelled.setValue(Task.isCancelled)
+                    return DelegationRecoveryReport(outcome: .cancelled)
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.initialization(.appDelegate(.didFinishLaunching)))
+        for await _ in started.stream { break }
+        await store.send(.initialization(.resetZashi))
+        await store.finish()
+
+        #expect(cancelled.value, "the reset must cancel the recovery effect")
+    }
+
     @Test func recoverySendsNoActionBackIntoTheReducer() async {
         let store = TestStore(initialState: Self.launchState()) {
             Root()

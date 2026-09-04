@@ -148,7 +148,25 @@ private actor DelegationEscrowStore {
         try persist(entries)
     }
 
+    func beginRecovery() -> DelegationEscrowLease {
+        DelegationEscrowLease(generation: DelegationEscrowFile.generation.value)
+    }
+
+    func recordRecovered(_ entry: DelegationEscrowEntry, lease: DelegationEscrowLease) throws {
+        guard lease.generation == DelegationEscrowFile.generation.value else {
+            throw DelegationEscrowError.staleLease
+        }
+        try record(entry)
+        // A reset bumps the generation BEFORE it removes the file, so a write
+        // that landed between the two is seen here and undone.
+        if lease.generation != DelegationEscrowFile.generation.value {
+            reset()
+            throw DelegationEscrowError.staleLease
+        }
+    }
+
     func reset() {
+        DelegationEscrowFile.generation.withValue { $0 += 1 }
         if let url = try? fileURL() {
             try? FileManager.default.removeItem(at: url)
         }
@@ -182,11 +200,27 @@ private extension DelegationEscrowEntry {
 enum DelegationEscrowFile {
     /// Sits beside `voting.sqlite3` in Documents so the two share a lifetime.
     static let name = "voting-delegation-escrow.json"
+
+    /// Bumped by every wallet reset. A recovery run takes a lease on the value
+    /// it started under, and the store refuses that run's writes once the
+    /// value has moved on.
+    static let generation = LockIsolated<UInt64>(0)
+
+    /// The wallet-reset half: makes every outstanding lease stale, then removes
+    /// the file. Synchronous, because reset runs in a plain reducer case. The
+    /// order matters: a write racing this call re-checks the generation after
+    /// it persists and removes what it wrote.
+    static func invalidate(inDocuments documents: URL) {
+        generation.withValue { $0 += 1 }
+        try? FileManager.default.removeItem(at: documents.appendingPathComponent(name))
+    }
 }
 
 enum DelegationEscrowError: Error {
     case documentsFolder
     case schemaVersionNotSupported
+    /// A wallet reset happened after the lease was taken.
+    case staleLease
 }
 
 extension DelegationEscrowClient: DependencyKey {
@@ -196,6 +230,12 @@ extension DelegationEscrowClient: DependencyKey {
         return Self(
             record: { entry in
                 try await store.record(entry)
+            },
+            beginRecovery: {
+                await store.beginRecovery()
+            },
+            recordRecovered: { entry, lease in
+                try await store.recordRecovered(entry, lease: lease)
             },
             entries: { roundId in
                 try await store.entries(roundId: roundId)

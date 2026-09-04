@@ -77,6 +77,10 @@ struct Root {
         /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
         /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
         var startFailureRetryCancelId = UUID()
+        /// The launch-time delegation recovery. A wallet reset cancels it
+        /// before wiping, so a run that read the old wallet's files cannot
+        /// write them back for the next one.
+        var delegationRecoveryCancelId = UUID()
         /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
         /// the second failure waits for the next external trigger (foreground, gate emission).
         var didScheduleStartFailureRetry = false
@@ -749,10 +753,10 @@ extension Root {
             // The delegation escrow holds VAN blinding factors for this
             // wallet's rounds. It is as wallet-scoped as the database it
             // shadows, so it must not survive the reset boundary either.
+            // Invalidating, rather than merely deleting, also makes a
+            // launch-time recovery still in flight refuse to write.
             #if RECOVERY_VOTING_ENABLED
-            try? FileManager.default.removeItem(
-                at: documents.appendingPathComponent(DelegationEscrowFile.name)
-            )
+            DelegationEscrowFile.invalidate(inDocuments: documents)
             #endif
         }
         // Belt-and-suspenders: voting drafts and vote records live in

@@ -121,6 +121,33 @@ import Testing
         }
     }
 
+    /// The ownership boundary a wallet reset relies on: a run that began
+    /// before the reset can write nothing that survives it.
+    @Test func aRecoveryLeaseGoesStaleWhenTheWalletResets() async throws {
+        try await SharedLiveEscrow.exclusive {
+            let escrow = DelegationEscrowClient.liveValue
+            await escrow.reset()
+            defer { Task { await escrow.reset() } }
+            let documents = try #require(
+                FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            )
+            let lease = await escrow.beginRecovery()
+            try await escrow.recordRecovered(candidate(bundle: 0, rand: 0xA0, rank: 0), lease)
+
+            DelegationEscrowFile.invalidate(inDocuments: documents)
+
+            await #expect(throws: DelegationEscrowError.staleLease) {
+                try await escrow.recordRecovered(candidate(bundle: 1, rand: 0xA1, rank: 0), lease)
+            }
+            #expect(
+                FileManager.default.fileExists(atPath: documents.appendingPathComponent(DelegationEscrowFile.name).path)
+                    == false
+            )
+            #expect(try await escrow.entries(roundId).isEmpty)
+            #expect(await escrow.beginRecovery() != lease, "a new run takes a fresh lease")
+        }
+    }
+
     /// An escrow written before the candidate fields existed still reads,
     /// and reads as a single unranked, unrefused candidate.
     @Test func anEntryWithoutTheCandidateFieldsDecodesWithDefaults() throws {

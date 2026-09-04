@@ -125,12 +125,18 @@ extension Root {
                 // or failing carve cannot affect what the user sees. What it
                 // did is in the log under "[poll-recovery]".
                 //
+                // A wallet reset cancels it (`.resetZashi`), and the escrow
+                // refuses writes from a run that began before the reset, so
+                // the old wallet's secrets cannot be written back for the new
+                // one whichever of the two lands first.
+                //
                 // It costs almost nothing for the overwhelming majority of
                 // wallets, which have no voting round at all and are turned
                 // away by `holdsRoundData` after one file read.
                 return .merge(
                     setup,
                     .run { _ in _ = await delegationRecovery.run() }
+                        .cancellable(id: state.delegationRecoveryCancelId, cancelInFlight: true)
                 )
                 #else
                 return setup
@@ -1408,17 +1414,29 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
+                #if RECOVERY_VOTING_ENABLED
+                // Launch-time recovery may still be reading this wallet's
+                // files. Stop it before anything is wiped; the escrow also
+                // refuses its writes once the reset has run, whether or not
+                // cancellation reached it first.
+                let stopRecovery: Effect<Root.Action> = .cancel(id: state.delegationRecoveryCancelId)
+                #else
+                let stopRecovery: Effect<Root.Action> = .none
+                #endif
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
-                    return .send(.resetZashiSDKFailed)
+                    return .merge(stopRecovery, .send(.resetZashiSDKFailed))
                 }
-                return .publisher {
-                    wipePublisher
-                        .replaceEmpty(with: Void())
-                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                        .replaceError(with: Root.Action.resetZashiSDKFailed)
-                        .receive(on: mainQueue)
-                }
-                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                return .merge(
+                    stopRecovery,
+                    .publisher {
+                        wipePublisher
+                            .replaceEmpty(with: Void())
+                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
+                            .replaceError(with: Root.Action.resetZashiSDKFailed)
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                )
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true

@@ -142,6 +142,12 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
     }
 }
 
+/// Held by one recovery run for its whole duration. The store accepts the
+/// run's entries only while no wallet reset has happened since it was taken.
+struct DelegationEscrowLease: Equatable, Sendable {
+    let generation: UInt64
+}
+
 /// Durable, wallet-scoped escrow for delegation secrets that `clear_round`
 /// would otherwise destroy irrecoverably.
 @DependencyClient
@@ -150,6 +156,13 @@ struct DelegationEscrowClient {
     /// van)`: a bundle keeps every distinct image recovered for it, and a live
     /// capture never displaces a recovered copy of the same candidate.
     var record: @Sendable (_ entry: DelegationEscrowEntry) async throws -> Void
+    /// A lease for one recovery run; see `recordRecovered`.
+    var beginRecovery: @Sendable () async -> DelegationEscrowLease = { DelegationEscrowLease(generation: 0) }
+    /// Persists one candidate a recovery run found. Throws
+    /// `DelegationEscrowError.staleLease`, writing nothing that survives, once
+    /// a wallet reset has happened since `lease` was taken, so the previous
+    /// wallet's secrets can never be written back for its replacement.
+    var recordRecovered: @Sendable (_ entry: DelegationEscrowEntry, _ lease: DelegationEscrowLease) async throws -> Void
     /// Every escrowed bundle for one round, in bundle-index order.
     var entries: @Sendable (_ roundId: String) async throws -> [DelegationEscrowEntry]
     /// Whether this round has any escrowed delegation left to protect.

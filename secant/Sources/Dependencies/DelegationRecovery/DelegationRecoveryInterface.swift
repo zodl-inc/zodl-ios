@@ -30,6 +30,9 @@ struct DelegationRecoveryReport: Equatable, Sendable {
         /// The reason is logged; it is not shown, so that raw internals never
         /// reach the user.
         case failed
+        /// A wallet reset stopped the run. Nothing it wrote after the reset
+        /// survives, and the next wallet starts from an empty escrow.
+        case cancelled
     }
 
     var outcome: Outcome

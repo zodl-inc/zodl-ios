@@ -168,7 +168,6 @@ extension DelegationRecoveryClient: DependencyKey {
         return url.lastPathComponent
     }
 
-
     /// Every line this subsystem emits carries the same prefix, so the whole
     /// run can be isolated in the Xcode console by filtering on "poll-recovery".
     ///
@@ -274,6 +273,7 @@ extension DelegationRecoveryClient: DependencyKey {
                 var bundles: Set<String> = []
                 var escrowFailed = false
                 var readFailed = false
+                let lease = await delegationEscrow.beginRecovery()
 
                 for source in sources {
                     let found: VotingDatabaseRecovery.Report
@@ -300,9 +300,14 @@ extension DelegationRecoveryClient: DependencyKey {
                     )
 
                     for candidate in found.candidates {
+                        if Task.isCancelled {
+                            log("RUN stopped: cancelled while recovering")
+                            report.outcome = .cancelled
+                            return report
+                        }
                         let key = "\(candidate.roundId)/\(candidate.bundleIndex)"
                         do {
-                            try await delegationEscrow.record(
+                            try await delegationEscrow.recordRecovered(
                                 DelegationEscrowEntry(
                                     roundId: candidate.roundId,
                                     bundleIndex: candidate.bundleIndex,
@@ -317,8 +322,15 @@ extension DelegationRecoveryClient: DependencyKey {
                                     vanLeafPosition: candidate.vanLeafPosition,
                                     provenance: "\(source.name): \(candidate.source.label)",
                                     provenanceRank: candidate.source.rank
-                                )
+                                ),
+                                lease
                             )
+                        } catch DelegationEscrowError.staleLease {
+                            // The wallet was reset under this run. Nothing it
+                            // still holds may be written for the new wallet.
+                            log("RUN stopped: the wallet was reset while recovering")
+                            report.outcome = .cancelled
+                            return report
                         } catch {
                             // Keep going. Every one of these is irreplaceable, so
                             // one unwritable entry must not abandon the rest.
