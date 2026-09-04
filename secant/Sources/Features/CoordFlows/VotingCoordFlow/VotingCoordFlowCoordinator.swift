@@ -900,10 +900,30 @@ extension VotingCoordFlow {
                     }
 
                     let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
-                    let (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
+                    var (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
                         roundId: roundId,
                         votingCrypto: votingCrypto
                     )
+                    #if RECOVERY_VOTING_ENABLED
+                    // A delegation carved out of a wiped database goes back in
+                    // here, before any branch below can rebuild the round over
+                    // it. The SDK clears nothing unless the round provably
+                    // holds nothing the wallet could still use.
+                    if case .restored = await Self.restoreRecoveredDelegation(
+                        roundId: roundId,
+                        session: session,
+                        networkId: networkId,
+                        accountId: accountId,
+                        existingBundleCount: existingBundleCount,
+                        votingCrypto: votingCrypto,
+                        walletStorage: walletStorage
+                    ) {
+                        (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
+                            roundId: roundId,
+                            votingCrypto: votingCrypto
+                        )
+                    }
+                    #endif
                     var resolvedBundleCount: UInt32 = 0
                     var didPrepareFreshRound = false
                     if existingState?.proofGenerated == true {
@@ -4466,3 +4486,46 @@ extension VotingCoordFlow {
         return diagnosis.message
     }
 }
+
+#if RECOVERY_VOTING_ENABLED
+extension VotingCoordFlow {
+    /// Feeds the round pipeline's inputs to `DelegationRestore`. Reads the
+    /// escrow first so an unaffected round costs one file read and no SDK
+    /// call.
+    static func restoreRecoveredDelegation(
+        roundId: String,
+        session: VotingSession,
+        networkId: UInt32,
+        accountId: AccountUUID?,
+        existingBundleCount: UInt32,
+        votingCrypto: VotingCryptoClient,
+        walletStorage: WalletStorageClient
+    ) async -> DelegationRestore.Outcome {
+        @Dependency(\.delegationEscrow) var delegationEscrow
+        let entries = (try? await delegationEscrow.entries(roundId)) ?? []
+        guard entries.contains(where: { $0.source == .recovered }) else {
+            return .notApplicable(reason: "nothing recovered for this round")
+        }
+        let hotkeySecret = accountId
+            .flatMap { try? walletStorage.exportVotingHotkey($0) }?
+            .storedSecret.value()
+        let outcome = await DelegationRestore.restoreIfNeeded(
+            roundId: roundId,
+            roundParams: VotingRoundParams(
+                voteRoundId: session.voteRoundId,
+                snapshotHeight: session.snapshotHeight,
+                eaPK: session.eaPK,
+                ncRoot: session.ncRoot,
+                nullifierIMTRoot: session.nullifierIMTRoot
+            ),
+            networkId: networkId,
+            hotkeyStoredSecret: hotkeySecret,
+            escrowEntries: entries,
+            expectedBundleCount: existingBundleCount == 0 ? nil : existingBundleCount,
+            crypto: votingCrypto
+        )
+        LoggerProxy.info("[poll-restore] round=\(roundId) outcome=\(outcome)")
+        return outcome
+    }
+}
+#endif
