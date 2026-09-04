@@ -16,7 +16,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 ### Fixed
 - [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
-- [Ironwood] A poll made unvotable by an earlier version is now repaired automatically. When ZODL opens, it checks the copies of the polling database it keeps and restores the delegation secret that a previous build could replace, so a poll that had silently become impossible to vote in works again. This happens in the background with nothing to tap, costs nothing for wallets that have never opened a poll, and only ever reads those files.
+- [MOB-1798] A poll made unvotable by an earlier version can be voted in again. When ZODL opens, it recovers the delegation an earlier build replaced from the copies of the polling database it keeps; when you enter that poll, the recovered delegation is restored and the poll continues where it left off. Nothing is restored unless every part of the delegation was recovered, and a poll that already holds a vote, a delivered share, or a different confirmed delegation is never touched.
 
 ## [3.10.3] - 2026-08-31
 
