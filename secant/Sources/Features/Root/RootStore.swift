@@ -39,6 +39,12 @@ struct Root {
         }
         
         var CancelEventId = UUID()
+        /// MOB-1853: the `.syncStalled` event channel's own cancel id -- a dedicated `.publisher`
+        /// branch in the same `.observeTransactions` `.merge`, kept separate from `CancelEventId`'s
+        /// transaction-event channel so the two can never silently drop each other's event under a
+        /// shared "latest wins" throttle window (see `RootTransactions.swift`). Cancelled everywhere
+        /// `CancelEventId` is cancelled at `.didEnterBackground`.
+        var CancelSyncStalledEventId = UUID()
         var CancelId = UUID()
         var CancelResyncStateId = UUID()
         var CancelStateId = UUID()
@@ -131,7 +137,29 @@ struct Root {
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
         var isStaleWalletHealedAlertPending = false
+        /// MOB-1853: true from the stall hook's own reaction (`gaveUp || attempt >= 2`, see
+        /// `Root.Action.syncStalled`'s handler) until the next `.synchronizerStateChanged` reports
+        /// either `.upToDate` or `.syncing` progress past `lastKnownSyncProgress` -- i.e. the engine
+        /// visibly moving again. While true, `isSynchronizerIdleForSwitch` treats a `.syncing`
+        /// status as idle too, since a stalled sync has nothing left for an automatic switch to
+        /// interrupt. Reset at `.didEnterBackground`, same as `lastKnownSyncStatus`.
+        var isSyncStalledSinceLastProgress = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
+        /// The most recent `.syncing` progress value seen via `.synchronizerStateChanged`, kept
+        /// solely so that handler can detect a NEW tick's progress advancing past this one and
+        /// clear `isSyncStalledSinceLastProgress`. Not reset at `.didEnterBackground` -- the first
+        /// `.syncing` tick after a foreground restart is compared against this stale pre-background
+        /// value BEFORE it gets overwritten with the fresh one. That comparison can spuriously
+        /// "clear" a stall that this session never armed, but it is harmless:
+        /// `isSyncStalledSinceLastProgress` is already `false` from that same `.didEnterBackground`
+        /// reset, so there is nothing left for it to (no-op) clear.
+        var lastKnownSyncProgress: Float?
+        /// The last sync status `.synchronizerStateChanged` reported, read by
+        /// `isSynchronizerIdleForSwitch`. `nil` (nothing observed yet this session, or just reset at
+        /// `.didEnterBackground`) deliberately does NOT count as idle -- an automatic switch must
+        /// never run against an unknown sync state. A later task (transaction-list guards) reads
+        /// this too, hence a plain optional here rather than something private to the switch gate.
+        var lastKnownSyncStatus: SyncStatus?
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts
         var messageToBeShared = ""
@@ -212,9 +240,27 @@ struct Root {
             }
         }
 
-        /// The local-snapshot read is completed before a candidate reaches this gate.
+        /// True once the synchronizer has told us enough to believe an automatic switch (which
+        /// tears down and rebuilds the synchronizer) will not interrupt an active sync: either the
+        /// last known status carries no progress a switch could lose (`.upToDate`, `.stopped`,
+        /// `.unprepared`, `.error`), or the sync has stalled since its last observed progress. `nil`
+        /// -- nothing observed yet, or just cleared at `.didEnterBackground` -- is deliberately NOT
+        /// idle.
+        var isSynchronizerIdleForSwitch: Bool {
+            if isSyncStalledSinceLastProgress { return true }
+            guard let lastKnownSyncStatus else { return false }
+            switch lastKnownSyncStatus {
+            case .upToDate, .stopped, .unprepared, .error: return true
+            case .syncing: return false
+            }
+        }
+
+        /// The local-snapshot read is completed before a candidate reaches this gate. Also
+        /// requires the synchronizer to be idle (`isSynchronizerIdleForSwitch`) -- a switch tears
+        /// down and rebuilds the synchronizer, so it must never land while a sync is actively
+        /// making progress.
         var canApplyAutoServerSwitch: Bool {
-            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
+            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive && isSynchronizerIdleForSwitch
         }
 
         /// Gate for taking the screen over with the one-time Ironwood announcement.
@@ -348,6 +394,12 @@ struct Root {
         case observeTransactions
         case foundTransactions([ZcashTransaction.Overview])
         case minedTransaction(ZcashTransaction.Overview)
+        /// MOB-1853: mapped from `SynchronizerEvent.syncStalled` (see `.observeTransactions`) --
+        /// sent right before each recovery restart (`attempt`, 1-based) and once more when
+        /// recovery gives up. The handler always logs it; only `gaveUp || attempt >= 2` unblocks
+        /// an automatic server switch, since attempt 1 is the SDK's own cheap same-server
+        /// reconnect and must get its chance first.
+        case syncStalled(attempt: Int, gaveUp: Bool)
         case fetchTransactionsForTheSelectedAccount
         case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         case noChangeInTransactions
@@ -626,8 +678,9 @@ struct Root {
                         benchmarkedAt: benchmarkedAt
                     )
                     let hardGates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible)"
-                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive)"
-                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates))")
+                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive), idle: \(state.isSynchronizerIdleForSwitch)"
+                    let status = String(describing: state.lastKnownSyncStatus)
+                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates), lastKnownSyncStatus: \(status))")
                     return .none
                 }
                 state.pendingServerCandidate = nil

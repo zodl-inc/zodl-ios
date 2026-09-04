@@ -225,6 +225,11 @@ extension Root {
                 // (#7) The one-shot start-failure retry is a foreground mechanism, same as the
                 // tick loop: cancel it and reset its latch so the next foreground starts clean.
                 state.didScheduleStartFailureRetry = false
+                // MOB-1853: an unknown sync state must never read as idle (see
+                // `isSynchronizerIdleForSwitch`), so the gate closes at background and stays closed
+                // until a fresh `.synchronizerStateChanged` tick reports in next foreground.
+                state.lastKnownSyncStatus = nil
+                state.isSyncStalledSinceLastProgress = false
                 // Tear down ALL synchronizer-driven subscriptions (plus the pending-transactions
                 // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
                 // every one of them.
@@ -232,6 +237,7 @@ extension Root {
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId),
                     .cancel(id: state.CancelEventId),
+                    .cancel(id: state.CancelSyncStalledEventId),
                     .cancel(id: state.CancelPendingTxPollId),
                     // MOB-1466: the tick loop is a FOREGROUND-only mechanism — the app cannot poll
                     // anything once backgrounded (there is no background lane), so its whole reason
@@ -244,7 +250,11 @@ extension Root {
                     // gate emission ran the full resume (clearing the arming flags, sending
                     // `.retryStart`, restarting the sync this boundary just stopped). The next
                     // foreground's `.registerForSynchronizersUpdate` respawns it.
-                    .cancel(id: state.migrationSyncGateCancelId)
+                    .cancel(id: state.migrationSyncGateCancelId),
+                    // MOB-1853: a benchmark/apply-switch run still in flight when the app
+                    // backgrounds must not land later against the synchronizer `stop()` above just
+                    // tore down.
+                    .cancel(id: state.automaticServerRefreshCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):
@@ -268,6 +278,26 @@ extension Root {
                 }
                 
             case .synchronizerStateChanged(let latestState):
+                // MOB-1853: feeds `Root.State.isSynchronizerIdleForSwitch` -- like the announcement
+                // gate below, this must run above every early return in this case body, on every
+                // tick, regardless of whether an account is selected or a background task is in
+                // flight. `.upToDate` and a `.syncing` tick whose progress advanced past the last
+                // one recorded both mean the engine is visibly making progress again, so either
+                // clears a stall the `.syncStalled` hook (`RootTransactions.swift`) may have armed.
+                let newSyncStatus = latestState.data.syncStatus
+                switch newSyncStatus {
+                case .upToDate:
+                    state.isSyncStalledSinceLastProgress = false
+                case .syncing(let progress, _):
+                    if let lastKnownSyncProgress = state.lastKnownSyncProgress, progress > lastKnownSyncProgress {
+                        state.isSyncStalledSinceLastProgress = false
+                    }
+                    state.lastKnownSyncProgress = progress
+                case .unprepared, .stopped, .error:
+                    break
+                }
+                state.lastKnownSyncStatus = newSyncStatus
+
                 // Must run above the `selectedWalletAccount` guard and the background-task
                 // branch below — both early-return, but the announcement gate has to keep
                 // evaluating on every sync tick regardless of whether an account is selected

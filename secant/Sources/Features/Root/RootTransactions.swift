@@ -35,6 +35,23 @@ extension Root {
                     }
                     .cancellable(id: state.CancelEventId, cancelInFlight: true),
                     .publisher {
+                        // MOB-1853: a channel of its own, separate from the transaction events above.
+                        // Sharing one "latest wins" throttle window with them let one kind of event
+                        // silently replace the other as "latest" -- a `minedTransaction` could drop a
+                        // `syncStalled`, and a `syncStalled` could just as easily drop a
+                        // `minedTransaction`. The SDK emits `gaveUp: true` exactly once per handle, so
+                        // losing it here would disable the stall escape hatch for that handle.
+                        sdkSynchronizer.eventStream()
+                            .compactMap {
+                                if case SynchronizerEvent.syncStalled(let attempt, let gaveUp) = $0 {
+                                    return Root.Action.syncStalled(attempt: attempt, gaveUp: gaveUp)
+                                }
+                                return nil
+                            }
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
+                    }
+                    .cancellable(id: state.CancelSyncStalledEventId, cancelInFlight: true),
+                    .publisher {
                         sdkSynchronizer.stateStream()
                             .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .map {
@@ -56,6 +73,15 @@ extension Root {
                 
             case .minedTransaction:
                 return .send(.fetchTransactionsForTheSelectedAccount)
+
+            case .syncStalled(let attempt, let gaveUp):
+                LoggerProxy.event("[AutoServerSelection] Sync stalled (attempt: \(attempt), gaveUp: \(gaveUp))")
+                // Attempt 1 is the SDK's own cheap reconnect to the SAME server -- it must get its
+                // chance before the app tears the synchronizer down for a benchmarked switch. Only
+                // a second restart, or recovery giving up outright, unblocks the switch.
+                guard gaveUp || attempt >= 2 else { return .none }
+                state.isSyncStalledSinceLastProgress = true
+                return .send(.refreshAutomaticServer)
 
             case .fetchTransactionsForTheSelectedAccount:
                 guard let accountUUID = state.selectedWalletAccount?.id else {
