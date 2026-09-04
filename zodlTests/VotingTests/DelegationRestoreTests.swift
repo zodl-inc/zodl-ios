@@ -10,13 +10,14 @@ import Foundation
         _ index: UInt32,
         hash: String? = nil,
         source: DelegationEscrowEntry.Source = .recovered,
-        weight: UInt64 = 130_000_000
+        weight: UInt64 = 130_000_000,
+        van: Data? = nil
     ) -> DelegationEscrowEntry {
         DelegationEscrowEntry(
             roundId: roundId,
             bundleIndex: index,
             vanCommRand: Data(repeating: UInt8(0xA0 + index), count: 31) + Data([0x01]),
-            van: Data(repeating: 0xC0, count: 32),
+            van: van ?? Data(repeating: 0xC0, count: 32),
             totalNoteValue: weight,
             delegationTxHash: hash ?? String(repeating: String(format: "%02x", 0xD0 + index), count: 32),
             source: source,
@@ -38,7 +39,7 @@ import Foundation
     }
 
     @Test func aCompleteEscrowBecomesAPackageInIndexOrder() {
-        let package = DelegationRestore.package(from: [entry(2), entry(0), entry(1)], expectedBundleCount: 3)
+        let package = DelegationRestore.package(from: [entry(2), entry(0), entry(1)])
 
         #expect(package?.map(\.bundleIndex) == [0, 1, 2])
         #expect(package?.map(\.totalNoteValue) == [130_000_000, 130_000_000, 130_000_000])
@@ -46,32 +47,40 @@ import Foundation
     }
 
     @Test func liveCapturesAreNotPartOfARecoveredPackage() {
-        #expect(DelegationRestore.package(from: [entry(0), entry(1, source: .liveCapture)], expectedBundleCount: 2) == nil)
+        #expect(DelegationRestore.package(from: [entry(0), entry(1, source: .liveCapture)])?.count == 1)
+        #expect(DelegationRestore.package(from: [entry(0, source: .liveCapture)]) == nil)
     }
 
-    @Test func aGapInTheIndicesIsIncomplete() {
-        #expect(DelegationRestore.package(from: [entry(0), entry(2)], expectedBundleCount: nil) == nil)
+    @Test func theRunStopsAtTheFirstMissingIndex() {
+        #expect(DelegationRestore.package(from: [entry(0), entry(2)])?.map(\.bundleIndex) == [0])
+        #expect(DelegationRestore.package(from: [entry(1), entry(2)]) == nil)
     }
 
-    @Test func aBundleWithoutATransactionHashCannotBeImported() {
-        #expect(DelegationRestore.package(from: [entry(0), entryWithoutHash(1)], expectedBundleCount: nil) == nil)
+    @Test func aBundleWithoutATransactionHashEndsTheRun() {
+        #expect(DelegationRestore.package(from: [entry(0), entryWithoutHash(1)])?.count == 1)
+        #expect(DelegationRestore.package(from: [entryWithoutHash(0)]) == nil)
     }
 
-    @Test func duplicateAndMalformedHashesAreRejected() {
+    @Test func duplicateAndMalformedHashesEndTheRun() {
         let shared = String(repeating: "ee", count: 32)
-        #expect(DelegationRestore.package(from: [entry(0, hash: shared), entry(1, hash: shared)], expectedBundleCount: nil) == nil)
-        #expect(DelegationRestore.package(from: [entry(0, hash: String(repeating: "EE", count: 32))], expectedBundleCount: nil) == nil)
-        #expect(DelegationRestore.package(from: [entry(0, hash: "abc")], expectedBundleCount: nil) == nil)
+        #expect(DelegationRestore.package(from: [entry(0, hash: shared), entry(1, hash: shared)])?.count == 1)
+        #expect(DelegationRestore.package(from: [entry(0, hash: String(repeating: "EE", count: 32))]) == nil)
+        #expect(DelegationRestore.package(from: [entry(0, hash: "abc")]) == nil)
     }
 
     @Test func aWeightBelowOneBallotIsRejected() {
-        #expect(DelegationRestore.package(from: [entry(0, weight: 12_499_999)], expectedBundleCount: nil) == nil)
-        #expect(DelegationRestore.package(from: [entry(0, weight: 12_500_000)], expectedBundleCount: nil) != nil)
+        #expect(DelegationRestore.package(from: [entry(0, weight: 12_499_999)]) == nil)
+        #expect(DelegationRestore.package(from: [entry(0, weight: 12_500_000)]) != nil)
     }
 
-    @Test func theRoundsBundleCountMustMatchWhenKnown() {
-        #expect(DelegationRestore.package(from: [entry(0), entry(1)], expectedBundleCount: 3) == nil)
-        #expect(DelegationRestore.package(from: [entry(0), entry(1)], expectedBundleCount: nil)?.count == 2)
+    @Test func aCommitmentThatIsNotThirtyTwoBytesEndsTheRun() {
+        #expect(DelegationRestore.package(from: [entry(0), entry(1, van: Data(repeating: 0xC0, count: 31))])?.count == 1)
+        #expect(DelegationRestore.package(from: [entry(0, van: Data())]) == nil)
+    }
+
+    @Test func thePackageCarriesTheCommitmentTheRowHeld() {
+        let van = Data(repeating: 0xC1, count: 32)
+        #expect(DelegationRestore.package(from: [entry(0, van: van)])?.first?.van == van)
     }
 }
 
@@ -132,7 +141,7 @@ import Foundation
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1, 2, 3]),
-            escrowEntries: [entry(0), entry(1)], expectedBundleCount: 2, crypto: recorder.client()
+            escrowEntries: [entry(0), entry(1)], crypto: recorder.client()
         )
 
         #expect(outcome == .restored(bundleCount: 2))
@@ -148,21 +157,21 @@ import Foundation
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1]),
-            escrowEntries: [entry(0)], expectedBundleCount: 1, crypto: recorder.client()
+            escrowEntries: [entry(0)], crypto: recorder.client()
         )
 
         #expect(outcome == .alreadyRestored)
     }
 
-    @Test func anIncompleteEscrowNeverReachesTheSdk() async {
+    @Test func anEscrowWithoutBundleZeroNeverReachesTheSdk() async {
         let recorder = Recorder()
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1]),
-            escrowEntries: [entry(0)], expectedBundleCount: 2, crypto: recorder.client()
+            escrowEntries: [entry(1)], crypto: recorder.client()
         )
 
-        #expect(outcome == .notApplicable(reason: "escrow holds no complete recovered delegation"))
+        #expect(outcome == .notApplicable(reason: "escrow holds no restorable delegation"))
         #expect(recorder.requests.isEmpty)
     }
 
@@ -171,7 +180,7 @@ import Foundation
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: nil,
-            escrowEntries: [entry(0)], expectedBundleCount: 1, crypto: recorder.client()
+            escrowEntries: [entry(0)], crypto: recorder.client()
         )
 
         #expect(outcome == .notApplicable(reason: "no voting hotkey on this device"))
@@ -184,7 +193,7 @@ import Foundation
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1]),
-            escrowEntries: [entry(0)], expectedBundleCount: 1, crypto: recorder.client()
+            escrowEntries: [entry(0)], crypto: recorder.client()
         )
 
         #expect(outcome == .refused(reason: "round holds 2 cast vote(s); nothing may be cleared"))
@@ -196,7 +205,7 @@ import Foundation
 
         let outcome = await DelegationRestore.restoreIfNeeded(
             roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1]),
-            escrowEntries: [entry(0)], expectedBundleCount: 1, crypto: recorder.client()
+            escrowEntries: [entry(0)], crypto: recorder.client()
         )
 
         #expect(outcome == .failed)

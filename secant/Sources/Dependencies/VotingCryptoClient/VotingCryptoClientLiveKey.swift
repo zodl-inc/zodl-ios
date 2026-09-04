@@ -521,6 +521,7 @@ extension VotingCryptoClient: DependencyKey {
                                 bundleIndex: $0.bundleIndex,
                                 totalNoteValue: $0.totalNoteValue,
                                 vanCommRand: [UInt8]($0.vanCommRand),
+                                van: [UInt8]($0.van),
                                 delegationTxHash: $0.delegationTxHash
                             )
                         },

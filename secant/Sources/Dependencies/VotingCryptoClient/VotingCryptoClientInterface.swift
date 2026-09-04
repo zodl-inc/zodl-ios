@@ -23,6 +23,9 @@ struct RecoveredDelegationBundleInput: Equatable, Sendable {
     let totalNoteValue: UInt64
     /// The 32-byte VAN blinding factor.
     let vanCommRand: Data
+    /// The 32-byte VAN commitment the recovered row carried. The SDK refuses
+    /// a bundle whose blinding and weight do not open it.
+    let van: Data
     /// Lowercase hex SHA-256 of the signed delegation transaction.
     let delegationTxHash: String
 }

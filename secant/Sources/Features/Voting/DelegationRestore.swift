@@ -41,11 +41,10 @@ enum DelegationRestore {
         networkId: UInt32,
         hotkeyStoredSecret: Data?,
         escrowEntries: [DelegationEscrowEntry],
-        expectedBundleCount: UInt32?,
         crypto: VotingCryptoClient
     ) async -> Outcome {
-        guard let bundles = package(from: escrowEntries, expectedBundleCount: expectedBundleCount) else {
-            return .notApplicable(reason: "escrow holds no complete recovered delegation")
+        guard let bundles = package(from: escrowEntries) else {
+            return .notApplicable(reason: "escrow holds no restorable delegation")
         }
         guard let hotkeyStoredSecret else {
             return .notApplicable(reason: "no voting hotkey on this device")
@@ -83,49 +82,42 @@ enum DelegationRestore {
         }
     }
 
-    /// The bundles a complete package needs, or nil when the escrow cannot
-    /// supply one.
+    /// The longest run of bundles from index 0 the escrow can restore, or nil
+    /// when it cannot restore any.
     ///
-    /// Complete means: every entry was carved (`.recovered`), the indices run
-    /// from 0 with no gap, every entry has a distinct lowercase-hex transaction
-    /// hash, every weight is at least one ballot, and when the caller knows
-    /// the round's bundle count, the package has exactly that many.
-    static func package(
-        from entries: [DelegationEscrowEntry],
-        expectedBundleCount: UInt32?
-    ) -> [RecoveredDelegationBundleInput]? {
-        let recovered = entries
-            .filter { $0.source == .recovered }
-            .sorted { $0.bundleIndex < $1.bundleIndex }
-        guard !recovered.isEmpty else { return nil }
-        guard recovered.enumerated().allSatisfy({ $0.element.bundleIndex == UInt32($0.offset) }) else {
-            return nil
-        }
-        if let expectedBundleCount, recovered.count != Int(expectedBundleCount) {
-            return nil
-        }
-
+    /// Restorable means: the entry was carved (`.recovered`), its blinding and
+    /// commitment are 32 bytes, its weight is at least one ballot, and it has
+    /// a lowercase-hex transaction hash no earlier bundle shares. The run
+    /// stops at the first index without such an entry: the SDK imports only a
+    /// prefix, and each bundle votes on its own, so a lost trailing bundle
+    /// costs its own voting power and nothing else.
+    static func package(from entries: [DelegationEscrowEntry]) -> [RecoveredDelegationBundleInput]? {
+        let byIndex = Dictionary(grouping: entries.filter { $0.source == .recovered }, by: \.bundleIndex)
         var bundles: [RecoveredDelegationBundleInput] = []
         var hashes: Set<String> = []
-        for entry in recovered {
+        var index: UInt32 = 0
+        while let entry = byIndex[index]?.first {
             guard let hash = entry.delegationTxHash,
                   isLowercaseHexHash(hash),
                   hashes.insert(hash).inserted,
                   entry.vanCommRand.count == 32,
+                  entry.van.count == 32,
                   entry.totalNoteValue >= ballotDivisor
             else {
-                return nil
+                break
             }
             bundles.append(
                 RecoveredDelegationBundleInput(
-                    bundleIndex: entry.bundleIndex,
+                    bundleIndex: index,
                     totalNoteValue: entry.totalNoteValue,
                     vanCommRand: entry.vanCommRand,
+                    van: entry.van,
                     delegationTxHash: hash
                 )
             )
+            index += 1
         }
-        return bundles
+        return bundles.isEmpty ? nil : bundles
     }
 
     /// 64 lowercase hex characters, the form the capability codec accepts.

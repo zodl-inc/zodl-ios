@@ -1,6 +1,7 @@
 #if RECOVERY_VOTING_ENABLED
 import Foundation
 import SQLite3
+import ZcashLightClientKit
 @testable import zodl_internal
 
 extension VotingRecoveryEndToEndTests {
@@ -17,6 +18,10 @@ extension VotingRecoveryEndToEndTests {
         /// Generation 1 — what the rebuild sampled in its place.
         static let rebuiltRand = [byte(0xB0), byte(0xB1), byte(0xB2)]
         static let govComm = String(repeating: "c0", count: 31) + "02"
+        /// Every bundle's `total_note_value`.
+        static let totalNoteValue: UInt64 = 130_000_000
+        /// The SDK network id of `rounds.network` (testnet).
+        static let networkId: UInt32 = 1
 
         /// A 32-byte value whose most significant byte is small, so it is below
         /// the Pallas modulus and could genuinely have been a blinding factor.
@@ -51,6 +56,10 @@ extension VotingRecoveryEndToEndTests {
         /// The run's filler seed. Logged on construction so a failure can be
         /// reproduced exactly by setting `VOTING_FIXTURE_SEED`.
         let seed: UInt64
+        /// When set, every bundle of the round under test stores the
+        /// commitment its blinding opens for this hotkey, so the SDK's restore
+        /// accepts the carved rows. Otherwise `Fixture.govComm`.
+        let hotkey: ZcashLightClientKit.VotingHotkey?
 
         var allURLs: [URL] { [databaseURL, walURL, shmURL] }
 
@@ -73,6 +82,9 @@ extension VotingRecoveryEndToEndTests {
         /// - Parameter otherRounds: unrelated rounds inserted alongside, so the
         ///   bundles of interest share pages with neighbours instead of sitting
         ///   alone on freshly allocated ones.
+        /// - Parameter hotkey: when given, each bundle's `gov_comm` is the
+        ///   commitment its blinding opens for this hotkey, as the SDK's
+        ///   restore checks before it clears anything.
         init(
             rebuildAfterClearing: Bool,
             /// Whether the delegation reached the chain before the wipe. False
@@ -83,6 +95,7 @@ extension VotingRecoveryEndToEndTests {
             updateAfterCheckpoint: Bool = false,
             notesPerBundle: Int = 1,
             otherRounds: Int = 0,
+            hotkey: ZcashLightClientKit.VotingHotkey? = nil,
             seed: UInt64? = nil
         ) throws {
             // A caller's seed wins, then the environment (which is how a CI
@@ -91,6 +104,7 @@ extension VotingRecoveryEndToEndTests {
                 ?? ProcessInfo.processInfo.environment["VOTING_FIXTURE_SEED"]
                     .flatMap(UInt64.init)
                 ?? UInt64.random(in: .min ... .max)
+            self.hotkey = hotkey
             // print, NOT LoggerProxy: the seed has to land in the xcodebuild
             // output a failing CI run is read from. LoggerProxy goes to
             // os_log, which that output never shows, so the seed would be
@@ -238,6 +252,7 @@ extension VotingRecoveryEndToEndTests {
 
         private init(cloning original: CorruptedDatabase) throws {
             seed = original.seed
+            hotkey = original.hotkey
             directory = original.directory
                 .deletingLastPathComponent()
                 .appendingPathComponent("voting-e2e-copy-\(UUID().uuidString)", isDirectory: true)
@@ -377,7 +392,7 @@ extension VotingRecoveryEndToEndTests {
             rands: [String],
             notesPerBundle: Int = 1,
             roundId: String = Fixture.roundId
-        ) -> String {
+        ) throws -> String {
             let notes = max(notesPerBundle, 1)
             var sql = """
                 INSERT INTO rounds
@@ -389,6 +404,7 @@ extension VotingRecoveryEndToEndTests {
 
                 """
             for (index, rand) in rands.enumerated() {
+                let govComm = try govComm(for: rand, roundId: roundId)
                 sql += """
                     INSERT INTO bundles
                         (round_id, wallet_id, bundle_index,
@@ -412,8 +428,8 @@ extension VotingRecoveryEndToEndTests {
                          \(randomBlob("alpha", 32, bundle: index)),
                          \(randomBlob("rseedSigned", 32, bundle: index)),
                          \(randomBlob("rseedOutput", 32, bundle: index)),
-                         X'\(Fixture.govComm)',
-                         130000000, 0,
+                         X'\(govComm)',
+                         \(Fixture.totalNoteValue), 0,
                          \(randomBlob("rk", 32, bundle: index)),
                          \(randomBlob("govNullifiers", 32 * notes, bundle: index)),
                          \(randomBlob("paddedNoteSecrets", 64 * notes, bundle: index)),
@@ -423,6 +439,29 @@ extension VotingRecoveryEndToEndTests {
                     """
             }
             return sql
+        }
+
+        /// The commitment a bundle row stores: the one its blinding opens when
+        /// the fixture has a hotkey and this is the round under test, else the
+        /// constant.
+        private func govComm(for rand: String, roundId: String) throws -> String {
+            guard let hotkey, roundId == Fixture.roundId else { return Fixture.govComm }
+            return try Data(
+                VotingRustBackend.vanCommitment(
+                    hotkey: hotkey,
+                    networkId: Fixture.networkId,
+                    roundId: roundId,
+                    totalNoteValue: Fixture.totalNoteValue,
+                    vanCommRand: Self.bytes(fromHex: rand)
+                )
+            ).hexString
+        }
+
+        private static func bytes(fromHex hex: String) -> [UInt8] {
+            stride(from: 0, to: hex.count, by: 2).compactMap { offset in
+                let start = hex.index(hex.startIndex, offsetBy: offset)
+                return UInt8(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)
+            }
         }
 
         /// `rounds` and `bundles`, copied VERBATIM from the voting crate's

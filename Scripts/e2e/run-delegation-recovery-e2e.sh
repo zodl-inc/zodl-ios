@@ -43,7 +43,7 @@ SCHEME="${SCHEME:-zodl-internal}"
 PROJECT="secant.xcodeproj"
 KEEP=0
 # Tests in DelegationRecoveryDeviceE2ETests; bump with the suite.
-EXPECTED_TESTS=12
+EXPECTED_TESTS=13
 # Every test in the suite must run; a skip means the gate did not engage.
 EXPECTED_SKIPS=0
 
@@ -190,7 +190,8 @@ for required in \
     openingTheAppDeletesNothingItRecoveredFrom \
     theEscrowHoldsEverythingARestoreWillNeed \
     aVoteReachesTheServerUnderTheRecoveredDelegation \
-    restoringTheCarvedDelegationLetsTheRoundBeVotedOn
+    restoringTheCarvedDelegationLetsTheRoundBeVotedOn \
+    restoringAPrefixLetsThoseBundlesVote
 do
     if ! grep -q "Test ${required}() passed" "$TEST_LOG"; then
         echo "Required test did not pass: ${required}" >&2

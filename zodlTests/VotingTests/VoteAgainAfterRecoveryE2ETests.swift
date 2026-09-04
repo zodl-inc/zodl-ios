@@ -84,7 +84,7 @@ struct VoteAgain {
     /// broadcast, the round was cleared, and a rebuild put fresh secrets in
     /// place of the ones the chain has.
     @discardableResult
-    private func plantTheIncident() throws -> VotingRecoveryEndToEndTests.CorruptedDatabase {
+    private func plantTheIncident(hotkey: ZcashLightClientKit.VotingHotkey? = nil) throws -> VotingRecoveryEndToEndTests.CorruptedDatabase {
         let documents = try #require(
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         )
@@ -93,7 +93,8 @@ struct VoteAgain {
         try FileManager.default.createDirectory(at: preserved, withIntermediateDirectories: true)
 
         let corrupted = try VotingRecoveryEndToEndTests.CorruptedDatabase(
-            rebuildAfterClearing: true
+            rebuildAfterClearing: true,
+            hotkey: hotkey
         )
         for source in corrupted.allURLs {
             try FileManager.default.copyItem(
@@ -266,6 +267,13 @@ struct VoteAgain {
 
     private static let restoreNetworkId: UInt32 = 1
 
+    private static func removeEscrowFile() throws {
+        let documents = try #require(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        try? FileManager.default.removeItem(at: documents.appendingPathComponent(DelegationEscrowFile.name))
+    }
+
     private static var roundParams: VotingRoundParams {
         VotingRoundParams(
             voteRoundId: Data(bytes(fromHex: Expected.roundId)),
@@ -305,6 +313,7 @@ struct VoteAgain {
                             bundleIndex: $0.bundleIndex,
                             totalNoteValue: $0.totalNoteValue,
                             vanCommRand: [UInt8]($0.vanCommRand),
+                            van: [UInt8]($0.van),
                             delegationTxHash: $0.delegationTxHash
                         )
                     },
@@ -322,7 +331,11 @@ struct VoteAgain {
     /// second pass recognises it and writes nothing.
     @Test func restoringTheCarvedDelegationLetsTheRoundBeVotedOn() async throws {
         try await SharedLiveEscrow.exclusive {
-        try plantTheIncident()
+        // Start from a clean escrow: another test's fixture stores constant
+        // commitments, and this one needs only the images of its own hotkey.
+        try Self.removeEscrowFile()
+        let hotkey = try VotingRustBackend.generateHotkey(networkId: Self.restoreNetworkId)
+        try plantTheIncident(hotkey: hotkey)
         await openTheApp(server: FakeVoteServer())
         let entries = try await escrowedEntries()
         #expect(entries.count == Expected.bundleCount)
@@ -336,7 +349,6 @@ struct VoteAgain {
             backend.close()
             try? FileManager.default.removeItem(atPath: path)
         }
-        let hotkey = try VotingRustBackend.generateHotkey(networkId: Self.restoreNetworkId)
         let crypto = Self.realCryptoClient(backend: backend)
 
         let first = await DelegationRestore.restoreIfNeeded(
@@ -345,7 +357,6 @@ struct VoteAgain {
             networkId: Self.restoreNetworkId,
             hotkeyStoredSecret: Data(hotkey.storedSecret),
             escrowEntries: entries,
-            expectedBundleCount: nil,
             crypto: crypto
         )
         #expect(first == .restored(bundleCount: Expected.bundleCount))
@@ -364,10 +375,88 @@ struct VoteAgain {
             networkId: Self.restoreNetworkId,
             hotkeyStoredSecret: Data(hotkey.storedSecret),
             escrowEntries: entries,
-            expectedBundleCount: UInt32(Expected.bundleCount),
             crypto: crypto
         )
         #expect(second == .alreadyRestored)
+        }
+    }
+
+    /// A carve that finds only the first bundles restores those under their
+    /// original indices, and each of them votes on its own. The poll holds no
+    /// delegation rows here: the SDK refuses to shrink a round that does.
+    @Test func restoringAPrefixLetsThoseBundlesVote() async throws {
+        try await SharedLiveEscrow.exclusive {
+        // Start from a clean escrow: another test's fixture stores constant
+        // commitments, and this one needs only the images of its own hotkey.
+        try Self.removeEscrowFile()
+        let hotkey = try VotingRustBackend.generateHotkey(networkId: Self.restoreNetworkId)
+        try plantTheIncident(hotkey: hotkey)
+        let server = FakeVoteServer()
+        await openTheApp(server: server)
+        let entries = try await escrowedEntries()
+        #expect(entries.count == Expected.bundleCount)
+        // Bundle 2's record did not survive.
+        let survivors = entries.filter { $0.bundleIndex < 2 }.sorted { $0.bundleIndex < $1.bundleIndex }
+
+        let backend = VotingRustBackend()
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restore-\(UUID().uuidString).sqlite3").path
+        try backend.open(path: path, networkId: Self.restoreNetworkId)
+        try backend.setWalletId(Expected.walletId)
+        defer {
+            backend.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        let outcome = await DelegationRestore.restoreIfNeeded(
+            roundId: Expected.roundId,
+            roundParams: Self.roundParams,
+            networkId: Self.restoreNetworkId,
+            hotkeyStoredSecret: Data(hotkey.storedSecret),
+            escrowEntries: survivors,
+            crypto: Self.realCryptoClient(backend: backend)
+        )
+        #expect(outcome == .restored(bundleCount: 2))
+        #expect(try backend.getBundleCount(roundId: Expected.roundId) == 2)
+        for index in 0..<2 {
+            #expect(
+                try backend.getDelegationTxHash(roundId: Expected.roundId, bundleIndex: UInt32(index))
+                    == Expected.txHash(index)
+            )
+        }
+
+        // Each restored bundle votes on its own, naming the commitment the
+        // chain holds for it.
+        let api = server.client()
+        for entry in survivors {
+            _ = try await api.submitVoteCommitment(
+                VoteCommitmentBundle(
+                    vanNullifier: Data(repeating: 0x01, count: 32),
+                    voteAuthorityNoteNew: entry.van,
+                    voteCommitment: Data(repeating: 0x02, count: 32),
+                    proposalId: 0,
+                    proof: Data(),
+                    encShares: [],
+                    anchorHeight: 1,
+                    voteRoundId: Expected.roundId,
+                    sharesHash: Data(repeating: 0x03, count: 32)
+                ),
+                CastVoteSignature(voteAuthSig: Data(repeating: 0xAA, count: 64))
+            )
+        }
+        #expect(server.submittedVotes.count == 2)
+        let expectedVANs = try survivors.map { entry in
+            try Data(
+                VotingRustBackend.vanCommitment(
+                    hotkey: hotkey,
+                    networkId: Self.restoreNetworkId,
+                    roundId: Expected.roundId,
+                    totalNoteValue: entry.totalNoteValue,
+                    vanCommRand: [UInt8](entry.vanCommRand)
+                )
+            ).hexString
+        }
+        #expect(server.acceptedVANs == expectedVANs)
         }
     }
 

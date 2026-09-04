@@ -914,7 +914,6 @@ extension VotingCoordFlow {
                         session: session,
                         networkId: networkId,
                         accountId: accountId,
-                        existingBundleCount: existingBundleCount,
                         votingCrypto: votingCrypto,
                         walletStorage: walletStorage
                     ) {
@@ -4497,7 +4496,6 @@ extension VotingCoordFlow {
         session: VotingSession,
         networkId: UInt32,
         accountId: AccountUUID?,
-        existingBundleCount: UInt32,
         votingCrypto: VotingCryptoClient,
         walletStorage: WalletStorageClient
     ) async -> DelegationRestore.Outcome {
@@ -4521,7 +4519,6 @@ extension VotingCoordFlow {
             networkId: networkId,
             hotkeyStoredSecret: hotkeySecret,
             escrowEntries: entries,
-            expectedBundleCount: existingBundleCount == 0 ? nil : existingBundleCount,
             crypto: votingCrypto
         )
         LoggerProxy.info("[poll-restore] round=\(roundId) outcome=\(outcome)")
