@@ -721,6 +721,14 @@ extension Root {
         state.autoUpdateSwapCandidates.removeAll()
         state.homeState.transactionListState.isInvalidated = true
         state.transactionsCoordFlowState.transactionsManagerState.isInvalidated = true
+        // MOB-1856: the `.cancel` below drops whatever fetch is still running for the account just
+        // left -- TCA drops actions sent from a cancelled effect, so neither `.fetchedTransactions`
+        // nor `.transactionsFetchFailed` ever arrives for it to reset the coalescing gate itself
+        // (see `RootTransactions.swift`). Without this reset, `isTransactionsFetchInFlight` would
+        // stick `true` forever and the fresh fetch sent below would be coalesced as dirty instead of
+        // actually starting -- parking the newly-selected account's fetch forever.
+        state.isTransactionsFetchInFlight = false
+        state.isTransactionsFetchDirty = false
         return .merge(
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),

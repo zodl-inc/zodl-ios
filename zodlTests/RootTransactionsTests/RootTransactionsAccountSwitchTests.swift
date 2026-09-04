@@ -18,11 +18,23 @@
 //  dependency baseline, file-scoped rather than shared, the same way that file keeps its own
 //  private helpers local to itself.
 //
+//  MOB-1856: this file used to also guard a shared-cancellable-id race with a test named
+//  `earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult` -- two SAME-account dispatches
+//  of `.fetchTransactionsForTheSelectedAccount` each starting their own concurrent
+//  `getAllTransactions` call, with the later one required not to cancel the earlier. MOB-1856's
+//  single-flight coalescing gate (`RootTransactions.swift`) makes that scenario unreachable: a
+//  second same-account dispatch while one is already in flight no longer starts a competing effect
+//  at all -- it just marks the request dirty and returns, so there is nothing left for a shared
+//  cancellable id to race. That test was removed as part of MOB-1856; the coalescing behavior it
+//  is superseded by is covered in `RootTransactionsCoalescingTests.swift`. The account-SWITCH
+//  cancellation this file covers below (`switchingAccountsCancelsInFlightFetchForThePreviousAccount`)
+//  is a different, still-live scenario -- a cross-account cancel, not a same-account race -- and is
+//  unaffected.
+//
 //  NOTHING here waits on the clock. An earlier version of this file polled shared state behind
 //  wall-clock budgets (3-5s), which made it load-sensitive: measured on a contended box, the whole
-//  suite went from 1.4s to 23.1s and `earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult`
-//  alone from 0.099s to 7.384s -- a 75x stretch that walks right up to a 5s budget, and past it on
-//  a busier machine. The stretch is not specific to the waits: `staleFetchFromPreviousAccountIsDroppedAfterSwitch`,
+//  suite went from 1.4s to 23.1s -- a stretch that walks right up to a 5s budget, and past it on a
+//  busier machine. The stretch is not specific to the waits: `staleFetchFromPreviousAccountIsDroppedAfterSwitch`,
 //  which awaits nothing at all, still went 0.079s -> 2.236s, because TCA runs every `.run` effect
 //  body on the MAIN ACTOR (`Core.swift`'s `Task(name:priority:) { @MainActor ... }`), so every
 //  effect in every parallel suite queues behind the same actor. Widening the budgets would only
@@ -31,8 +43,7 @@
 //   - "a fetch has entered the mock" is an `AsyncStream` the mocked `getAllTransactions` yields to;
 //   - "this dispatch is completely finished" is `StoreTask.finish()`, which awaits the whole effect
 //     tree including effects of actions the effect itself sent (`Core.swift` appends those nested
-//     tasks to the same list the returned task awaits);
-//   - "call #1 may now return" is an `AsyncStream` the test yields to, not a polled flag.
+//     tasks to the same list the returned task awaits).
 //
 //  A machine 100x slower runs these to the same verdict, just later. `.timeLimit` is the only clock
 //  left, and it exists purely so a genuinely never-resolving condition fails instead of hanging
@@ -193,107 +204,6 @@ import ComposableArchitecture
         #expect(aFetchCancelled.value)
         #expect(!aFetchCompleted.value)
         #expect(callsStarted.value.contains(accountA.id))
-    }
-
-    // MARK: - A later fetch dispatch during a sync must not starve an earlier one
-
-    /// Two traps an earlier draft of this test fell into -- both worth naming so they don't come
-    /// back:
-    ///
-    /// 1. A FINITE burst of dispatches is not a valid regression guard. Whichever dispatch is
-    ///    LAST has nothing after it to cancel it, so it always survives to completion under both
-    ///    the shared-id `cancelInFlight: true` bug and the fix -- asserting only that "a" result
-    ///    landed passes either way and proves nothing. The assertion has to be about a SPECIFIC
-    ///    earlier dispatch's own result landing, never about any result landing.
-    /// 2. A wall-clock window is not safe either. An earlier draft mocked `getAllTransactions` to
-    ///    sleep, kept re-dispatching faster than that sleep from a background loop, and asserted
-    ///    the result showed up within a fixed time budget. Swift Testing runs suites in parallel,
-    ///    and under the load of the full suite that budget can blow even with the fix in place --
-    ///    the test needs to tell "never" apart from "eventually", not "fast" apart from "slow".
-    ///
-    /// This version replaces both the burst and the clock with explicit gates:
-    ///  - the mocked `getAllTransactions` hands out a distinct call index per invocation (a
-    ///    `LockIsolated<Int>` counter) and returns a transaction identified by that index alone
-    ///    (`"fetch-1"`, `"fetch-2"`, ...), announcing each start on an `AsyncStream`;
-    ///  - call #1 PARKS on a second `AsyncStream` until the test releases it, then rethrows any
-    ///    cancellation via `Task.checkCancellation()` -- load-bearing, because if the shared-id bug
-    ///    cancels this effect the instant dispatch B registers, that cancellation has to leave this
-    ///    closure as a thrown error so the result is dropped rather than silently returned;
-    ///  - call #2 (and any later call) returns immediately.
-    ///
-    /// The sequence: dispatch A, await call #1's start, dispatch B -- the exact moment the shared-id
-    /// bug would cancel A -- await call #2's start, await B's dispatch to FINISH (so B's `"fetch-2"`
-    /// is already written and A's write is unambiguously the later one), and only THEN release call
-    /// #1 and await A's own dispatch to finish. Under the fix, A survives B untouched and lands
-    /// `"fetch-1"` over what B wrote. Under the bug, A was cancelled the instant B was dispatched,
-    /// so `"fetch-1"` can never land -- `"fetch-2"` stays, which is exactly why the assertion names
-    /// the id instead of accepting any result.
-    ///
-    /// Every step above is a signal, not a duration -- no budget to blow. `StoreTask.finish()`
-    /// covers the whole effect tree, including the `.fetchedTransactions` each fetch sends back
-    /// into the store, so "A finished" really does mean "A's write has landed".
-    @Test func earlierFetchDispatchSurvivesALaterDispatchAndLandsItsOwnResult() async {
-        let account = Self.walletAccount(idByte: 69)
-
-        let callIndex = LockIsolated<Int>(0)
-        let (callStarted, callStartedContinuation) = AsyncStream<Int>.makeStream()
-        let (releaseFirstCall, releaseFirstCallContinuation) = AsyncStream<Void>.makeStream()
-
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = account }
-        initialState.$transactions.withLock { $0 = [] }
-
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { _ in
-                let index = callIndex.withValue { value -> Int in
-                    value += 1
-                    return value
-                }
-                callStartedContinuation.yield(index)
-
-                if index == 1 {
-                    // Parks until the test releases this call -- no polling, no flag, no clock.
-                    // Cancellation is load-bearing: if the shared-id bug cancels this effect the
-                    // moment dispatch B registers, the stream ends without ever yielding and
-                    // `checkCancellation` rethrows it, so this call drops its result instead of
-                    // returning one. Swallowing it (a `try?`) would hide the very bug under test.
-                    for await _ in releaseFirstCall { break }
-                    try Task.checkCancellation()
-                }
-
-                let transaction = TransactionState(
-                    fee: Zatoshi(10),
-                    id: "fetch-\(index)",
-                    status: .received,
-                    zecAmount: Zatoshi(100_000)
-                )
-                return IdentifiedArrayOf<TransactionState>(uniqueElements: [transaction])
-            }
-        }
-
-        var started = callStarted.makeAsyncIterator()
-
-        let earlierDispatch = store.send(.fetchTransactionsForTheSelectedAccount)
-        #expect(await started.next() == 1)
-
-        // The exact moment the shared-id/`cancelInFlight` bug would cancel call #1.
-        let laterDispatch = store.send(.fetchTransactionsForTheSelectedAccount)
-        #expect(await started.next() == 2)
-        // B is completely done -- `"fetch-2"` is in `state.transactions` -- BEFORE call #1 is
-        // released, so A's write is unambiguously the last one. (The old wall-clock version left
-        // the two writes free to race: B landing after A would have overwritten `"fetch-1"` and
-        // failed the assertion for a reason that had nothing to do with the bug under test.)
-        await laterDispatch.finish()
-        #expect(store.state.transactions.contains { $0.id == "fetch-2" })
-
-        releaseFirstCallContinuation.yield(())
-        releaseFirstCallContinuation.finish()
-        await earlierDispatch.finish()
-
-        #expect(store.state.transactions.contains { $0.id == "fetch-1" })
     }
 
     // MARK: - (c) Keystone-connect auto-select parity
