@@ -149,6 +149,22 @@ struct Root {
         /// status as idle too, since a stalled sync has nothing left for an automatic switch to
         /// interrupt. Reset at `.didEnterBackground`, same as `lastKnownSyncStatus`.
         var isSyncStalledSinceLastProgress = false
+        /// MOB-1856: single-flight coalescing latch for `.fetchTransactionsForTheSelectedAccount`.
+        /// During catch-up sync this fetch is re-dispatched on every throttled synchronizer event
+        /// (`.observeTransactions` -- see `RootTransactions.swift`), and on a long transaction
+        /// history `getAllTransactions` can easily take longer than one throttle window, so without
+        /// this latch concurrent full-history fetches piled up. While `true`, a fresh dispatch sets
+        /// `isTransactionsFetchDirty` and returns immediately instead of starting another fetch; the
+        /// in-flight fetch's own completion (`.fetchedTransactions`/`.transactionsFetchFailed`)
+        /// clears this flag and, if dirty, sends exactly one follow-up fetch. Also reset by
+        /// `accountSwitchedEffect` (`RootCoordinator.swift`), whose `.cancel` drops any pending
+        /// completion for the fetch it just cancelled -- see that reset's own comment for why.
+        var isTransactionsFetchInFlight = false
+        /// Set by `.fetchTransactionsForTheSelectedAccount` when a dispatch arrives while
+        /// `isTransactionsFetchInFlight` is already `true`. Cleared by the in-flight fetch's own
+        /// completion, which folds every dispatch coalesced during its run into exactly one
+        /// follow-up fetch for whichever account is selected at that point.
+        var isTransactionsFetchDirty = false
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         /// The most recent `.syncing` progress value seen via `.synchronizerStateChanged`, kept
         /// solely so that handler can detect a NEW tick's progress advancing past this one and

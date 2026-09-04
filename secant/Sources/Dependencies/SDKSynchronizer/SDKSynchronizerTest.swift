@@ -302,7 +302,11 @@ extension SDKSynchronizerClient {
         },
         rescanFrom: @escaping @Sendable (BlockHeight) async throws -> Void = { _ in },
         rewind: @escaping @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
-        getAllTransactions: @escaping @Sendable (AccountUUID?) -> IdentifiedArrayOf<TransactionState> = { _ in
+        // MOB-1856: `async throws` (matching `SDKSynchronizerClient.getAllTransactions`'s real type,
+        // `SDKSynchronizerInterface.swift`) so a test's stub can genuinely suspend (e.g. on a gate)
+        // or fail -- every existing call site passes a synchronous, non-throwing closure, which
+        // stays valid under this wider type. Same widening `mocked(start:)` already got for MOB-1854.
+        getAllTransactions: @escaping @Sendable (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState> = { _ in
             let mockedCleared: [TransactionStateMockHelper] = [
                 TransactionStateMockHelper(date: 1651039202, amount: Zatoshi(1), status: .paid, uuid: "aa11"),
                 TransactionStateMockHelper(date: 1651039101, amount: Zatoshi(2), uuid: "bb22"),

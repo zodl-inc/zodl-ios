@@ -736,7 +736,10 @@ extension SDKSynchronizerClient {
                 currentChainTip: currentChainTip
             )
 
-            let recipients = await synchronizer.getRecipients(for: clearedTransaction)
+            // MOB-1856: the SDK's `getRecipients(for:)` is itself just
+            // `getTransactionOutputs(for:).map { $0.recipient }` -- reuse the `outputs` already read
+            // above instead of a second call that re-reads the exact same rows from the database.
+            let recipients = outputs.map(\.recipient)
             let addresses = recipients.compactMap {
                 if case let .address(address) = $0 {
                     return address

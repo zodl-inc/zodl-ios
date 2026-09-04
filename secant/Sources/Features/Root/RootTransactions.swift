@@ -88,18 +88,29 @@ extension Root {
                     LoggerProxy.event("[RootTransactions] fetch skipped: no selected account yet")
                     return .none
                 }
-                // This id exists so an account switch can cancel whatever fetch is still running
+                // MOB-1856: refreshes are coalesced -- at most one `getAllTransactions` fetch runs
+                // at a time. During a sync, `sdkSynchronizer.eventStream()` is throttled to one
+                // event per 0.2s and every `foundTransactions`/`minedTransaction` re-dispatches this
+                // action (see above); on a wallet with a long transaction history,
+                // `getAllTransactions` reads the WHOLE history and can easily take longer than that
+                // 0.2s interval, so before this guard, every throttled tick started its own
+                // concurrent full-history fetch and they piled up for the whole sync, each one
+                // competing for the same SQLite connection and CPU the sync itself needed. A
+                // dispatch that arrives while one is already running just marks the request dirty
+                // and returns; the in-flight fetch's own completion below (`.fetchedTransactions`/
+                // `.transactionsFetchFailed`) folds every dispatch coalesced during its run into
+                // exactly one follow-up fetch, for whichever account is selected at that point. This
+                // id still exists so an account switch can cancel whatever fetch is still running
                 // for the account just left (see `accountSwitchedEffect` in `RootCoordinator.swift`,
-                // which explicitly `.cancel`s this id before sending a fresh fetch for the new
-                // account). `cancelInFlight` is deliberately NOT used here: during a sync,
-                // `sdkSynchronizer.eventStream()` is throttled to one event per 0.2s and every
-                // `foundTransactions`/`minedTransaction` re-dispatches this action (see above) -- on
-                // a wallet where `getAllTransactions` takes longer than that 0.2s interval,
-                // `cancelInFlight` would cancel every one of those fetches before it could complete,
-                // starving `.fetchedTransactions` for the whole sync. Letting concurrent fetches for
-                // the same account run to completion is harmless: the `.fetchedTransactions`
+                // which explicitly `.cancel`s this id -- and resets the coalescing flags below --
+                // before sending a fresh fetch for the new account); the `.fetchedTransactions`
                 // provenance guard below still drops any payload for an account other than the one
-                // currently selected.
+                // currently selected, as a second line of defense.
+                if state.isTransactionsFetchInFlight {
+                    state.isTransactionsFetchDirty = true
+                    return .none
+                }
+                state.isTransactionsFetchInFlight = true
                 return .run { send in
                     do {
                         let transactions = try await sdkSynchronizer.getAllTransactions(accountUUID)
@@ -121,6 +132,20 @@ extension Root {
                 .cancellable(id: state.CancelTransactionsFetchId)
 
             case .fetchedTransactions(let accountUUID, var transactions):
+                // MOB-1856: the coalescing gate's own completion signal -- the effect that set
+                // `isTransactionsFetchInFlight` has now finished, whichever account it was for, so
+                // the gate must open before anything else below (including the provenance guard's
+                // own early return) or a fetch coalesced during this run would stay parked forever.
+                // A dirty request folds into exactly one follow-up, for whichever account is
+                // selected NOW -- which is exactly right even when this very completion is for a
+                // stale account.
+                state.isTransactionsFetchInFlight = false
+                var coalescedFollowUp: Effect<Root.Action> = .none
+                if state.isTransactionsFetchDirty {
+                    state.isTransactionsFetchDirty = false
+                    coalescedFollowUp = .send(.fetchTransactionsForTheSelectedAccount)
+                }
+
                 // Load-bearing provenance guard -- drop a payload that belongs to an account other
                 // than the one currently selected. Closes the race even when the cancel id above
                 // misses (the fetch's own effect completed anyway): during sync, BOTH accounts'
@@ -128,7 +153,7 @@ extension Root {
                 // for the account that was JUST switched away from can still land after the switch.
                 // Never merge/reconcile a stale payload -- always drop it whole.
                 guard accountUUID == state.selectedWalletAccount?.id else {
-                    return .none
+                    return coalescedFollowUp
                 }
 
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
@@ -208,7 +233,8 @@ extension Root {
                     return .merge(
                         reconciliationPoller(for: state.transactions, state: state),
                         .send(.home(.transactionList(.transactionsUpdated))),
-                        .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                        .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                        coalescedFollowUp
                     )
                 }
 
@@ -245,7 +271,8 @@ extension Root {
                     }
                     return .merge(
                         pendingTransactionsPoller,
-                        .send(.home(.smartBanner(.evaluatePriority6)))
+                        .send(.home(.smartBanner(.evaluatePriority6))),
+                        coalescedFollowUp
                     )
                 }
                 // The fetch still completed even though its result is identical to what's already in
@@ -264,15 +291,28 @@ extension Root {
                 // query. Nothing is waiting on the signal once both flags are already clear.
                 guard state.homeState.transactionListState.isInvalidated
                     || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
-                    return pendingTransactionsPoller
+                    return .merge(pendingTransactionsPoller, coalescedFollowUp)
                 }
                 return .merge(
                     pendingTransactionsPoller,
                     .send(.home(.transactionList(.transactionsUpdated))),
-                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                    coalescedFollowUp
                 )
 
             case .transactionsFetchFailed(let accountUUID):
+                // MOB-1856: same coalescing-gate reset as `.fetchedTransactions` above, and for the
+                // same reason -- this completion also ends the effect that set
+                // `isTransactionsFetchInFlight`, whichever account it was for, so the gate must open
+                // before the provenance guard below can return early, or a fetch coalesced during
+                // this run would stay parked forever.
+                state.isTransactionsFetchInFlight = false
+                var coalescedFollowUp: Effect<Root.Action> = .none
+                if state.isTransactionsFetchDirty {
+                    state.isTransactionsFetchDirty = false
+                    coalescedFollowUp = .send(.fetchTransactionsForTheSelectedAccount)
+                }
+
                 // Same provenance guard as `.fetchedTransactions` above, and for the same reason:
                 // without it, a stale failure for an account the user has since switched away from
                 // would clear the NEWLY selected account's `isInvalidated` flags and re-arm the
@@ -280,7 +320,7 @@ extension Root {
                 // PREVIOUS account's leftover rows -- marking the new account "loaded" while the
                 // wrong rows are still on screen.
                 guard accountUUID == state.selectedWalletAccount?.id else {
-                    return .none
+                    return coalescedFollowUp
                 }
                 // The list keeps its previous contents (nothing to overwrite here at all), but
                 // either list may already be showing its loading placeholder -- clear it exactly
@@ -289,7 +329,8 @@ extension Root {
                 return .merge(
                     reconciliationPoller(for: state.transactions, state: state),
                     .send(.home(.transactionList(.transactionsUpdated))),
-                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated)))
+                    .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                    coalescedFollowUp
                 )
 
             default: return .none
