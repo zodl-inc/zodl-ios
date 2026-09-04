@@ -89,6 +89,7 @@ extension Root {
         case synchronizerStartFailed(ZcashError)
         case registerForSynchronizersUpdate
         case retryStart
+        case retryStartFinished
         case walletConfigChanged(WalletConfig)
     }
 
@@ -230,6 +231,9 @@ extension Root {
                 // until a fresh `.synchronizerStateChanged` tick reports in next foreground.
                 state.lastKnownSyncStatus = nil
                 state.isSyncStalledSinceLastProgress = false
+                // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
+                // cancellation (store teardown) must never wedge the next foreground's retryStart.
+                state.isRetryStartInFlight = false
                 // Tear down ALL synchronizer-driven subscriptions (plus the pending-transactions
                 // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
                 // every one of them.
@@ -757,6 +761,16 @@ extension Root {
                 state.syncDeferredByMigrationGate = false
                 @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
                 $migrationStoppedSyncForBroadcast.withLock { $0 = false }
+                // MOB-1854: drop a re-entrant retryStart rather than cancelling the in-flight
+                // pipeline — `SlipstreamSynchronizer.start()` has no cancellation points, so
+                // cancelling it mid-flight would let it run to completion anyway and a second
+                // pipeline would then call `start()` again, draining and restarting the engine. The
+                // in-flight pipeline performs the same work this one would have.
+                guard !state.isRetryStartInFlight else {
+                    LoggerProxy.event("[Root] retryStart ignored: a start pipeline is already in flight")
+                    return .none
+                }
+                state.isRetryStartInFlight = true
                 return .run { [state] send in
                     do {
                         // ZIP 318 session separation, decided BEFORE the wire is touched: if any
@@ -879,6 +893,10 @@ extension Root {
                         // the list observing what its own broadcast creates.
                         await send(.observeTransactions)
                         await send(.refreshAutomaticServer)
+                        // MOB-1854: clears `isRetryStartInFlight` — must be the LAST statement of
+                        // this exit path so a re-entrant retryStart is only ever dropped while this
+                        // pipeline is genuinely still doing something.
+                        await send(.initialization(.retryStartFinished))
                     } catch {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
@@ -890,8 +908,15 @@ extension Root {
                         // emissions, no resume until the next background→foreground round trip.
                         await send(.initialization(.registerForSynchronizersUpdate))
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
+                        // MOB-1854: same latch clear as the success path above — the last statement
+                        // of this exit path too, so a start failure can't leave retryStart wedged.
+                        await send(.initialization(.retryStartFinished))
                     }
                 }
+
+            case .initialization(.retryStartFinished):
+                state.isRetryStartInFlight = false
+                return .none
 
             case .initialization(.registerForSynchronizersUpdate):
                 let stateStreamEffect = Effect.publisher {

@@ -136,6 +136,11 @@ struct Root {
         var isInitializingSDK = false
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        /// MOB-1854: single-flight latch for `.initialization(.retryStart)` — `start()` has no
+        /// cancellation points, so a re-entrant retryStart is dropped (and logged) rather than
+        /// cancelling the in-flight pipeline. Reset at `.didEnterBackground` so a pipeline whose
+        /// finishing `send` was dropped by cancellation can never wedge the next foreground.
+        var isRetryStartInFlight = false
         var isStaleWalletHealedAlertPending = false
         /// MOB-1853: true from the stall hook's own reaction (`gaveUp || attempt >= 2`, see
         /// `Root.Action.syncStalled`'s handler) until the next `.synchronizerStateChanged` reports
