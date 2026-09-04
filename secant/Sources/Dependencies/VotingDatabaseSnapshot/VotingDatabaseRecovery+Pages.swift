@@ -62,8 +62,8 @@ extension VotingDatabaseRecovery {
     static func scanLiveDatabase(
         _ database: DatabaseLayout,
         source: (Int) -> Source,
-        target: Data,
-        roundId: String,
+        target: Data?,
+        roundId: String?,
         walletId: String?,
         bundleIndex: UInt32?
     ) -> ScanResult {

@@ -140,8 +140,8 @@ extension VotingDatabaseRecovery {
     static func append(
         record: DecodedRecord,
         source: Source,
-        target: Data,
-        roundId: String,
+        target: Data?,
+        roundId: String?,
         walletId: String?,
         bundleIndex: UInt32?,
         to result: inout ScanResult
@@ -152,7 +152,7 @@ extension VotingDatabaseRecovery {
         if record.spans.count >= bundleColumnCount {
             result.templates.append(RecordTemplate(spans: record.spans))
         }
-        guard bundle.vanCmx == target,
+        guard target.map({ bundle.vanCmx == $0 }) ?? true,
               matches(
                   bundle,
                   roundId: roundId,
@@ -253,13 +253,16 @@ extension VotingDatabaseRecovery {
         )
     }
 
+    /// A nil constraint is no constraint: an untargeted scan admits every
+    /// round, wallet and bundle index the schema accepts.
     static func matches(
         _ bundle: RecoveredBundle,
-        roundId: String,
+        roundId: String?,
         walletId: String?,
         bundleIndex: UInt32?
     ) -> Bool {
-        if bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
+        if let roundId,
+           bundle.roundId.caseInsensitiveCompare(roundId) != .orderedSame {
             return false
         }
         if let walletId, bundle.walletId != walletId { return false }

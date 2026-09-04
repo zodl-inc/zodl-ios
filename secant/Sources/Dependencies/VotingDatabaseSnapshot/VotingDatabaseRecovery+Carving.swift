@@ -12,8 +12,8 @@ extension VotingDatabaseRecovery {
 
     static func scanRecordSignatures(
         _ page: RawPage,
-        target: Data,
-        roundId: String,
+        target: Data?,
+        roundId: String?,
         walletId: String?,
         bundleIndex: UInt32?
     ) -> ScanResult {
@@ -56,7 +56,7 @@ extension VotingDatabaseRecovery {
         templates: [RecordTemplate],
         source: Source,
         target: Data,
-        roundId: String,
+        roundId: String?,
         walletId: String?,
         bundleIndex: UInt32?
     ) -> [RecoveredBundle] {

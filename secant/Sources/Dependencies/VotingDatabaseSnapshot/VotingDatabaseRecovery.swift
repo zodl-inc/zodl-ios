@@ -124,7 +124,8 @@ enum VotingDatabaseRecovery {
     }
 
     struct Report: Equatable, Sendable {
-        let vanCmx: Data
+        /// The commitment this scan was bound to, or nil for an untargeted scan.
+        let vanCmx: Data?
         let candidates: [RecoveredBundle]
         let rawTargetHits: [RawTargetHit]
         let validWalFrameCount: Int
@@ -187,8 +188,69 @@ enum VotingDatabaseRecovery {
         guard isCanonicalRoundId(roundId) else {
             throw RecoveryError.invalidRoundId
         }
+        return try scan(
+            databaseBytes: databaseBytes,
+            walBytes: walBytes,
+            target: vanCmx,
+            roundId: roundId,
+            walletId: walletId,
+            bundleIndex: bundleIndex
+        )
+    }
 
-        let target = [UInt8](vanCmx)
+    /// Every schema-consistent bundle row in the files, with where each was
+    /// found. Nothing is elected: a caller that must choose between two
+    /// candidates for one bundle does so with evidence this scan cannot
+    /// have, such as the chain's own commitment.
+    static func recoverAll(
+        databaseBytes: [UInt8],
+        walBytes: [UInt8]? = nil,
+        roundId: String?,
+        walletId: String? = nil
+    ) throws -> Report {
+        if let roundId, !isCanonicalRoundId(roundId) {
+            throw RecoveryError.invalidRoundId
+        }
+        return try scan(
+            databaseBytes: databaseBytes,
+            walBytes: walBytes,
+            target: nil,
+            roundId: roundId,
+            walletId: walletId,
+            bundleIndex: nil
+        )
+    }
+
+    static func recoverAll(
+        databaseURL: URL,
+        walURL: URL? = nil,
+        roundId: String?,
+        walletId: String? = nil
+    ) throws -> Report {
+        let database = try Data(contentsOf: databaseURL, options: .mappedIfSafe)
+        let wal: Data? = walURL.flatMap { url in
+            FileManager.default.fileExists(atPath: url.path)
+                ? try? Data(contentsOf: url, options: .mappedIfSafe)
+                : nil
+        }
+        return try recoverAll(
+            databaseBytes: [UInt8](database),
+            walBytes: wal.map { [UInt8]($0) },
+            roundId: roundId,
+            walletId: walletId
+        )
+    }
+
+    /// Shared decoder for both modes. A nil `target` admits every row the
+    /// schema accepts; a nil `roundId` drops the round constraint.
+    private static func scan(
+        databaseBytes: [UInt8],
+        walBytes: [UInt8]?,
+        target: Data?,
+        roundId: String?,
+        walletId: String?,
+        bundleIndex: UInt32?
+    ) throws -> Report {
         let databaseLayout = DatabaseLayout(bytes: databaseBytes)
         let wal = walBytes.flatMap {
             WalFile(bytes: $0, fallbackPageSize: databaseLayout?.pageSize)
@@ -202,7 +264,7 @@ enum VotingDatabaseRecovery {
             let scan = scanLiveDatabase(
                 databaseLayout,
                 source: { .databaseLive(page: $0) },
-                target: vanCmx,
+                target: target,
                 roundId: roundId,
                 walletId: walletId,
                 bundleIndex: bundleIndex
@@ -270,7 +332,7 @@ enum VotingDatabaseRecovery {
                     let scan = scanLiveDatabase(
                         committed,
                         source: { _ in .walCommit(frame: frame.index) },
-                        target: vanCmx,
+                        target: target,
                         roundId: roundId,
                         walletId: walletId,
                         bundleIndex: bundleIndex
@@ -287,7 +349,7 @@ enum VotingDatabaseRecovery {
         for rawPage in rawPages {
             let signatureScan = scanRecordSignatures(
                 rawPage,
-                target: vanCmx,
+                target: target,
                 roundId: roundId,
                 walletId: walletId,
                 bundleIndex: bundleIndex
@@ -297,26 +359,31 @@ enum VotingDatabaseRecovery {
         }
         templates = Array(Set(templates))
 
+        // Anchoring needs an exact commitment to locate the old body, so it
+        // has nothing to do when no target is known.
         var hits: [RawTargetHit] = []
-        for rawPage in rawPages {
-            for offset in offsets(of: target, in: rawPage.bytes) {
-                let source = rawPage.source(offset)
-                hits.append(RawTargetHit(source: source))
-                candidates += recoverAnchoredRecord(
-                    page: rawPage.bytes,
-                    targetOffset: offset,
-                    templates: templates,
-                    source: source,
-                    target: vanCmx,
-                    roundId: roundId,
-                    walletId: walletId,
-                    bundleIndex: bundleIndex
-                )
+        if let target {
+            let needle = [UInt8](target)
+            for rawPage in rawPages {
+                for offset in offsets(of: needle, in: rawPage.bytes) {
+                    let source = rawPage.source(offset)
+                    hits.append(RawTargetHit(source: source))
+                    candidates += recoverAnchoredRecord(
+                        page: rawPage.bytes,
+                        targetOffset: offset,
+                        templates: templates,
+                        source: source,
+                        target: target,
+                        roundId: roundId,
+                        walletId: walletId,
+                        bundleIndex: bundleIndex
+                    )
+                }
             }
         }
 
         return Report(
-            vanCmx: vanCmx,
+            vanCmx: target,
             candidates: deduplicated(candidates),
             rawTargetHits: Array(Set(hits)).sorted(by: rawHitOrder),
             validWalFrameCount: validWalFrameCount,

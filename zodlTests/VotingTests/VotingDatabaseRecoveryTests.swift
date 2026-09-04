@@ -217,6 +217,52 @@ import Testing
         }
     }
 
+    @Test func anUntargetedScanReturnsBothGenerationsWithTheirProvenance() throws {
+        let database = databasePage(
+            liveRecord: bundleRecord(van: rebuiltVan, rand: rebuiltRand),
+            releasedRecord: bundleRecord(van: acceptedVan, rand: originalRand)
+        )
+
+        let report = try VotingDatabaseRecovery.recoverAll(
+            databaseBytes: database,
+            roundId: roundId,
+            walletId: walletId
+        )
+
+        #expect(report.vanCmx == nil)
+        #expect(report.rawTargetHits.isEmpty)
+        let byRand = Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.vanCommRand, $0.source) })
+        #expect(byRand[rebuiltRand] == .databaseLive(page: 1))
+        if case .databaseCarved(page: 1, offset: _)? = byRand[originalRand] {
+        } else {
+            Issue.record("the released original must be carved, got \(String(describing: byRand[originalRand]))")
+        }
+        #expect(report.candidates.map(\.source.rank).sorted(by: >) == [3, 0])
+    }
+
+    @Test func anUntargetedScanOverTheLogReturnsEveryCommittedGeneration() throws {
+        let wal = walFile(frames: [
+            WalFixtureFrame(page: databasePage(liveRecord: bundleRecord(van: acceptedVan, rand: originalRand)), currentGeneration: true),
+            WalFixtureFrame(page: databasePage(liveRecord: bundleRecord(van: rebuiltVan, rand: rebuiltRand)), currentGeneration: true)
+        ])
+
+        let report = try VotingDatabaseRecovery.recoverAll(
+            databaseBytes: databasePage(),
+            walBytes: wal,
+            roundId: roundId,
+            walletId: nil
+        )
+
+        #expect(Set(report.candidates.map(\.vanCommRand)) == [originalRand, rebuiltRand])
+        #expect(report.candidates.allSatisfy { if case .walCommit = $0.source { return true } else { return false } })
+    }
+
+    @Test func anUntargetedScanStillRejectsAnInvalidRoundId() {
+        #expect(throws: VotingDatabaseRecovery.RecoveryError.invalidRoundId) {
+            try VotingDatabaseRecovery.recoverAll(databaseBytes: databasePage(), roundId: "nope", walletId: nil)
+        }
+    }
+
     // MARK: - Deterministic SQLite fixtures
 
     private func bundleRecord(van: Data, rand: Data) -> [UInt8] {
