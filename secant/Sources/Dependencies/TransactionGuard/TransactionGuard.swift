@@ -141,6 +141,12 @@ struct TransactionTimeoutError: Error {}
 /// abandoning a half-applied switch could race a submission against a synchronizer still being rebuilt.
 let serverSwitchTimeout: Duration = .seconds(60)
 
+/// Deadline for *taking* the guard on a send. Only the acquisition is bounded — a broadcast that
+/// already owns the guard is never cut short. Long enough to queue behind a normal broadcast, short
+/// enough that a wedged holder surfaces as a failed send the user can retry instead of a screen that
+/// appears to have frozen. Nothing has been broadcast when it expires, so retrying is always safe.
+let submissionGuardTimeout: Duration = .seconds(30)
+
 /// Race `operation` against a `duration` timer; whichever finishes first wins and the loser is
 /// *cancelled* (a cancellation request, not a forced stop). Throws `TransactionTimeoutError` when
 /// the timer wins.

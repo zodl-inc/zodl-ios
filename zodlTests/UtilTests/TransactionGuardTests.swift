@@ -289,6 +289,100 @@ import Testing
         #expect(!stillHeld, "Cancelling a timed waiter must not release the guard held by another task")
     }
 
+
+    // MARK: - Guard scope on the send paths
+
+    @Test func provingRunsToCompletionBeforeTheGuardIsAcquired() async throws {
+        let log = OrderRecorder()
+        let client = Self.recordingClient(into: log)
+
+        let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
+            transactionGuard: client,
+            timeout: .seconds(30),
+            prove: {
+                await log.record("prove-start")
+                try await Task.sleep(for: .milliseconds(20))
+                await log.record("prove-end")
+                return []
+            },
+            submit: { _ in
+                await log.record("submit")
+                return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: ["abc"])
+            }
+        )
+
+        #expect(result == SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: ["abc"]))
+        let recorded = await log.values
+        #expect(
+            recorded == ["prove-start", "prove-end", "acquire", "submit", "release"],
+            "Proving must finish before the guard is taken and the guard released after the broadcast; got \(recorded)"
+        )
+    }
+
+    @Test func aBusyGuardFailsTheSendWithoutBroadcasting() async throws {
+        let log = OrderRecorder()
+        let client = TransactionGuardClient(
+            acquire: { throw TransactionGuardBusyError() },
+            acquireWithTimeout: { _ in throw TransactionGuardBusyError() },
+            tryAcquire: { false },
+            release: { await log.record("release") }
+        )
+
+        let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
+            transactionGuard: client,
+            timeout: .milliseconds(10),
+            prove: {
+                await log.record("prove")
+                return []
+            },
+            submit: { _ in
+                await log.record("submit")
+                return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: [])
+            }
+        )
+
+        #expect(
+            result == SDKSynchronizerClient.CreateProposedTransactionsResult.failure(
+                txIds: [],
+                code: SDKSynchronizerClient.MultiServerSubmission.guardBusyCode,
+                description: String(localizable: .transactionGuardBusy)
+            ),
+            "A busy guard must fail the send definitively, carrying the localized busy text; got \(result)"
+        )
+        let recorded = await log.values
+        #expect(recorded == ["prove"], "Nothing may be broadcast, and no guard released, when the acquisition failed; got \(recorded)")
+    }
+
+    @Test func aFailedProofNeverTouchesTheGuard() async {
+        let log = OrderRecorder()
+        let client = Self.recordingClient(into: log)
+
+        let result = try? await SDKSynchronizerClient.createThenSubmitUnderGuard(
+            transactionGuard: client,
+            timeout: .seconds(30),
+            prove: { throw TestFailure() },
+            submit: { _ in
+                await log.record("submit")
+                return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: [])
+            }
+        )
+
+        #expect(result == nil, "A proving failure must keep propagating to the caller")
+        let recorded = await log.values
+        #expect(recorded.isEmpty, "A send that never got past proving must not touch the guard; got \(recorded)")
+    }
+
+    /// A pass-through client that logs every guard interaction, so a test can assert *when* the
+    /// guard is taken relative to the work around it.
+    private static func recordingClient(into log: OrderRecorder) -> TransactionGuardClient {
+        TransactionGuardClient(
+            acquire: { await log.record("acquire") },
+            acquireWithTimeout: { _ in await log.record("acquire") },
+            tryAcquire: { true },
+            release: { await log.record("release") }
+        )
+    }
+
     /// A client wired over a test-local actor, so a timing-sensitive test never contends with the
     /// process-global `liveValue` guard.
     private static func client(over guardActor: TransactionGuard) -> TransactionGuardClient {

@@ -317,24 +317,29 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let transactions = try await synchronizer.broadcaster.createProposedTransactions(
-                        proposal: proposal,
-                        spendingKey: spendingKey
-                    )
-
-                    return await Self.submitCreatedTransactions(
-                        transactions,
-                        logPrefix: "[MultiSubmit]",
-                        userStoredPreferences: userStoredPreferences,
-                        zcashSDKEnvironment: zcashSDKEnvironment,
-                        submit: { createdTransactions, endpoints in
-                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                return try await Self.createThenSubmitUnderGuard(
+                    transactionGuard: transactionGuard,
+                    timeout: submissionGuardTimeout,
+                    prove: {
+                        try await synchronizer.broadcaster.createProposedTransactions(
+                            proposal: proposal,
+                            spendingKey: spendingKey
+                        )
+                    },
+                    submit: { transactions in
+                        await Self.submitCreatedTransactions(
+                            transactions,
+                            logPrefix: "[MultiSubmit]",
+                            userStoredPreferences: userStoredPreferences,
+                            zcashSDKEnvironment: zcashSDKEnvironment,
+                            submit: { createdTransactions, endpoints in
+                                await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                    await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                                }
                             }
-                        }
-                    )
-                }
+                        )
+                    }
+                )
             },
             proposeShielding: { accountUUID, shieldingThreshold, memo, transparentReceiver in
                 try await synchronizer.proposeShielding(
@@ -405,24 +410,29 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
-                        pcztWithProofs: pcztWithProofs,
-                        pcztWithSigs: pcztWithSigs
-                    )
-
-                    return await Self.submitCreatedTransactions(
-                        transactions,
-                        logPrefix: "[MultiSubmit/PCZT]",
-                        userStoredPreferences: userStoredPreferences,
-                        zcashSDKEnvironment: zcashSDKEnvironment,
-                        submit: { createdTransactions, endpoints in
-                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                return try await Self.createThenSubmitUnderGuard(
+                    transactionGuard: transactionGuard,
+                    timeout: submissionGuardTimeout,
+                    prove: {
+                        try await synchronizer.broadcaster.createTransactionFromPCZT(
+                            pcztWithProofs: pcztWithProofs,
+                            pcztWithSigs: pcztWithSigs
+                        )
+                    },
+                    submit: { transactions in
+                        await Self.submitCreatedTransactions(
+                            transactions,
+                            logPrefix: "[MultiSubmit/PCZT]",
+                            userStoredPreferences: userStoredPreferences,
+                            zcashSDKEnvironment: zcashSDKEnvironment,
+                            submit: { createdTransactions, endpoints in
+                                await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                    await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                                }
                             }
-                        }
-                    )
-                }
+                        )
+                    }
+                )
             },
             urEncoderForPCZT: { pczt in
                 let keystoneSDK = KeystoneZcashSDK()
@@ -502,6 +512,45 @@ extension SDKSynchronizerClient {
         // no server-level rejection was observed — never label that "rejected" in support data.
         static let unreachableStatus = "all servers unreachable"
         static let cancelledStatus = "submission cancelled"
+        /// Distinct from every other submission failure code (-1 nothing created, -996/-999 on the
+        /// PCZT path) so a support report tells "gave up waiting for the guard" apart from a server
+        /// rejection. Nothing was broadcast when it is reported.
+        static let guardBusyCode = -995
+    }
+
+    /// The submission guard's scope for the two send paths: create (and prove) the transactions
+    /// *outside* the guard, then hold it only across the broadcast.
+    ///
+    /// Proving runs through the Rust backend against the wallet database and records its submit
+    /// plans in the SDK's own plan store; it never touches the engine handle that
+    /// `switchTo(endpoint:)` tears down, so it does not need exclusivity. Holding the guard across
+    /// it made a send wait out every unrelated guarded operation — and made them wait out a
+    /// multi-second proof — for no protection at all. Only `submit` races a server switch.
+    ///
+    /// A guard still busy after `timeout` fails the send definitively rather than hanging: nothing
+    /// was created on-chain, so the user can simply try again. A proving failure is untouched and
+    /// keeps propagating to the caller.
+    static func createThenSubmitUnderGuard(
+        transactionGuard: TransactionGuardClient,
+        timeout: Duration,
+        prove: () async throws -> [CreatedTransaction],
+        submit: ([CreatedTransaction]) async -> CreateProposedTransactionsResult
+    ) async throws -> CreateProposedTransactionsResult {
+        let transactions = try await prove()
+
+        do {
+            return try await transactionGuard.withSubmission(timeout: timeout) {
+                await submit(transactions)
+            }
+        } catch is TransactionGuardBusyError {
+            LoggerProxy.error("[MultiSubmit] Gave up waiting \(timeout) for exclusive access; nothing was broadcast.")
+
+            return CreateProposedTransactionsResult.failure(
+                txIds: [],
+                code: MultiServerSubmission.guardBusyCode,
+                description: String(localizable: .transactionGuardBusy)
+            )
+        }
     }
 
     /// Submits one transaction at a time so every one of them gets its retry plan recorded by the
