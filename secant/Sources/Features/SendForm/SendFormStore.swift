@@ -415,14 +415,12 @@ struct SendForm {
                     }
                 }
                 
-            case let .sendFailed(error, confirmationType):
+            case let .sendFailed(error, _):
                 if error.isInsufficientBalance {
                     state.isInsufficientBalance = error.isInsufficientBalance
                     return .none
                 }
-                if confirmationType == .send {
-                    state.alert = AlertState.sendFailure(error)
-                }
+                state.alert = AlertState.sendFailure(error)
                 return .none
 
             case .confirmationRequired:
