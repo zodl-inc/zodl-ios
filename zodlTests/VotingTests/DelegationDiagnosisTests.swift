@@ -17,13 +17,15 @@ import Foundation
         roundHasBundles: Bool = true,
         escrowHoldsRecoveredSecrets: Bool = false,
         hasDelegationTxHash: Bool = false,
-        voteServiceAnswered: Bool = true
+        voteServiceAnswered: Bool = true,
+        commitmentPresentButUndecodable: Bool = false
     ) -> Diagnosis.Signals {
         Diagnosis.Signals(
             roundHasBundles: roundHasBundles,
             escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
             hasDelegationTxHash: hasDelegationTxHash,
-            voteServiceAnswered: voteServiceAnswered
+            voteServiceAnswered: voteServiceAnswered,
+            commitmentPresentButUndecodable: commitmentPresentButUndecodable
         )
     }
 
@@ -104,6 +106,28 @@ import Foundation
     }
 
     /// The wipe, with nothing recovered. The unrecoverable state.
+    /// The commitment survived on the device but its record did not. Not
+    /// "lost": support can still attempt a manual recovery, so the message
+    /// must say so and carry its own code.
+    @Test func aCommitmentWithNoDecodableRecordIsItsOwnState() {
+        let diagnosis = Diagnosis.diagnose(
+            signals(hasDelegationTxHash: true, commitmentPresentButUndecodable: true)
+        )
+
+        #expect(diagnosis == .commitmentUndecodable)
+        #expect(diagnosis.rawValue == "POLL-06")
+        #expect(diagnosis.mayRebuildLocalState == false)
+    }
+
+    /// Recovered secrets still take precedence: the restore is the next step.
+    @Test func recoveredSecretsOutrankAnUndecodableCommitment() {
+        let diagnosis = Diagnosis.diagnose(
+            signals(escrowHoldsRecoveredSecrets: true, commitmentPresentButUndecodable: true)
+        )
+
+        #expect(diagnosis == .secretsRecovered)
+    }
+
     @Test func wipedWithNothingRecoveredReportsSecretsLost() {
         let diagnosis = Diagnosis.diagnose(
             signals(roundHasBundles: false, hasDelegationTxHash: true)

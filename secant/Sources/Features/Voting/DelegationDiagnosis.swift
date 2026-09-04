@@ -31,6 +31,12 @@ enum DelegationDiagnosis: String, Equatable, Sendable, CaseIterable {
     /// submitted. This is the unrecoverable state.
     case secretsLost = "POLL-04"
 
+    /// The commitment the chain holds for this delegation is in the device's
+    /// preserved files, but the record around it was overwritten, so neither
+    /// recovery nor a rebuild can restore it. Support can attempt a manual
+    /// recovery from the preserved copy; the app cannot.
+    case commitmentUndecodable = "POLL-06"
+
     /// The voting service could not be reached, so whether a delegation was
     /// submitted is unknown. Nothing destructive may follow.
     ///
@@ -51,6 +57,8 @@ enum DelegationDiagnosis: String, Equatable, Sendable, CaseIterable {
             return String(localizable: .coinVoteStoreUserErrorDelegationDiagnosisSecretsRecovered)
         case .secretsLost:
             return String(localizable: .coinVoteStoreUserErrorDelegationDiagnosisSecretsLost)
+        case .commitmentUndecodable:
+            return String(localizable: .coinVoteStoreUserErrorDelegationDiagnosisCommitmentUndecodable)
         case .undetermined:
             return String(localizable: .coinVoteStoreUserErrorDelegationDiagnosisUndetermined)
         }
@@ -90,6 +98,10 @@ extension DelegationDiagnosis {
         /// The voting service answered, so "no delegation recorded" can be
         /// trusted. False whenever the check failed OR was inconclusive.
         let voteServiceAnswered: Bool
+        /// A targeted scan found the chain's commitment in the preserved
+        /// bytes with no decodable record around it. False until a
+        /// root-validated leaf list is available; see `DelegationEvidence`.
+        var commitmentPresentButUndecodable = false
     }
 
     /// Classifies the state, ordered so that a wrong answer fails safe.
@@ -107,6 +119,12 @@ extension DelegationDiagnosis {
         // is what hid this case behind `broadcastDoNotRebuild`.
         if signals.escrowHoldsRecoveredSecrets {
             return .secretsRecovered
+        }
+
+        // The chain's commitment is on this device but nothing around it
+        // decodes: the escrow has nothing, and neither would a rebuild.
+        if signals.commitmentPresentButUndecodable {
+            return .commitmentUndecodable
         }
 
         // No rows and nothing rescued. Only call it lost where something was
@@ -157,6 +175,7 @@ extension DelegationDiagnosis {
         bundleIndex: UInt32 = 0,
         voteServiceAnswered: Bool,
         escrowHoldsRecoveredSecrets: Bool,
+        commitmentPresentButUndecodable: Bool = false,
         crypto: VotingCryptoClient
     ) async -> DelegationDiagnosis {
 
@@ -187,7 +206,8 @@ extension DelegationDiagnosis {
                 roundHasBundles: roundHasBundles,
                 escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
                 hasDelegationTxHash: hasTxHash,
-                voteServiceAnswered: voteServiceAnswered
+                voteServiceAnswered: voteServiceAnswered,
+                commitmentPresentButUndecodable: commitmentPresentButUndecodable
             )
         )
     }

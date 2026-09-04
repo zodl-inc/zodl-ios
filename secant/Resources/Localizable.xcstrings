@@ -5550,6 +5550,23 @@
         }
       }
     },
+    "coinVote.store.userError.delegationDiagnosis.commitmentUndecodable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
+          }
+        }
+      }
+    },
     "coinVote.store.userError.delegationDiagnosis.notBroadcast" : {
       "extractionState" : "manual",
       "localizations" : {

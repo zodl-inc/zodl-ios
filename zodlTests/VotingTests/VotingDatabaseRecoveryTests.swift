@@ -538,5 +538,19 @@ import Testing
         bytes[offset + 2] = UInt8(truncatingIfNeeded: value >> 8)
         bytes[offset + 3] = UInt8(truncatingIfNeeded: value)
     }
+
+    @Test func aBatchSearchDecodesOnlyTargetsPresentInTheBytes() throws {
+        let database = databasePage(liveRecord: bundleRecord(van: acceptedVan, rand: originalRand))
+
+        let reports = try VotingDatabaseRecovery.recover(
+            databaseBytes: database,
+            vanCmxTargets: [acceptedVan, Data(repeating: 0x99, count: 32)],
+            roundId: roundId
+        )
+
+        #expect(reports.count == 1)
+        #expect(reports[0].vanCmx == acceptedVan)
+        #expect(reports[0].candidates.map(\.vanCommRand) == [originalRand])
+    }
 }
 #endif
