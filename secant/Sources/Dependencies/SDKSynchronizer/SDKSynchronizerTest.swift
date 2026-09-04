@@ -240,7 +240,10 @@ extension SDKSynchronizerClient {
         latestState: @escaping @Sendable () -> SynchronizerState = { .zero },
         latestScannedHeight: @escaping @Sendable () -> BlockHeight = { 0 },
         prepareWith: @escaping @Sendable ([UInt8], BlockHeight?, String, String?) async throws -> Initializer.InitializationResult = { _, _, _, _ in .success },
-        start: @escaping @Sendable (_ retry: Bool) throws -> Void = { _ in },
+        // MOB-1854: `async` (matching `SDKSynchronizerClient.start`'s real type) so a test's stub can
+        // genuinely suspend (e.g. on a gate) rather than only throw/return synchronously — every
+        // existing call site passes a non-awaiting closure, which stays valid under this wider type.
+        start: @escaping @Sendable (_ retry: Bool) async throws -> Void = { _ in },
         stop: @escaping @Sendable () -> Void = { },
         isSyncing: @escaping @Sendable () -> Bool = { false },
         isInitialized: @escaping @Sendable () -> Bool = { false },
