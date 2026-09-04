@@ -1339,9 +1339,15 @@ extension Root {
                 )
                 
             case .initialization(.loadedWalletAccounts(let walletAccounts)):
-                state.$walletAccounts.withLock { $0 = walletAccounts }
+                // MOB-1859: `walletAccounts()` no longer generates each account's rotation stash
+                // (`nextPrivateUA`) — that was a wallet-database write on every single load, which
+                // contended with the sync engine. Carry forward whatever stash the in-memory
+                // accounts already had (a foreground refresh, a Keystone disconnect/reconnect, …)
+                // before the wholesale overwrite below would otherwise silently drop it.
+                let mergedWalletAccounts = WalletAccount.mergingPrivateUAStash(from: state.walletAccounts, into: walletAccounts)
+                state.$walletAccounts.withLock { $0 = mergedWalletAccounts }
                 if state.selectedWalletAccount == nil {
-                    for account in walletAccounts {
+                    for account in mergedWalletAccounts {
                         if account.vendor == .zcash {
                             state.$selectedWalletAccount.withLock { $0 = account }
                             state.$zashiWalletAccount.withLock { $0 = account }
@@ -1349,6 +1355,19 @@ extension Root {
                         }
                     }
                 }
+                // Refill, in the background, only the accounts the merge above left without a
+                // stash — never awaited on this load path, which is the entire point of MOB-1859.
+                // A Receive/Swap tap before this lands still self-heals on its own (`PrivateUAStash`
+                // there too), so there is nothing for the UI to wait on.
+                let accountsNeedingStash = mergedWalletAccounts.filter { $0.nextPrivateUA == nil }
+                let stashRefillEffect: Effect<Root.Action> = accountsNeedingStash.isEmpty
+                    ? .none
+                    : .run { send in
+                        await PrivateUAStash.refill(accounts: accountsNeedingStash, sdkSynchronizer: sdkSynchronizer) { ua, accountId in
+                            await send(.privateUAStashRefilled(ua, accountId))
+                        }
+                    }
+                    .cancellable(id: state.privateUAStashRefillCancelId, cancelInFlight: true)
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
@@ -1367,8 +1386,24 @@ extension Root {
                     // Sent unconditionally: a duplicate walk is harmless (the ladder is idempotent —
                     // it re-reads and re-seats the same occupant), while a missed one costs the whole
                     // launch, which is precisely the bug.
-                    .send(.home(.smartBanner(.evaluatePriority1)))
+                    .send(.home(.smartBanner(.evaluatePriority1))),
+                    stashRefillEffect
                 )
+
+            case let .privateUAStashRefilled(nextPrivateUA, accountId):
+                // Writes through the shared helper rather than directly, so the `walletAccounts`
+                // array entry (what an account switch installs as the new selection,
+                // `WalletAccountsSheet`) and `zashiWalletAccount` stay in sync with
+                // `selectedWalletAccount` for every account this background refill reaches, not
+                // only whichever one happens to be selected when the result lands.
+                PrivateUAStash.write(
+                    nextPrivateUA,
+                    forAccountId: accountId,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount,
+                    zashiWalletAccount: state.$zashiWalletAccount
+                )
+                return .none
 
             case .resolveMetadataEncryptionKeys:
                 do {

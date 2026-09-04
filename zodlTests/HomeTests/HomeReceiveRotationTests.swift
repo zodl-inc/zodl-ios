@@ -200,4 +200,72 @@ import ComposableArchitecture
 
         await store.finish()
     }
+
+    // d. MOB-1859 (review): the `walletAccounts` array entry is the source of truth an account
+    // switch installs as the new selection (`WalletAccountsSheet`), so both the promotion step
+    // and the background refill must keep it in sync, not only `selectedWalletAccount`'s live
+    // copy — otherwise a switch away and back from this account would either re-show an address
+    // already displayed (breaking the MOB-1803 guarantee) or find a stash that never arrived
+    // (forcing the slow live-fill path again instead of just once).
+    @MainActor @Test func promotionClearsTheArrayEntryStashAndTheRefillWritesItBack() async {
+        // Gated exactly like `tapWithStashPromotesAndNavigatesWithoutAwaitingGeneration` above:
+        // without the gate, the un-awaited refill can race ahead of the assertions checking the
+        // state right after `.receiveScreenRequested`, since this mock has no delay of its own.
+        let generationGateOpen = LockIsolated(false)
+        let generationCalls = LockIsolated(0)
+
+        let state = Home.State.initial
+        let previousAccount = state.selectedWalletAccount
+        let previousAccounts = state.walletAccounts
+        var account = testWalletAccount
+        account.privateUA = Const.previousVisitUA
+        account.nextPrivateUA = Const.stashUA
+        state.$selectedWalletAccount.withLock { $0 = account }
+        // The array entry starts with the SAME stash as the selected copy — what a merged load
+        // (`RootInitialization.swift`) or an earlier refill would already have left behind.
+        state.$walletAccounts.withLock { $0 = [account] }
+        defer {
+            state.$selectedWalletAccount.withLock { $0 = previousAccount }
+            state.$walletAccounts.withLock { $0 = previousAccounts }
+        }
+
+        let store = TestStore(initialState: state) {
+            Home()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getCustomUnifiedAddress: { _, _ in
+                    generationCalls.withValue { $0 += 1 }
+                    while !generationGateOpen.value {
+                        if Task.isCancelled { return nil }
+                        try? await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    return Const.freshUA
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.receiveScreenRequested)
+
+        // Promotion consumed the stash — the array entry must lose it too, not only the selected
+        // copy, or a switch away and back would re-install and re-show `Const.stashUA`. Checked
+        // while the refill mock is still gated shut, so this can only reflect the synchronous
+        // promotion step, never the background refill landing early.
+        #expect(store.state.selectedWalletAccount?.nextPrivateUA == nil)
+        #expect(store.state.walletAccounts.first { $0.id == account.id }?.nextPrivateUA == nil)
+
+        await store.receive(\.receiveTapped, timeout: .seconds(5))
+        #expect(!generationGateOpen.value)
+
+        generationGateOpen.setValue(true)
+        await store.receive(\.updateNextPrivateUA, timeout: .seconds(5))
+
+        // The refill wrote the fresh stash back into the array entry too — not only the selected
+        // copy — so the next account switch installs a real stash instead of forcing a live-fill.
+        #expect(store.state.selectedWalletAccount?.nextPrivateUA == Const.freshUA)
+        #expect(store.state.walletAccounts.first { $0.id == account.id }?.nextPrivateUA == Const.freshUA)
+        #expect(generationCalls.value == 1)
+
+        await store.finish()
+    }
 }

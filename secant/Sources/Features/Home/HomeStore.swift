@@ -177,9 +177,7 @@ struct Home {
                 guard let account = state.selectedWalletAccount else {
                     return .send(.receiveTapped)
                 }
-                let isKeystone = account.vendor == .keystone
                 let uuid = account.id
-                let receivers: Set<ReceiverType> = isKeystone ? [.orchard] : [.sapling, .orchard]
                 // Rotate-ahead by one (MOB-1803): `getCustomUnifiedAddress` is a wallet-DB write
                 // that can stall for seconds behind the sync engine, so it must never be awaited
                 // before navigating. Promote the pre-generated stash into the displayed slot
@@ -190,36 +188,55 @@ struct Home {
                 state.$selectedWalletAccount.withLock {
                     let stash = $0?.nextPrivateUA
                     $0?.privateUA = stash
-                    $0?.nextPrivateUA = nil
                 }
+                // Clear the consumed stash in the `walletAccounts` array entry too, not only the
+                // selected copy — otherwise switching away and back (`WalletAccountsSheet`
+                // installs the ARRAY entry as the new selection) could re-install and re-show
+                // `stash`, the address just promoted above, breaking the MOB-1803 guarantee.
+                PrivateUAStash.write(
+                    nil,
+                    forAccountId: uuid,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount
+                )
+                if hadStash {
+                    // The promoted stash is on screen; refill the stash for the next visit.
+                    return .merge(
+                        .send(.receiveTapped),
+                        .run { send in
+                            await PrivateUAStash.refill(accounts: [account], sdkSynchronizer: sdkSynchronizer) { ua, accountId in
+                                await send(.updateNextPrivateUA(ua, accountId))
+                            }
+                        }
+                        .cancellable(id: state.CancelUAGenerationId, cancelInFlight: true)
+                    )
+                }
+                // Nothing was promoted — live-fill the displayed slot (filling from empty is
+                // fine, swapping a displayed address is not), then generate one more UA so the
+                // stash self-heals for the next visit.
                 return .merge(
                     .send(.receiveTapped),
                     .run { send in
-                        let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
-                        if hadStash {
-                            // The promoted stash is on screen; the fresh UA refills the stash
-                            // for the next visit.
-                            await send(.updateNextPrivateUA(freshUA, uuid))
-                        } else {
-                            // Nothing was promoted — live-fill the displayed slot (filling from
-                            // empty is fine, swapping a displayed address is not), then generate
-                            // one more UA so the stash self-heals for the next visit.
-                            await send(.updatePrivateUA(freshUA, uuid))
-                            let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
-                            await send(.updateNextPrivateUA(stashUA, uuid))
-                        }
+                        let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
+                        await send(.updatePrivateUA(freshUA, uuid))
+                        let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
+                        await send(.updateNextPrivateUA(stashUA, uuid))
                     }
                     .cancellable(id: state.CancelUAGenerationId, cancelInFlight: true)
                 )
 
             case let .updateNextPrivateUA(nextPrivateUA, accountId):
                 // The UA was derived for `accountId`; if the selection changed while the
-                // generation was in flight, dropping it beats stashing one account's
-                // address under another.
-                state.$selectedWalletAccount.withLock {
-                    guard $0?.id == accountId else { return }
-                    $0?.nextPrivateUA = nextPrivateUA
-                }
+                // generation was in flight, dropping it beats stashing one account's address
+                // under another (the helper itself guards `id == accountId` on every slot).
+                // Writing through the array too keeps it the source of truth an account switch
+                // reads (`WalletAccountsSheet`), not just this visit's live `selectedWalletAccount`.
+                PrivateUAStash.write(
+                    nextPrivateUA,
+                    forAccountId: accountId,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount
+                )
                 return .none
 
             case let .updatePrivateUA(privateUA, accountId):

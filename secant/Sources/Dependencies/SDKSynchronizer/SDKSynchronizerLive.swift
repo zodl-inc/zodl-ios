@@ -378,19 +378,18 @@ extension SDKSynchronizerClient: DependencyKey {
                 var walletAccounts = try await synchronizer.listAccounts().map {
                     WalletAccount($0)
                 }
-                
-                // Enrich the WalletAccounts with UnifiedAddresses
+
+                // Enrich the WalletAccounts with the default UnifiedAddress only. The rotation
+                // stash (`nextPrivateUA`) is deliberately left nil here (MOB-1859): generating it
+                // is a wallet-database write, and doing that for every account on every single
+                // load contended with the sync engine during catch-up. Callers merge in whatever
+                // stash the previous in-memory accounts already had
+                // (`WalletAccount.mergingPrivateUAStash`) and refill a still-empty one lazily in
+                // the background — see `PrivateUAStash`.
                 for i in 0..<walletAccounts.count {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
-                    // This fills the rotation stash (`nextPrivateUA`), not the displayed slot:
-                    // `privateUA` is only ever set by promotion at tap time, so a Receive/Swap
-                    // visit never re-shows an address that was already on screen (MOB-1803).
-                    walletAccounts[i].nextPrivateUA = try? await synchronizer.getCustomUnifiedAddress(
-                        accountUUID: walletAccounts[i].id,
-                        receivers: walletAccounts[i].vendor == .keystone ? [.orchard] : [.sapling, .orchard]
-                    )
                 }
-                
+
                 // Put the Zashi account to the top
                 let sortedWalletAccounts = walletAccounts.sorted { $0.vendor.rawValue > $1.vendor.rawValue }
 

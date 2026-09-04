@@ -83,6 +83,11 @@ struct Root {
         /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
         /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
         var startFailureRetryCancelId = UUID()
+        /// MOB-1859: the background `PrivateUAStash.refill` dispatched from
+        /// `.initialization(.loadedWalletAccounts)` for accounts whose rotation stash is still
+        /// nil after merging in the previous in-memory accounts. A newer load's refill supersedes
+        /// whichever one is still running for a now-stale accounts list.
+        var privateUAStashRefillCancelId = UUID()
         /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
         /// the second failure waits for the next external trigger (foreground, gate emission).
         var didScheduleStartFailureRetry = false
@@ -385,6 +390,16 @@ struct Root {
         /// requires returning an `Effect` from the REDUCER, which a `.run` closure's body cannot do
         /// on its own partway through.
         case migrationTickAdvanced(MigrationStepVerdict)
+        /// MOB-1859: the result of one account's background rotation-stash refill, dispatched
+        /// from `.initialization(.loadedWalletAccounts)` for whichever accounts still had no
+        /// stash after merging in the previous in-memory accounts. A Root-owned action rather
+        /// than `.home(.updateNextPrivateUA(...))` — Home's handler only ever updates
+        /// `state.selectedWalletAccount`, so routing a multi-account refill through it would
+        /// silently discard the result for every account except whichever one happens to be
+        /// selected. The handler writes through `PrivateUAStash.write`, which keeps the
+        /// `walletAccounts` array (the source of truth an account switch installs as the new
+        /// selection, `WalletAccountsSheet`) in sync for every account, not only the selected one.
+        case privateUAStashRefilled(UnifiedAddress?, AccountUUID)
         case synchronizerStateChanged(RedactableSynchronizerState)
         case transactionDetailsOpen(String)
         case updateStateAfterConfigUpdate(WalletConfig)

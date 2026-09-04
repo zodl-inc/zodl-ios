@@ -789,9 +789,7 @@ struct SwapAndPay {
                 guard let account = state.selectedWalletAccount else {
                     return .send(.getQuote)
                 }
-                let isKeystone = account.vendor == .keystone
                 let uuid = account.id
-                let receivers: Set<ReceiverType> = isKeystone ? [.orchard] : [.sapling, .orchard]
                 // Rotate-ahead by one (MOB-1803): `getCustomUnifiedAddress` is a wallet-DB write
                 // that can stall for seconds behind the sync engine. `.getQuote` hard-requires
                 // `privateUnifiedAddress` (the refund address — its guard silently no-ops on nil),
@@ -801,13 +799,24 @@ struct SwapAndPay {
                     state.$selectedWalletAccount.withLock {
                         let stash = $0?.nextPrivateUA
                         $0?.privateUA = stash
-                        $0?.nextPrivateUA = nil
                     }
+                    // Clear the consumed stash in the `walletAccounts` array entry too, not only
+                    // the selected copy — otherwise switching away and back
+                    // (`WalletAccountsSheet` installs the ARRAY entry as the new selection) could
+                    // re-install and re-show `stash`, the address just promoted above, breaking
+                    // the MOB-1803 guarantee.
+                    PrivateUAStash.write(
+                        nil,
+                        forAccountId: uuid,
+                        walletAccounts: state.$walletAccounts,
+                        selectedWalletAccount: state.$selectedWalletAccount
+                    )
                     return .merge(
                         .send(.getQuote),
                         .run { send in
-                            let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
-                            await send(.updateNextPrivateUA(freshUA, uuid))
+                            await PrivateUAStash.refill(accounts: [account], sdkSynchronizer: sdkSynchronizer) { ua, accountId in
+                                await send(.updateNextPrivateUA(ua, accountId))
+                            }
                         }
                         .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
                     )
@@ -816,22 +825,26 @@ struct SwapAndPay {
                 // its refund address — then generate one more UA so the stash self-heals and the
                 // next quote request promotes instantly.
                 return .run { send in
-                    let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                    let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
                     await send(.updatePrivateUA(privateUA, uuid))
                     await send(.getQuote)
-                    let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                    let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
                     await send(.updateNextPrivateUA(stashUA, uuid))
                 }
                 .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
 
             case let .updateNextPrivateUA(nextPrivateUA, accountId):
                 // The UA was derived for `accountId`; if the selection changed while the
-                // generation was in flight, dropping it beats stashing one account's
-                // address under another.
-                state.$selectedWalletAccount.withLock {
-                    guard $0?.id == accountId else { return }
-                    $0?.nextPrivateUA = nextPrivateUA
-                }
+                // generation was in flight, dropping it beats stashing one account's address
+                // under another (the helper itself guards `id == accountId` on every slot).
+                // Writing through the array too keeps it the source of truth an account switch
+                // reads (`WalletAccountsSheet`), not just this visit's live `selectedWalletAccount`.
+                PrivateUAStash.write(
+                    nextPrivateUA,
+                    forAccountId: accountId,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount
+                )
                 return .none
 
             case let .updatePrivateUA(privateUA, accountId):
