@@ -181,6 +181,17 @@ struct VoteAgain {
         await store.finish()
     }
 
+    /// The candidates the chain accepted: per bundle, the best-placed entry
+    /// carrying a transaction hash, in index order. Every carved row is
+    /// escrowed, the rebuilt ones and any partly overwritten image included;
+    /// the hash tells the generations apart and the rank picks the intact
+    /// image over a damaged one.
+    private static func broadcastCandidates(in entries: [DelegationEscrowEntry]) -> [DelegationEscrowEntry] {
+        Dictionary(grouping: entries.filter { $0.delegationTxHash != nil }, by: \.bundleIndex)
+            .compactMap { $0.value.max { $0.provenanceRank < $1.provenanceRank } }
+            .sorted { $0.bundleIndex < $1.bundleIndex }
+    }
+
     private func escrowedEntries() async throws -> [DelegationEscrowEntry] {
         try await withDependencies {
             $0.delegationEscrow = .liveValue
@@ -206,10 +217,9 @@ struct VoteAgain {
 
         await openTheApp(server: FakeVoteServer())
 
-        let entries = try await escrowedEntries()
-            .sorted { $0.bundleIndex < $1.bundleIndex }
-        #expect(entries.count == Expected.bundleCount)
-        #expect(entries.map(\.vanCommRand.hexString) == Expected.originalRand)
+        let broadcast = Self.broadcastCandidates(in: try await escrowedEntries())
+        #expect(broadcast.count == Expected.bundleCount)
+        #expect(broadcast.map(\.vanCommRand.hexString) == Expected.originalRand)
         }
     }
 
@@ -230,9 +240,8 @@ struct VoteAgain {
         try plantTheIncident()
         await openTheApp(server: FakeVoteServer())
 
-        let entries = try await escrowedEntries()
-            .sorted { $0.bundleIndex < $1.bundleIndex }
-        #expect(entries.isEmpty == false)
+        let entries = Self.broadcastCandidates(in: try await escrowedEntries())
+        #expect(entries.count == Expected.bundleCount)
 
         for (index, entry) in entries.enumerated() {
             #expect(entry.roundId == Expected.roundId)
@@ -258,7 +267,7 @@ struct VoteAgain {
         let entries = try await escrowedEntries()
         #expect(entries.isEmpty == false)
         for entry in entries {
-            #expect(DelegationWalRecovery.isCanonicalPallasElement(entry.vanCommRand))
+            #expect(VotingDatabaseRecovery.isCanonicalPallasElement(entry.vanCommRand))
         }
         }
     }
@@ -338,7 +347,7 @@ struct VoteAgain {
         try plantTheIncident(hotkey: hotkey)
         await openTheApp(server: FakeVoteServer())
         let entries = try await escrowedEntries()
-        #expect(entries.count == Expected.bundleCount)
+        #expect(Set(entries.map(\.bundleIndex)).count == Expected.bundleCount)
 
         let backend = VotingRustBackend()
         let path = FileManager.default.temporaryDirectory
@@ -394,9 +403,11 @@ struct VoteAgain {
         let server = FakeVoteServer()
         await openTheApp(server: server)
         let entries = try await escrowedEntries()
-        #expect(entries.count == Expected.bundleCount)
-        // Bundle 2's record did not survive.
-        let survivors = entries.filter { $0.bundleIndex < 2 }.sorted { $0.bundleIndex < $1.bundleIndex }
+        #expect(Set(entries.map(\.bundleIndex)).count == Expected.bundleCount)
+        // Bundle 2's record did not survive, in any generation.
+        let survivors = entries.filter { $0.bundleIndex < 2 }
+        let restored = Self.broadcastCandidates(in: survivors)
+        #expect(restored.count == 2)
 
         let backend = VotingRustBackend()
         let path = FileManager.default.temporaryDirectory
@@ -428,7 +439,7 @@ struct VoteAgain {
         // Each restored bundle votes on its own, naming the commitment the
         // chain holds for it.
         let api = server.client()
-        for entry in survivors {
+        for entry in restored {
             _ = try await api.submitVoteCommitment(
                 VoteCommitmentBundle(
                     vanNullifier: Data(repeating: 0x01, count: 32),
@@ -445,7 +456,7 @@ struct VoteAgain {
             )
         }
         #expect(server.submittedVotes.count == 2)
-        let expectedVANs = try survivors.map { entry in
+        let expectedVANs = try restored.map { entry in
             try Data(
                 VotingRustBackend.vanCommitment(
                     hotkey: hotkey,
@@ -493,8 +504,7 @@ struct VoteAgain {
             let server = FakeVoteServer()
             await openTheApp(server: server)
 
-            let escrowed = try await escrowedEntries()
-                .sorted { $0.bundleIndex < $1.bundleIndex }
+            let escrowed = Self.broadcastCandidates(in: try await escrowedEntries())
             #expect(escrowed.count == Expected.bundleCount)
 
             // Stands in for the FFI the restore will eventually call. It reads

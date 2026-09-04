@@ -235,20 +235,28 @@ rebuilt = {secret(b) for b in (0xB0, 0xB1, 0xB2)}
 
 with open(sys.argv[1]) as escrow:
     entries = json.load(escrow)["entries"]
-held = {
-    base64.b64decode(entry["vanCommRand"]).hex()
-    for entry in entries
-    if entry["roundId"].lower() == round_id
-}
+hashes = {}
+for entry in entries:
+    if entry["roundId"].lower() == round_id:
+        rand = base64.b64decode(entry["vanCommRand"]).hex()
+        hashes.setdefault(rand, set()).add(entry.get("delegationTxHash"))
 
-missing = broadcast - held
+# Every carved row is escrowed: the rebuilt ones, and possibly more than one
+# image of a value. The transaction hash is what tells the original apart, so
+# some image of every broadcast secret must carry it, and no image of a
+# rebuilt one may.
+missing = broadcast - set(hashes)
 if missing:
     print(f"escrow is missing broadcast secrets: {sorted(missing)}", file=sys.stderr)
     sys.exit(1)
-if held & rebuilt:
-    print("a rebuilt secret was escrowed as though it were the original", file=sys.stderr)
+unhashed = [r for r in broadcast if not any(hashes[r])]
+if unhashed:
+    print(f"broadcast secrets escrowed without their transaction hash: {sorted(unhashed)}", file=sys.stderr)
     sys.exit(1)
-print(f"escrow holds all {len(broadcast)} broadcast secrets and none of the rebuilt ones")
+if any(any(hashes[r]) for r in rebuilt if r in hashes):
+    print("a rebuilt secret was escrowed as though the chain had accepted it", file=sys.stderr)
+    sys.exit(1)
+print(f"escrow holds all {len(broadcast)} broadcast secrets with their hashes; rebuilt ones carry none")
 PY
 
 if [ "$KEEP" -eq 0 ]; then

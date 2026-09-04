@@ -3,7 +3,7 @@ import Testing
 import Foundation
 @testable import zodl_internal
 
-/// The carver reads released space: freed pages, freeblocks, and the
+/// The decoder reads released space: freed pages, freeblocks, and the
 /// unallocated gap. Those bytes are whatever was last written there, so every
 /// length and offset it decodes is arbitrary rather than trusted.
 ///
@@ -11,56 +11,47 @@ import Foundation
 /// takes the process down. These tests assert only that decoding RETURNS.
 /// Reaching the end of one is the whole assertion: a regression would abort
 /// the test run rather than fail a check.
-@Suite struct DelegationWalRecoveryHostileInputTests {
-    /// The reproducer that crashed the decoder before the clamps were added.
-    ///
-    /// `0x0C` is a plausible record-header length, `0x81 0x0D` is exactly the
-    /// signature the page sweep scans for (`round_id` as TEXT of length 64,
-    /// serial `2 * 64 + 13 = 141`), and the nine `0xFF` bytes are a varint
-    /// serial type of about 2^64. Its width came out as 9223372036854775801,
-    /// and `body + width` overflowed.
-    @Test func decodingSurvivesASerialTypeNearTwoToTheSixtyFour() {
-        let payload: [UInt8] = [0x0C, 0x81, 0x0D] + Array(repeating: 0xFF, count: 9)
+@Suite struct VotingDatabaseRecoveryHostileInputTests {
+    /// `0x0C` is a plausible record-header length, `0x81 0x0D` is the serial
+    /// type of `round_id` as TEXT of length 64, and the nine `0xFF` bytes are
+    /// a varint serial type of about 2^64.
+    private static let hostilePayload: [UInt8] = [0x0C, 0x81, 0x0D] + Array(repeating: 0xFF, count: 9)
 
-        let columns = DelegationWalRecovery.decodeRecord(payload)
+    @Test func decodingSurvivesASerialTypeNearTwoToTheSixtyFour() throws {
+        let report = try? VotingDatabaseRecovery.recoverAll(
+            databaseBytes: Self.database(pages: [Self.page(filledWith: Self.hostilePayload)]),
+            roundId: nil,
+            walletId: nil
+        )
 
         // Whatever it returns, it must not be a `bundles` row: nothing here
         // carries a round id, so this can never reach the escrow.
-        if let columns {
-            #expect(columns.count < DelegationWalRecovery.bundleColumnCount)
-        }
+        #expect(report?.candidates.isEmpty ?? true)
     }
 
-    /// The same shape with a header length that also exceeds `Int.max`, which
-    /// used to trap one line earlier, in `Int(headerLength)`.
+    /// A header length that also exceeds `Int.max`.
     @Test func decodingSurvivesAHeaderLengthLargerThanInt() {
-        let payload = Array(repeating: UInt8(0xFF), count: 12)
-
-        _ = DelegationWalRecovery.decodeRecord(payload)
+        _ = VotingDatabaseRecovery.decodeRecord(Array(repeating: UInt8(0xFF), count: 12))
     }
 
-    /// Truncation must stay non-fatal: the columns the carver needs sit near
-    /// the front, so a payload cut short by overflow still has to decode.
+    /// Truncation must stay non-fatal: the columns the decoder needs sit near
+    /// the front, so a payload cut short still has to decode or refuse.
     @Test func decodingSurvivesEveryPrefixOfTheHostilePayload() {
-        let payload: [UInt8] = [0x0C, 0x81, 0x0D] + Array(repeating: 0xFF, count: 9)
-
-        for length in 0...payload.count {
-            _ = DelegationWalRecovery.decodeRecord(Array(payload.prefix(length)))
+        for length in 0...Self.hostilePayload.count {
+            _ = VotingDatabaseRecovery.decodeRecord(Array(Self.hostilePayload.prefix(length)))
         }
     }
 
     /// A whole page of the signature back to back, so the sweep decodes at
     /// every offset rather than once.
     @Test func carvingSurvivesAPageMadeEntirelyOfTheSignature() {
-        var page: [UInt8] = []
-        while page.count < 4096 {
-            page += [0x0C, 0x81, 0x0D] + Array(repeating: 0xFF, count: 9)
-        }
-        let database = Self.database(pages: [Array(page.prefix(4096))])
+        let report = try? VotingDatabaseRecovery.recoverAll(
+            databaseBytes: Self.database(pages: [Self.page(filledWith: Self.hostilePayload)]),
+            roundId: nil,
+            walletId: nil
+        )
 
-        let rows = DelegationWalRecovery.recover(databaseBytes: database)
-
-        #expect(rows.isEmpty, "no real bundle exists in this page")
+        #expect(report?.candidates.isEmpty ?? true, "no real bundle exists in this page")
     }
 
     /// Deterministic pseudo-random pages, which is what freed space holding
@@ -83,13 +74,26 @@ import Foundation
                 page[offset] = 0x81
                 page[offset + 1] = 0x0D
             }
-            _ = DelegationWalRecovery.recover(databaseBytes: Self.database(pages: [page]))
+            _ = try? VotingDatabaseRecovery.recoverAll(
+                databaseBytes: Self.database(pages: [page]),
+                roundId: nil,
+                walletId: nil
+            )
         }
     }
 
-    /// Wraps pages in a minimal but valid database header so `recover` gets
+    /// A page that is nothing but the payload, repeated.
+    private static func page(filledWith payload: [UInt8]) -> [UInt8] {
+        var page: [UInt8] = []
+        while page.count < 4096 {
+            page += payload
+        }
+        return Array(page.prefix(4096))
+    }
+
+    /// Wraps pages in a minimal but valid database header so the scan gets
     /// past its own validation and reaches the page walk.
-    static func database(pages: [[UInt8]]) -> [UInt8] {
+    private static func database(pages: [[UInt8]]) -> [UInt8] {
         let pageSize = 4096
         var bytes = Array("SQLite format 3\u{0}".utf8)
         bytes += [UInt8(pageSize >> 8), UInt8(pageSize & 0xFF)]     // page size at 16

@@ -132,7 +132,7 @@ struct RootDelegationRecoveryOnLaunchTests {
                     DelegationRecoveryReport(
                         outcome: .recovered,
                         rounds: 1,
-                        bundlesEscrowed: 3
+                        candidatesEscrowed: 3
                     )
                 }
             )

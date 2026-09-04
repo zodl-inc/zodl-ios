@@ -134,10 +134,10 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
         /// broadcast. Ordinary bookkeeping: its presence says nothing about
         /// whether anything was lost.
         case liveCapture
-        /// Carved back out of a wiped database. Its presence is evidence that
-        /// the round WAS cleared and rebuilt, because recovery escrows only
-        /// where it found a replacement for a secret the live copy no longer
-        /// holds.
+        /// Carved out of the preserved files. Every schema-consistent row is
+        /// escrowed, the live one included, each with its provenance; a bundle
+        /// holding more than one distinct blinding is the evidence that the
+        /// round was cleared and rebuilt.
         case recovered
     }
 }

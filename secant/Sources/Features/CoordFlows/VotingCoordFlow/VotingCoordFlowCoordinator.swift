@@ -4468,11 +4468,15 @@ extension VotingCoordFlow {
         var escrowHoldsRecoveredSecrets = false
         #if RECOVERY_VOTING_ENABLED
         @Dependency(\.delegationEscrow) var delegationEscrow
-        // Asks for the ORIGIN, not merely for presence: an ordinary live
-        // capture is not evidence that anything was lost.
+        // Asks whether a bundle holds more than one distinct blinding. Every
+        // carved row is escrowed, the live one included, so presence alone
+        // is not evidence that anything was lost.
         escrowHoldsRecoveredSecrets = (
-            try? await delegationEscrow.entries(roundId).contains { $0.source == .recovered }
-        ) ?? false
+            try? await delegationEscrow.entries(roundId)
+        ).map { entries in
+            Dictionary(grouping: entries.filter { $0.source == .recovered }, by: \.bundleIndex)
+                .values.contains { Set($0.map(\.vanCommRand)).count > 1 }
+        } ?? false
         #endif
 
         let diagnosis = await DelegationDiagnosis.forRound(

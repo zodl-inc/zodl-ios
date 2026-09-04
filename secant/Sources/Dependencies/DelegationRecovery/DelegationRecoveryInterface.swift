@@ -12,9 +12,9 @@ extension DependencyValues {
 /// What one recovery run found, and what it did about it.
 ///
 /// Counts are reported rather than summarised into a single "it worked",
-/// because the interesting cases are the partial ones: a carved value that is
-/// not a field element was never a blinding factor, and one whose `gov_comm`
-/// did not survive carries no self-check.
+/// because the interesting cases are the partial ones: a bundle with two
+/// candidates was cleared and rebuilt, and a run that read only some of its
+/// sources may have missed the one that mattered.
 struct DelegationRecoveryReport: Equatable, Sendable {
     enum Outcome: Equatable, Sendable {
         /// Nothing was preserved, so there is nothing to read. Either the
@@ -37,16 +37,12 @@ struct DelegationRecoveryReport: Equatable, Sendable {
     var sourcesScanned = 0
     /// Distinct rounds represented by the escrowed bundles.
     var rounds = 0
-    /// Bundles whose original secrets were written to the escrow.
-    var bundlesEscrowed = 0
-    /// Carved values discarded because they are not canonical Pallas base
-    /// field elements, so they cannot have been blinding factors.
-    var bundlesRejected = 0
-    /// Escrowed bundles whose `gov_comm` did not survive, so the recovered
-    /// blinding factor arrives without the commitment that verifies it.
-    var bundlesWithoutVan = 0
+    /// Candidate rows written to the escrow: every generation of every
+    /// bundle the decoder admitted.
+    var candidatesEscrowed = 0
+    /// Distinct bundles with at least one candidate.
+    var bundles = 0
 }
-
 
 /// Carves the preserved copy of `voting.sqlite3` for delegation secrets an
 /// older build replaced, and escrows whatever it finds.
@@ -56,8 +52,8 @@ struct DelegationRecoveryClient {
     /// through SQLite: opening a connection checkpoints the write-ahead log
     /// and destroys the frames being read.
     ///
-    /// Safe to run repeatedly. An untouched round yields an empty plan, and
-    /// re-escrowing a bundle overwrites its entry in place.
+    /// Safe to run repeatedly. The escrow keeps one entry per distinct
+    /// candidate, so re-escrowing what an earlier run found changes nothing.
     var run: @Sendable () async -> DelegationRecoveryReport = {
         DelegationRecoveryReport(outcome: .noSnapshot)
     }

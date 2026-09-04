@@ -289,7 +289,7 @@ extension VotingDatabaseRecovery {
         return data
     }
 
-    private static func isCanonicalPallasElement(_ candidate: Data) -> Bool {
+    static func isCanonicalPallasElement(_ candidate: Data) -> Bool {
         guard candidate.count == 32 else { return false }
         return Data(candidate.reversed()).hexString < pallasModulus
     }

@@ -238,18 +238,24 @@ struct DelegationRecoveryDeviceE2ETests {
             "opening the app did not escrow anything"
         )
 
+        // Every carved row is escrowed, the rebuilt ones included. What
+        // tells the original apart is the transaction hash the chain saw.
         let entries = try await escrowedEntries()
-        #expect(entries.count == Expected.bundleCount)
-
-        let recovered = entries
-            .sorted { $0.bundleIndex < $1.bundleIndex }
-            .map(\.vanCommRand.hexString)
-        #expect(recovered == Expected.originalRand)
-
-        for rebuilt in Expected.rebuiltRand {
+        let byBundle = Dictionary(grouping: entries, by: \.bundleIndex)
+        #expect(byBundle.count == Expected.bundleCount)
+        for (index, original) in Expected.originalRand.enumerated() {
+            let candidates = byBundle[UInt32(index)] ?? []
             #expect(
-                recovered.contains(rebuilt) == false,
-                "a rebuilt secret was escrowed as though it were the original"
+                candidates.contains {
+                    $0.vanCommRand.hexString == original && $0.delegationTxHash == Expected.txHash(index)
+                },
+                "bundle \(index) lost its original, or its original lost its hash"
+            )
+        }
+        for entry in entries where Expected.rebuiltRand.contains(entry.vanCommRand.hexString) {
+            #expect(
+                entry.delegationTxHash == nil,
+                "a rebuilt secret was escrowed as though the chain had accepted it"
             )
         }
         }
@@ -265,7 +271,7 @@ struct DelegationRecoveryDeviceE2ETests {
         let entries = try await escrowedEntries()
         #expect(entries.isEmpty == false)
         for entry in entries {
-            #expect(DelegationWalRecovery.isCanonicalPallasElement(entry.vanCommRand))
+            #expect(VotingDatabaseRecovery.isCanonicalPallasElement(entry.vanCommRand))
         }
         }
     }
@@ -282,7 +288,7 @@ struct DelegationRecoveryDeviceE2ETests {
         let second = try await escrowedEntries().map(\.vanCommRand.hexString)
 
         #expect(first == second)
-        #expect(second.sorted() == Expected.originalRand.sorted())
+        #expect(Set(second).isSuperset(of: Expected.originalRand))
         }
     }
 

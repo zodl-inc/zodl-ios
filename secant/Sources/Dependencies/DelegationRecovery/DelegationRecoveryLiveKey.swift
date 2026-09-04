@@ -141,16 +141,19 @@ extension DelegationRecoveryClient: DependencyKey {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
     }
 
+    private static let sqliteMagic = Array("SQLite format 3\u{0}".utf8)
+    /// A write-ahead log of exactly this size holds no frames.
+    private static let walHeaderLength = 32
+
     /// Reads the 16-byte SQLite magic, and nothing more. A name is a guess; a
     /// header is evidence.
     private static func looksLikeSQLite(_ url: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
-        guard let head = try? handle.read(upToCount: DelegationWalRecovery.Format.magic.count)
-        else {
+        guard let head = try? handle.read(upToCount: sqliteMagic.count) else {
             return false
         }
-        return Array(head) == DelegationWalRecovery.Format.magic
+        return Array(head) == sqliteMagic
     }
 
     /// A short, stable label naming WHICH file a log line is about: the path
@@ -185,14 +188,6 @@ extension DelegationRecoveryClient: DependencyKey {
         let hex = data.hexString
         guard hex.count > 16 else { return hex }
         return "\(hex.prefix(6))...\(hex.suffix(6))"
-    }
-
-    static func describe(_ origin: DelegationWalRecovery.Origin) -> String {
-        switch origin {
-        case .databaseFreeSpace: return "released space"
-        case .databaseLive: return "live row"
-        case let .walFrame(index): return "log frame \(index)"
-        }
     }
 
     /// Byte size, or 0 when the file is not there. For the log only, so a
@@ -264,49 +259,30 @@ extension DelegationRecoveryClient: DependencyKey {
                     log(
                         "  - \(source.name): db \(fileSize(source.databaseURL))B, wal \(wal)B"
                         + (captured.map { ", captured \($0) UTC" } ?? "")
-                        + (wal <= DelegationWalRecovery.Format.walHeaderLength
+                        + (wal <= Self.walHeaderLength
                             ? " (log header-only: nothing superseded left in it)"
                             : "")
                     )
                 }
 
-                // The cheap early-out. A wallet that never opened a poll has no
-                // round, so nothing can have been lost and there is no reason to
-                // carve anything. Presence is NOT health: a wiped round was
-                // rebuilt, so it is present too. This only decides whether it is
-                // worth looking; `plan` decides what was found.
-                let holdsRoundData = sources.contains { source in
-                    (try? DelegationWalRecovery.holdsRoundData(
-                        databaseURL: source.databaseURL,
-                        walURL: source.walURL
-                    )) == true
-                }
-                guard holdsRoundData else {
-                    log("RUN skipped: no voting round on this device, nothing can have been lost")
-                    return DelegationRecoveryReport(outcome: .nothingToRecover)
-                }
-                log("round data present, carving")
-
-                // Keyed by bundle, holding the oldest surviving copy found in
-                // the most trusted source that had one.
-                //
-                // Each source is planned INDEPENDENTLY and only the results are
-                // merged. `Origin` orders copies within ONE file: released
-                // space precedes live rows, which precede log frames, because
-                // the file holds the last checkpointed state. Across files that
-                // order means nothing, so pooling raw rows would rank a
-                // preserved log frame above the live database's current row and
-                // invert original and replacement.
-                var originals: [String: DelegationWalRecovery.RecoveredBundle] = [:]
-                var scanned = 0
+                // Every schema-consistent row goes to the escrow with where it
+                // was found. Nothing is elected here: which copy is the
+                // original is decided at restore time, by the transaction hash
+                // and, in the end, by the chain.
+                var report = DelegationRecoveryReport(outcome: .recovered)
+                var rounds: Set<String> = []
+                var bundles: Set<String> = []
+                var escrowFailed = false
                 var readFailed = false
 
                 for source in sources {
-                    let plan: DelegationWalRecovery.Plan
+                    let found: VotingDatabaseRecovery.Report
                     do {
-                        plan = try DelegationWalRecovery.plan(
+                        found = try VotingDatabaseRecovery.recoverAll(
                             databaseURL: source.databaseURL,
-                            walURL: source.walURL
+                            walURL: source.walURL,
+                            roundId: nil,
+                            walletId: nil
                         )
                     } catch {
                         // A source that cannot be read is not fatal: another
@@ -318,105 +294,63 @@ extension DelegationRecoveryClient: DependencyKey {
                         readFailed = true
                         continue
                     }
+                    report.sourcesScanned += 1
+                    log(
+                        "  [\(source.name)] \(found.candidates.count) candidate(s), \(found.validWalFrameCount) valid log frame(s)"
+                    )
 
-                    scanned += 1
-                    guard plan.needsRecovery else {
-                        log("  [\(source.name)] nothing to restore")
-                        continue
-                    }
-                    log("  [\(source.name)] proposes \(plan.replacements.count) replacement(s)")
-
-                    for replacement in plan.replacements {
-                        let original = replacement.original
-                        let key = "\(original.roundId)/\(original.bundleIndex)"
-                        // First writer wins: sources are in descending trust.
-                        if originals[key] == nil {
-                            originals[key] = original
-                            log(
-                                "    take \(key) from [\(source.name)] "
-                                + describe(original.origin)
+                    for candidate in found.candidates {
+                        let key = "\(candidate.roundId)/\(candidate.bundleIndex)"
+                        do {
+                            try await delegationEscrow.record(
+                                DelegationEscrowEntry(
+                                    roundId: candidate.roundId,
+                                    bundleIndex: candidate.bundleIndex,
+                                    vanCommRand: candidate.vanCommRand,
+                                    van: candidate.vanCmx,
+                                    totalNoteValue: candidate.totalNoteValue,
+                                    delegationTxHash: candidate.delegationTxHash,
+                                    source: .recovered,
+                                    createdAt: Date(),
+                                    walletId: candidate.walletId,
+                                    addressIndex: candidate.addressIndex ?? 0,
+                                    vanLeafPosition: candidate.vanLeafPosition,
+                                    provenance: "\(source.name): \(candidate.source.label)",
+                                    provenanceRank: candidate.source.rank
+                                )
                             )
-                        } else {
-                            log(
-                                "    skip \(key) in [\(source.name)], "
-                                + "a more trusted copy already supplied it"
+                        } catch {
+                            // Keep going. Every one of these is irreplaceable, so
+                            // one unwritable entry must not abandon the rest.
+                            LoggerProxy.error(
+                                "[poll-recovery] could not escrow \(key): \(error)"
                             )
+                            escrowFailed = true
+                            continue
                         }
+                        report.candidatesEscrowed += 1
+                        rounds.insert(candidate.roundId)
+                        bundles.insert(key)
+                        // The hash decides whether this candidate is a complete
+                        // capability record, so a support log that omits it
+                        // cannot answer the first question anyone asks.
+                        let tx = candidate.delegationTxHash.map { "tx \($0.prefix(8))" }
+                            ?? "no tx hash"
+                        let provenance = "[\(source.name)] \(candidate.source.label)"
+                        log("    ESCROWED \(key) = \(elide(candidate.vanCommRand)) from \(provenance), \(tx)")
                     }
-                }
-
-                var report = DelegationRecoveryReport(outcome: .recovered)
-                report.sourcesScanned = scanned
-                var rounds: Set<String> = []
-                var escrowFailed = false
-
-                for key in originals.keys.sorted() {
-                    guard let original = originals[key] else { continue }
-
-                    // The carver matches on record shape, so a byte pattern in
-                    // released space can decode into a plausible-looking row. A
-                    // real blinding factor is a canonical Pallas base field
-                    // element; anything else never was one and must not enter
-                    // the escrow dressed as one.
-                    guard DelegationWalRecovery
-                        .isCanonicalPallasElement(original.vanCommRand) else {
-                        report.bundlesRejected += 1
-                        log("    REJECT \(key): not a canonical Pallas element")
-                        continue
-                    }
-
-                    do {
-                        try await delegationEscrow.record(
-                            DelegationEscrowEntry(
-                                roundId: original.roundId,
-                                bundleIndex: original.bundleIndex,
-                                vanCommRand: original.vanCommRand,
-                                van: original.van,
-                                totalNoteValue: original.totalNoteValue,
-                                delegationTxHash: original.delegationTxHash,
-                                source: .recovered,
-                                createdAt: Date()
-                            )
-                        )
-                    } catch {
-                        // Keep going. Every one of these is irreplaceable, so
-                        // one unwritable entry must not abandon the rest.
-                        LoggerProxy.error(
-                            "[poll-recovery] could not escrow \(key): \(error)"
-                        )
-                        escrowFailed = true
-                        continue
-                    }
-                    // The hash decides whether this entry is a complete
-                    // capability record, so a support log that omits it
-                    // cannot answer the first question anyone asks.
-                    let tx = original.delegationTxHash.map { "tx \($0.prefix(8))" }
-                        ?? "no tx hash"
-                    log("    ESCROWED \(key) = \(elide(original.vanCommRand)), \(tx)")
-
-                    report.bundlesEscrowed += 1
-                    if original.van.isEmpty {
-                        report.bundlesWithoutVan += 1
-                    }
-                    rounds.insert(original.roundId)
                 }
 
                 report.rounds = rounds.count
-
-                if escrowFailed || (readFailed && report.bundlesEscrowed == 0 && scanned == 0) {
+                report.bundles = bundles.count
+                if escrowFailed || (readFailed && report.sourcesScanned == 0) {
                     report.outcome = .failed
-                } else if report.bundlesEscrowed == 0 {
-                    // Either no source proposed anything, or every candidate
-                    // failed admission. Nothing was recovered either way.
+                } else if report.candidatesEscrowed == 0 {
                     report.outcome = .nothingToRecover
                 }
 
-                log(
-                    "RUN finished over \(report.sourcesScanned) source(s): outcome=\(report.outcome), "
-                    + "escrowed=\(report.bundlesEscrowed) across \(report.rounds) round(s), "
-                    + "rejected=\(report.bundlesRejected), "
-                    + "withoutCommitment=\(report.bundlesWithoutVan)"
-                )
+                let summary = "candidates=\(report.candidatesEscrowed) across \(report.bundles) bundle(s) in \(report.rounds) round(s)"
+                log("RUN finished over \(report.sourcesScanned) source(s): outcome=\(report.outcome), \(summary)")
                 return report
             }
         )
