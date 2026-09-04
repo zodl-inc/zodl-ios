@@ -13,6 +13,76 @@ enum DelegationRestore {
     /// Zatoshi per ballot. A bundle below one ballot cannot be imported.
     static let ballotDivisor: UInt64 = 12_500_000
 
+    enum Outcome: Equatable, Sendable {
+        /// The escrow does not hold a complete recovered delegation, or the
+        /// device has no hotkey to recompute the commitments with.
+        case notApplicable(reason: String)
+        /// The database already holds exactly this delegation.
+        case alreadyRestored
+        /// The round was cleared and the delegation imported.
+        case restored(bundleCount: Int)
+        /// The SDK's guards refused to clear the round. The reason names the
+        /// guard and carries no secret.
+        case refused(reason: String)
+        /// The SDK reported a failure that is not a guard.
+        case failed
+
+        /// The marker every guard refusal from the SDK carries.
+        static let refusalMarker = "nothing may be cleared"
+    }
+
+    /// Restores the round from the escrow when it holds a complete recovered
+    /// delegation. Whether the database may be cleared is decided in the SDK,
+    /// on the live rows, in the same call that clears; the app only decides
+    /// whether there is anything worth asking about.
+    static func restoreIfNeeded(
+        roundId: String,
+        roundParams: VotingRoundParams,
+        networkId: UInt32,
+        hotkeyStoredSecret: Data?,
+        escrowEntries: [DelegationEscrowEntry],
+        expectedBundleCount: UInt32?,
+        crypto: VotingCryptoClient
+    ) async -> Outcome {
+        guard let bundles = package(from: escrowEntries, expectedBundleCount: expectedBundleCount) else {
+            return .notApplicable(reason: "escrow holds no complete recovered delegation")
+        }
+        guard let hotkeyStoredSecret else {
+            return .notApplicable(reason: "no voting hotkey on this device")
+        }
+
+        do {
+            let result = try await crypto.restoreRecoveredDelegation(
+                RecoveredDelegationImportRequest(
+                    roundParams: roundParams,
+                    networkId: networkId,
+                    voteChainId: voteChainId,
+                    hotkeyStoredSecret: hotkeyStoredSecret,
+                    bundles: bundles,
+                    sessionJson: nil
+                )
+            )
+            switch result {
+            case .alreadyRestored:
+                return .alreadyRestored
+            case .restored:
+                LoggerProxy.info("[poll-restore] round=\(roundId) restored \(bundles.count) bundle(s) from the escrow")
+                return .restored(bundleCount: bundles.count)
+            }
+        } catch {
+            // The crate's and the FFI's messages name conditions and counts,
+            // never row contents.
+            let description = error.localizedDescription
+            if description.contains(Outcome.refusalMarker) {
+                let reason = description.components(separatedBy: "failed: ").last ?? description
+                LoggerProxy.info("[poll-restore] round=\(roundId) refused: \(reason)")
+                return .refused(reason: reason)
+            }
+            LoggerProxy.error("[poll-restore] round=\(roundId) restore failed: \(description)")
+            return .failed
+        }
+    }
+
     /// The bundles a complete package needs, or nil when the escrow cannot
     /// supply one.
     ///
