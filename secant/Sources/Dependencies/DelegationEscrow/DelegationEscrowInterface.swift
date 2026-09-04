@@ -57,6 +57,22 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
     /// data was lost and we have it back" only when that is true.
     let source: Source
     let createdAt: Date
+    /// `bundles.wallet_id` of the row this was carved from. Empty for a live
+    /// capture, or an escrow written before the field existed.
+    let walletId: String
+    /// Hotkey address index; the import stores zero.
+    let addressIndex: UInt32
+    /// Position of the VAN in the round's tree, once confirmed.
+    let vanLeafPosition: UInt32?
+    /// Where the row was found, for logs and support. Never carries content.
+    let provenance: String
+    /// `VotingDatabaseRecovery.Source.rank`; higher is more trusted. One
+    /// bundle may hold several candidates, and the restore offers the best
+    /// the chain has not refused.
+    let provenanceRank: Int
+    /// Set when the chain refused this candidate's leaf, so the restore
+    /// never offers it again.
+    let rejectedAt: Date?
 
     /// An escrow written before `source` existed decodes as a live capture.
     ///
@@ -73,6 +89,12 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
         delegationTxHash = try container.decodeIfPresent(String.self, forKey: .delegationTxHash)
         source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .liveCapture
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+        walletId = try container.decodeIfPresent(String.self, forKey: .walletId) ?? ""
+        addressIndex = try container.decodeIfPresent(UInt32.self, forKey: .addressIndex) ?? 0
+        vanLeafPosition = try container.decodeIfPresent(UInt32.self, forKey: .vanLeafPosition)
+        provenance = try container.decodeIfPresent(String.self, forKey: .provenance) ?? "unknown"
+        provenanceRank = try container.decodeIfPresent(Int.self, forKey: .provenanceRank) ?? 0
+        rejectedAt = try container.decodeIfPresent(Date.self, forKey: .rejectedAt)
     }
 
     init(
@@ -83,7 +105,13 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
         totalNoteValue: UInt64,
         delegationTxHash: String?,
         source: Source,
-        createdAt: Date
+        createdAt: Date,
+        walletId: String = "",
+        addressIndex: UInt32 = 0,
+        vanLeafPosition: UInt32? = nil,
+        provenance: String = "unknown",
+        provenanceRank: Int = 0,
+        rejectedAt: Date? = nil
     ) {
         self.roundId = roundId
         self.bundleIndex = bundleIndex
@@ -93,6 +121,12 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
         self.delegationTxHash = delegationTxHash
         self.source = source
         self.createdAt = createdAt
+        self.walletId = walletId
+        self.addressIndex = addressIndex
+        self.vanLeafPosition = vanLeafPosition
+        self.provenance = provenance
+        self.provenanceRank = provenanceRank
+        self.rejectedAt = rejectedAt
     }
 
     enum Source: String, Equatable, Sendable, Codable {
@@ -112,9 +146,9 @@ struct DelegationEscrowEntry: Equatable, Sendable, Codable {
 /// would otherwise destroy irrecoverably.
 @DependencyClient
 struct DelegationEscrowClient {
-    /// Persists one bundle's secrets. Overwrites any entry for the same
-    /// `(roundId, bundleIndex)` -- re-running the delegation samples fresh
-    /// randomness, and the newest sample is the one the chain will see.
+    /// Persists one candidate. Keyed by `(roundId, bundleIndex, vanCommRand,
+    /// van)`: a bundle keeps every distinct image recovered for it, and a live
+    /// capture never displaces a recovered copy of the same candidate.
     var record: @Sendable (_ entry: DelegationEscrowEntry) async throws -> Void
     /// Every escrowed bundle for one round, in bundle-index order.
     var entries: @Sendable (_ roundId: String) async throws -> [DelegationEscrowEntry]
@@ -123,6 +157,10 @@ struct DelegationEscrowClient {
     /// Drops one round's entries. Call only once its delegation is confirmed
     /// and its votes are cast -- never as part of a retry.
     var forget: @Sendable (_ roundId: String) async throws -> Void
+    /// Stamps one candidate as refused by the chain, so a restore never
+    /// offers it again. Named by its blinding, since one bundle may hold
+    /// several candidates.
+    var markRejected: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ vanCommRand: Data) async throws -> Void
     /// Drops everything. Wallet-reset scope only: the escrow is as
     /// wallet-specific as `voting.sqlite3` and must not outlive it.
     var reset: @Sendable () async -> Void

@@ -84,27 +84,47 @@ private actor DelegationEscrowStore {
         // the one copy recovery just carved out of a wiped database -- the
         // second, quieter version of the loss this whole mechanism exists to
         // undo.
-        let existing = entries.first {
+        //
+        // One bundle may hold several candidates, each a distinct blinding
+        // the carve found, so the key includes the value itself, and the
+        // commitment beside it: two images of one blinding can disagree on
+        // the commitment when a rebuild overwrote part of a row, and only
+        // the intact one opens. A live capture of the SAME candidate adds
+        // nothing the recovered copy lacks.
+        let sameCandidate: (DelegationEscrowEntry) -> Bool = {
             $0.roundId.caseInsensitiveCompare(entry.roundId) == .orderedSame
                 && $0.bundleIndex == entry.bundleIndex
+                && $0.vanCommRand == entry.vanCommRand
+                && $0.van == entry.van
         }
-        if existing?.source == .recovered && entry.source == .liveCapture {
+        if let existing = entries.first(where: sameCandidate),
+           existing.source == .recovered, entry.source == .liveCapture {
             return
         }
 
-        entries.removeAll {
-            $0.roundId.caseInsensitiveCompare(entry.roundId) == .orderedSame
-                && $0.bundleIndex == entry.bundleIndex
-        }
-        entries.append(entry)
-        entries.sort { ($0.roundId, $0.bundleIndex) < ($1.roundId, $1.bundleIndex) }
+        // A candidate the chain refused stays refused when a later run
+        // escrows the same value again.
+        let refusedAt = entries.first(where: sameCandidate)?.rejectedAt
+        entries.removeAll(where: sameCandidate)
+        entries.append(refusedAt.map { entry.refused(at: $0) } ?? entry)
+        entries.sort(by: Self.precedes)
         try persist(entries)
     }
 
     func entries(roundId: String) throws -> [DelegationEscrowEntry] {
         try loadAll()
             .filter { $0.roundId.caseInsensitiveCompare(roundId) == .orderedSame }
-            .sorted { $0.bundleIndex < $1.bundleIndex }
+            .sorted(by: Self.precedes)
+    }
+
+    /// A total order, so the file and `entries` read the same from one run to
+    /// the next: round, bundle, best rank first, then the candidate's own bytes.
+    private static func precedes(_ lhs: DelegationEscrowEntry, _ rhs: DelegationEscrowEntry) -> Bool {
+        if lhs.roundId != rhs.roundId { return lhs.roundId < rhs.roundId }
+        if lhs.bundleIndex != rhs.bundleIndex { return lhs.bundleIndex < rhs.bundleIndex }
+        if lhs.provenanceRank != rhs.provenanceRank { return lhs.provenanceRank > rhs.provenanceRank }
+        if lhs.vanCommRand != rhs.vanCommRand { return lhs.vanCommRand.lexicographicallyPrecedes(rhs.vanCommRand) }
+        return lhs.van.lexicographicallyPrecedes(rhs.van)
     }
 
     func holdsDelegation(roundId: String) -> Bool {
@@ -117,10 +137,43 @@ private actor DelegationEscrowStore {
         try persist(entries)
     }
 
+    func markRejected(roundId: String, bundleIndex: UInt32, vanCommRand: Data) throws {
+        let entries = try loadAll().map { entry -> DelegationEscrowEntry in
+            guard entry.roundId.caseInsensitiveCompare(roundId) == .orderedSame,
+                  entry.bundleIndex == bundleIndex,
+                  entry.vanCommRand == vanCommRand
+            else { return entry }
+            return entry.refused(at: Date())
+        }
+        try persist(entries)
+    }
+
     func reset() {
         if let url = try? fileURL() {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+}
+
+private extension DelegationEscrowEntry {
+    /// The same entry, stamped as refused by the chain at `date`.
+    func refused(at date: Date) -> DelegationEscrowEntry {
+        DelegationEscrowEntry(
+            roundId: roundId,
+            bundleIndex: bundleIndex,
+            vanCommRand: vanCommRand,
+            van: van,
+            totalNoteValue: totalNoteValue,
+            delegationTxHash: delegationTxHash,
+            source: source,
+            createdAt: createdAt,
+            walletId: walletId,
+            addressIndex: addressIndex,
+            vanLeafPosition: vanLeafPosition,
+            provenance: provenance,
+            provenanceRank: provenanceRank,
+            rejectedAt: date
+        )
     }
 }
 
@@ -152,6 +205,9 @@ extension DelegationEscrowClient: DependencyKey {
             },
             forget: { roundId in
                 try await store.forget(roundId: roundId)
+            },
+            markRejected: { roundId, bundleIndex, vanCommRand in
+                try await store.markRejected(roundId: roundId, bundleIndex: bundleIndex, vanCommRand: vanCommRand)
             },
             reset: {
                 await store.reset()

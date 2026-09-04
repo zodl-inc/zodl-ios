@@ -91,33 +91,51 @@ enum DelegationRestore {
     /// stops at the first index without such an entry: the SDK imports only a
     /// prefix, and each bundle votes on its own, so a lost trailing bundle
     /// costs its own voting power and nothing else.
+    ///
+    /// Where a bundle holds several candidates, the best-ranked one the chain
+    /// has not refused is offered. Nothing here decides which is the original;
+    /// the chain does, and a refusal is recorded on the candidate.
     static func package(from entries: [DelegationEscrowEntry]) -> [RecoveredDelegationBundleInput]? {
-        let byIndex = Dictionary(grouping: entries.filter { $0.source == .recovered }, by: \.bundleIndex)
+        let candidates = Dictionary(
+            grouping: entries.filter { $0.source == .recovered && $0.rejectedAt == nil },
+            by: \.bundleIndex
+        )
         var bundles: [RecoveredDelegationBundleInput] = []
         var hashes: Set<String> = []
         var index: UInt32 = 0
-        while let entry = byIndex[index]?.first {
-            guard let hash = entry.delegationTxHash,
-                  isLowercaseHexHash(hash),
-                  hashes.insert(hash).inserted,
-                  entry.vanCommRand.count == 32,
-                  entry.van.count == 32,
-                  entry.totalNoteValue >= ballotDivisor
-            else {
-                break
-            }
-            bundles.append(
-                RecoveredDelegationBundleInput(
-                    bundleIndex: index,
-                    totalNoteValue: entry.totalNoteValue,
-                    vanCommRand: entry.vanCommRand,
-                    van: entry.van,
-                    delegationTxHash: hash
-                )
-            )
+        while let bundle = candidates[index]?
+            .sorted(by: { $0.provenanceRank > $1.provenanceRank })
+            .lazy
+            .compactMap({ restorable($0, excluding: hashes) })
+            .first {
+            hashes.insert(bundle.delegationTxHash)
+            bundles.append(bundle)
             index += 1
         }
         return bundles.isEmpty ? nil : bundles
+    }
+
+    /// The input one candidate yields, or nil when it cannot be imported.
+    private static func restorable(
+        _ entry: DelegationEscrowEntry,
+        excluding hashes: Set<String>
+    ) -> RecoveredDelegationBundleInput? {
+        guard let hash = entry.delegationTxHash,
+              isLowercaseHexHash(hash),
+              !hashes.contains(hash),
+              entry.vanCommRand.count == 32,
+              entry.van.count == 32,
+              entry.totalNoteValue >= ballotDivisor
+        else {
+            return nil
+        }
+        return RecoveredDelegationBundleInput(
+            bundleIndex: entry.bundleIndex,
+            totalNoteValue: entry.totalNoteValue,
+            vanCommRand: entry.vanCommRand,
+            van: entry.van,
+            delegationTxHash: hash
+        )
     }
 
     /// 64 lowercase hex characters, the form the capability codec accepts.

@@ -116,6 +116,7 @@ import ComposableArchitecture
                 entries: { _ in [] },
                 holdsDelegation: { _ in false },
                 forget: { _ in wrote.setValue(true) },
+                markRejected: { _, _, _ in wrote.setValue(true) },
                 reset: { wrote.setValue(true) }
             )
         } operation: {
@@ -144,6 +145,7 @@ import ComposableArchitecture
                 entries: { _ in [] },
                 holdsDelegation: { _ in false },
                 forget: { _ in wrote.setValue(true) },
+                markRejected: { _, _, _ in wrote.setValue(true) },
                 reset: { wrote.setValue(true) }
             )
         } operation: {

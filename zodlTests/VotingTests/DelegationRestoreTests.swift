@@ -11,30 +11,36 @@ import Foundation
         hash: String? = nil,
         source: DelegationEscrowEntry.Source = .recovered,
         weight: UInt64 = 130_000_000,
-        van: Data? = nil
+        van: Data? = nil,
+        rand: UInt8? = nil,
+        rank: Int = 0,
+        rejected: Bool = false
     ) -> DelegationEscrowEntry {
         DelegationEscrowEntry(
             roundId: roundId,
             bundleIndex: index,
-            vanCommRand: Data(repeating: UInt8(0xA0 + index), count: 31) + Data([0x01]),
+            vanCommRand: Data(repeating: rand ?? UInt8(0xA0 + index), count: 31) + Data([0x01]),
             van: van ?? Data(repeating: 0xC0, count: 32),
             totalNoteValue: weight,
             delegationTxHash: hash ?? String(repeating: String(format: "%02x", 0xD0 + index), count: 32),
             source: source,
-            createdAt: Date(timeIntervalSince1970: 0)
+            createdAt: Date(timeIntervalSince1970: 0),
+            provenanceRank: rank,
+            rejectedAt: rejected ? Date(timeIntervalSince1970: 1) : nil
         )
     }
 
-    private func entryWithoutHash(_ index: UInt32) -> DelegationEscrowEntry {
+    private func entryWithoutHash(_ index: UInt32, rand: UInt8? = nil, rank: Int = 0) -> DelegationEscrowEntry {
         DelegationEscrowEntry(
             roundId: roundId,
             bundleIndex: index,
-            vanCommRand: Data(repeating: UInt8(0xA0 + index), count: 31) + Data([0x01]),
+            vanCommRand: Data(repeating: rand ?? UInt8(0xA0 + index), count: 31) + Data([0x01]),
             van: Data(repeating: 0xC0, count: 32),
             totalNoteValue: 130_000_000,
             delegationTxHash: nil,
             source: .recovered,
-            createdAt: Date(timeIntervalSince1970: 0)
+            createdAt: Date(timeIntervalSince1970: 0),
+            provenanceRank: rank
         )
     }
 
@@ -81,6 +87,34 @@ import Foundation
     @Test func thePackageCarriesTheCommitmentTheRowHeld() {
         let van = Data(repeating: 0xC1, count: 32)
         #expect(DelegationRestore.package(from: [entry(0, van: van)])?.first?.van == van)
+    }
+
+    @Test func theBestRankedCandidatePerBundleIsChosen() {
+        let package = DelegationRestore.package(from: [
+            entry(0, rand: 0xA0, rank: 0), entry(0, rand: 0xA1, rank: 4), entry(1, rand: 0xB0, rank: 3)
+        ])
+        #expect(package?.map(\.vanCommRand.first) == [0xA1, 0xB0])
+    }
+
+    @Test func aRejectedCandidateIsSkippedForTheNextBest() {
+        let package = DelegationRestore.package(from: [
+            entry(0, rand: 0xA0, rank: 0), entry(0, rand: 0xA1, rank: 4, rejected: true)
+        ])
+        #expect(package?.map(\.vanCommRand.first) == [0xA0])
+    }
+
+    @Test func aBundleWithOnlyRejectedCandidatesEndsTheRun() {
+        #expect(DelegationRestore.package(from: [entry(0, rank: 2, rejected: true)]) == nil)
+        #expect(DelegationRestore.package(from: [entry(0), entry(1, rejected: true)])?.count == 1)
+    }
+
+    /// The live row of a rebuilt round outranks the carved original but was
+    /// never accepted by the chain; the original is what restores.
+    @Test func aBetterRankedCandidateThatCannotBeImportedYieldsToOneThatCan() {
+        let package = DelegationRestore.package(from: [
+            entry(0, rand: 0xA0, rank: 0), entryWithoutHash(0, rand: 0xB0, rank: 3)
+        ])
+        #expect(package?.map(\.vanCommRand.first) == [0xA0])
     }
 }
 

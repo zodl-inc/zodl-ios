@@ -64,6 +64,7 @@ import ComposableArchitecture
             entries: { roundId in escrowed.value.filter { $0.roundId == roundId } },
             holdsDelegation: { roundId in escrowed.value.contains { $0.roundId == roundId } },
             forget: { roundId in escrowed.withValue { $0.removeAll { $0.roundId == roundId } } },
+            markRejected: { _, _, _ in },
             reset: { escrowed.withValue { $0.removeAll() } }
         )
 
