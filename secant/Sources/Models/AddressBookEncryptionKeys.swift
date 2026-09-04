@@ -7,7 +7,7 @@
 
 import Foundation
 import CryptoKit
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Representation of the address book encryption keys
 struct AddressBookEncryptionKeys: Codable, Equatable {

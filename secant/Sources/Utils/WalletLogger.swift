@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import os
 
 enum LoggerConstants {
@@ -15,9 +15,9 @@ enum LoggerConstants {
     static let walletLogs = "walletLogs"
 }
 
-private let walletLoggerLock = OSAllocatedUnfairLock<ZcashLightClientKit.Logger?>(initialState: nil)
+private let walletLoggerLock = OSAllocatedUnfairLock<ZODLSwiftWalletSDK.Logger?>(initialState: nil)
 
-var walletLogger: ZcashLightClientKit.Logger? {
+var walletLogger: ZODLSwiftWalletSDK.Logger? {
     get { walletLoggerLock.withLock { $0 } }
     set { walletLoggerLock.withLock { $0 = newValue } }
 }

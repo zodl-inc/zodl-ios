@@ -8,7 +8,7 @@
 import Foundation
 import URLRouting
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum Deeplink {
     enum Destination: Equatable {

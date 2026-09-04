@@ -24,7 +24,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Why a migration cannot proceed on its own and needs the user.
 enum MigrationAttentionReason: Equatable, Sendable {

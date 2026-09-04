@@ -18,11 +18,11 @@
 import Foundation
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: - PHASE 7: the SDK's own Keystone firmware type
 
-extension ZcashLightClientKit.KeystoneFirmwareVersion {
+extension ZODLSwiftWalletSDK.KeystoneFirmwareVersion {
     /// The dotted `major.minor.build` rendering of the version the Keystone BATCH-signing response
     /// envelope reports, for the migration flow's firmware-gate copy.
     ///
@@ -1139,7 +1139,7 @@ extension MigrationCoordFlow {
     /// `KeystoneDisplayFirmwareVersion.minimumSupported` (`Features/SendConfirmation/`), which reads its
     /// version from a stamp embedded in the signed PCZT bytes. The two `KeystoneDisplayFirmwareVersion`
     /// types share a bare name, so every reference to the SDK's is module-qualified.
-    static let keystoneMigrationBatchMinimumFirmware = ZcashLightClientKit.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
+    static let keystoneMigrationBatchMinimumFirmware = ZODLSwiftWalletSDK.KeystoneFirmwareVersion(major: 3, minor: 0, build: 2)
 
     /// Splits an applied batch into its preparation entries and the schedule's own transfers.
     ///

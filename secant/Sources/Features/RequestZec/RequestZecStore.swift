@@ -8,7 +8,7 @@
 import Foundation
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import ZcashPaymentURI
 
 @Reducer

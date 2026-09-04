@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZcashLightClientKit`) for blockchain operations.
+Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composable Architecture (TCA). It uses the Zcash Swift SDK (`ZODLSwiftWalletSDK`) for blockchain operations.
 
 ## Build & Development
 
@@ -47,7 +47,7 @@ Zodl (formerly Zashi) is an iOS Zcash wallet built with SwiftUI and The Composab
 - `<Name>LiveKey.swift` - `liveValue` conformance for production
 - `<Name>TestKey.swift` - **only when** the macro-generated default isn't enough; otherwise omit (the macro provides `testValue` automatically). Tests can also override individual closures inline via `withDependencies`.
 
-Closures must be `@Sendable`. Use `@preconcurrency import ZcashLightClientKit` when an SDK type is not yet `Sendable`.
+Closures must be `@Sendable`. Use `@preconcurrency import ZODLSwiftWalletSDK` when an SDK type is not yet `Sendable`.
 
 **Transaction guard (`Dependencies/TransactionGuard/`)** — the SDK's `switchTo(endpoint:)` tears down and rebuilds the synchronizer, so it must never overlap a transaction broadcast. A shared, non-reentrant FIFO-mutex actor (`@Dependency(\.transactionGuard)`) enforces this **inside the dependency LiveKeys** — feature code never wraps broadcasts; the one feature-level guard use is the manual switch (`switchWaiting`) in `ServerSetupStore`:
 - Guarded closures (their `liveValue` acquires the guard internally): `sdkSynchronizer.createProposedTransactions`, `createTransactionFromPCZT`, `getTreeState`, and `votingAPI.submitVoteCommitment`, `submitDelegation`, `delegateShares`. (Voting's `resubmitShare` is deliberately unguarded — an idempotent, recoverable resubmission path.) A new broadcast-sensitive dependency closure must take the same wrap in its own LiveKey — never at call sites, and **never nested** (the guard is non-reentrant and will deadlock).

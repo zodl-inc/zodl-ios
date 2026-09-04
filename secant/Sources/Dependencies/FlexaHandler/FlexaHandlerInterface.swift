@@ -9,7 +9,7 @@ import Foundation
 import ComposableArchitecture
 @preconcurrency import Combine
 import Flexa
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DependencyValues {
     var flexaHandler: FlexaHandlerClient {

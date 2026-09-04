@@ -10,7 +10,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized) struct ZecKeyboardTests {
     @Test func isNextButtonDisabledReflectsAmountAndZeroAllowed() {

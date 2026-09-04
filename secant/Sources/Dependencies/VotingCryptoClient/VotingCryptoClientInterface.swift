@@ -2,7 +2,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DependencyValues {
     var votingCrypto: VotingCryptoClient {

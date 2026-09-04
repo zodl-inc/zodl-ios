@@ -16,7 +16,7 @@
 import Testing
 import Foundation
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `SendConfirmation.State` carries `@Shared(.inMemory(...))` process-global storage (address book

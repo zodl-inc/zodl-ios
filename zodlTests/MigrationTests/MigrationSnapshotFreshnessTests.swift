@@ -44,7 +44,7 @@ import Foundation
 import Combine
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite(.serialized, .timeLimit(.minutes(1))) struct MigrationSnapshotFreshnessTests {

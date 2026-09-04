@@ -3,7 +3,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 // Drives a TCA coordinator that touches process-global `@Shared` state (e.g. `selectedWalletAccount`)
 // and uses plain `Store`s for the async cases, so the suite is serialized to match XCTest's previous

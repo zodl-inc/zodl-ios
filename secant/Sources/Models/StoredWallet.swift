@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @preconcurrency import MnemonicSwift
 
 /// Representation of the wallet stored in the persistent storage (typically keychain, handled by `WalletStorage`).

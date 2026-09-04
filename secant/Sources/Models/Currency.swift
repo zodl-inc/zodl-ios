@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // Both will be defined in the SDK
 enum CurrencyISO4217: String, CaseIterable, Equatable, Codable {
