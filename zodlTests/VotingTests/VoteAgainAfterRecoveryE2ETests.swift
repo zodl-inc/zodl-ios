@@ -303,6 +303,18 @@ struct VoteAgain {
     /// A crypto client whose restore hits a real Rust backend.
     private static func realCryptoClient(backend: VotingRustBackend) -> VotingCryptoClient {
         var client = VotingCryptoClient.testValue
+        client.vanCommitment = { hotkeyStoredSecret, networkId, roundId, totalNoteValue, vanCommRand in
+            let hotkey = try VotingRustBackend.hotkey(fromStoredSecret: [UInt8](hotkeyStoredSecret), networkId: networkId)
+            return try Data(
+                VotingRustBackend.vanCommitment(
+                    hotkey: hotkey,
+                    networkId: networkId,
+                    roundId: roundId,
+                    totalNoteValue: totalNoteValue,
+                    vanCommRand: [UInt8](vanCommRand)
+                )
+            )
+        }
         client.restoreRecoveredDelegation = { request in
             let hotkey = try VotingRustBackend.hotkey(
                 fromStoredSecret: [UInt8](request.hotkeyStoredSecret),

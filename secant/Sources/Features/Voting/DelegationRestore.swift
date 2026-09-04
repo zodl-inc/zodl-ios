@@ -43,11 +43,20 @@ enum DelegationRestore {
         escrowEntries: [DelegationEscrowEntry],
         crypto: VotingCryptoClient
     ) async -> Outcome {
-        guard let bundles = package(from: escrowEntries) else {
-            return .notApplicable(reason: "escrow holds no restorable delegation")
-        }
         guard let hotkeyStoredSecret else {
             return .notApplicable(reason: "no voting hotkey on this device")
+        }
+        // The same check the SDK makes before it clears anything, made here
+        // per candidate so a damaged row image is passed over rather than
+        // refusing the whole restore.
+        let opens: (DelegationEscrowEntry) -> Bool = { entry in
+            let recomputed = try? crypto.vanCommitment(
+                hotkeyStoredSecret, networkId, roundId, entry.totalNoteValue, entry.vanCommRand
+            )
+            return recomputed == entry.van
+        }
+        guard let bundles = package(from: escrowEntries, opens: opens) else {
+            return .notApplicable(reason: "escrow holds no restorable delegation")
         }
 
         do {
@@ -92,10 +101,14 @@ enum DelegationRestore {
     /// prefix, and each bundle votes on its own, so a lost trailing bundle
     /// costs its own voting power and nothing else.
     ///
-    /// Where a bundle holds several candidates, the best-ranked one the chain
-    /// has not refused is offered. Nothing here decides which is the original;
-    /// the chain does, and a refusal is recorded on the candidate.
-    static func package(from entries: [DelegationEscrowEntry]) -> [RecoveredDelegationBundleInput]? {
+    /// Where a bundle holds several candidates, the best-ranked one that
+    /// `opens` its commitment and that the chain has not refused is offered.
+    /// Nothing here decides which is the original; the chain does, and a
+    /// refusal is recorded on the candidate.
+    static func package(
+        from entries: [DelegationEscrowEntry],
+        opens: (DelegationEscrowEntry) -> Bool = { _ in true }
+    ) -> [RecoveredDelegationBundleInput]? {
         let candidates = Dictionary(
             grouping: entries.filter { $0.source == .recovered && $0.rejectedAt == nil },
             by: \.bundleIndex
@@ -105,8 +118,7 @@ enum DelegationRestore {
         var index: UInt32 = 0
         while let bundle = candidates[index]?
             .sorted(by: { $0.provenanceRank > $1.provenanceRank })
-            .lazy
-            .compactMap({ restorable($0, excluding: hashes) })
+            .compactMap({ opens($0) ? restorable($0, excluding: hashes) : nil })
             .first {
             hashes.insert(bundle.delegationTxHash)
             bundles.append(bundle)

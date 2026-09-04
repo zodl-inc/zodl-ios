@@ -498,6 +498,21 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.storeVanPosition(roundId: roundId, bundleIndex: bundleIndex, position: position)
             },
+            vanCommitment: { hotkeyStoredSecret, networkId, roundId, totalNoteValue, vanCommRand in
+                let hotkey = try VotingRustBackend.hotkey(
+                    fromStoredSecret: [UInt8](hotkeyStoredSecret),
+                    networkId: networkId
+                )
+                return try Data(
+                    VotingRustBackend.vanCommitment(
+                        hotkey: hotkey,
+                        networkId: networkId,
+                        roundId: roundId,
+                        totalNoteValue: totalNoteValue,
+                        vanCommRand: [UInt8](vanCommRand)
+                    )
+                )
+            },
             restoreRecoveredDelegation: { request in
                 let backend = try await dbActor.backend()
                 let roundIdHex = request.roundParams.voteRoundId.hexString

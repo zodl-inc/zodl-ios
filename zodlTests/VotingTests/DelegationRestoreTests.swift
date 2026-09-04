@@ -110,6 +110,18 @@ import Foundation
 
     /// The live row of a rebuilt round outranks the carved original but was
     /// never accepted by the chain; the original is what restores.
+    /// A row image whose later columns a rebuild overwrote decodes with a
+    /// commitment its blinding does not open. It is passed over, not fatal.
+    @Test func aCandidateWhoseBlindingDoesNotOpenItsCommitmentIsSkipped() {
+        let genuine = Data(repeating: 0xC0, count: 32)
+        let package = DelegationRestore.package(
+            from: [entry(0, van: Data(repeating: 0xC1, count: 32), rand: 0xA0, rank: 4), entry(0, van: genuine, rand: 0xA1, rank: 0)],
+            opens: { $0.van == genuine }
+        )
+        #expect(package?.map(\.vanCommRand.first) == [0xA1])
+        #expect(DelegationRestore.package(from: [entry(0)], opens: { _ in false }) == nil)
+    }
+
     @Test func aBetterRankedCandidateThatCannotBeImportedYieldsToOneThatCan() {
         let package = DelegationRestore.package(from: [
             entry(0, rand: 0xA0, rank: 0), entryWithoutHash(0, rand: 0xB0, rank: 3)
@@ -131,16 +143,17 @@ import Foundation
         )
     }
 
-    private func entry(_ index: UInt32) -> DelegationEscrowEntry {
+    private func entry(_ index: UInt32, van: Data? = nil, rand: UInt8? = nil, rank: Int = 0) -> DelegationEscrowEntry {
         DelegationEscrowEntry(
             roundId: roundId,
             bundleIndex: index,
-            vanCommRand: Data(repeating: UInt8(0xA0 + index), count: 31) + Data([0x01]),
-            van: Data(repeating: 0xC0, count: 32),
+            vanCommRand: Data(repeating: rand ?? UInt8(0xA0 + index), count: 31) + Data([0x01]),
+            van: van ?? Data(repeating: 0xC0, count: 32),
             totalNoteValue: 130_000_000,
             delegationTxHash: String(repeating: String(format: "%02x", 0xD0 + index), count: 32),
             source: .recovered,
-            createdAt: Date(timeIntervalSince1970: 0)
+            createdAt: Date(timeIntervalSince1970: 0),
+            provenanceRank: rank
         )
     }
 
@@ -151,6 +164,7 @@ import Foundation
 
         func client() -> VotingCryptoClient {
             var client = VotingCryptoClient.testValue
+            client.vanCommitment = { _, _, _, _, _ in Data(repeating: 0xC0, count: 32) }
             client.restoreRecoveredDelegation = { [self] request in
                 requests.append(request)
                 if let error { throw error }
@@ -183,6 +197,21 @@ import Foundation
         #expect(recorder.requests.first?.bundles.map(\.bundleIndex) == [0, 1])
         #expect(recorder.requests.first?.voteChainId == DelegationRestore.voteChainId)
         #expect(recorder.requests.first?.hotkeyStoredSecret == Data([1, 2, 3]))
+    }
+
+    /// The restore recomputes each candidate's commitment through the crypto
+    /// client and offers only the ones that open.
+    @Test func aCandidateThatDoesNotOpenIsNotOfferedToTheSdk() async {
+        let recorder = Recorder()
+        let damaged = entry(0, van: Data(repeating: 0xC1, count: 32), rand: 0xA0, rank: 4)
+
+        let outcome = await DelegationRestore.restoreIfNeeded(
+            roundId: roundId, roundParams: roundParams, networkId: 1, hotkeyStoredSecret: Data([1]),
+            escrowEntries: [damaged, entry(0, rand: 0xA1, rank: 0)], crypto: recorder.client()
+        )
+
+        #expect(outcome == .restored(bundleCount: 1))
+        #expect(recorder.requests.first?.bundles.map(\.vanCommRand.first) == [0xA1])
     }
 
     @Test func theSdkSayingAlreadyRestoredIsReportedAsSuch() async {

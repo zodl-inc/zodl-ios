@@ -230,6 +230,17 @@ struct VotingCryptoClient {
         _ sighash: Data
     ) async throws -> DelegationRegistration
     var storeVanPosition: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws -> Void
+    /// The VAN commitment a hotkey, round, weight and blinding open, as the
+    /// SDK recomputes it before a restore clears anything. Lets the restore
+    /// skip a recovered candidate whose blinding does not open the commitment
+    /// its row held, so one damaged row image cannot block the rest.
+    var vanCommitment: @Sendable (
+        _ hotkeyStoredSecret: Data,
+        _ networkId: UInt32,
+        _ roundId: String,
+        _ totalNoteValue: UInt64,
+        _ vanCommRand: Data
+    ) throws -> Data
     /// Restore a carved delegation. The SDK refuses unless the round holds
     /// nothing the wallet could still use, then clears it and imports the
     /// package, recomputing every VAN from the wallet's hotkey first. The app
