@@ -1,4 +1,4 @@
-#if VOTING_ENABLED
+#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 /// Finds delegation bundles that match a VAN commitment already accepted by
