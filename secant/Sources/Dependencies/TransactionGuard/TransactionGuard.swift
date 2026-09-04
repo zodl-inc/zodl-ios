@@ -42,6 +42,48 @@ actor TransactionGuard {
         }
     }
 
+    /// Wait until the guard is free, but give up after `timeout` and throw `TransactionGuardBusyError`
+    /// instead of parking indefinitely. Used by the send paths, where an unbounded wait behind an
+    /// unrelated network operation reads to the user as a frozen app.
+    ///
+    /// The deadline is enforced from *inside* the actor rather than by racing `acquire()` against
+    /// `withTimeout` from outside: every state change (enqueue, hand-off, deadline, cancellation)
+    /// happens under actor isolation, so the deadline can only ever observe a waiter that is still
+    /// queued or one that is already gone. It can never see a half-completed hand-off, and so can
+    /// never abandon ownership that `release()` has just transferred to it.
+    func acquire(timeout: Duration) async throws {
+        guard isBusy else {
+            isBusy = true
+            return
+        }
+        let id = UUID()
+        // Unstructured on purpose: it must outlive the continuation below and does not inherit the
+        // caller's cancellation, which `withTaskCancellationHandler` already handles separately.
+        let deadline = Task {
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                // Cancelled because the acquisition already settled; nothing to time out.
+                return
+            }
+            await self.timeOutWaiter(id)
+        }
+        defer { deadline.cancel() }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                // Cancelled before we parked: don't enqueue a doomed waiter.
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waiters.append(Waiter(id: id, continuation: continuation))
+            }
+            // Ownership was handed to us by `release()`; `isBusy` is already true.
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
     /// Take the guard only if it is free right now; never waits. Returns `false` if busy.
     func tryAcquire() -> Bool {
         guard !isBusy else { return false }
@@ -66,6 +108,25 @@ actor TransactionGuard {
         guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
         let waiter = waiters.remove(at: index)
         waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    /// Resume a still-parked waiter whose deadline expired, throwing `TransactionGuardBusyError`.
+    /// A no-op when the waiter is no longer queued, which means `release()` won the race and already
+    /// handed it ownership — that acquirer proceeds normally and releases as usual, so an expired
+    /// deadline can never strand the guard. Removing the waiter here leaves `isBusy` untouched
+    /// because the timed-out waiter never owned the guard.
+    private func timeOutWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(throwing: TransactionGuardBusyError())
+    }
+}
+
+/// Thrown by `acquire(timeout:)` when the guard could not be taken within its deadline. Surfaced to
+/// the user, so its description comes from the string catalogue rather than being hard-coded.
+struct TransactionGuardBusyError: LocalizedError {
+    var errorDescription: String? {
+        String(localizable: .transactionGuardBusy)
     }
 }
 

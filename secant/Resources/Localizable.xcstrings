@@ -23542,6 +23542,23 @@
         }
       }
     },
+    "transactionGuard.busy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The wallet is busy with another network operation. Try again in a moment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La billetera está ocupada con otra operación de red. Inténtalo de nuevo en un momento."
+          }
+        }
+      }
+    },
     "transactionHistory.defaultFee" : {
       "extractionState" : "manual",
       "localizations" : {
