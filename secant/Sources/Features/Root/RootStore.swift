@@ -407,6 +407,17 @@ struct Root {
         case syncStalled(attempt: Int, gaveUp: Bool)
         case fetchTransactionsForTheSelectedAccount
         case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
+        /// MOB-1855: sent from `.fetchTransactionsForTheSelectedAccount`'s `catch` when
+        /// `getAllTransactions` throws, carrying the account the failed fetch was for. The handler
+        /// applies the same provenance guard as `.fetchedTransactions` above -- a failure for an
+        /// account the user has since switched away from must change nothing, or it would clear the
+        /// NEWLY selected account's `isInvalidated` flags and re-arm the poller using the PREVIOUS
+        /// account's leftover `state.transactions`, marking the new account "loaded" while the old
+        /// rows are still what is on screen. For the current account, the list keeps its previous
+        /// contents either way, but a failed fetch must still clear any list still showing its
+        /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
+        /// `RootTransactions.swift`.
+        case transactionsFetchFailed(accountUUID: AccountUUID)
         case noChangeInTransactions
         
         // Address Book

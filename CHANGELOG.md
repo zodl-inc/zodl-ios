@@ -14,6 +14,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
 
 ### Fixed
+- [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync.
 - [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself.
 - [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
