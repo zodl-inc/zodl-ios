@@ -348,4 +348,30 @@ import Foundation
         state.status = .failed
         #expect(state.daysAgo.isEmpty)
     }
+
+    // MARK: - Submission acceptance (MOB-1863)
+
+    /// Once a server has accepted a sent, unmined transaction for broadcast, the row must read
+    /// "Sent · awaiting confirmation" rather than the generic "Sending" - the wallet's own scan
+    /// catching up is not the same as the network not having the transaction yet.
+    @Test func sendingTransactionAcceptedBySubmitterShowsAwaitingConfirmation() {
+        var state = TransactionState(fee: Zatoshi(10), id: "s", status: .sending, zecAmount: Zatoshi(-10))
+        state.isAcceptedBySubmitter = true
+        #expect(state.title() == String(localizable: .transactionSentAwaitingConfirmation))
+    }
+
+    /// Without server acceptance, a sending transaction keeps today's generic "Sending" label.
+    @Test func sendingTransactionNotYetAcceptedShowsSending() {
+        var state = TransactionState(fee: Zatoshi(10), id: "s", status: .sending, zecAmount: Zatoshi(-10))
+        state.isAcceptedBySubmitter = false
+        #expect(state.title() == String(localizable: .transactionSending))
+    }
+
+    /// The flag only matters while a transaction is still `.sending` - a mined (`.paid`)
+    /// transaction ignores it and keeps its regular label.
+    @Test func minedTransactionIgnoresTheAcceptedFlag() {
+        var state = TransactionState(fee: Zatoshi(10), id: "m", status: .paid, zecAmount: Zatoshi(-10))
+        state.isAcceptedBySubmitter = true
+        #expect(state.title() == String(localizable: .transactionSent))
+    }
 }
