@@ -24,6 +24,9 @@ struct WalletBalances {
         var isExchangeRateFeatureOn = false
         var isExchangeRateRefreshEnabled = false
         var isExchangeRateStale = false
+        /// The SDK is withholding the spendable value until it confirms a fresh chain tip. Not a
+        /// balance: it says the number is not knowable yet, which a zero balance never can.
+        var isSpendableMasked = false
         var migratingDatabase = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var shieldedBalance: Zatoshi
@@ -281,6 +284,12 @@ struct WalletBalances {
                 if snapshot.syncStatus != .unprepared {
                     state.migratingDatabase = false
                 }
+
+                // Recorded before either guard below. The mask is a property of the synchronizer,
+                // not of any one account's balance, and the states that carry it are precisely the
+                // ones with nothing to publish — so deferring it past the guards would leave the
+                // screen silent exactly while it should be saying it is still working this out.
+                state.isSpendableMasked = latestState.data.isSpendableMasked
 
                 guard let account = state.selectedWalletAccount else {
                     return .none

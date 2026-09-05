@@ -57,7 +57,7 @@ struct WalletBalancesView: View {
                     } label: {
                         AvailableBalanceView(
                             balance: store.shieldedBalance,
-                            showIndicator: store.isProcessingZeroAvailableBalance
+                            showIndicator: store.isProcessingZeroAvailableBalance || store.isSpendableMasked
                         )
                         .padding(.top, 12)
                         .padding(.bottom, 30)
