@@ -268,4 +268,48 @@ import ComposableArchitecture
 
         await store.finish()
     }
+
+    // e. Review follow-up (MOB-1859): a failed refill must not clobber a stash a different,
+    // faster path already wrote for the same account while this one was still in flight —
+    // typical right after backgrounding, when the synchronizer has already stopped and this
+    // slower call is the one that ends up failing.
+    @MainActor @Test func failedRefillLeavesAConcurrentlyWrittenStashUntouched() async {
+        let state = Home.State.initial
+        let previousAccount = state.selectedWalletAccount
+        let previousAccounts = state.walletAccounts
+        var account = testWalletAccount
+        account.privateUA = Const.previousVisitUA
+        account.nextPrivateUA = Const.stashUA
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.$walletAccounts.withLock { $0 = [account] }
+        defer {
+            state.$selectedWalletAccount.withLock { $0 = previousAccount }
+            state.$walletAccounts.withLock { $0 = previousAccounts }
+        }
+
+        let store = TestStore(initialState: state) {
+            Home()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getCustomUnifiedAddress: { accountId, _ in
+                    // Simulate a different, faster path writing a real stash for this same
+                    // account while this attempt is still resolving, then have THIS attempt fail.
+                    @Shared(.inMemory(.walletAccounts)) var sharedWalletAccounts: [WalletAccount] = []
+                    $sharedWalletAccounts.withLock { accounts in
+                        guard let index = accounts.firstIndex(where: { $0.id == accountId }) else { return }
+                        accounts[index].nextPrivateUA = Const.secondFreshUA
+                    }
+                    return nil
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.receiveScreenRequested)
+        await store.receive(\.receiveTapped, timeout: .seconds(5))
+        await store.finish()
+
+        // The failed refill must not have overwritten the stash the other path wrote.
+        #expect(store.state.walletAccounts.first { $0.id == account.id }?.nextPrivateUA == Const.secondFreshUA)
+    }
 }

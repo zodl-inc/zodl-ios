@@ -58,14 +58,20 @@ enum PrivateUAStash {
     }
 
     /// Generates a fresh stash address for each of `accounts`, in order, awaiting each in turn,
-    /// and reports every result back through `onGenerated` as it lands. Callers pass a single
+    /// and reports every success back through `onGenerated` as it lands. Callers pass a single
     /// selected account (Home's and SwapAndPay's own refill-after-promotion effect) or every
     /// account whose stash came back nil from a load (Root's `.loadedWalletAccounts`). This is
     /// meant to run inside a caller's own `.run { send in … }` — never awaited on a path the UI
     /// blocks on — with the caller wrapping that in its own `.cancellable(id:)` so a newer
-    /// request supersedes a still-running one. Errors are swallowed with `try?`, matching every
-    /// other call site of this SDK method: a failed generation just leaves that account's stash
-    /// nil for the next attempt to retry.
+    /// request supersedes a still-running one.
+    ///
+    /// Errors are swallowed with `try?` and the account is simply skipped: every caller writes
+    /// whatever it receives through `PrivateUAStash.write`, which is unconditional, so reporting a
+    /// failed generation as `nil` would clear a stash a different, faster path had already written
+    /// for the same account while this call was still resolving (typical right after
+    /// backgrounding, when the synchronizer has already stopped and this call is the one that
+    /// fails). A failure therefore leaves the account's existing stash — nil or not — untouched
+    /// for the next attempt to retry.
     static func refill(
         accounts: [WalletAccount],
         sdkSynchronizer: SDKSynchronizerClient,
@@ -73,7 +79,11 @@ enum PrivateUAStash {
     ) async {
         for account in accounts {
             let accountId = account.id
-            let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(accountId, receivers(for: account))
+            // A nil result means generation failed, not that the address should be cleared —
+            // skip the callback so a failure can never overwrite a stash a different path wrote.
+            guard let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(accountId, receivers(for: account)) else {
+                continue
+            }
             await onGenerated(freshUA, accountId)
         }
     }
