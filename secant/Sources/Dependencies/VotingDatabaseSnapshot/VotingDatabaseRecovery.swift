@@ -43,9 +43,12 @@ enum VotingDatabaseRecovery {
 
     static let maxMoneyZatoshi: Int64 = 2_100_000_000_000_000
 
-    /// Pallas base-field modulus, encoded big-endian for lexical comparison.
-    static let pallasModulus =
-        "40000000000000000000000000000000224698fc094cf91b992d30ed00000001"
+    /// Pallas base-field modulus, big-endian, so a candidate's bytes can be
+    /// compared to it directly.
+    static let pallasModulus: [UInt8] = [
+        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x22, 0x46, 0x98, 0xfc, 0x09, 0x4c, 0xf9, 0x1b, 0x99, 0x2d, 0x30, 0xed, 0x00, 0x00, 0x00, 0x01
+    ]
 
     enum RecoveryError: Error, Equatable {
         case invalidVanCmxLength(Int)

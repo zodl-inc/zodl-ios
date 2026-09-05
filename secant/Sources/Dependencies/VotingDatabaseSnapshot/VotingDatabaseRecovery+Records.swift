@@ -289,9 +289,11 @@ extension VotingDatabaseRecovery {
         return data
     }
 
+    /// Whether `candidate` is the little-endian encoding of a value below the
+    /// Pallas base-field modulus.
     static func isCanonicalPallasElement(_ candidate: Data) -> Bool {
         guard candidate.count == 32 else { return false }
-        return Data(candidate.reversed()).hexString < pallasModulus
+        return Array(candidate.reversed()).lexicographicallyPrecedes(pallasModulus)
     }
 
     // MARK: - Choosing between copies of one row
