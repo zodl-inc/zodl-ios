@@ -7,8 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A0BA5E000000000000000B3 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A3 /* VotingRecovery */; };
 		3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FB303C3A54005A09AD /* ZcashLightClientKit */; };
+		5A0BA5E000000000000000B2 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A2 /* VotingRecovery */; };
 		3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */; };
+		5A0BA5E000000000000000B1 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A1 /* VotingRecovery */; };
 		34982B6E3014A1C100FF9205 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34982B6D3014A1C100FF9205 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
@@ -147,6 +150,7 @@
 				34AA778E2F85833900D244E2 /* Lottie in Frameworks */,
 				34AA77402F8580D700D244E2 /* CasePathsCore in Frameworks */,
 				34982B6E3014A1C100FF9205 /* ZcashLightClientKit in Frameworks */,
+				5A0BA5E000000000000000B1 /* VotingRecovery in Frameworks */,
 				34AA77A42F8583C300D244E2 /* BigDecimal in Frameworks */,
 				34AA77C02F85862200D244E2 /* UInt128 in Frameworks */,
 				34AA77782F8582AC00D244E2 /* Flexa in Frameworks */,
@@ -168,6 +172,7 @@
 				34AA778A2F85832E00D244E2 /* Lottie in Frameworks */,
 				34AA77382F8580CB00D244E2 /* CasePathsCore in Frameworks */,
 				3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */,
+				5A0BA5E000000000000000B2 /* VotingRecovery in Frameworks */,
 				34AA77A02F8583BA00D244E2 /* BigDecimal in Frameworks */,
 				34AA77BC2F85861800D244E2 /* UInt128 in Frameworks */,
 				34AA77742F8582A200D244E2 /* Flexa in Frameworks */,
@@ -182,6 +187,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */,
+				5A0BA5E000000000000000B3 /* VotingRecovery in Frameworks */,
 				34AA77812F8582EB00D244E2 /* ZcashPaymentURI in Frameworks */,
 				34AA77492F85814C00D244E2 /* URLRouting in Frameworks */,
 				34AA77292F857E3400D244E2 /* XCTestDynamicOverlay in Frameworks */,
@@ -302,6 +308,7 @@
 				34AA77BF2F85862200D244E2 /* UInt128 */,
 				34B967682F8CC49100823B20 /* Atomics */,
 				34982B6D3014A1C100FF9205 /* ZcashLightClientKit */,
+				5A0BA5E000000000000000A1 /* VotingRecovery */,
 			);
 			productName = "zodl-testnet";
 			productReference = 9E41FFBB2CB2814500783CFD /* zodl-testnet.app */;
@@ -343,6 +350,7 @@
 				34AA77BB2F85861800D244E2 /* UInt128 */,
 				34B967642F8CC48700823B20 /* Atomics */,
 				3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */,
+				5A0BA5E000000000000000A2 /* VotingRecovery */,
 			);
 			productName = "zodl-production";
 			productReference = 9E4AB2B72BA1BEE900F5D6DB /* zodl-production.app */;
@@ -385,6 +393,7 @@
 				34B967662F8CC48B00823B20 /* Atomics */,
 				34FB884A3010911000A2F01F /* ZcashLightClientKit */,
 				3464A8FB303C3A54005A09AD /* ZcashLightClientKit */,
+				5A0BA5E000000000000000A3 /* VotingRecovery */,
 			);
 			productName = "zodl-internal";
 			productReference = 9E5AB4822C94777800065483 /* zodl-internal.app */;
@@ -432,6 +441,7 @@
 				34B9675A2F8CC47200823B20 /* XCRemoteSwiftPackageReference "swift-atomics" */,
 				34C011EC140011A400EA4002 /* XCRemoteSwiftPackageReference "swift-collections" */,
 				3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */,
+				5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */,
 			);
 			productRefGroup = 0D4E7A0626B364170058B01E /* Products */;
 			projectDirPath = "";
@@ -1364,6 +1374,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../zodl-swift-wallet-sdk";
 		};
+		5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/VotingRecovery;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -1374,8 +1388,6 @@
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.25.5;
 			};
-			traits = (
-			);
 		};
 		34AA771D2F857DFF00D244E2 /* XCRemoteSwiftPackageReference "xctest-dynamic-overlay" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1484,14 +1496,29 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		5A0BA5E000000000000000A3 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
+		};
 		3464A8FB303C3A54005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZcashLightClientKit;
+		};
+		5A0BA5E000000000000000A2 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
 		};
 		3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
+		};
+		5A0BA5E000000000000000A1 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
 		};
 		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;

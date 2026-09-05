@@ -6,6 +6,7 @@
 
 import Foundation
 import ComposableArchitecture
+import VotingRecovery
 @preconcurrency import ZcashLightClientKit
 
 extension VotingCoordFlow {
@@ -900,10 +901,26 @@ extension VotingCoordFlow {
                     }
 
                     let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
-                    let (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
+                    var (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
                         roundId: roundId,
                         votingCrypto: votingCrypto
                     )
+                    // VotingRecovery: a delegation carved out of a wiped
+                    // database goes back in here, before any branch below can
+                    // rebuild the round over it. The SDK clears nothing unless
+                    // the round provably holds nothing the wallet could use.
+                    if case .restored = await Self.restoreRecoveredDelegation(
+                        roundId: roundId,
+                        session: session,
+                        networkId: networkId,
+                        accountId: accountId,
+                        walletStorage: walletStorage
+                    ) {
+                        (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
+                            roundId: roundId,
+                            votingCrypto: votingCrypto
+                        )
+                    }
                     var resolvedBundleCount: UInt32 = 0
                     var didPrepareFreshRound = false
                     if existingState?.proofGenerated == true {
@@ -1146,7 +1163,14 @@ extension VotingCoordFlow {
                     }
                 } catch: { error, send in
                     LoggerProxy.error("Active round pipeline failed: \(error)")
-                    await send(.pipelineFailed(roundId: roundId, message: VotingErrorMapper.userFriendlyMessage(from: error)))
+                    await send(.pipelineFailed(
+                        roundId: roundId,
+                        message: await Self.pipelineFailureMessage(
+                            error: error,
+                            roundId: roundId,
+                            crypto: votingCrypto
+                        )
+                    ))
                 }
                 .cancellable(id: cancelPipelineId, cancelInFlight: true)
 
@@ -2070,7 +2094,13 @@ extension VotingCoordFlow {
                             continue
                         }
 
-                        let anchorHeight = try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
+                        let anchorHeight = try await Self.syncVoteTree(
+                            roundId: roundId,
+                            chainNodeUrl: chainNodeUrl,
+                            hotkeyStoredSecret: Data(hotkeySeed),
+                            networkId: networkId,
+                            votingCrypto: votingCrypto
+                        )
                         let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
 
                         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
@@ -4409,3 +4439,97 @@ private enum DelegationTxConfirmationStatus: Sendable {
     case notFound
 }
 #endif
+
+extension VotingCoordFlow {
+    /// The message shown when the round pipeline fails.
+    ///
+    /// Everything except an incomplete delegation setup keeps the existing
+    /// mapping. That one case gets `DelegationDiagnosis` instead, because it
+    /// is the case where the old single message was not merely vague but
+    /// wrong: it told the voter to leave the poll and enter it again, and
+    /// re-entering is what used to call `clear_round`. Which of several
+    /// states they are actually in decides whether that advice is safe, and
+    /// only the round's own state separates them.
+    ///
+    /// `voteServiceAnswered: false` is literal here rather than pessimistic.
+    /// This path fails on a local database read, so no check with the voting
+    /// service has been made, and "not asked" and "asked and got nothing" are
+    /// the same evidence: none. The diagnosis therefore never reports that
+    /// rebuilding is safe from here, which is the intended direction to err.
+    static func pipelineFailureMessage(
+        error: Error,
+        roundId: String,
+        crypto: VotingCryptoClient
+    ) async -> String {
+        guard VotingErrorMapper.isIncompleteDelegationSetup(error.localizedDescription) else {
+            return VotingErrorMapper.userFriendlyMessage(from: error)
+        }
+
+        // The only recovery-aware line in the message path, and the only one
+        // that has to disappear with the recovery code. Without it the
+        // diagnosis simply never reports `secretsRecovered`, which is the
+        // truth once nothing is recovering anything.
+        @Dependency(\.delegationRestore) var delegationRestore // VotingRecovery
+        let escrowHoldsRecoveredSecrets = await delegationRestore.holdsRecoveredSecrets(roundId)
+
+        let diagnosis = await DelegationDiagnosis.forRound(
+            roundId,
+            voteServiceAnswered: false,
+            escrowHoldsRecoveredSecrets: escrowHoldsRecoveredSecrets,
+            crypto: crypto
+        )
+        LoggerProxy.info("[poll-diagnosis] round=\(roundId) diagnosis=\(diagnosis.rawValue)")
+        return diagnosis.message
+    }
+}
+
+extension VotingCoordFlow {
+    /// `syncVoteTree`, with one side effect on failure: when the chain
+    /// refuses a leaf that a restore put back, the escrow candidate it came
+    /// from is marked so the next restore tries the next-best one. The hotkey
+    /// lets the same candidate the restore offered be found again.
+    static func syncVoteTree(
+        roundId: String,
+        chainNodeUrl: String,
+        hotkeyStoredSecret: Data,
+        networkId: UInt32,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> UInt32 {
+        do {
+            return try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
+        } catch {
+            @Dependency(\.delegationRestore) var delegationRestore // VotingRecovery
+            _ = await delegationRestore.noteChainRefusal(roundId, error, hotkeyStoredSecret, networkId)
+            throw error
+        }
+    }
+}
+
+extension VotingCoordFlow {
+    /// VotingRecovery: exports the hotkey the restore recomputes commitments
+    /// with, and hands the round to the module. Delete with the package.
+    static func restoreRecoveredDelegation(
+        roundId: String,
+        session: VotingSession,
+        networkId: UInt32,
+        accountId: AccountUUID?,
+        walletStorage: WalletStorageClient
+    ) async -> DelegationRestore.Outcome {
+        @Dependency(\.delegationRestore) var delegationRestore
+        let hotkeySecret = accountId
+            .flatMap { try? walletStorage.exportVotingHotkey($0) }?
+            .storedSecret.value()
+        return await delegationRestore.restoreIfNeeded(
+            roundId,
+            RoundParameters(
+                voteRoundId: session.voteRoundId,
+                snapshotHeight: session.snapshotHeight,
+                eaPK: session.eaPK,
+                ncRoot: session.ncRoot,
+                nullifierIMTRoot: session.nullifierIMTRoot
+            ),
+            networkId,
+            hotkeySecret
+        )
+    }
+}

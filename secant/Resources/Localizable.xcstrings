@@ -5533,6 +5533,108 @@
         }
       }
     },
+    "coinVote.store.userError.delegationDiagnosis.alreadyBroadcast" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.commitmentUndecodable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.notBroadcast" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.secretsLost" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.secretsRecovered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.delegationDiagnosis.undetermined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
+          }
+        }
+      }
+    },
     "coinVote.store.userError.delegationSetupIncomplete" : {
       "extractionState" : "manual",
       "localizations" : {

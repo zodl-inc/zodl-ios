@@ -1,6 +1,7 @@
 #if VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
+import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -31,6 +32,18 @@ extension VotingCryptoClient: DependencyKey {
             )
             stateSubject.send(dbState)
         }
+
+        // VotingRecovery: the one place the module is handed the app's open
+        // database and logger. Delete with the package.
+        VotingRecovery.configure(
+            logger: { walletLogger },
+            backend: { try await dbActor.backend() },
+            didRestore: { roundId in
+                if let backend = try? await dbActor.backend() {
+                    publishState(backend: backend, roundId: roundId)
+                }
+            }
+        )
 
         return Self(
             stateStream: {
@@ -244,6 +257,19 @@ extension VotingCryptoClient: DependencyKey {
                 let rseedSigned: Data = Data(result.rseedSigned)
                 let rseedOutput: Data = Data(result.rseedOutput)
                 let actionBytes: Data = Data(result.actionBytes)
+
+                // VotingRecovery: escrow the blinding factor before anything
+                // else can touch the round. This is the only moment it exists
+                // outside `voting.sqlite3`. A failed write is logged, never
+                // thrown, so it cannot abort a delegation the user paid for.
+                await VotingRecovery.captureLiveDelegation(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    vanCommRand: vanCommRand,
+                    van: van,
+                    totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value }
+                )
+
                 return VotingPcztResult(
                     pcztBytes: pcztBytes,
                     pcztSighash: pcztSighash,
@@ -651,7 +677,7 @@ private actor DatabaseActor {
         // unlink the WAL — and the WAL is the only place a cleared round's
         // original secrets still exist. Once this line has run, the evidence
         // is safe whatever the rest of the flow does.
-        VotingDatabaseSnapshot.capture(databasePath: path)
+        VotingRecovery.preserve(databasePath: path) // VotingRecovery
 
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).

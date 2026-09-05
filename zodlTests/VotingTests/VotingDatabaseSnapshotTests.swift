@@ -2,6 +2,7 @@
 import Testing
 import Foundation
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The snapshot ships ahead of any restore path, so its contract is narrow and
 /// worth pinning: copy all three files byte-for-byte, put a timestamp in the
