@@ -23457,6 +23457,23 @@
         }
       }
     },
+    "transaction.sentAwaitingConfirmation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent · awaiting confirmation"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado · esperando confirmación"
+          }
+        }
+      }
+    },
     "transaction.shieldedFunds" : {
       "extractionState" : "manual",
       "localizations" : {

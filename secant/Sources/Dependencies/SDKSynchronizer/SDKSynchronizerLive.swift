@@ -784,6 +784,15 @@ extension SDKSynchronizerClient {
                 currentChainTip: currentChainTip
             )
 
+            // MOB-1863: a `.sending` row can already be accepted by a server for broadcast even
+            // though this device's own scan hasn't caught up yet. Only look this up for rows
+            // that need it, so mined/received rows don't pay for an extra query.
+            if transaction.status == .sending {
+                if case .accepted = await synchronizer.transactionSubmissionStatus(for: clearedTransaction.rawID) {
+                    transaction.isAcceptedBySubmitter = true
+                }
+            }
+
             // MOB-1856: the SDK's `getRecipients(for:)` is itself just
             // `getTransactionOutputs(for:).map { $0.recipient }` -- reuse the `outputs` already read
             // above instead of a second call that re-reads the exact same rows from the database.
