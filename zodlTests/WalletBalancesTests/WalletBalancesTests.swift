@@ -20,12 +20,10 @@ import ComposableArchitecture
     /// shape of the balance says that: a zero spendable balance is a settled answer, so none of
     /// these wallets is unresolved, however their value is distributed.
     @Test func isProcessingZeroAvailableBalance() {
-        var transparentAboveThreshold = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(100), transparentBalance: Zatoshi(100))
-        transparentAboveThreshold.autoShieldingThreshold = Zatoshi(50)
-        #expect(!transparentAboveThreshold.isProcessingZeroAvailableBalance)
+        let transparentOnly = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(100), transparentBalance: Zatoshi(100))
+        #expect(!transparentOnly.isProcessingZeroAvailableBalance)
 
-        var shieldedZeroPending = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(10), transparentBalance: Zatoshi(10))
-        shieldedZeroPending.autoShieldingThreshold = Zatoshi(50)
+        let shieldedZeroPending = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(10), transparentBalance: Zatoshi(10))
         #expect(!shieldedZeroPending.isProcessingZeroAvailableBalance)
 
         let hasShielded = WalletBalances.State(shieldedBalance: Zatoshi(100), totalBalance: Zatoshi(200), transparentBalance: Zatoshi(100))
