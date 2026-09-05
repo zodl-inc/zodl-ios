@@ -210,6 +210,132 @@ import ComposableArchitecture
         #expect(shieldCalled.value)
     }
 
+
+    // MARK: - The breakdown reads the same unmasked local balances as the home screen
+
+    /// A replayed `.zero` synchronizer state carries no entry for the selected account. The
+    /// breakdown must publish nothing from it — anything else would replace the concrete
+    /// balance on screen with zeros the moment the stream replays its seed value.
+    @MainActor @Test func replayedZeroSynchronizerStatePublishesNoBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = state(shieldedBalance: Zatoshi(600), transparentBalance: Zatoshi(5))
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            initialState.totalBalance = Zatoshi(816)
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+
+            await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted))
+            // The relay hop still runs; what must NOT follow is an `.updateBalance`. The store is
+            // exhaustive here, so one would be reported as an unhandled action.
+            await store.receive(\.updateBalances)
+            await store.finish()
+
+            #expect(store.state.shieldedBalance == Zatoshi(600))
+            #expect(store.state.totalBalance == Zatoshi(816))
+        }
+    }
+
+    /// The state stream carries both a possibly masked visible balance and the unmasked local
+    /// snapshot. The breakdown must read the local one, so it agrees with the home screen
+    /// instead of showing zeros while the engine withholds the spendable value.
+    @MainActor @Test func synchronizerStateUsesUnmaskedLocalBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let localBalance = fullPoolAccountBalance()
+            let maskedBalance = AccountBalance(
+                saplingBalance: .zero,
+                orchardBalance: .zero,
+                ironwoodBalance: .zero,
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            var snapshot = SynchronizerState.zero
+            snapshot.accountsBalances = [testWalletAccount.id: maskedBalance]
+            snapshot.localAccountsBalances = [testWalletAccount.id: localBalance]
+
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.synchronizerStateChanged(snapshot.redacted))
+            await store.receive(\.updateBalances)
+            await store.receive(\.updateBalance)
+
+            #expect(store.state.shieldedBalance == localBalance.shieldedSpendableValue)
+            #expect(store.state.shieldedBalance != .zero)
+        }
+    }
+
+    /// The instant read on appear prefers the unmasked local balances too, so opening the sheet
+    /// during a server switch does not momentarily show a masked zero.
+    @MainActor @Test func updateBalancesOnAppearPrefersLocalAccountBalances() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let localBalance = fullPoolAccountBalance()
+            let maskedBalance = AccountBalance(
+                saplingBalance: .zero,
+                orchardBalance: .zero,
+                ironwoodBalance: .zero,
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            let accountUUID = testWalletAccount.id
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.sdkSynchronizer = .mocked(
+                    getAccountsBalances: { [accountUUID: maskedBalance] },
+                    getLocalAccountBalances: { [accountUUID: localBalance] }
+                )
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalancesOnAppear)
+            await store.receive(\.updateBalance)
+
+            #expect(store.state.shieldedBalance == localBalance.shieldedSpendableValue)
+        }
+    }
+
+    private var testWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 9, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    private func fullPoolAccountBalance() -> AccountBalance {
+        AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
+            unshielded: Zatoshi(5),
+            awaitingResolution: Zatoshi(1)
+        )
+    }
+
     private func state(
         autoShieldingThreshold: Zatoshi = Zatoshi(1_000_000),
         changePending: Zatoshi = .zero,

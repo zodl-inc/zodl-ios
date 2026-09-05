@@ -164,11 +164,33 @@ struct Balances {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
+                // Same read order as the home screen's balances, so the breakdown never
+                // contradicts the figure the user tapped to open it. The unmasked local snapshot
+                // comes first: the SDK's visible balances can be spendable-masked until the
+                // server reports a fresh tip, and a mask must not be shown as a real zero.
+                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id]
                 return .run { send in
-                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.updateBalance(accountBalance))
-                    } else if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        await send(.updateBalance(accountBalance))
+                    if let cachedBalance {
+                        await send(.updateBalance(cachedBalance))
+                    }
+
+                    if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
+                       let freshBalance = localBalances[account.id] {
+                        if freshBalance != cachedBalance {
+                            await send(.updateBalance(freshBalance))
+                        }
+                        return
+                    }
+
+                    // Do not let a masked visible balance replace a concrete local snapshot.
+                    // Use the established API only when no local value is available.
+                    guard cachedBalance == nil else { return }
+                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
+                        await send(.updateBalance(fallbackBalance))
+                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
+                        await send(.updateBalance(fallbackBalance))
+                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
+                        await send(.updateBalance(fallbackBalance))
                     }
                 }
 
@@ -183,13 +205,19 @@ struct Balances {
                 return .none
 
             case .synchronizerStateChanged(let latestState):
-                return .send(.updateBalances(latestState.data.accountsBalances))
+                return .send(.updateBalances(latestState.data.localAccountsBalances))
 
             case .updateBalances(let accountsBalances):
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
-                return .send(.updateBalance(accountsBalances[account.id]))
+                // An absent entry means the synchronizer does not know the selected account yet —
+                // a replayed seed state is the common case. Publish nothing rather than zeros, or
+                // every replay would wipe the concrete balance the sheet is showing.
+                guard let accountBalance = accountsBalances[account.id] else {
+                    return .none
+                }
+                return .send(.updateBalance(accountBalance))
 
             case .updateBalance(let accountBalance):
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
