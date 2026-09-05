@@ -99,27 +99,41 @@ struct SwapAndPay {
             "\(address)-\(selectedAsset?.chain ?? "zcash")"
         }
         
+        /// The SDK has not said what is spendable yet. Distinct from "nothing is spendable":
+        /// the answer is still coming, so the form waits for it instead of judging on a zero.
+        var isSpendabilityBeingDetermined: Bool {
+            walletBalancesState.isSpendableMasked
+        }
+
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
             && amount > 0
             && !isInsufficientFunds
+            && !isSpendabilityBeingDetermined
         }
-        
+
         var isInsufficientFunds: Bool {
             guard !isSwapToZecExperienceEnabled else { return false }
 
             guard !amountText.isEmpty else {
                 return false
             }
-            
+
             guard let selectedAsset else {
                 return false
             }
-            
+
             guard let zecAsset else {
                 return false
             }
+
+            // A masked spendable value arrives as zero, so every typed amount would exceed it and
+            // the form would accuse the user of insufficient funds over a figure the SDK has
+            // simply declined to state. Holding the error needs the matching gate in `isValidForm`
+            // to go with it: without that, Swap/Pay would look enabled while the answer is
+            // unknown, and with only that, the error would still be on screen underneath it.
+            guard !isSpendabilityBeingDetermined else { return false }
 
             let spendableZec = walletBalancesState.shieldedBalance.decimalValue.decimalValue
             

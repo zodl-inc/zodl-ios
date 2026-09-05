@@ -368,7 +368,7 @@ extension SwapAndPayForm {
                             title: String(localizable: .generalMax),
                             style: .swap,
                             isEnabled: store.isSwapMaxButtonEnabled,
-                            isInFlight: store.isMaxRequestInFlight
+                            isInFlight: store.isMaxRequestInFlight || store.isSpendabilityBeingDetermined
                         ) {
                             store.send(.maxTapped)
                         }
