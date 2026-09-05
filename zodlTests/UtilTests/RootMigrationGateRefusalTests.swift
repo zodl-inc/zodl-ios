@@ -130,6 +130,18 @@ import Testing
 
             $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
 
+            // MOB-1861: the open lanes now skip `visitKind()`/`advance(.beforeSync)` entirely before
+            // Ironwood activates — nothing this suite is about can happen on an unactivated wallet
+            // (the SDK's sync gate only ever closes for a migration), so activating it here is what
+            // the scenario always implied. Left to the macro default (`false`) every claim below
+            // would be asserting against a wallet that has no migration at all.
+            $0.migrationManager.isIronwoodActivated = { true }
+            // …which in turn lets the foreground tick loop past its own activation guard on the
+            // launches that reach `.initializationSuccessfullyDone`, so its committed-run predicate
+            // is now reached too. `migrationMode` has no macro-supplied default and traps unstubbed,
+            // and this suite has no tick-lane scenario in mind: `nil` says "no committed run", the
+            // loop declines to spawn, and these tests keep the shape they have always had.
+            $0.migrationManager.migrationMode = { _ in nil }
             $0.migrationManager.visitKind = { visitKind }
             // MOB-1466 (2026-08-02): the refusal handlers discharge the engine's step through the
             // DRIVER now, not by calling `runBroadcastSession` directly — the broadcast is what the

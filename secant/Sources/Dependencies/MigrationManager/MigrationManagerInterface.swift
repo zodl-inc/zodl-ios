@@ -472,3 +472,47 @@ enum MigrationReentryRoute: Equatable, Sendable {
 // `Models/Migration/MigrationBroadcastFailure.swift` alongside `MigrationBroadcastFailureClass` and
 // the classifier that produces it — moved when Phase 2 needed the failure sheet without the manager.
 // Deleted here rather than in the model file: a route is a model, not a dependency-client detail.
+
+extension MigrationManagerClient {
+    /// MOB-1861: "does some candidate account have a run the TICK LANE could help along?" — the
+    /// foreground tick loop's spawn condition, extracted so the ordering rule below lives in one
+    /// place rather than being re-derived at each call site.
+    ///
+    /// `isIronwoodActivated()` is checked FIRST, as its own `guard`, and that is not a stylistic
+    /// choice: `migrationMode` has no macro-supplied default (unlike `isIronwoodActivated`, which
+    /// safely answers `false`), so it TRAPS under `MigrationManagerClient.testValue` when reached
+    /// unstubbed. Every Root lifecycle test reaches the tick loop's call sites, and almost none of
+    /// them has any reason to stub the migration client — so this must short-circuit before the mode
+    /// is ever touched, which a single `guard a, b` would not reliably do.
+    ///
+    /// NOT A GENERAL "HAS A COMMITTED RUN" TEST, and specifically NOT usable to gate an open lane
+    /// (`visitKind()` / `advance(.beforeSync)` in `.initializeSDK` / `.retryStart`). The implication
+    /// it would need — no stored mode implies no engine run — is false in the direction that costs
+    /// money:
+    ///
+    ///   * The two facts live in different stores with different lifetimes. The run is SQLite rows
+    ///     in the wallet database; the mode is a per-account `UserDefaults` blob. Nothing keeps them
+    ///     transactional, and only the run rides a device backup as a matter of design.
+    ///   * The mode has exactly ONE writer in the whole app — the entry fork, where the user picks a
+    ///     mode — and it is never re-derived from the engine. None of the calls that actually create
+    ///     a run writes it, and the recovery/replan lanes reach those calls WITHOUT passing the
+    ///     fork, so a mode that goes missing for any reason is never repaired.
+    ///   * That single writer is documented to write nowhere when no account resolves, and the mode
+    ///     storage self-heals by DELETING an undecodable payload — after which the run keeps
+    ///     existing and the mode reads `nil` forever.
+    ///
+    /// Being wrong here is cheap: the tick lane is a bonus 30s poke, and a run it declines to spawn
+    /// for is still served by every app-open. Being wrong on an OPEN lane is not, because
+    /// `advance(.beforeSync)` is the only delivery lane such a run has left — the tick lane's own
+    /// mode belt holds every transfer whose mode is not `.privateScheduled`, `nil` included. The
+    /// open lanes therefore gate on `isIronwoodActivated()` alone; see their call sites.
+    func hasCommittedMigrationRun(candidateAccountUUIDs: [AccountUUID]) -> Bool {
+        guard isIronwoodActivated() else {
+            return false
+        }
+
+        return candidateAccountUUIDs.contains { accountUUID in
+            migrationMode(accountUUID) != nil
+        }
+    }
+}

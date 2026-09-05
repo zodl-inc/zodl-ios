@@ -783,7 +783,24 @@ extension Root {
                         // re-registered. See the guard on `.registerForSynchronizersUpdate` at the
                         // bottom of this block for the loop this closes.
                         var startedSyncThisPass = false
-                        if await migrationManager.visitKind() == .send {
+                        // MOB-1861: read ONCE for the whole pass. Before Ironwood activates there is
+                        // no migration to classify and no step to discharge — `visitKind()` answers a
+                        // constant `.sync` from its own first-statement activation guard and
+                        // `advance(phase:)` a constant `.notApplicable` from its own, so every call
+                        // below is a round trip whose answer is already known here.
+                        //
+                        // DELIBERATELY NOT the tick loop's committed-run predicate
+                        // (`hasCommittedMigrationRun(candidateAccountUUIDs:)`), which would also skip
+                        // an activated wallet that has no stored mode. Read that helper's doc for
+                        // why: the mode has one writer, is never re-derived from the engine, and is
+                        // dropped outright when its stored payload will not decode — so "no mode"
+                        // does not mean "no run", and this lane is the ONLY one such a run has left
+                        // (the tick lane's mode belt holds every transfer whose mode is not
+                        // `.privateScheduled`). Skipping it here would strand a run that holds the
+                        // user's funds, with no way back short of a wallet reset. An engine read
+                        // saved is never worth a broadcast missed.
+                        let isMigrationActivated = migrationManager.isIronwoodActivated()
+                        if isMigrationActivated, await migrationManager.visitKind() == .send {
                             LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start — broadcast session")
                             // MOB-1466 (N4, field-caught 2026-08-01): ARM THE RESUME, exactly as the
                             // refusal handler below does. This branch is the one that was missing it,
@@ -816,6 +833,8 @@ extension Root {
                             // background lane on iOS this open IS the delivery window — suppressing
                             // sync without broadcasting would just stall a schedule the user
                             // already confirmed.
+                            // (Unconditional: reaching this branch already required
+                            // `isMigrationActivated`, so a second check would be dead.)
                             await migrationManager.advance(.beforeSync)
                         } else {
                             startedSyncThisPass = true
@@ -826,7 +845,9 @@ extension Root {
                             // wake-ups are re-armed here, and, crucially, this open now LOGS a
                             // verdict whether or not it did anything. A session that did nothing and
                             // said nothing is indistinguishable from a frozen app.
-                            await migrationManager.advance(.beforeSync)
+                            if isMigrationActivated {
+                                await migrationManager.advance(.beforeSync)
+                            }
                             do {
                                 try await sdkSynchronizer.start(true)
                             } catch ZcashError.migrationSyncBlocked {
@@ -845,7 +866,12 @@ extension Root {
                                 let refusalReason = "start refused — migration gate active; running broadcast session"
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
                                 await send(.migrationGateDeferredSyncStart)
-                                await migrationManager.advance(.beforeSync)
+                                // The SDK gate only closes for a migration, so this refusal implies
+                                // activation in practice; the check keeps the pass's single reading
+                                // of the flag authoritative rather than relying on that.
+                                if isMigrationActivated {
+                                    await migrationManager.advance(.beforeSync)
+                                }
                             }
                         }
                         if state.bgTask != nil {
@@ -1171,7 +1197,17 @@ extension Root {
                             // Same session separation as the foreground path above — a launch that
                             // lands in a due broadcast window must not sync either. See
                             // `MigrationVisit`.
-                            if await migrationManager.visitKind() == .send {
+                            // MOB-1861: the cold-launch twin of `.retryStart`'s gate — read once, and
+                            // on `isIronwoodActivated()` ALONE. Before activation both calls have a
+                            // constant answer (`.sync` / `.notApplicable`) from their own
+                            // first-statement guards, so the round trip buys nothing. It is
+                            // deliberately NOT the tick loop's committed-run predicate: see
+                            // `MigrationManagerClient.hasCommittedMigrationRun(candidateAccountUUIDs:)`
+                            // for why a missing device-local mode does not imply a missing engine
+                            // run, and why skipping this lane for one would leave that run with no
+                            // delivery lane at all.
+                            let isMigrationActivated = migrationManager.isIronwoodActivated()
+                            if isMigrationActivated, await migrationManager.visitKind() == .send {
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) skipping sync start on launch — broadcast session")
                                 // I5, N4's TWIN — live until 2026-08-02 and identical in shape to the
                                 // bug that froze a foreground session for six minutes. `.retryStart`
@@ -1189,9 +1225,13 @@ extension Root {
                                 // edge, no reconcile, no pokes. The rule that closes the whole class:
                                 // A SESSION THAT SUPPRESSES SYNC ALWAYS ARMS ITS OWN RESUME.
                                 await send(.migrationGateDeferredSyncStart)
+                                // (Unconditional: reaching this branch already required
+                                // `isMigrationActivated`, so a second check would be dead.)
                                 await migrationManager.advance(.beforeSync)
                             } else {
-                                await migrationManager.advance(.beforeSync)
+                                if isMigrationActivated {
+                                    await migrationManager.advance(.beforeSync)
+                                }
                                 do {
                                     try await sdkSynchronizer.start(false)
                                 } catch ZcashError.migrationSyncBlocked {
@@ -1214,7 +1254,13 @@ extension Root {
                                     let refusalReason = "start refused — migration gate active; treating launch as broadcast session"
                                     LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
                                     await send(.migrationGateDeferredSyncStart)
-                                    await migrationManager.advance(.beforeSync)
+                                    // The SDK gate only closes for a migration, so this refusal
+                                    // implies activation in practice; the check keeps the launch's
+                                    // single reading of the flag authoritative rather than relying
+                                    // on that.
+                                    if isMigrationActivated {
+                                        await migrationManager.advance(.beforeSync)
+                                    }
                                 }
                             }
 
@@ -1804,18 +1850,6 @@ extension Root {
             return .none
         }
 
-        // `isIronwoodActivated` gated FIRST, as its own `guard`, deliberately — every OTHER Root
-        // lifecycle test in the suite reaches this call site (it runs on every
-        // `.initializationSuccessfullyDone`/`.willEnterForeground`), and most of them have no
-        // reason to stub `migrationManager` at all. `migrationMode` has no macro-supplied default
-        // (unlike `isIronwoodActivated`, which safely defaults `false`), so it traps under
-        // `MigrationManagerClient.testValue` when called unstubbed — this guard must therefore
-        // short-circuit BEFORE `migrationMode` is ever reached, not merely list both conditions in
-        // one `guard a, b` (which still evaluates a `let` computed ahead of it regardless of `a`).
-        guard migrationManager.isIronwoodActivated() else {
-            return .none
-        }
-
         let accountUUIDs = MigrationDerivations.candidateAccountUUIDs(
             selectedAccountUUID: state.selectedWalletAccount?.id,
             walletAccounts: state.walletAccounts
@@ -1826,12 +1860,21 @@ extension Root {
         // delivers them between opens (AUD-3 F4 exempts preps from the tick's mode belt; D2 sends
         // a proved prep in the same pass). The belt still holds immediate-mode TRANSFERS — pacing
         // those stays the user's own choice, and a live loop does not change it. No stored mode =
-        // no committed run = nothing for a tick to help with; the loop also self-stops on
-        // `.complete`/`.noRun`.
-        let hasCommittedCandidate = accountUUIDs.contains { accountUUID in
-            migrationManager.migrationMode(accountUUID) != nil
-        }
-        guard hasCommittedCandidate else {
+        // nothing this lane can help with; the loop also self-stops on `.complete`/`.noRun`.
+        //
+        // `isIronwoodActivated` is gated FIRST, inside the helper, as its own `guard`, deliberately
+        // — every OTHER Root lifecycle test in the suite reaches this call site (it runs on every
+        // `.initializationSuccessfullyDone`/`.willEnterForeground`), and most of them have no reason
+        // to stub `migrationManager` at all. `migrationMode` has no macro-supplied default (unlike
+        // `isIronwoodActivated`, which safely defaults `false`), so it traps under
+        // `MigrationManagerClient.testValue` when called unstubbed — the check must therefore
+        // short-circuit BEFORE `migrationMode` is ever reached, not merely list both conditions in
+        // one `guard a, b` (which still evaluates a `let` computed ahead of it regardless of `a`).
+        //
+        // MOB-1861: this predicate is the TICK lane's alone. Read
+        // `hasCommittedMigrationRun(candidateAccountUUIDs:)`'s doc before reusing it anywhere that
+        // could suppress a broadcast — the open lanes deliberately do not.
+        guard migrationManager.hasCommittedMigrationRun(candidateAccountUUIDs: accountUUIDs) else {
             return .none
         }
 
