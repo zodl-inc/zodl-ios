@@ -18,7 +18,14 @@ struct Balances {
 
         var autoShieldingThreshold: Zatoshi
         var changePending: Zatoshi
+        /// The account the published balance was read for — see `hasConcreteBalance`.
+        var concreteBalanceAccountId: AccountUUID?
         var isShielding: Bool
+        /// The SDK is withholding the spendable value until it confirms a fresh chain tip. Not a
+        /// balance: it says the number is not knowable yet, which a zero balance never can.
+        var isSpendableMasked = false
+        /// A sync is running, so a balance may still be on its way.
+        var isSyncInProgress = false
         var pendingTransactions: Zatoshi
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var shieldedBalance: Zatoshi
@@ -71,12 +78,23 @@ struct Balances {
             isShielding || !isShieldableBalanceAvailable
         }
 
+        /// Whether a real balance for the CURRENTLY selected account has already been published.
+        /// Recorded against the account rather than as a bare flag: nothing tells this reducer
+        /// when the selection changes, so a flag would go on vouching for the previous account.
+        var hasConcreteBalance: Bool {
+            guard let concreteBalanceAccountId else { return false }
+
+            return concreteBalanceAccountId == selectedWalletAccount?.id
+        }
+
+        /// The spendable value is still being worked out — the only situation that deserves an
+        /// "updating" affordance. Deliberately not derived from the balance: a zero spendable
+        /// value is a settled answer for an empty wallet and for funds waiting on confirmations
+        /// alike, and reading it as unfinished left the indicator up forever and the Send screen
+        /// gated on value that was simply not spendable yet. Only two things are genuinely
+        /// unfinished — the SDK withholding the value, and a sync that has published nothing yet.
         var isProcessingZeroAvailableBalance: Bool {
-            if shieldedBalance.amount == 0 && ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold) {
-                return false
-            }
-            
-            return totalBalance.amount != shieldedBalance.amount && shieldedBalance.amount == 0
+            isSpendableMasked || (isSyncInProgress && !hasConcreteBalance)
         }
 
         init(
@@ -121,7 +139,26 @@ struct Balances {
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
-    
+
+    /// The one `spendability` derivation, shared by every place that can move one of its inputs —
+    /// a fresh balance in `.updateBalance`, or the mask/sync flags mirrored in
+    /// `.synchronizerStateChanged` — so the two can never compute a different answer for the same
+    /// state.
+    private func spendability(for state: State) -> Spendability {
+        let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
+        || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold())
+            && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+        || state.totalBalance == .zero
+
+        if state.isProcessingZeroAvailableBalance {
+            return .nothing
+        } else if everythingCondition {
+            return .everything
+        } else {
+            return .something
+        }
+    }
+
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
@@ -205,6 +242,19 @@ struct Balances {
                 return .none
 
             case .synchronizerStateChanged(let latestState):
+                // Recorded before anything is published: the states that carry a mask are exactly
+                // the ones with no balance to publish, so waiting for a balance to arrive would
+                // leave the sheet silent while it should be saying the value is still coming.
+                state.isSpendableMasked = latestState.data.isSpendableMasked
+                state.isSyncInProgress = latestState.data.syncStatus.isSyncing
+
+                // Re-derived here too, unconditionally: `isProcessingZeroAvailableBalance` (and an
+                // account switch invalidating `hasConcreteBalance`) can change on this action alone,
+                // with no balance publish following — most visibly when `.updateBalances` below
+                // finds no entry for this account, which is exactly when a stored `spendability`
+                // would otherwise go on repeating a now-stale answer.
+                state.spendability = spendability(for: state)
+
                 return .send(.updateBalances(latestState.data.localAccountsBalances))
 
             case .updateBalances(let accountsBalances):
@@ -220,6 +270,12 @@ struct Balances {
                 return .send(.updateBalance(accountBalance))
 
             case .updateBalance(let accountBalance):
+                if accountBalance != nil {
+                    // Every path that reaches here with a value looked it up by the account
+                    // selected right now, so that is the account this figure answers for.
+                    state.concreteBalanceAccountId = state.selectedWalletAccount?.id
+                }
+
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
                 // shielded pool) instead of hand-summing individual pools.
                 state.changePending = accountBalance?.shieldedChangePendingConfirmation ?? .zero
@@ -230,18 +286,9 @@ struct Balances {
                 state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
                 state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
 
-                let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
-                || state.totalBalance == .zero
-                
-                // spendability
-                if state.isProcessingZeroAvailableBalance {
-                    state.spendability = .nothing
-                } else if everythingCondition {
-                    state.spendability = .everything
+                state.spendability = spendability(for: state)
+                if state.spendability == .everything {
                     return .send(.everythingSpendable)
-                } else {
-                    state.spendability = .something
                 }
                 return .none
                 

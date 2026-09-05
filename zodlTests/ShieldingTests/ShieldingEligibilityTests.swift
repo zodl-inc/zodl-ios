@@ -55,9 +55,11 @@ import ComposableArchitecture
 // the plain `ShieldingEligibilityTests` suite above. A dedicated `.serialized` suite with pinned
 // storage keeps this test isolated from concurrently running suites that also touch that storage.
 @Suite(.serialized) struct WalletBalancesEligibilityTests {
-    /// WalletBalances and Balances compute "processing with zero available" from the same wallet
-    /// and must agree at exactly the shielding threshold (the SDK's rule is inclusive).
-    @Test func walletBalancesProcessingRuleIsInclusiveAtTheThreshold() {
+    /// "Processing with zero available" means the spendable value is still being worked out, so it
+    /// no longer reads the balance at all. A wallet holding exactly the shielding threshold in
+    /// transparent funds is a settled answer and must never read as unresolved — the regression
+    /// guarded here is any return of a balance-shaped rule to that property.
+    @Test func walletBalancesAtTheShieldingThresholdIsNotStillBeingDetermined() {
         withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
