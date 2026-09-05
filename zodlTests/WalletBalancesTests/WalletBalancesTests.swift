@@ -16,6 +16,9 @@ import ComposableArchitecture
 @Suite(.serialized) struct WalletBalancesTests {
     // MARK: - Computed props
 
+    /// "Processing with zero available" means the spendable value is still being worked out. No
+    /// shape of the balance says that: a zero spendable balance is a settled answer, so none of
+    /// these wallets is unresolved, however their value is distributed.
     @Test func isProcessingZeroAvailableBalance() {
         var transparentAboveThreshold = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(100), transparentBalance: Zatoshi(100))
         transparentAboveThreshold.autoShieldingThreshold = Zatoshi(50)
@@ -23,10 +26,20 @@ import ComposableArchitecture
 
         var shieldedZeroPending = WalletBalances.State(shieldedBalance: .zero, totalBalance: Zatoshi(10), transparentBalance: Zatoshi(10))
         shieldedZeroPending.autoShieldingThreshold = Zatoshi(50)
-        #expect(shieldedZeroPending.isProcessingZeroAvailableBalance)
+        #expect(!shieldedZeroPending.isProcessingZeroAvailableBalance)
 
         let hasShielded = WalletBalances.State(shieldedBalance: Zatoshi(100), totalBalance: Zatoshi(200), transparentBalance: Zatoshi(100))
         #expect(!hasShielded.isProcessingZeroAvailableBalance)
+
+        // The two states that really are unresolved.
+        var masked = shieldedZeroPending
+        masked.isSpendableMasked = true
+        #expect(masked.isProcessingZeroAvailableBalance)
+
+        var syncingBeforeFirstBalance = WalletBalances.State()
+        syncingBeforeFirstBalance.isSyncInProgress = true
+        #expect(!syncingBeforeFirstBalance.hasConcreteBalance)
+        #expect(syncingBeforeFirstBalance.isProcessingZeroAvailableBalance)
     }
 
     @Test func currencyValueIsEmptyWithoutConversionAndFormattedWithIt() {
