@@ -142,6 +142,20 @@ extension DelegationRecoveryClient: DependencyKey {
     }
 
     private static let sqliteMagic = Array("SQLite format 3\u{0}".utf8)
+
+    /// The most a single copy may weigh, database and log together, before a
+    /// run skips it. The decoder reads a copy in full, twice over, so this
+    /// bounds the run's peak memory at about twice the budget; a polling
+    /// database is a few hundred kilobytes, so a copy past this is not one
+    /// that recovery was written for.
+    static let sourceByteBudget = 64 << 20
+    /// The most copies a single run reads, best first.
+    static let sourceCountBudget = 8
+
+    /// Whether a copy fits the byte budget.
+    static func withinBudget(_ source: Source) -> Bool {
+        fileSize(source.databaseURL) + fileSize(source.walURL) <= sourceByteBudget
+    }
     /// A write-ahead log of exactly this size holds no frames.
     private static let walHeaderLength = 32
 
@@ -274,8 +288,17 @@ extension DelegationRecoveryClient: DependencyKey {
                 var escrowFailed = false
                 var readFailed = false
                 let lease = await delegationEscrow.beginRecovery()
+                if sources.count > Self.sourceCountBudget {
+                    log("  reading the best \(Self.sourceCountBudget) of \(sources.count) copies")
+                }
 
-                for source in sources {
+                for source in sources.prefix(Self.sourceCountBudget) {
+                    guard Self.withinBudget(source) else {
+                        let bytes = fileSize(source.databaseURL) + fileSize(source.walURL)
+                        log("  [\(source.name)] skipped: \(bytes) bytes is over the \(Self.sourceByteBudget)-byte budget")
+                        report.sourcesSkipped += 1
+                        continue
+                    }
                     let found: VotingDatabaseRecovery.Report
                     do {
                         found = try VotingDatabaseRecovery.recoverAll(

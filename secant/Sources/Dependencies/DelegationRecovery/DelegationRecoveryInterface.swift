@@ -38,6 +38,8 @@ struct DelegationRecoveryReport: Equatable, Sendable {
     var outcome: Outcome
     /// Copies of the database that were successfully read.
     var sourcesScanned = 0
+    /// Copies left unread because they were over the run's byte budget.
+    var sourcesSkipped = 0
     /// Distinct rounds represented by the escrowed bundles.
     var rounds = 0
     /// Candidate rows written to the escrow: every generation of every
