@@ -17,7 +17,6 @@ struct WalletBalances {
         var CancelStateId = UUID()
         var CancelRateId = UUID()
         var CancelMigrationSnapshotId = UUID()
-        var autoShieldingThreshold: Zatoshi = .zero
         /// The account the published balance was read for — see `hasConcreteBalance`.
         var concreteBalanceAccountId: AccountUUID?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
@@ -154,8 +153,6 @@ struct WalletBalances {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                // __LD TESTED
-                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold()
                 if let exchangeRate = userStoredPreferences.exchangeRate(), exchangeRate.automatic {
                     state.isExchangeRateFeatureOn = true
                 } else {
