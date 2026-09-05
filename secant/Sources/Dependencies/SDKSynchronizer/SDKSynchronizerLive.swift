@@ -320,6 +320,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await Self.createThenSubmitUnderGuard(
                     transactionGuard: transactionGuard,
                     timeout: submissionGuardTimeout,
+                    logPrefix: "[MultiSubmit]",
                     prove: {
                         try await synchronizer.broadcaster.createProposedTransactions(
                             proposal: proposal,
@@ -412,6 +413,7 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await Self.createThenSubmitUnderGuard(
                     transactionGuard: transactionGuard,
                     timeout: submissionGuardTimeout,
+                    logPrefix: "[MultiSubmit/PCZT]",
                     prove: {
                         try await synchronizer.broadcaster.createTransactionFromPCZT(
                             pcztWithProofs: pcztWithProofs,
@@ -532,6 +534,7 @@ extension SDKSynchronizerClient {
     static func createThenSubmitUnderGuard(
         transactionGuard: TransactionGuardClient,
         timeout: Duration,
+        logPrefix: String,
         prove: () async throws -> [CreatedTransaction],
         submit: ([CreatedTransaction]) async -> CreateProposedTransactionsResult
     ) async throws -> CreateProposedTransactionsResult {
@@ -542,7 +545,7 @@ extension SDKSynchronizerClient {
                 await submit(transactions)
             }
         } catch is TransactionGuardBusyError {
-            LoggerProxy.error("[MultiSubmit] Gave up waiting \(timeout) for exclusive access; nothing was broadcast.")
+            LoggerProxy.error("\(logPrefix) Gave up waiting \(timeout) for exclusive access; nothing was broadcast.")
 
             return CreateProposedTransactionsResult.failure(
                 txIds: [],

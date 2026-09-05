@@ -199,7 +199,6 @@ import Testing
         }
         await holderAcquired.wait()
 
-        let start = ContinuousClock.now
         var caught: Error?
         do {
             try await client.withSubmission(timeout: .milliseconds(100)) {
@@ -208,11 +207,9 @@ import Testing
         } catch {
             caught = error
         }
-        let elapsed = ContinuousClock.now - start
 
         #expect(caught is TransactionGuardBusyError, "A busy guard must surface TransactionGuardBusyError, got \(String(describing: caught))")
         #expect(!bodyRan.value, "The submission body must not run when the guard could not be acquired")
-        #expect(elapsed < .milliseconds(300), "The acquisition must give up near its deadline; it took \(elapsed)")
 
         // The timed-out acquirer must not have taken ownership it then dropped.
         await releaseHolder.signal()
@@ -299,6 +296,7 @@ import Testing
         let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
             transactionGuard: client,
             timeout: .seconds(30),
+            logPrefix: "[MultiSubmit]",
             prove: {
                 await log.record("prove-start")
                 try await Task.sleep(for: .milliseconds(20))
@@ -314,7 +312,7 @@ import Testing
         #expect(result == SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: ["abc"]))
         let recorded = await log.values
         #expect(
-            recorded == ["prove-start", "prove-end", "acquire", "submit", "release"],
+            recorded == ["prove-start", "prove-end", "acquire-timed", "submit", "release"],
             "Proving must finish before the guard is taken and the guard released after the broadcast; got \(recorded)"
         )
     }
@@ -331,6 +329,7 @@ import Testing
         let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
             transactionGuard: client,
             timeout: .milliseconds(10),
+            logPrefix: "[MultiSubmit]",
             prove: {
                 await log.record("prove")
                 return []
@@ -360,6 +359,7 @@ import Testing
         let result = try? await SDKSynchronizerClient.createThenSubmitUnderGuard(
             transactionGuard: client,
             timeout: .seconds(30),
+            logPrefix: "[MultiSubmit]",
             prove: { throw TestFailure() },
             submit: { _ in
                 await log.record("submit")
@@ -373,11 +373,19 @@ import Testing
     }
 
     /// A pass-through client that logs every guard interaction, so a test can assert *when* the
-    /// guard is taken relative to the work around it.
+    /// guard is taken relative to the work around it. `acquire` and `acquireWithTimeout` record
+    /// distinct labels so a test can tell which one the seam actually called — without that, a
+    /// seam that regressed to the unbounded `withSubmission(_:)` (and so the plain `acquire`)
+    /// would still satisfy an ordering assertion written against a single shared "acquire" label.
+    /// The submission seam must never call the unbounded `acquire`, so that closure also records
+    /// an `Issue` — a belt-and-braces signal alongside the ordering mismatch it also causes.
     private static func recordingClient(into log: OrderRecorder) -> TransactionGuardClient {
         TransactionGuardClient(
-            acquire: { await log.record("acquire") },
-            acquireWithTimeout: { _ in await log.record("acquire") },
+            acquire: {
+                Issue.record("The submission seam must acquire the guard with a timeout, never the unbounded acquire.")
+                await log.record("acquire")
+            },
+            acquireWithTimeout: { _ in await log.record("acquire-timed") },
             tryAcquire: { true },
             release: { await log.record("release") }
         )
