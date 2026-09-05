@@ -643,8 +643,9 @@ struct Root {
     }
     
     /// The `onChange` wrapper must observe every reducer that can mutate an input of
-    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path) — keep ALL
-    /// composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
+    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path, and — via
+    /// `isSynchronizerIdleForSwitch` — `lastKnownSyncStatus` / `isSyncStalledSinceLastProgress`)
+    /// — keep ALL composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
         combinedCore
             .onChange(of: \.canApplyAutoServerSwitch) { _, state in
