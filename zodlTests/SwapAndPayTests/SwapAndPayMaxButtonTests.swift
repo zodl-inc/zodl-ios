@@ -522,4 +522,22 @@ private enum SwapMaxButtonTestError: Error {
         #expect(!state.isSpendabilityBeingDetermined)
         #expect(!state.isInsufficientFunds)
     }
+
+    @Test func crossPayInsufficientFundsIsHeldWhileTheSpendableValueIsMasked() {
+        var state = swapState()
+        state.amountText = "1.5"
+        // `assetAmount` reads as zero under the test build (see this file's header note), so a
+        // spendable balance below zero is the only way to drive the unmasked `>=` verdict true.
+        state.walletBalancesState.shieldedBalance = Zatoshi(-1)
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isCrossPayInsufficientFunds)
+
+        state.walletBalancesState.isSpendableMasked = true
+        // The Pay screen's red field border and "You'll pay" label read this verdict directly,
+        // so it has to wait for the value exactly like `isInsufficientFunds` does.
+        #expect(!state.isCrossPayInsufficientFunds)
+
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isCrossPayInsufficientFunds)
+    }
 }

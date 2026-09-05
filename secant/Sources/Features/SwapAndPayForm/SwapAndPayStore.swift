@@ -162,9 +162,15 @@ struct SwapAndPay {
                 return false
             }
 
+            // Same gate as `isInsufficientFunds` above: a masked spendable value reads as zero,
+            // and the Pay screen renders this verdict directly (red field border, "You'll pay"
+            // label), so it must wait for the value instead of judging on a figure the SDK has
+            // declined to state.
+            guard !isSpendabilityBeingDetermined else { return false }
+
             let spendableZec = walletBalancesState.shieldedBalance.decimalValue.decimalValue
             let amountInToken = (assetAmount * selectedAsset.usdPrice) / zecAsset.usdPrice
-            
+
             return amountInToken >= spendableZec
         }
 
