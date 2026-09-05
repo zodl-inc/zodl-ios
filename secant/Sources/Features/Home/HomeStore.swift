@@ -219,8 +219,12 @@ struct Home {
                     .run { send in
                         let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
                         await send(.updatePrivateUA(freshUA, uuid))
-                        let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
-                        await send(.updateNextPrivateUA(stashUA, uuid))
+                        // A failed generation must not be reported as nil: `.updateNextPrivateUA`
+                        // writes through unconditionally and would clear a stash another path wrote
+                        // while this call was resolving (the same rule `PrivateUAStash.refill` follows).
+                        if let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account)) {
+                            await send(.updateNextPrivateUA(stashUA, uuid))
+                        }
                     }
                     .cancellable(id: state.CancelUAGenerationId, cancelInFlight: true)
                 )

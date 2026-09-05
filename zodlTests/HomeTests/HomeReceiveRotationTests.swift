@@ -312,4 +312,45 @@ import ComposableArchitecture
         // The failed refill must not have overwritten the stash the other path wrote.
         #expect(store.state.walletAccounts.first { $0.id == account.id }?.nextPrivateUA == Const.secondFreshUA)
     }
+
+    @MainActor @Test func failedLiveFillLeavesAConcurrentlyWrittenStashUntouched() async {
+        let state = Home.State.initial
+        let previousAccount = state.selectedWalletAccount
+        let previousAccounts = state.walletAccounts
+        var account = testWalletAccount
+        account.privateUA = nil
+        account.nextPrivateUA = nil
+        state.$selectedWalletAccount.withLock { $0 = account }
+        state.$walletAccounts.withLock { $0 = [account] }
+        defer {
+            state.$selectedWalletAccount.withLock { $0 = previousAccount }
+            state.$walletAccounts.withLock { $0 = previousAccounts }
+        }
+
+        let store = TestStore(initialState: state) {
+            Home()
+        } withDependencies: {
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getCustomUnifiedAddress: { accountId, _ in
+                    // No stash, so the tap takes the live-fill path. Simulate a different, faster
+                    // path writing a real stash for this account while the live-fill's own
+                    // generations are still resolving, then have every generation here fail.
+                    @Shared(.inMemory(.walletAccounts)) var sharedWalletAccounts: [WalletAccount] = []
+                    $sharedWalletAccounts.withLock { accounts in
+                        guard let index = accounts.firstIndex(where: { $0.id == accountId }) else { return }
+                        accounts[index].nextPrivateUA = Const.secondFreshUA
+                    }
+                    return nil
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.receiveScreenRequested)
+        await store.receive(\.receiveTapped, timeout: .seconds(5))
+        await store.finish()
+
+        // The failed self-heal must not have reported nil and cleared the stash the other path wrote.
+        #expect(store.state.walletAccounts.first { $0.id == account.id }?.nextPrivateUA == Const.secondFreshUA)
+    }
 }
