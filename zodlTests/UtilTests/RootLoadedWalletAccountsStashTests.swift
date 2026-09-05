@@ -172,6 +172,66 @@ import ComposableArchitecture
         #expect(generationCalls.value == 2)
     }
 
+    // Review follow-up (MOB-1859): the shared refill loop (`PrivateUAStash.refill`) used to call
+    // its `onGenerated` callback even when generation failed (`try?` produced nil), and every
+    // handler writes whatever it receives straight through `PrivateUAStash.write`, which is
+    // unconditional — so a failed background refill would clear a stash a different, faster path
+    // had already written for the very same account while this call was still resolving. This is
+    // exactly what happens right after backgrounding: the synchronizer stops, this call fails,
+    // but another path may already have succeeded in the meantime.
+    @Test func aFailedRefillLeavesAStashWrittenByAnotherPathDuringItUntouched() async {
+        let zcashAccount = account(idByte: 0x05, vendor: .zcash)
+
+        var initialState = freshRootState()
+        let previousWalletAccounts = initialState.walletAccounts
+        let previousSelected = initialState.selectedWalletAccount
+        let previousZashi = initialState.zashiWalletAccount
+        defer {
+            initialState.$walletAccounts.withLock { $0 = previousWalletAccounts }
+            initialState.$selectedWalletAccount.withLock { $0 = previousSelected }
+            initialState.$zashiWalletAccount.withLock { $0 = previousZashi }
+        }
+
+        initialState.$walletAccounts.withLock { $0 = [] }
+        initialState.$selectedWalletAccount.withLock { $0 = nil }
+        initialState.$zashiWalletAccount.withLock { $0 = nil }
+
+        let store = TestStore(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            $0.addressBook.allLocalContacts = { _ in (AddressBookContacts.empty, .notAttempted) }
+            $0.userMetadataProvider.load = { _ in }
+            $0.readTransactionsStorage = .noOp
+            $0.userDefaults = .noOp
+            $0.walletStorage = .noOp
+            $0.mainQueue = .immediate
+            $0.continuousClock = TestClock()
+            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(
+                getCustomUnifiedAddress: { accountId, _ in
+                    // Simulate a different, faster path (e.g. a Receive visit's own refill)
+                    // writing a real stash for this same account while this slower background
+                    // call is still resolving, then have THIS call fail — the exact ordering the
+                    // bug depended on.
+                    @Shared(.inMemory(.walletAccounts)) var sharedWalletAccounts: [WalletAccount] = []
+                    $sharedWalletAccounts.withLock { accounts in
+                        guard let index = accounts.firstIndex(where: { $0.id == accountId }) else { return }
+                        accounts[index].nextPrivateUA = Const.existingStashUA
+                    }
+                    return nil
+                }
+            )
+        }
+        store.exhaustivity = .off
+
+        await store.send(.initialization(.loadedWalletAccounts([zcashAccount])))
+
+        await store.skipReceivedActions(strict: false)
+        await store.skipInFlightEffects(strict: false)
+
+        // The failed refill must not have overwritten the stash the other path wrote.
+        #expect(store.state.walletAccounts.first { $0.id == zcashAccount.id }?.nextPrivateUA == Const.existingStashUA)
+    }
+
     @Test func loadSkipsTheRefillEntirelyWhenEveryAccountAlreadyHasAStash() async {
         let generationCalls = LockIsolated(0)
 

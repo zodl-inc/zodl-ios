@@ -255,9 +255,12 @@ extension Root {
                     // `.retryStart`, restarting the sync this boundary just stopped). The next
                     // foreground's `.registerForSynchronizersUpdate` respawns it.
                     .cancel(id: state.migrationSyncGateCancelId),
-                    // MOB-1853: a benchmark/apply-switch run still in flight when the app
-                    // backgrounds must not land later against the synchronizer `stop()` above just
-                    // tore down.
+                    // MOB-1853: cancels only the benchmark (`.refreshAutomaticServer`'s effect,
+                    // the one thing this id covers). An apply already in flight (`applySwitch`,
+                    // `RootStore.swift`) carries no cancel id of its own and keeps running to
+                    // completion regardless, under `switchIfIdle`/`withTimeout(serverSwitchTimeout)`
+                    // — cancelling a switch mid-apply is a behaviour change left for a follow-up,
+                    // not something this background-teardown path attempts.
                     .cancel(id: state.automaticServerRefreshCancelId)
                 )
 

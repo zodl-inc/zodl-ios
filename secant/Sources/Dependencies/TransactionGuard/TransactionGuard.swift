@@ -145,6 +145,14 @@ let serverSwitchTimeout: Duration = .seconds(60)
 /// already owns the guard is never cut short. Long enough to queue behind a normal broadcast, short
 /// enough that a wedged holder surfaces as a failed send the user can retry instead of a screen that
 /// appears to have frozen. Nothing has been broadcast when it expires, so retrying is always safe.
+///
+/// The trade-off this creates is deliberate, not just a hedge against a wedged holder: a
+/// *legitimate* holder can also run past 30s — a server switch bounded by `serverSwitchTimeout`
+/// (60s) or a migration broadcast can both hold the guard longer than a send is willing to wait.
+/// A send queued behind either one reports "busy" rather than waiting the holder out, and the user
+/// retries once it clears. That is preferred over letting a send queue indefinitely behind
+/// unrelated work; the 30s figure itself is a product choice, not a value derived from any
+/// protocol or server-side limit.
 let submissionGuardTimeout: Duration = .seconds(30)
 
 /// Race `operation` against a `duration` timer; whichever finishes first wins and the loser is
