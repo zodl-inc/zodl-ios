@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The decoder against the database the incident actually produced.
 @Suite struct VotingDatabaseRecoveryFixtureTests {
@@ -126,4 +126,3 @@ import Testing
         #expect(before == after)
     }
 }
-#endif

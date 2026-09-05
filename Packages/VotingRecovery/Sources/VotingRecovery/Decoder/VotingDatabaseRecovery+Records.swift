@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 // MARK: - SQLite records
@@ -307,8 +306,8 @@ extension VotingDatabaseRecovery {
                 candidate.roundId,
                 candidate.walletId,
                 String(candidate.bundleIndex),
-                candidate.vanCommRand.hexString,
-                candidate.vanCmx.hexString
+                candidate.vanCommRand.hexEncoded,
+                candidate.vanCmx.hexEncoded
             ].joined(separator: "/")
             if let existing = best[key] {
                 let existingRank = (
@@ -396,4 +395,3 @@ extension VotingDatabaseRecovery {
             | UInt32(bytes[offset + 3])
     }
 }
-#endif

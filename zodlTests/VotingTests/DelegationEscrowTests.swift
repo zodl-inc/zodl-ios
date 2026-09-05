@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The live store, on the test host's own Documents directory.
 @Suite(.serialized) struct DelegationEscrowTests {
@@ -169,4 +169,3 @@ import Testing
         #expect(entry.rejectedAt == nil)
     }
 }
-#endif

@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Testing
 import Foundation
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The decoder reads released space: freed pages, freeblocks, and the
 /// unallocated gap. Those bytes are whatever was last written there, so every
@@ -107,4 +107,3 @@ import Foundation
         return out
     }
 }
-#endif

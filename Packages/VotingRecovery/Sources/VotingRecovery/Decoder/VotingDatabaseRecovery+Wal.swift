@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 // MARK: - WAL validation
@@ -158,4 +157,3 @@ extension VotingDatabaseRecovery {
         }
     }
 }
-#endif

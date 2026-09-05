@@ -6,6 +6,7 @@
 
 import Foundation
 import ComposableArchitecture
+import VotingRecovery
 @preconcurrency import ZcashLightClientKit
 
 extension VotingCoordFlow {
@@ -904,17 +905,15 @@ extension VotingCoordFlow {
                         roundId: roundId,
                         votingCrypto: votingCrypto
                     )
-                    #if RECOVERY_VOTING_ENABLED
-                    // A delegation carved out of a wiped database goes back in
-                    // here, before any branch below can rebuild the round over
-                    // it. The SDK clears nothing unless the round provably
-                    // holds nothing the wallet could still use.
+                    // VotingRecovery: a delegation carved out of a wiped
+                    // database goes back in here, before any branch below can
+                    // rebuild the round over it. The SDK clears nothing unless
+                    // the round provably holds nothing the wallet could use.
                     if case .restored = await Self.restoreRecoveredDelegation(
                         roundId: roundId,
                         session: session,
                         networkId: networkId,
                         accountId: accountId,
-                        votingCrypto: votingCrypto,
                         walletStorage: walletStorage
                     ) {
                         (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
@@ -922,7 +921,6 @@ extension VotingCoordFlow {
                             votingCrypto: votingCrypto
                         )
                     }
-                    #endif
                     var resolvedBundleCount: UInt32 = 0
                     var didPrepareFreshRound = false
                     if existingState?.proofGenerated == true {
@@ -4471,19 +4469,8 @@ extension VotingCoordFlow {
         // that has to disappear with the recovery code. Without it the
         // diagnosis simply never reports `secretsRecovered`, which is the
         // truth once nothing is recovering anything.
-        var escrowHoldsRecoveredSecrets = false
-        #if RECOVERY_VOTING_ENABLED
-        @Dependency(\.delegationEscrow) var delegationEscrow
-        // Asks whether a bundle holds more than one distinct blinding. Every
-        // carved row is escrowed, the live one included, so presence alone
-        // is not evidence that anything was lost.
-        escrowHoldsRecoveredSecrets = (
-            try? await delegationEscrow.entries(roundId)
-        ).map { entries in
-            Dictionary(grouping: entries.filter { $0.source == .recovered }, by: \.bundleIndex)
-                .values.contains { Set($0.map(\.vanCommRand)).count > 1 }
-        } ?? false
-        #endif
+        @Dependency(\.delegationRestore) var delegationRestore // VotingRecovery
+        let escrowHoldsRecoveredSecrets = await delegationRestore.holdsRecoveredSecrets(roundId)
 
         let diagnosis = await DelegationDiagnosis.forRound(
             roundId,
@@ -4511,62 +4498,38 @@ extension VotingCoordFlow {
         do {
             return try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
         } catch {
-            #if RECOVERY_VOTING_ENABLED
-            @Dependency(\.delegationEscrow) var delegationEscrow
-            _ = await DelegationRestore.rejectRestoredCandidates(
-                roundId: roundId,
-                error: error,
-                escrow: delegationEscrow,
-                opens: DelegationRestore.opens(
-                    hotkeyStoredSecret: hotkeyStoredSecret,
-                    networkId: networkId,
-                    roundId: roundId,
-                    crypto: votingCrypto
-                )
-            )
-            #endif
+            @Dependency(\.delegationRestore) var delegationRestore // VotingRecovery
+            _ = await delegationRestore.noteChainRefusal(roundId, error, hotkeyStoredSecret, networkId)
             throw error
         }
     }
 }
 
-#if RECOVERY_VOTING_ENABLED
 extension VotingCoordFlow {
-    /// Feeds the round pipeline's inputs to `DelegationRestore`. Reads the
-    /// escrow first so an unaffected round costs one file read and no SDK
-    /// call.
+    /// VotingRecovery: exports the hotkey the restore recomputes commitments
+    /// with, and hands the round to the module. Delete with the package.
     static func restoreRecoveredDelegation(
         roundId: String,
         session: VotingSession,
         networkId: UInt32,
         accountId: AccountUUID?,
-        votingCrypto: VotingCryptoClient,
         walletStorage: WalletStorageClient
     ) async -> DelegationRestore.Outcome {
-        @Dependency(\.delegationEscrow) var delegationEscrow
-        let entries = (try? await delegationEscrow.entries(roundId)) ?? []
-        guard entries.contains(where: { $0.source == .recovered }) else {
-            return .notApplicable(reason: "nothing recovered for this round")
-        }
+        @Dependency(\.delegationRestore) var delegationRestore
         let hotkeySecret = accountId
             .flatMap { try? walletStorage.exportVotingHotkey($0) }?
             .storedSecret.value()
-        let outcome = await DelegationRestore.restoreIfNeeded(
-            roundId: roundId,
-            roundParams: VotingRoundParams(
+        return await delegationRestore.restoreIfNeeded(
+            roundId,
+            RoundParameters(
                 voteRoundId: session.voteRoundId,
                 snapshotHeight: session.snapshotHeight,
                 eaPK: session.eaPK,
                 ncRoot: session.ncRoot,
                 nullifierIMTRoot: session.nullifierIMTRoot
             ),
-            networkId: networkId,
-            hotkeyStoredSecret: hotkeySecret,
-            escrowEntries: entries,
-            crypto: votingCrypto
+            networkId,
+            hotkeySecret
         )
-        LoggerProxy.info("[poll-restore] round=\(roundId) outcome=\(outcome)")
-        return outcome
     }
 }
-#endif

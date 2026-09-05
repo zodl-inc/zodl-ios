@@ -1,9 +1,8 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 /// Puts a carved delegation back into the voting database, through the SDK's
 /// guarded restore, so the poll can be voted on.
-enum DelegationRestore {
+public enum DelegationRestore {
     /// The vote chain identifier written into the package and handed to the
     /// import as the expected value. zcash_voting 3.0.0 compares the two to
     /// each other and to nothing else, so the one requirement is stability: a
@@ -13,7 +12,7 @@ enum DelegationRestore {
     /// Zatoshi per ballot. A bundle below one ballot cannot be imported.
     static let ballotDivisor: UInt64 = 12_500_000
 
-    enum Outcome: Equatable, Sendable {
+    public enum Outcome: Equatable, Sendable {
         /// The escrow does not hold a complete recovered delegation, or the
         /// device has no hotkey to recompute the commitments with.
         case notApplicable(reason: String)
@@ -37,11 +36,11 @@ enum DelegationRestore {
     /// whether there is anything worth asking about.
     static func restoreIfNeeded(
         roundId: String,
-        roundParams: VotingRoundParams,
+        roundParams: RoundParameters,
         networkId: UInt32,
         hotkeyStoredSecret: Data?,
         escrowEntries: [DelegationEscrowEntry],
-        crypto: VotingCryptoClient
+        crypto: RecoveryBackend
     ) async -> Outcome {
         guard let hotkeyStoredSecret else {
             return .notApplicable(reason: "no voting hotkey on this device")
@@ -52,7 +51,7 @@ enum DelegationRestore {
         }
 
         do {
-            let result = try await crypto.restoreRecoveredDelegation(
+            let result = try await crypto.restore(
                 RecoveredDelegationImportRequest(
                     roundParams: roundParams,
                     networkId: networkId,
@@ -66,7 +65,7 @@ enum DelegationRestore {
             case .alreadyRestored:
                 return .alreadyRestored
             case .restored:
-                LoggerProxy.info("[poll-restore] round=\(roundId) restored \(bundles.count) bundle(s) from the escrow")
+                Log.info("[poll-restore] round=\(roundId) restored \(bundles.count) bundle(s) from the escrow")
                 return .restored(bundleCount: bundles.count)
             }
         } catch {
@@ -75,10 +74,10 @@ enum DelegationRestore {
             let description = error.localizedDescription
             if description.contains(Outcome.refusalMarker) {
                 let reason = description.components(separatedBy: "failed: ").last ?? description
-                LoggerProxy.info("[poll-restore] round=\(roundId) refused: \(reason)")
+                Log.info("[poll-restore] round=\(roundId) refused: \(reason)")
                 return .refused(reason: reason)
             }
-            LoggerProxy.error("[poll-restore] round=\(roundId) restore failed: \(description)")
+            Log.error("[poll-restore] round=\(roundId) restore failed: \(description)")
             return .failed
         }
     }
@@ -90,7 +89,7 @@ enum DelegationRestore {
         hotkeyStoredSecret: Data,
         networkId: UInt32,
         roundId: String,
-        crypto: VotingCryptoClient
+        crypto: RecoveryBackend
     ) -> (DelegationEscrowEntry) -> Bool {
         { entry in
             let recomputed = try? crypto.vanCommitment(
@@ -126,7 +125,7 @@ enum DelegationRestore {
         for bundle in refused {
             try? await escrow.markRejected(roundId, bundle.bundleIndex, bundle.vanCommRand)
         }
-        LoggerProxy.info(
+        Log.info(
             "[poll-restore] round=\(roundId) chain refused \(refused.count) of \(offered.count) restored candidate(s)"
         )
         return true
@@ -210,4 +209,3 @@ enum DelegationRestore {
             && bytes.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }
     }
 }
-#endif

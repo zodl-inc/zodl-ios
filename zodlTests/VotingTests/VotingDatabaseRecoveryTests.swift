@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 @Suite struct VotingDatabaseRecoveryTests {
     private let roundId = String(repeating: "4a", count: 32)
@@ -553,4 +553,3 @@ import Testing
         #expect(reports[0].candidates.map(\.vanCommRand) == [originalRand])
     }
 }
-#endif

@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Testing
 import Foundation
 @testable import zodl_internal
+@testable import VotingRecovery
 
 @Suite struct DelegationRestorePackageTests {
     private let roundId = String(repeating: "4a", count: 31) + "01"
@@ -133,8 +133,8 @@ import Foundation
 @Suite struct DelegationRestoreOrchestrationTests {
     private let roundId = String(repeating: "4a", count: 31) + "01"
 
-    private var roundParams: VotingRoundParams {
-        VotingRoundParams(
+    private var roundParams: RoundParameters {
+        RoundParameters(
             voteRoundId: Data(repeating: 0x4a, count: 31) + Data([0x01]),
             snapshotHeight: 1,
             eaPK: Data(repeating: 0x07, count: 32),
@@ -162,15 +162,15 @@ import Foundation
         var result: RecoveredDelegationRestoreOutcome = .restored
         var error: Error?
 
-        func client() -> VotingCryptoClient {
-            var client = VotingCryptoClient.testValue
-            client.vanCommitment = { _, _, _, _, _ in Data(repeating: 0xC0, count: 32) }
-            client.restoreRecoveredDelegation = { [self] request in
-                requests.append(request)
-                if let error { throw error }
-                return result
-            }
-            return client
+        func client() -> RecoveryBackend {
+            RecoveryBackend(
+                vanCommitment: { _, _, _, _, _ in Data(repeating: 0xC0, count: 32) },
+                restore: { [self] request in
+                    requests.append(request)
+                    if let error { throw error }
+                    return result
+                }
+            )
         }
     }
 
@@ -364,4 +364,3 @@ import Foundation
         #expect(handled == false)
     }
 }
-#endif

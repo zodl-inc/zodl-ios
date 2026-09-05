@@ -7,6 +7,7 @@
 
 import Combine
 import ComposableArchitecture
+import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -113,7 +114,6 @@ extension Root {
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
-                #if RECOVERY_VOTING_ENABLED
                 // Delegation recovery, on every cold launch, invisible to the
                 // user. An older build could delete a round's blinding factor
                 // and rebuild the round in its place, which makes that poll
@@ -135,12 +135,10 @@ extension Root {
                 // away by `holdsRoundData` after one file read.
                 return .merge(
                     setup,
+                    // VotingRecovery
                     .run { _ in _ = await delegationRecovery.run() }
-                        .cancellable(id: state.delegationRecoveryCancelId, cancelInFlight: true)
+                        .cancellable(id: VotingRecovery.CancelID.launch, cancelInFlight: true)
                 )
-                #else
-                return setup
-                #endif
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 // See the cold-launch marker above. The tip rides along because it is the one piece
@@ -1414,15 +1412,11 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
-                #if RECOVERY_VOTING_ENABLED
-                // Launch-time recovery may still be reading this wallet's
-                // files. Stop it before anything is wiped; the escrow also
-                // refuses its writes once the reset has run, whether or not
-                // cancellation reached it first.
-                let stopRecovery: Effect<Root.Action> = .cancel(id: state.delegationRecoveryCancelId)
-                #else
-                let stopRecovery: Effect<Root.Action> = .none
-                #endif
+                // VotingRecovery: launch-time recovery may still be reading this
+                // wallet's files. Stop it before anything is wiped; the escrow
+                // also refuses its writes once the reset has run, whether or
+                // not cancellation reached it first.
+                let stopRecovery: Effect<Root.Action> = .cancel(id: VotingRecovery.CancelID.launch)
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
                     return .merge(stopRecovery, .send(.resetZashiSDKFailed))
                 }

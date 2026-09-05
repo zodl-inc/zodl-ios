@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 // MARK: - Raw page carving
@@ -129,4 +128,3 @@ extension VotingDatabaseRecovery {
         return matches
     }
 }
-#endif

@@ -1,10 +1,10 @@
-#if RECOVERY_VOTING_ENABLED
 @preconcurrency import Combine
 import Testing
 import Foundation
 import ComposableArchitecture
 import ZcashLightClientKit
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The incident, end to end, in the order a voter lived it: a poll whose
 /// delegation was broadcast, an error telling them to leave and re-enter, the
@@ -283,8 +283,8 @@ struct VoteAgain {
         try? FileManager.default.removeItem(at: documents.appendingPathComponent(DelegationEscrowFile.name))
     }
 
-    private static var roundParams: VotingRoundParams {
-        VotingRoundParams(
+    private static var roundParams: RoundParameters {
+        RoundParameters(
             voteRoundId: Data(bytes(fromHex: Expected.roundId)),
             snapshotHeight: 1,
             eaPK: Data(repeating: 0x07, count: 32),
@@ -300,50 +300,9 @@ struct VoteAgain {
         }
     }
 
-    /// A crypto client whose restore hits a real Rust backend.
-    private static func realCryptoClient(backend: VotingRustBackend) -> VotingCryptoClient {
-        var client = VotingCryptoClient.testValue
-        client.vanCommitment = { hotkeyStoredSecret, networkId, roundId, totalNoteValue, vanCommRand in
-            let hotkey = try VotingRustBackend.hotkey(fromStoredSecret: [UInt8](hotkeyStoredSecret), networkId: networkId)
-            return try Data(
-                VotingRustBackend.vanCommitment(
-                    hotkey: hotkey,
-                    networkId: networkId,
-                    roundId: roundId,
-                    totalNoteValue: totalNoteValue,
-                    vanCommRand: [UInt8](vanCommRand)
-                )
-            )
-        }
-        client.restoreRecoveredDelegation = { request in
-            let hotkey = try VotingRustBackend.hotkey(
-                fromStoredSecret: [UInt8](request.hotkeyStoredSecret),
-                networkId: request.networkId
-            )
-            let result = try backend.restoreRecoveredDelegation(
-                RecoveredDelegationRestoreRequest(
-                    roundId: request.roundParams.voteRoundId.hexString,
-                    snapshotHeight: request.roundParams.snapshotHeight,
-                    eaPublicKey: [UInt8](request.roundParams.eaPK),
-                    ncRoot: [UInt8](request.roundParams.ncRoot),
-                    nullifierImtRoot: [UInt8](request.roundParams.nullifierIMTRoot),
-                    voteChainId: request.voteChainId,
-                    hotkey: hotkey,
-                    bundles: request.bundles.map {
-                        RecoveredDelegationBundle(
-                            bundleIndex: $0.bundleIndex,
-                            totalNoteValue: $0.totalNoteValue,
-                            vanCommRand: [UInt8]($0.vanCommRand),
-                            van: [UInt8]($0.van),
-                            delegationTxHash: $0.delegationTxHash
-                        )
-                    },
-                    sessionJson: request.sessionJson
-                )
-            )
-            return result == .restored ? .restored : .alreadyRestored
-        }
-        return client
+    /// The SDK calls the restore makes, over a real Rust backend.
+    private static func recoveryBackend(over backend: VotingRustBackend) -> RecoveryBackend {
+        .live(backend: { backend })
     }
 
     /// The step this suite exists to reach: the escrow that launch-time
@@ -370,7 +329,7 @@ struct VoteAgain {
             backend.close()
             try? FileManager.default.removeItem(atPath: path)
         }
-        let crypto = Self.realCryptoClient(backend: backend)
+        let crypto = Self.recoveryBackend(over: backend)
 
         let first = await DelegationRestore.restoreIfNeeded(
             roundId: Expected.roundId,
@@ -437,7 +396,7 @@ struct VoteAgain {
             networkId: Self.restoreNetworkId,
             hotkeyStoredSecret: Data(hotkey.storedSecret),
             escrowEntries: survivors,
-            crypto: Self.realCryptoClient(backend: backend)
+            crypto: Self.recoveryBackend(over: backend)
         )
         #expect(outcome == .restored(bundleCount: 2))
         #expect(try backend.getBundleCount(roundId: Expected.roundId) == 2)
@@ -557,4 +516,3 @@ struct VoteAgain {
     }
 }
 }
-#endif

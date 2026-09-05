@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// A launch-time run reads each copy in full, so a copy past the budget is
 /// left unread rather than risking the process.
@@ -46,4 +46,3 @@ import Testing
         #expect(DelegationRecoveryClient.withinBudget(source))
     }
 }
-#endif

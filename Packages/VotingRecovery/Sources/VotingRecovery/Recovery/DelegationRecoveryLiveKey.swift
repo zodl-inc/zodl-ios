@@ -1,5 +1,4 @@
-#if RECOVERY_VOTING_ENABLED
-import ComposableArchitecture
+import Dependencies
 import Foundation
 
 extension DelegationRecoveryClient: DependencyKey {
@@ -20,7 +19,7 @@ extension DelegationRecoveryClient: DependencyKey {
             // SQLite names its sidecars by path suffix, not path extension.
             self.walURL = databaseURL
                 .deletingLastPathComponent()
-                .appendingPathComponent(databaseURL.lastPathComponent + "-wal")
+                .appendingPathComponent("\(databaseURL.lastPathComponent)-wal")
         }
     }
 
@@ -176,7 +175,7 @@ extension DelegationRecoveryClient: DependencyKey {
     static func label(for url: URL, relativeTo documents: URL) -> String {
         let full = url.standardizedFileURL.path
         let base = documents.standardizedFileURL.path
-        if full.hasPrefix(base + "/") {
+        if full.hasPrefix("\(base)/") {
             return String(full.dropFirst(base.count + 1))
         }
         return url.lastPathComponent
@@ -189,7 +188,7 @@ extension DelegationRecoveryClient: DependencyKey {
     /// log export, and `van_comm_rand` is the one secret in the system that
     /// cannot be regenerated, so it must not be written out in full.
     static func log(_ message: String) {
-        LoggerProxy.info("[poll-recovery] \(message)")
+        Log.info("[poll-recovery] \(message)")
     }
 
     /// Keeps both ends of a hex value and drops the middle.
@@ -198,7 +197,7 @@ extension DelegationRecoveryClient: DependencyKey {
     /// in the LAST byte, so an elision keeping only a prefix would render them
     /// identical and make the log useless for telling them apart.
     static func elide(_ data: Data) -> String {
-        let hex = data.hexString
+        let hex = data.hexEncoded
         guard hex.count > 16 else { return hex }
         return "\(hex.prefix(6))...\(hex.suffix(6))"
     }
@@ -244,7 +243,7 @@ extension DelegationRecoveryClient: DependencyKey {
         return String(marker.dropFirst("captured-".count).dropLast(".txt".count))
     }
 
-    static var liveValue: Self {
+    public static var liveValue: Self {
         Self(
             run: {
                 @Dependency(\.delegationEscrow) var delegationEscrow
@@ -265,7 +264,7 @@ extension DelegationRecoveryClient: DependencyKey {
                     // one, closest to the incident.
                     let captured = preservedRoot.flatMap { root -> String? in
                         source.databaseURL.standardizedFileURL.path
-                            .hasPrefix(root.standardizedFileURL.path + "/")
+                            .hasPrefix("\(root.standardizedFileURL.path)/")
                             ? captureTime(inPreservedDirectory: root)
                             : nil
                     }
@@ -311,7 +310,7 @@ extension DelegationRecoveryClient: DependencyKey {
                         // A source that cannot be read is not fatal: another
                         // may still hold the value. The live database in
                         // particular can be mid-write while this runs.
-                        LoggerProxy.error(
+                        Log.error(
                             "[poll-recovery] could not read source \(source.name): \(error)"
                         )
                         readFailed = true
@@ -357,7 +356,7 @@ extension DelegationRecoveryClient: DependencyKey {
                         } catch {
                             // Keep going. Every one of these is irreplaceable, so
                             // one unwritable entry must not abandon the rest.
-                            LoggerProxy.error(
+                            Log.error(
                                 "[poll-recovery] could not escrow \(key): \(error)"
                             )
                             escrowFailed = true
@@ -391,4 +390,3 @@ extension DelegationRecoveryClient: DependencyKey {
         )
     }
 }
-#endif

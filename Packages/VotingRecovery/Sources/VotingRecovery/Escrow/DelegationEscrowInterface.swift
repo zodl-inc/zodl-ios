@@ -1,5 +1,5 @@
-#if RECOVERY_VOTING_ENABLED
-import ComposableArchitecture
+import Dependencies
+import DependenciesMacros
 import Foundation
 
 extension DependencyValues {
@@ -178,4 +178,3 @@ struct DelegationEscrowClient {
     /// wallet-specific as `voting.sqlite3` and must not outlive it.
     var reset: @Sendable () async -> Void
 }
-#endif

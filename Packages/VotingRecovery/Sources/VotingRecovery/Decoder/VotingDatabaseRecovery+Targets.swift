@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 // MARK: - Several on-chain targets at once
@@ -84,4 +83,3 @@ extension VotingDatabaseRecovery {
             | UInt32(bytes[offset + 2]) << 8 | UInt32(bytes[offset + 3])
     }
 }
-#endif

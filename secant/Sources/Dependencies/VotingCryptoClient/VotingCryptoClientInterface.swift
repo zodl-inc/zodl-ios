@@ -16,37 +16,6 @@ enum VotingTxHashLookup: Equatable, Sendable {
     case present(String)
 }
 
-/// One bundle to restore, in the escrow's own terms.
-struct RecoveredDelegationBundleInput: Equatable, Sendable {
-    let bundleIndex: UInt32
-    /// Bundle weight in zatoshi.
-    let totalNoteValue: UInt64
-    /// The 32-byte VAN blinding factor.
-    let vanCommRand: Data
-    /// The 32-byte VAN commitment the recovered row carried. The SDK refuses
-    /// a bundle whose blinding and weight do not open it.
-    let van: Data
-    /// Lowercase hex SHA-256 of the signed delegation transaction.
-    let delegationTxHash: String
-}
-
-/// Inputs for restoring a carved delegation. Carries the hotkey secret and
-/// the blinding factors, so it is deliberately not printable.
-struct RecoveredDelegationImportRequest: Sendable, Undescribable {
-    let roundParams: VotingRoundParams
-    /// Rust network id, needed to derive the hotkey from its stored secret.
-    let networkId: UInt32
-    let voteChainId: String
-    let hotkeyStoredSecret: Data
-    let bundles: [RecoveredDelegationBundleInput]
-    let sessionJson: String?
-}
-
-enum RecoveredDelegationRestoreOutcome: Equatable, Sendable {
-    case restored
-    case alreadyRestored
-}
-
 @DependencyClient
 struct VotingCryptoClient {
     // --- State stream (DB → UI, follows SDKSynchronizer pattern) ---
@@ -230,24 +199,6 @@ struct VotingCryptoClient {
         _ sighash: Data
     ) async throws -> DelegationRegistration
     var storeVanPosition: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws -> Void
-    /// The VAN commitment a hotkey, round, weight and blinding open, as the
-    /// SDK recomputes it before a restore clears anything. Lets the restore
-    /// skip a recovered candidate whose blinding does not open the commitment
-    /// its row held, so one damaged row image cannot block the rest.
-    var vanCommitment: @Sendable (
-        _ hotkeyStoredSecret: Data,
-        _ networkId: UInt32,
-        _ roundId: String,
-        _ totalNoteValue: UInt64,
-        _ vanCommRand: Data
-    ) throws -> Data
-    /// Restore a carved delegation. The SDK refuses unless the round holds
-    /// nothing the wallet could still use, then clears it and imports the
-    /// package, recomputing every VAN from the wallet's hotkey first. The app
-    /// has no separate way to clear a round.
-    var restoreRecoveredDelegation: @Sendable (
-        _ request: RecoveredDelegationImportRequest
-    ) async throws -> RecoveredDelegationRestoreOutcome
     var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
     var generateVanWitness: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ anchorHeight: UInt32) async throws -> VanWitness
     var markVoteSubmitted: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ txHash: String) async throws -> Void

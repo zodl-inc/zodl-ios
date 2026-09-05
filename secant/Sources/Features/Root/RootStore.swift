@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import VotingRecovery
 @preconcurrency import ZcashLightClientKit
 import Foundation
 import BackgroundTasks
@@ -77,10 +78,6 @@ struct Root {
         /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
         /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
         var startFailureRetryCancelId = UUID()
-        /// The launch-time delegation recovery. A wallet reset cancels it
-        /// before wiping, so a run that read the old wallet's files cannot
-        /// write them back for the next one.
-        var delegationRecoveryCancelId = UUID()
         /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
         /// the second failure waits for the next external trigger (foreground, gate emission).
         var didScheduleStartFailureRetry = false
@@ -400,9 +397,7 @@ struct Root {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
-    #if RECOVERY_VOTING_ENABLED
-    @Dependency(\.delegationRecovery) var delegationRecovery
-    #endif
+    @Dependency(\.delegationRecovery) var delegationRecovery // VotingRecovery
     @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
@@ -746,18 +741,11 @@ extension Root {
             .first {
             let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
             try? FileManager.default.removeItem(at: votingDbURL)
-            // Preserved copies of the previous wallet's voting database are
-            // the same wallet-scoped material, and must not cross the reset
+            // VotingRecovery: the preserved copies of the previous wallet's
+            // voting database and the escrow of its blinding factors are the
+            // same wallet-scoped material, and must not cross the reset
             // boundary either.
-            VotingDatabaseSnapshot.reset()
-            // The delegation escrow holds VAN blinding factors for this
-            // wallet's rounds. It is as wallet-scoped as the database it
-            // shadows, so it must not survive the reset boundary either.
-            // Invalidating, rather than merely deleting, also makes a
-            // launch-time recovery still in flight refuse to write.
-            #if RECOVERY_VOTING_ENABLED
-            DelegationEscrowFile.invalidate(inDocuments: documents)
-            #endif
+            VotingRecovery.wipe(inDocuments: documents)
         }
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which

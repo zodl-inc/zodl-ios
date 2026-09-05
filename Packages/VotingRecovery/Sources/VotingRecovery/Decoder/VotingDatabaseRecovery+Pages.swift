@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 // MARK: - Logical database states
@@ -259,4 +258,3 @@ extension VotingDatabaseRecovery {
         return payloads
     }
 }
-#endif

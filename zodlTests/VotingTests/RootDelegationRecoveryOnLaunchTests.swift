@@ -1,9 +1,9 @@
-#if RECOVERY_VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// Delegation recovery has to run when the app opens, with nothing for the
 /// user to tap.
@@ -248,4 +248,3 @@ struct RootDelegationRecoveryOnLaunchTests {
         #expect(spy.callCount == 1)
     }
 }
-#endif

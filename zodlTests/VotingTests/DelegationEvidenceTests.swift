@@ -1,7 +1,7 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import Testing
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// The targeted scan against the incident's database, once a leaf list is
 /// available. Until then, the evidence is honestly unavailable.
@@ -51,4 +51,3 @@ import Testing
         #expect(evidence == .nothingOnDevice)
     }
 }
-#endif

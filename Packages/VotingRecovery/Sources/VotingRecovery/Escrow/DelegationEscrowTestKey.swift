@@ -1,8 +1,6 @@
-#if RECOVERY_VOTING_ENABLED
-import ComposableArchitecture
+import Dependencies
 import Foundation
 
 extension DelegationEscrowClient: TestDependencyKey {
     static let testValue = Self()
 }
-#endif

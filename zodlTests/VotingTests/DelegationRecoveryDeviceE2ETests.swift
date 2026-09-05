@@ -1,9 +1,9 @@
-#if RECOVERY_VOTING_ENABLED
 @preconcurrency import Combine
 import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// Where the app keeps its files, kept OUTSIDE the suite type because a
 /// `@Suite` condition cannot reach into the type its macro is attached to.
@@ -359,4 +359,3 @@ struct DelegationRecoveryDeviceE2ETests {
         }
     }
 }
-#endif

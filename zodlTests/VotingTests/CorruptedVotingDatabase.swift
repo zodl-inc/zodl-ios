@@ -1,8 +1,8 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 import SQLite3
 import ZcashLightClientKit
 @testable import zodl_internal
+@testable import VotingRecovery
 
 extension VotingRecoveryEndToEndTests {
     /// The values the built database is seeded with.
@@ -539,5 +539,3 @@ extension VotingRecoveryEndToEndTests {
 // `SeededGenerator`, `String.stableHash` and `URL.appendingSuffix` are
 // general-purpose and live in zodlTests/TestSupport/, not here: nothing about
 // them is specific to delegation recovery.
-
-#endif

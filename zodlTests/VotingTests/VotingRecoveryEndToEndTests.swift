@@ -1,8 +1,8 @@
-#if RECOVERY_VOTING_ENABLED
 import Testing
 import Foundation
 import SQLite3
 @testable import zodl_internal
+@testable import VotingRecovery
 
 /// End-to-end recovery against a database this test builds itself.
 ///
@@ -59,4 +59,3 @@ import SQLite3
         }
     }
 }
-#endif

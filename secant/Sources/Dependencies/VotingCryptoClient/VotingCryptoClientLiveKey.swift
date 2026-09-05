@@ -1,6 +1,7 @@
 #if VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
+import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -31,6 +32,18 @@ extension VotingCryptoClient: DependencyKey {
             )
             stateSubject.send(dbState)
         }
+
+        // VotingRecovery: the one place the module is handed the app's open
+        // database and logger. Delete with the package.
+        VotingRecovery.configure(
+            logger: { walletLogger },
+            backend: { try await dbActor.backend() },
+            didRestore: { roundId in
+                if let backend = try? await dbActor.backend() {
+                    publishState(backend: backend, roundId: roundId)
+                }
+            }
+        )
 
         return Self(
             stateStream: {
@@ -186,9 +199,6 @@ extension VotingCryptoClient: DependencyKey {
             },
             // swiftlint:disable:next line_length
             buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
-                #if RECOVERY_VOTING_ENABLED
-                @Dependency(\.delegationEscrow) var delegationEscrow
-                #endif
                 let backend = try await dbActor.backend()
                 let inputs: VotingDelegationInputs
                 let actualFvkBytes: [UInt8]
@@ -248,44 +258,17 @@ extension VotingCryptoClient: DependencyKey {
                 let rseedOutput: Data = Data(result.rseedOutput)
                 let actionBytes: Data = Data(result.actionBytes)
 
-                // Escrow the blinding factor before anything else can touch the
-                // round. This is the only moment it exists outside
-                // `voting.sqlite3`: it is sampled from `OsRng` in the Rust core,
-                // never derived from the seed, and the FFI has no setter that
-                // could put it back once `clear_round` cascades `bundles` away.
-                //
-                // A failed escrow write must not abort a delegation the user has
-                // already paid for, so this logs and continues; the guard in
-                // `prepareFreshRound` is the other half of the protection and
-                // does not depend on the escrow succeeding.
-                #if RECOVERY_VOTING_ENABLED
-                do {
-                    try await delegationEscrow.record(
-                        DelegationEscrowEntry(
-                            roundId: roundId,
-                            bundleIndex: bundleIndex,
-                            vanCommRand: vanCommRand,
-                            van: van,
-                            totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value },
-                            // Nil, necessarily: this runs while the PCZT is
-                            // being built, and the hash only exists once
-                            // `submitDelegation` has returned and
-                            // `storeDelegationTxHash` has run. A live capture
-                            // therefore never carries one, so an escrow entry
-                            // written here is not yet a complete capability
-                            // record -- only the carved path can supply it
-                            // today.
-                            delegationTxHash: nil,
-                            source: .liveCapture,
-                            createdAt: Date()
-                        )
-                    )
-                } catch {
-                    LoggerProxy.error(
-                        "Delegation escrow write failed for round \(roundId) bundle \(bundleIndex): \(error)"
-                    )
-                }
-                #endif
+                // VotingRecovery: escrow the blinding factor before anything
+                // else can touch the round. This is the only moment it exists
+                // outside `voting.sqlite3`. A failed write is logged, never
+                // thrown, so it cannot abort a delegation the user paid for.
+                await VotingRecovery.captureLiveDelegation(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    vanCommRand: vanCommRand,
+                    van: van,
+                    totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value }
+                )
 
                 return VotingPcztResult(
                     pcztBytes: pcztBytes,
@@ -498,59 +481,6 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.storeVanPosition(roundId: roundId, bundleIndex: bundleIndex, position: position)
             },
-            vanCommitment: { hotkeyStoredSecret, networkId, roundId, totalNoteValue, vanCommRand in
-                let hotkey = try VotingRustBackend.hotkey(
-                    fromStoredSecret: [UInt8](hotkeyStoredSecret),
-                    networkId: networkId
-                )
-                return try Data(
-                    VotingRustBackend.vanCommitment(
-                        hotkey: hotkey,
-                        networkId: networkId,
-                        roundId: roundId,
-                        totalNoteValue: totalNoteValue,
-                        vanCommRand: [UInt8](vanCommRand)
-                    )
-                )
-            },
-            restoreRecoveredDelegation: { request in
-                let backend = try await dbActor.backend()
-                let roundIdHex = request.roundParams.voteRoundId.hexString
-                // The SDK wants the semantic hotkey, not bare secret bytes; the
-                // address it derives is what every VAN is recomputed from.
-                let hotkey = try VotingRustBackend.hotkey(
-                    fromStoredSecret: [UInt8](request.hotkeyStoredSecret),
-                    networkId: request.networkId
-                )
-                let result = try backend.restoreRecoveredDelegation(
-                    RecoveredDelegationRestoreRequest(
-                        roundId: roundIdHex,
-                        snapshotHeight: request.roundParams.snapshotHeight,
-                        eaPublicKey: [UInt8](request.roundParams.eaPK),
-                        ncRoot: [UInt8](request.roundParams.ncRoot),
-                        nullifierImtRoot: [UInt8](request.roundParams.nullifierIMTRoot),
-                        voteChainId: request.voteChainId,
-                        hotkey: hotkey,
-                        bundles: request.bundles.map {
-                            RecoveredDelegationBundle(
-                                bundleIndex: $0.bundleIndex,
-                                totalNoteValue: $0.totalNoteValue,
-                                vanCommRand: [UInt8]($0.vanCommRand),
-                                van: [UInt8]($0.van),
-                                delegationTxHash: $0.delegationTxHash
-                            )
-                        },
-                        sessionJson: request.sessionJson
-                    )
-                )
-                switch result {
-                case .restored:
-                    publishState(backend: backend, roundId: roundIdHex)
-                    return .restored
-                case .alreadyRestored:
-                    return .alreadyRestored
-                }
-            },
             syncVoteTree: { roundId, nodeUrl in
                 let backend = try await dbActor.backend()
                 return try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
@@ -747,7 +677,7 @@ private actor DatabaseActor {
         // unlink the WAL — and the WAL is the only place a cleared round's
         // original secrets still exist. Once this line has run, the evidence
         // is safe whatever the rest of the flow does.
-        VotingDatabaseSnapshot.capture(databasePath: path)
+        VotingRecovery.preserve(databasePath: path) // VotingRecovery
 
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).

@@ -1,5 +1,5 @@
-#if RECOVERY_VOTING_ENABLED
-import ComposableArchitecture
+import ConcurrencyExtras
+import Dependencies
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -255,4 +255,3 @@ extension DelegationEscrowClient: DependencyKey {
         )
     }
 }
-#endif

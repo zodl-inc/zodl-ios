@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 /// Finds delegation bundles that match a VAN commitment already accepted by
@@ -395,6 +394,5 @@ enum VotingDatabaseRecovery {
     }
 }
 
-// `Data.hexString` is declared once for the voting flavor in
-// `VotingCryptoClientLiveKey.swift` and reused here.
-#endif
+// `Data.hexEncoded` is declared once for the voting flavor in
+// `VotingRecovery.preserve(databasePath:)` and reused here.

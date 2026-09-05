@@ -1,9 +1,9 @@
-#if RECOVERY_VOTING_ENABLED
-import ComposableArchitecture
+import Dependencies
+import DependenciesMacros
 import Foundation
 
 extension DependencyValues {
-    var delegationRecovery: DelegationRecoveryClient {
+    public var delegationRecovery: DelegationRecoveryClient {
         get { self[DelegationRecoveryClient.self] }
         set { self[DelegationRecoveryClient.self] = newValue }
     }
@@ -15,8 +15,8 @@ extension DependencyValues {
 /// because the interesting cases are the partial ones: a bundle with two
 /// candidates was cleared and rebuilt, and a run that read only some of its
 /// sources may have missed the one that mattered.
-struct DelegationRecoveryReport: Equatable, Sendable {
-    enum Outcome: Equatable, Sendable {
+public struct DelegationRecoveryReport: Equatable, Sendable {
+    public enum Outcome: Equatable, Sendable {
         /// Nothing was preserved, so there is nothing to read. Either the
         /// wallet never opened a voting database, or this build took its
         /// snapshot after one had already been checkpointed away.
@@ -35,32 +35,31 @@ struct DelegationRecoveryReport: Equatable, Sendable {
         case cancelled
     }
 
-    var outcome: Outcome
+    public var outcome: Outcome
     /// Copies of the database that were successfully read.
-    var sourcesScanned = 0
+    public var sourcesScanned = 0
     /// Copies left unread because they were over the run's byte budget.
-    var sourcesSkipped = 0
+    public var sourcesSkipped = 0
     /// Distinct rounds represented by the escrowed bundles.
-    var rounds = 0
+    public var rounds = 0
     /// Candidate rows written to the escrow: every generation of every
     /// bundle the decoder admitted.
-    var candidatesEscrowed = 0
+    public var candidatesEscrowed = 0
     /// Distinct bundles with at least one candidate.
-    var bundles = 0
+    public var bundles = 0
 }
 
 /// Carves the preserved copy of `voting.sqlite3` for delegation secrets an
 /// older build replaced, and escrows whatever it finds.
 @DependencyClient
-struct DelegationRecoveryClient {
+public struct DelegationRecoveryClient: Sendable {
     /// Reads only `voting_recovery/`, never the live database, and never
     /// through SQLite: opening a connection checkpoints the write-ahead log
     /// and destroys the frames being read.
     ///
     /// Safe to run repeatedly. The escrow keeps one entry per distinct
     /// candidate, so re-escrowing what an earlier run found changes nothing.
-    var run: @Sendable () async -> DelegationRecoveryReport = {
+    public var run: @Sendable () async -> DelegationRecoveryReport = {
         DelegationRecoveryReport(outcome: .noSnapshot)
     }
 }
-#endif

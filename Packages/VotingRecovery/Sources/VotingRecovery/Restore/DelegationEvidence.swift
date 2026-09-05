@@ -1,4 +1,3 @@
-#if RECOVERY_VOTING_ENABLED
 import Foundation
 
 /// What a targeted scan against the round's on-chain commitments shows.
@@ -39,4 +38,3 @@ enum DelegationEvidence: Equatable, Sendable {
         return anyRawHit ? .commitmentPresentButUndecodable : .nothingOnDevice
     }
 }
-#endif
