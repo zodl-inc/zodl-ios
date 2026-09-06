@@ -1,10 +1,15 @@
+import ComposableArchitecture
+import Foundation
 import Testing
+@testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
 // Several tests drive the shared `TransactionGuardClient.liveValue`, which is backed by a single
 // process-global mutex actor. They must not run concurrently or they would contend on that guard,
 // so the suite is serialized (matching XCTest's previous serial execution).
 @Suite(.serialized) struct TransactionGuardTests {
+    private var endpointA: LightWalletEndpoint { LightWalletEndpoint(address: "endpoint-a.test", port: 9067) }
+
     @Test func tryAcquireFailsWhileHeld() async {
         let guardActor = TransactionGuard()
         try? await guardActor.acquire()
@@ -297,6 +302,7 @@ import Testing
             transactionGuard: client,
             timeout: .seconds(30),
             logPrefix: "[MultiSubmit]",
+            intendedEndpoints: [],
             prove: {
                 await log.record("prove-start")
                 try await Task.sleep(for: .milliseconds(20))
@@ -306,7 +312,8 @@ import Testing
             submit: { _ in
                 await log.record("submit")
                 return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: ["abc"])
-            }
+            },
+            release: { _, _ in await log.record("released") }
         )
 
         #expect(result == SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: ["abc"]))
@@ -330,6 +337,7 @@ import Testing
             transactionGuard: client,
             timeout: .milliseconds(10),
             logPrefix: "[MultiSubmit]",
+            intendedEndpoints: [],
             prove: {
                 await log.record("prove")
                 return []
@@ -337,7 +345,8 @@ import Testing
             submit: { _ in
                 await log.record("submit")
                 return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: [])
-            }
+            },
+            release: { _, _ in await log.record("released") }
         )
 
         #expect(
@@ -360,16 +369,121 @@ import Testing
             transactionGuard: client,
             timeout: .seconds(30),
             logPrefix: "[MultiSubmit]",
+            intendedEndpoints: [],
             prove: { throw TestFailure() },
             submit: { _ in
                 await log.record("submit")
                 return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: [])
-            }
+            },
+            release: { _, _ in await log.record("released") }
         )
 
         #expect(result == nil, "A proving failure must keep propagating to the caller")
         let recorded = await log.values
         #expect(recorded.isEmpty, "A send that never got past proving must not touch the guard; got \(recorded)")
+    }
+
+    // MARK: - Missed broadcast: release to background resubmission
+
+    @Test func busyGuardAfterProvingReleasesTheCreatedTransactionsAndReportsThemPending() async throws {
+        let created = [CreatedTransaction.fixture(0xAB), CreatedTransaction.fixture(0xCD)]
+        let released = LockIsolated<[(txIds: [Data], endpoints: [LightWalletEndpoint])]>([])
+        let submits = LockIsolated(0)
+
+        let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
+            transactionGuard: Self.busyGuardClient(),
+            timeout: .milliseconds(50),
+            logPrefix: "[Test]",
+            intendedEndpoints: [endpointA],
+            prove: { created },
+            submit: { _ in
+                submits.withValue { $0 += 1 }
+                return SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: [])
+            },
+            release: { transactions, endpoints in
+                released.withValue { $0.append((transactions.map(\.txId), endpoints)) }
+            }
+        )
+
+        #expect(submits.value == 0, "A guard that never granted access must not run the broadcast")
+        #expect(released.value.count == 1)
+        #expect(released.value.first?.txIds == created.map(\.txId))
+        #expect(released.value.first?.endpoints == [endpointA])
+        #expect(
+            result == SDKSynchronizerClient.CreateProposedTransactionsResult.grpcFailure(
+                txIds: created.map { $0.txId.toHexStringTxId() },
+                reason: .guardBusy
+            ),
+            "A missed broadcast must report the created transactions as pending, not a plain failure; got \(result)"
+        )
+    }
+
+    @Test func cancellationAfterProvingReleasesTheCreatedTransactions() async throws {
+        // `CreatedTransaction` carries no Sendable guarantee across the module boundary, so it is
+        // constructed fresh inside the unstructured `Task` below rather than captured from an
+        // outer `let` — a value crossing into `Task.init`'s `@Sendable` closure must not alias a
+        // non-Sendable capture. The expected txId (`Data([0xEF])`) mirrors `.fixture(0xEF)`.
+        let released = LockIsolated<[[Data]]>([])
+        let parked = AsyncBox()
+
+        // `acquireWithTimeout` never returns on its own; only cancelling the surrounding Task can
+        // unblock it, via `Task.sleep`'s own cancellation handling.
+        let client = TransactionGuardClient(
+            acquire: {
+                Issue.record("The submission seam must acquire the guard with a timeout, never the unbounded acquire.")
+            },
+            acquireWithTimeout: { _ in
+                await parked.signal()
+                try await Task.sleep(for: .seconds(999))
+            },
+            tryAcquire: { true },
+            release: { }
+        )
+
+        let task = Task {
+            try await SDKSynchronizerClient.createThenSubmitUnderGuard(
+                transactionGuard: client,
+                timeout: .seconds(30),
+                logPrefix: "[Test]",
+                intendedEndpoints: [],
+                prove: { [CreatedTransaction.fixture(0xEF)] },
+                submit: { _ in SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: []) },
+                release: { transactions, _ in released.withValue { $0.append(transactions.map(\.txId)) } }
+            )
+        }
+
+        await parked.wait()
+        task.cancel()
+        _ = try? await task.value
+
+        #expect(
+            released.value == [[Data([0xEF])]],
+            "A send cancelled while parked on the guard must still hand its created transactions to background resubmission"
+        )
+    }
+
+    @Test func emptyProveResultKeepsTheFailureShape() async throws {
+        let releaseCallCount = LockIsolated(0)
+
+        let result = try await SDKSynchronizerClient.createThenSubmitUnderGuard(
+            transactionGuard: Self.busyGuardClient(),
+            timeout: .milliseconds(50),
+            logPrefix: "[Test]",
+            intendedEndpoints: [endpointA],
+            prove: { [] },
+            submit: { _ in SDKSynchronizerClient.CreateProposedTransactionsResult.success(txIds: []) },
+            release: { _, _ in releaseCallCount.withValue { $0 += 1 } }
+        )
+
+        #expect(
+            result == SDKSynchronizerClient.CreateProposedTransactionsResult.failure(
+                txIds: [],
+                code: SDKSynchronizerClient.MultiServerSubmission.guardBusyCode,
+                description: String(localizable: .transactionGuardBusy)
+            ),
+            "With nothing created there is nothing to release, so the definitive failure shape is unchanged; got \(result)"
+        )
+        #expect(releaseCallCount.value == 0, "An empty prove result must never call release")
     }
 
     /// A pass-through client that logs every guard interaction, so a test can assert *when* the
@@ -401,6 +515,17 @@ import Testing
             release: { await guardActor.release() }
         )
     }
+
+    /// A client whose timed acquire always reports the guard as busy without ever taking it —
+    /// matches what a real `TransactionGuard` does once `acquire(timeout:)`'s deadline passes.
+    private static func busyGuardClient() -> TransactionGuardClient {
+        TransactionGuardClient(
+            acquire: { throw TransactionGuardBusyError() },
+            acquireWithTimeout: { _ in throw TransactionGuardBusyError() },
+            tryAcquire: { false },
+            release: { }
+        )
+    }
 }
 
 /// Minimal async one-shot signal for ordering test steps.
@@ -428,4 +553,12 @@ private struct TestFailure: Error {}
 private actor OrderRecorder {
     private(set) var values: [String] = []
     func record(_ value: String) { values.append(value) }
+}
+
+private extension CreatedTransaction {
+    /// A minimal, distinguishable transaction for seam tests: `txId` and `raw` both derive from
+    /// `byte` so a test can tell fixtures apart without caring about real transaction encoding.
+    static func fixture(_ byte: UInt8) -> CreatedTransaction {
+        CreatedTransaction(txId: Data([byte]), raw: Data([byte, byte]), expiryHeight: nil)
+    }
 }
