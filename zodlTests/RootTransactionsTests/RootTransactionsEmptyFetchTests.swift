@@ -36,7 +36,11 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct RootTransactionsEmptyFetchTests {
+// Three minutes, not one -- CI has clocked a healthy run of
+// `emptyFetchMidSyncWithValidListsKeepsTheListAndStillNotifiesBothLists` past the 1-minute budget
+// under load, same rationale as `RootPendingTransactionRefreshTests.swift`/
+// `RootSendCompletionRefreshTests.swift`, which size their own `.timeLimit` the same way.
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootTransactionsEmptyFetchTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {
         WalletAccount(
             Account(
@@ -75,6 +79,11 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
         initialState.$transactions.withLock { $0 = keptTransactions }
+        // The guard now also requires the kept array to be confirmed as belonging to THIS account
+        // (see `transactionsAccountId`'s doc comment, `RootStore.swift`) -- production only ever
+        // reaches this guard with the id already set by a prior `.fetchedTransactions` for the same
+        // account, which this hand-built fixture must mirror explicitly.
+        initialState.transactionsAccountId = account.id
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
         initialState.lastKnownSyncStatus = .syncing(0.3, false)
@@ -97,8 +106,12 @@ import ComposableArchitecture
         #expect(store.state.transactions == keptTransactions, "a spurious empty fetch mid-sync must never blank a non-empty list")
 
         // `transactionsUpdated` reaches each list via a returned `.send` effect, not a synchronous
-        // mutation -- give it a moment to land before reading each list's own derived state.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        // mutation -- wait on the store's own state-change publisher rather than a fixed sleep, so
+        // this resumes the moment the effect actually lands, at whatever speed the machine runs.
+        await waitForRootState(store) {
+            $0.homeState.transactionListState.latestTransactionId == "kept-pending-tx"
+                && $0.transactionsCoordFlowState.transactionsManagerState.searchedTransactionsList == keptTransactions
+        }
         #expect(
             store.state.homeState.transactionListState.latestTransactionId == "kept-pending-tx",
             "Home's transactionsUpdated was not received on the ignored-empty-fetch path"
@@ -195,6 +208,11 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
         initialState.$transactions.withLock { $0 = keptTransactions }
+        // Mirrors the real invariant `.fetchedTransactions` maintains: rows sitting in the shared
+        // array are recorded as belonging to the account that fetched them (`RootStore.swift`'s
+        // `transactionsAccountId` doc comment) -- without this, the failure path's own defensive
+        // guard would find a mismatched id and wrongly clear this test's kept rows.
+        initialState.transactionsAccountId = account.id
         initialState.homeState.transactionListState.isInvalidated = true
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = true
 
@@ -214,8 +232,12 @@ import ComposableArchitecture
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         // The failure's own completion signal reaches both lists via returned `.send` effects --
-        // give them a moment to land.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        // wait on the store's own state-change publisher rather than a fixed sleep, so this resumes
+        // the moment both flags actually clear, at whatever speed the machine runs.
+        await waitForRootState(store) {
+            !$0.homeState.transactionListState.isInvalidated
+                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
 
         #expect(store.state.transactions == keptTransactions, "a failed fetch must never clear the kept list")
         #expect(!store.state.homeState.transactionListState.isInvalidated, "a failed fetch must still clear Home's invalidation")
@@ -322,6 +344,9 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
         initialState.$transactions.withLock { $0 = keptTransactions }
+        // See `transactionsAccountId`'s doc comment (`RootStore.swift`): the guard this test
+        // exercises now also requires the kept rows to be confirmed as this account's own.
+        initialState.transactionsAccountId = account.id
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
         initialState.lastKnownSyncStatus = .syncing(0.3, false)
@@ -339,6 +364,24 @@ import ComposableArchitecture
             store.state.transactions == keptTransactions,
             "an empty on-chain fetch must keep the on-chain rows even with an in-flight swap-to-ZEC synthetic row in play"
         )
+    }
+}
+
+/// Suspends until `condition` holds, resuming on the store's own state-change publisher instead of
+/// a fixed wall-clock wait -- a file-scoped copy of `RootTransactionsAccountSwitchTests.swift`'s
+/// `waitForRootState`, kept private to this file per that file's own established convention of not
+/// sharing test helpers across the suites in this directory. Still no clock of its own: the suite's
+/// `.timeLimit` is the only outer bound, and only a condition that never becomes true reaches it.
+@MainActor
+private func waitForRootState(
+    _ store: StoreOf<Root>,
+    until condition: @escaping @MainActor (Root.State) -> Bool
+) async {
+    if condition(store.state) {
+        return
+    }
+    for await state in store.publisher.values where condition(state) {
+        return
     }
 }
 

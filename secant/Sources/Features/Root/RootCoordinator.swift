@@ -729,6 +729,15 @@ extension Root {
         // actually starting -- parking the newly-selected account's fetch forever.
         state.isTransactionsFetchInFlight = false
         state.isTransactionsFetchDirty = false
+        // MOB-1855: the rows still sitting in the shared `transactions` array belong to the account just
+        // LEFT -- both lists above are now invalidated and show their loading placeholder, so
+        // nothing renderable may remain for a failed fetch to leave on screen as if it were the new
+        // account's history. `transactionsAccountId` drops to `nil` alongside it, so neither the
+        // empty-fetch keep-guard nor the failure path in `RootTransactions.swift` can mistake the
+        // (now empty) array for a confirmed answer about the newly-selected account until ITS OWN
+        // fetch actually lands.
+        state.$transactions.withLock { $0 = [] }
+        state.transactionsAccountId = nil
         return .merge(
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),

@@ -186,6 +186,15 @@ struct Root {
         /// completion, which folds every dispatch coalesced during its run into exactly one
         /// follow-up fetch for whichever account is selected at that point.
         var isTransactionsFetchDirty = false
+        /// Which account the shared `transactions` array currently holds rows for. Set by
+        /// `.fetchedTransactions` (`RootTransactions.swift`) the moment it writes `$transactions`, so
+        /// it always names the account whose fetch actually produced the array's current contents --
+        /// never the account merely selected right now. `nil` after `accountSwitchedEffect`
+        /// (`RootCoordinator.swift`) clears both together on every switch, and stays `nil` until the
+        /// newly-selected account's own fetch lands. Read by the empty-fetch keep-guard and the
+        /// failure path in `RootTransactions.swift` so neither can ever treat a foreign account's
+        /// leftover rows as belonging to the account a fetch just completed (or failed) for.
+        var transactionsAccountId: AccountUUID?
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
         /// The most recent `.syncing` progress value seen via `.synchronizerStateChanged`, kept
         /// solely so that handler can detect a NEW tick's progress advancing past this one and
