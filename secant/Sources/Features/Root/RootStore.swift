@@ -37,7 +37,11 @@ struct Root {
                 now.timeIntervalSince(benchmarkedAt) >= AutoServerSelectionConstants.pendingCandidateTTL
             }
         }
-        
+
+        /// MOB-1853: how many terminal-stall rebuilds (`.syncStalled(gaveUp: true)`) one foreground
+        /// may run -- see `terminalStallRebuildsThisForeground`.
+        static let maxTerminalStallRebuildsPerForeground = 2
+
         var CancelEventId = UUID()
         /// MOB-1853: the `.syncStalled` event channel's own cancel id -- a dedicated `.publisher`
         /// branch in the same `.observeTransactions` `.merge`, kept separate from `CancelEventId`'s
@@ -69,6 +73,11 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        /// MOB-1853: the terminal-stall rebuild effect's own cancel id -- separate from
+        /// `automaticServerRefreshCancelId` (that one only ever covers a benchmark-and-maybe-switch,
+        /// never a rebuild). Cancelled at `.didEnterBackground`, same as every other foreground-only
+        /// mechanism.
+        var terminalStallRebuildCancelId = UUID()
         var staleWalletHealedAlertCancelId = UUID()
         var migrationSyncGateCancelId = UUID()
         /// MOB-1466: the foreground migration TICK LOOP's cancel id — one recurring 30s wake-up,
@@ -154,6 +163,13 @@ struct Root {
         /// status as idle too, since a stalled sync has nothing left for an automatic switch to
         /// interrupt. Reset at `.didEnterBackground`, same as `lastKnownSyncStatus`.
         var isSyncStalledSinceLastProgress = false
+        /// MOB-1853: how many terminal-stall rebuilds (`.syncStalled(gaveUp: true)`) this foreground
+        /// has already run -- see `maxTerminalStallRebuildsPerForeground` and `.syncStalled`'s handler
+        /// (`RootTransactions.swift`). A rebuild tears the synchronizer down and rebuilds it, which is
+        /// disruptive if it happened without bound, so once the budget is spent the SDK's own error
+        /// state is left on screen for the user instead of retrying silently forever. Reset to 0 at
+        /// `.didEnterBackground`, same foreground-scoped shape as `didScheduleStartFailureRetry`.
+        var terminalStallRebuildsThisForeground = 0
         /// MOB-1856: single-flight coalescing latch for `.fetchTransactionsForTheSelectedAccount`.
         /// During catch-up sync this fetch is re-dispatched on every throttled synchronizer event
         /// (`.observeTransactions` -- see `RootTransactions.swift`), and on a long transaction
@@ -436,6 +452,11 @@ struct Root {
         /// an automatic server switch, since attempt 1 is the SDK's own cheap same-server
         /// reconnect and must get its chance first.
         case syncStalled(attempt: Int, gaveUp: Bool)
+        /// MOB-1853: completion of the terminal-stall rebuild effect `.syncStalled` starts when
+        /// recovery gives up -- `started` is `autoServerSelection.rebuildAfterStall()`'s own return,
+        /// true when a pass actually got underway. Logged either way; no further state change, since
+        /// the ordinary synchronizer-state/transaction pipeline reports whatever happens next.
+        case terminalStallRebuildFinished(Bool)
         case fetchTransactionsForTheSelectedAccount
         case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         /// MOB-1855: sent from `.fetchTransactionsForTheSelectedAccount`'s `catch` when

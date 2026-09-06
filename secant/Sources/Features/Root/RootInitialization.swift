@@ -231,6 +231,9 @@ extension Root {
                 // until a fresh `.synchronizerStateChanged` tick reports in next foreground.
                 state.lastKnownSyncStatus = nil
                 state.isSyncStalledSinceLastProgress = false
+                // MOB-1853: the terminal-stall rebuild budget is foreground-scoped, same reasoning
+                // as `isSyncStalledSinceLastProgress` above -- a fresh foreground gets a fresh budget.
+                state.terminalStallRebuildsThisForeground = 0
                 // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
                 // cancellation (store teardown) must never wedge the next foreground's retryStart.
                 state.isRetryStartInFlight = false
@@ -261,7 +264,12 @@ extension Root {
                     // completion regardless, under `switchIfIdle`/`withTimeout(serverSwitchTimeout)`
                     // — cancelling a switch mid-apply is a behaviour change left for a follow-up,
                     // not something this background-teardown path attempts.
-                    .cancel(id: state.automaticServerRefreshCancelId)
+                    .cancel(id: state.automaticServerRefreshCancelId),
+                    // MOB-1853: cancels only an in-flight terminal-stall rebuild's own effect --
+                    // `terminalStallRebuildsThisForeground` was already reset above, and the next
+                    // foreground starts this budget fresh regardless of whether a rebuild was
+                    // actually running here.
+                    .cancel(id: state.terminalStallRebuildCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):

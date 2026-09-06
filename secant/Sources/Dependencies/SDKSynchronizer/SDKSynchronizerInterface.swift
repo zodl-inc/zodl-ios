@@ -302,7 +302,12 @@ struct SDKSynchronizerClient: Sendable {
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
     var switchToEndpoint: @Sendable (LightWalletEndpoint) async throws -> Void
-    
+    /// Rebuilds the engine at `endpoint` (same or different server) and starts a pass regardless
+    /// of prior running state -- the bounded way back to a running sync once the SDK's own stall
+    /// recovery has given up and possibly left no engine handle behind. See
+    /// `AutoServerSelectionClient.rebuildAfterStall`, the one caller.
+    var restartSync: @Sendable (LightWalletEndpoint) async throws -> Void
+
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
     var sendMaxAmount: @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi

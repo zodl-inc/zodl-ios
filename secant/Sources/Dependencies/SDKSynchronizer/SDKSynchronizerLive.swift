@@ -297,6 +297,9 @@ extension SDKSynchronizerClient: DependencyKey {
             switchToEndpoint: { endpoint in
                 try await synchronizer.switchTo(endpoint: endpoint)
             },
+            restartSync: { endpoint in
+                try await synchronizer.restartSync(at: endpoint)
+            },
             proposeTransfer: { accountUUID, recipient, amount, memo in
                 try await synchronizer.proposeTransfer(
                     accountUUID: accountUUID,

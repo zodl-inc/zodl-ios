@@ -7,8 +7,10 @@
 //  `lastKnownSyncStatus` (`RootStore.swift`), `.synchronizerStateChanged` recording it and
 //  clearing a recorded stall (`RootInitialization.swift`), `.didEnterBackground` cancelling an
 //  in-flight refresh and resetting both to their "unknown" state (`RootInitialization.swift`),
-//  and the `.syncStalled` stall hook that only unblocks a switch from the SDK's second recovery
-//  restart onward, or once it gives up outright (`RootTransactions.swift`).
+//  and the `.syncStalled` stall hook's still-unchanged benchmark-only path: the SDK's second
+//  recovery restart unblocks a benchmark-and-maybe-switch, same as before
+//  (`RootTransactions.swift`). A give-up no longer unblocks that switch -- it instead runs a
+//  bounded rebuild, covered separately by `RootTerminalStallRebuildTests.swift`.
 //
 //  Mirrors `RootAutoServerCandidateTests` (`AutoServerSelectionClientTests.swift`) for driving
 //  `Root` via `TestStore` with `exhaustivity = .off`, and `RootIronwoodAnnouncementGateTests`'
@@ -47,14 +49,16 @@ import Testing
     private func makeStore(
         state: Root.State,
         findBestServer: @escaping @Sendable () async -> LightWalletEndpoint? = { nil },
-        applySwitch: @escaping @Sendable (LightWalletEndpoint) async -> Bool = { _ in false }
+        applySwitch: @escaping @Sendable (LightWalletEndpoint) async -> Bool = { _ in false },
+        rebuildAfterStall: @escaping @Sendable () async -> Bool = { false }
     ) -> TestStore<Root.State, Root.Action> {
         let store = TestStore(initialState: state) {
             Root()
         } withDependencies: {
             $0.autoServerSelection = AutoServerSelectionClient(
                 findBestServer: findBestServer,
-                applySwitch: applySwitch
+                applySwitch: applySwitch,
+                rebuildAfterStall: rebuildAfterStall
             )
             $0.sdkSynchronizer = .mocked()
             $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
@@ -191,6 +195,11 @@ import Testing
         }
     }
 
+    // MOB-1853: a give-up no longer sends `.refreshAutomaticServer` -- see
+    // `RootTerminalStallRebuildTests.swift` for what it does instead (a bounded rebuild through
+    // `autoServerSelection.rebuildAfterStall`). This test keeps covering the still-unchanged
+    // benchmark-only path (attempt >= 2, no give-up yet), now also proving the new dependency is
+    // left untouched by it.
     @Test
     func secondAttemptStallOpensTheGateAndSendsARefresh() async {
         await withDependencies {
@@ -198,32 +207,23 @@ import Testing
         } operation: {
             var state = Root.State.initial
             state.lastKnownSyncStatus = .syncing(0.5, false)
-            let store = makeStore(state: state)
+            let rebuildCallCount = LockIsolated(0)
+            let store = makeStore(
+                state: state,
+                rebuildAfterStall: {
+                    rebuildCallCount.withValue { $0 += 1 }
+                    return true
+                }
+            )
 
             await store.send(.syncStalled(attempt: 2, gaveUp: false)) {
                 $0.isSyncStalledSinceLastProgress = true
             }
             await store.receive(\.refreshAutomaticServer)
             await store.finish()
-        }
-    }
 
-    @Test
-    func gaveUpStallOpensTheGateAndSendsARefresh() async {
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            var state = Root.State.initial
-            state.lastKnownSyncStatus = .syncing(0.5, false)
-            let store = makeStore(state: state)
-
-            // Same shape as attempt 2: a give-up unblocks the switch regardless of the attempt
-            // count that reached it.
-            await store.send(.syncStalled(attempt: 3, gaveUp: true)) {
-                $0.isSyncStalledSinceLastProgress = true
-            }
-            await store.receive(\.refreshAutomaticServer)
-            await store.finish()
+            #expect(rebuildCallCount.value == 0, "attempt 2 without a give-up is still only a benchmark")
+            #expect(store.state.terminalStallRebuildsThisForeground == 0)
         }
     }
 

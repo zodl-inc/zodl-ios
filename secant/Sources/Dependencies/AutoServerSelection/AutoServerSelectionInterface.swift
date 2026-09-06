@@ -27,6 +27,14 @@ struct AutoServerSelectionClient {
     /// the new server. Returns true when the switch ran and the new server was persisted.
     /// Never throws; failures are logged.
     var applySwitch: @Sendable (LightWalletEndpoint) async -> Bool = { _ in false }
+    /// The bounded way back to a running sync once the SDK's own stall recovery has given up.
+    /// Picks a fresh benchmark winner (`findBestServer()`) when Automatic mode is on and one
+    /// qualifies, otherwise the currently configured endpoint -- restarting at the current
+    /// endpoint is still useful when recovery gave up with no engine handle left. Runs under the
+    /// transaction guard (`switchIfIdle` + timeout) via `SDKSynchronizerClient.restartSync`, and
+    /// persists the server preference when the endpoint actually changed, same as `applySwitch`.
+    /// Returns whether a pass was actually started; never throws, failures are logged.
+    var rebuildAfterStall: @Sendable () async -> Bool = { false }
 }
 
 enum AutoServerSelectionConstants {
