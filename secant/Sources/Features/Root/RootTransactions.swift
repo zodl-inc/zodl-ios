@@ -251,9 +251,22 @@ extension Root {
                 // Both lists still get `transactionsUpdated` so one that WAS mid-load can clear its
                 // placeholder, and the poller is armed from the KEPT `state.transactions`, never
                 // from this fetch's result, so a still-pending kept row keeps its 30 s reconciler.
+                //
+                // MOB-1855: `state.transactionsAccountId == accountUUID` on top of the pre-existing
+                // conditions -- the array being "kept" here must actually belong to the account THIS
+                // fetch just answered for, or the guard would protect a foreign account's leftover
+                // rows the same way it protects a legitimate stale-empty-during-sync race. In normal
+                // operation `accountSwitchedEffect` already empties `state.transactions` on every
+                // switch, so `!state.transactions.isEmpty` above would already be false for a
+                // just-switched-to account -- this clause is defense in depth for that guarantee, not
+                // the only thing enforcing it.
                 let listsAreInvalidated = state.homeState.transactionListState.isInvalidated
                     || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated
-                if transactions.isEmpty && !state.transactions.isEmpty && !listsAreInvalidated && !isUpToDate(state.lastKnownSyncStatus) {
+                if transactions.isEmpty
+                    && !state.transactions.isEmpty
+                    && !listsAreInvalidated
+                    && !isUpToDate(state.lastKnownSyncStatus)
+                    && state.transactionsAccountId == accountUUID {
                     LoggerProxy.event("[RootTransactions] ignored an empty fetch while sync is not up to date; kept \(state.transactions.count) rows")
                     return .merge(
                         reconciliationPoller(for: state.transactions, state: state),
@@ -294,6 +307,10 @@ extension Root {
                     state.$transactions.withLock {
                         $0 = identifiedArray
                     }
+                    // MOB-1855: this write is the one place the array's contents actually change to
+                    // reflect `accountUUID`'s fetch, so this is where provenance is recorded too --
+                    // see `transactionsAccountId`'s doc comment (`RootStore.swift`).
+                    state.transactionsAccountId = accountUUID
                     return .merge(
                         pendingTransactionsPoller,
                         .send(.home(.smartBanner(.evaluatePriority6))),
@@ -346,6 +363,21 @@ extension Root {
                 // wrong rows are still on screen.
                 guard accountUUID == state.selectedWalletAccount?.id else {
                     return coalescedFollowUp
+                }
+                // MOB-1855: a failure carries no rows of its own to apply, so it must never be the path
+                // that VALIDATES rows left behind by a different account. `accountSwitchedEffect`
+                // (`RootCoordinator.swift`) already empties `state.transactions` on every switch, so
+                // reaching this with a non-empty array whose `transactionsAccountId` disagrees with
+                // `accountUUID` should not occur -- but "should not occur" is exactly the case a
+                // failure path must still cover defensively, since there is no fresh fetch result
+                // here to overwrite the wrong rows with. Log it: if this ever fires, that gap is
+                // worth investigating on its own.
+                if state.transactionsAccountId != accountUUID, !state.transactions.isEmpty {
+                    let clearedRowCount = state.transactions.count
+                    state.$transactions.withLock { $0 = [] }
+                    LoggerProxy.event(
+                        "[RootTransactions] transactionsFetchFailed found \(clearedRowCount) foreign-account rows still in state; cleared them"
+                    )
                 }
                 // The list keeps its previous contents (nothing to overwrite here at all), but
                 // either list may already be showing its loading placeholder -- clear it exactly
