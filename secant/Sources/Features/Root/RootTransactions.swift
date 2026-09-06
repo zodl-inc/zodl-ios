@@ -378,6 +378,11 @@ extension Root {
                     LoggerProxy.event(
                         "[RootTransactions] transactionsFetchFailed found \(clearedRowCount) foreign-account rows still in state; cleared them"
                     )
+                    // MOB-1862: derived from those same foreign rows (`.fetchedTransactions`, above)
+                    // and read straight into the balance breakdown's "Pending" row, so it must leave
+                    // together with them instead of continuing to describe an account that is no
+                    // longer on screen.
+                    state.$unminedMigrationPendingValue.withLock { $0 = .zero }
                 }
                 // The list keeps its previous contents (nothing to overwrite here at all), but
                 // either list may already be showing its loading placeholder -- clear it exactly

@@ -206,7 +206,7 @@ import ComposableArchitecture
             }
             store.exhaustivity = .off
 
-            await store.send(.balanceUpdated(pendingSelfShieldBalance()))
+            await store.send(.balanceUpdated(pendingSelfShieldBalance(), testWalletAccount.id, 0))
 
             #expect(store.state.shieldedBalance == .zero)
             #expect(store.state.transparentBalance == .zero)
@@ -239,7 +239,7 @@ import ComposableArchitecture
             #expect(!store.state.hasConcreteBalance)
             #expect(store.state.isProcessingZeroAvailableBalance)
 
-            await store.send(.balanceUpdated(pendingSelfShieldBalance()))
+            await store.send(.balanceUpdated(pendingSelfShieldBalance(), testWalletAccount.id, 0))
             #expect(store.state.hasConcreteBalance)
             #expect(!store.state.isProcessingZeroAvailableBalance)
         }
@@ -267,7 +267,7 @@ import ComposableArchitecture
             store.exhaustivity = .off
 
             await store.send(.synchronizerStateChanged(syncing.redacted))
-            await store.send(.balanceUpdated(pendingSelfShieldBalance()))
+            await store.send(.balanceUpdated(pendingSelfShieldBalance(), testWalletAccount.id, 0))
             #expect(store.state.hasConcreteBalance)
             #expect(store.state.spendability == .something)
 

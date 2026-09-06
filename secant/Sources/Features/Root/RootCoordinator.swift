@@ -738,6 +738,11 @@ extension Root {
         // fetch actually lands.
         state.$transactions.withLock { $0 = [] }
         state.transactionsAccountId = nil
+        // MOB-1862: derived from those same rows (`RootTransactions.swift`'s `.fetchedTransactions`
+        // handler) and read straight into the balance breakdown's "Pending" row, so it must not
+        // outlive the transactions it was computed from -- or the breakdown could transiently
+        // subtract the account just left's figure from the newly-selected account's pending lanes.
+        state.$unminedMigrationPendingValue.withLock { $0 = .zero }
         return .merge(
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),
