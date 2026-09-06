@@ -81,7 +81,32 @@ extension Root {
                 // a second restart, or recovery giving up outright, unblocks the switch.
                 guard gaveUp || attempt >= 2 else { return .none }
                 state.isSyncStalledSinceLastProgress = true
-                return .send(.refreshAutomaticServer)
+                guard gaveUp else { return .send(.refreshAutomaticServer) }
+                // Terminal: the SDK's own recovery has given up, and it may have left no engine
+                // handle behind. A benchmark-and-maybe-switch alone cannot bring sync back here --
+                // manual mode has no candidate to offer, and even Automatic mode's ordinary switch is
+                // a no-op once the winning candidate is the server already configured. Rebuild at the
+                // best available endpoint instead (the current one included), at most
+                // `maxTerminalStallRebuildsPerForeground` times per foreground; past that, the SDK's
+                // own error state is left on screen rather than retrying silently forever.
+                guard state.terminalStallRebuildsThisForeground < Root.State.maxTerminalStallRebuildsPerForeground else {
+                    LoggerProxy.event("[AutoServerSelection] Terminal stall: rebuild budget exhausted for this foreground")
+                    return .none
+                }
+                guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
+                state.terminalStallRebuildsThisForeground += 1
+                // A candidate parked earlier this foreground is stale now -- rebuildAfterStall
+                // computes its own fresh one, so drop it before it can replay through applySwitch.
+                state.pendingServerCandidate = nil
+                return .run { send in
+                    let started = await autoServerSelection.rebuildAfterStall()
+                    await send(.terminalStallRebuildFinished(started))
+                }
+                .cancellable(id: state.terminalStallRebuildCancelId, cancelInFlight: true)
+
+            case .terminalStallRebuildFinished(let started):
+                LoggerProxy.event("[AutoServerSelection] Terminal stall rebuild \(started ? "started a pass" : "did not start a pass")")
+                return .none
 
             case .fetchTransactionsForTheSelectedAccount:
                 guard let accountUUID = state.selectedWalletAccount?.id else {

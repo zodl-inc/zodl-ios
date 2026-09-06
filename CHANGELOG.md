@@ -22,7 +22,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.
 - [MOB-1856] The app stays responsive while it catches up on a long transaction history.
 - [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync.
-- [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself.
+- [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself. When the wallet's own reconnection attempts give up, the app now rebuilds the connection (to a better server when one is available, otherwise the current one) instead of waiting; after two rebuilds in one session it shows the error state.
 - [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
 

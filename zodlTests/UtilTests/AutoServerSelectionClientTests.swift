@@ -196,7 +196,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { nil })
             }
@@ -239,7 +240,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(
                     getLocalAccountBalances: {
@@ -290,7 +292,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { [:] })
                 $0.date.now = { benchmarkedAt }
