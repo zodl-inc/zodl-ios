@@ -20,6 +20,11 @@ struct Balances {
         var changePending: Zatoshi
         /// The account the published balance was read for — see `hasConcreteBalance`.
         var concreteBalanceAccountId: AccountUUID?
+        /// Bumped every time `.updateBalancesOnAppear` starts a new request, and carried on every
+        /// `.updateBalance` that request produces. A response whose generation no longer matches
+        /// is from a superseded request — answering for the right account is not enough on its
+        /// own, since two requests for the SAME account can still resolve out of order.
+        var balanceRequestGeneration = 0
         var isShielding: Bool
         /// The SDK is withholding the spendable value until it confirms a fresh chain tip. Not a
         /// balance: it says the number is not knowable yet, which a zero balance never can.
@@ -97,6 +102,10 @@ struct Balances {
             isSpendableMasked || (isSyncInProgress && !hasConcreteBalance)
         }
 
+        /// The breakdown shows the last unmasked spendable amount while the SDK is still masking
+        /// the value; this flag drives the row's progress indicator and the explanatory header.
+        var isSpendableValueUpdating: Bool { isSpendableMasked }
+
         init(
             autoShieldingThreshold: Zatoshi,
             changePending: Zatoshi,
@@ -124,7 +133,7 @@ struct Balances {
         case shieldFundsTapped
         case shieldingProcessorStateChanged(ShieldingProcessorClient.State)
         case synchronizerStateChanged(RedactableSynchronizerState)
-        case updateBalance(AccountBalance?)
+        case updateBalance(AccountBalance?, AccountUUID?, Int)
         case updateBalances([AccountUUID: AccountBalance])
         case updateBalancesOnAppear
     }
@@ -201,20 +210,23 @@ struct Balances {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
+                state.balanceRequestGeneration += 1
+                let generation = state.balanceRequestGeneration
+                let accountId = account.id
                 // Same read order as the home screen's balances, so the breakdown never
                 // contradicts the figure the user tapped to open it. The unmasked local snapshot
                 // comes first: the SDK's visible balances can be spendable-masked until the
                 // server reports a fresh tip, and a mask must not be shown as a real zero.
-                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id]
+                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId]
                 return .run { send in
                     if let cachedBalance {
-                        await send(.updateBalance(cachedBalance))
+                        await send(.updateBalance(cachedBalance, accountId, generation))
                     }
 
                     if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
-                       let freshBalance = localBalances[account.id] {
+                       let freshBalance = localBalances[accountId] {
                         if freshBalance != cachedBalance {
-                            await send(.updateBalance(freshBalance))
+                            await send(.updateBalance(freshBalance, accountId, generation))
                         }
                         return
                     }
@@ -222,12 +234,12 @@ struct Balances {
                     // Do not let a masked visible balance replace a concrete local snapshot.
                     // Use the established API only when no local value is available.
                     guard cachedBalance == nil else { return }
-                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
-                        await send(.updateBalance(fallbackBalance))
-                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.updateBalance(fallbackBalance))
-                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        await send(.updateBalance(fallbackBalance))
+                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId] {
+                        await send(.updateBalance(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[accountId] {
+                        await send(.updateBalance(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[accountId] {
+                        await send(.updateBalance(fallbackBalance, accountId, generation))
                     }
                 }
 
@@ -267,13 +279,19 @@ struct Balances {
                 guard let accountBalance = accountsBalances[account.id] else {
                     return .none
                 }
-                return .send(.updateBalance(accountBalance))
+                return .send(.updateBalance(accountBalance, account.id, state.balanceRequestGeneration))
 
-            case .updateBalance(let accountBalance):
+            case .updateBalance(let accountBalance, let accountId, let generation):
+                // Dropped rather than applied when either no longer holds: the account it was
+                // read for (or, for a nil result, was looked up for) may no longer be selected, or
+                // a later `.updateBalancesOnAppear` dispatch may already have superseded the
+                // request this answers for.
+                guard accountId == state.selectedWalletAccount?.id, generation == state.balanceRequestGeneration else {
+                    LoggerProxy.event("[Balances] dropped a balance for a previous account or request")
+                    return .none
+                }
                 if accountBalance != nil {
-                    // Every path that reaches here with a value looked it up by the account
-                    // selected right now, so that is the account this figure answers for.
-                    state.concreteBalanceAccountId = state.selectedWalletAccount?.id
+                    state.concreteBalanceAccountId = accountId
                 }
 
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future

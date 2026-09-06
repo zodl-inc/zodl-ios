@@ -117,6 +117,47 @@ import ComposableArchitecture
         #expect(store.state.selectedWalletAccount == accountB)
     }
 
+    /// The defensive foreign-rows branch above clears `state.transactions`, but
+    /// `unminedMigrationPendingValue` (`RootStore.swift`) is derived from those same rows
+    /// (`.fetchedTransactions`, above) and read straight into the balance breakdown's "Pending"
+    /// row -- so it must be cleared alongside them, not left reading the account just left's
+    /// figure until the newly-selected account's own fetch eventually corrects it as a side
+    /// effect. Reaches the branch with a hand-built fixture rather than the real switch action --
+    /// `accountSwitchedEffect` (`RootCoordinator.swift`) already empties `transactions` on every
+    /// switch, so this defensive branch is only reachable at all with a fixture that deliberately
+    /// disagrees with that invariant, exactly as the surrounding code comment describes.
+    @Test func transactionsFetchFailedClearsUnminedMigrationPendingValueWithForeignRows() async {
+        let accountA = Self.walletAccount(idByte: 128)
+        let accountB = Self.walletAccount(idByte: 129)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = accountB }
+        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
+        initialState.$transactions.withLock { $0 = aRows }
+        initialState.transactionsAccountId = accountA.id
+        let previousUnminedMigrationPendingValue = initialState.unminedMigrationPendingValue
+        initialState.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(12_345) }
+        defer { initialState.$unminedMigrationPendingValue.withLock { $0 = previousUnminedMigrationPendingValue } }
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        // `Store.send` (unlike `TestStore.send`) runs the reducer's synchronous body immediately,
+        // so both assertions below hold as soon as this call returns, with no need to await
+        // whatever effects it also spawns.
+        store.send(.transactionsFetchFailed(accountUUID: accountB.id))
+
+        #expect(store.state.transactions.isEmpty, "the foreign rows must still be cleared")
+        #expect(
+            store.state.unminedMigrationPendingValue == .zero,
+            "the pending-migration figure derived from those same foreign rows must not outlive them"
+        )
+    }
+
     // MARK: - (2) An empty result for the NEW account while syncing must leave it empty, not resurrect the old rows
 
     /// The non-failure sibling of the test above: B's fetch does not throw, it legitimately answers

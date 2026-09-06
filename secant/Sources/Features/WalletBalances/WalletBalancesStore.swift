@@ -19,6 +19,11 @@ struct WalletBalances {
         var CancelMigrationSnapshotId = UUID()
         /// The account the published balance was read for — see `hasConcreteBalance`.
         var concreteBalanceAccountId: AccountUUID?
+        /// Bumped every time `.updateBalances` starts a new request, and carried on every
+        /// `.balanceUpdated` that request produces. A response whose generation no longer matches
+        /// is from a superseded request — answering for the right account is not enough on its
+        /// own, since two requests for the SAME account can still resolve out of order.
+        var balanceRequestGeneration = 0
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var fiatCurrencyResult: FiatCurrencyResult?
         var isAvailableBalanceTappable = true
@@ -111,7 +116,7 @@ struct WalletBalances {
     enum Action: Equatable {
         case availableBalanceTapped
         case balanceTapped
-        case balanceUpdated(AccountBalance)
+        case balanceUpdated(AccountBalance, AccountUUID, Int)
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
         case onAppear
@@ -251,18 +256,26 @@ struct WalletBalances {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
+                // The selection may have just changed; `hasConcreteBalance` already answers for
+                // the new account, so the stored spendability must follow before any balance
+                // arrives — otherwise it would go on repeating whatever the PREVIOUS account's
+                // answer was for however long this request takes to resolve.
+                state.spendability = spendability(for: state)
+                state.balanceRequestGeneration += 1
+                let generation = state.balanceRequestGeneration
+                let accountId = account.id
                 // Use the unmasked local snapshot for display continuity. The SDK's visible
                 // balances can be spendable-masked until the new server reports a fresh tip.
-                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id]
+                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId]
                 return .run { send in
                     if let cachedBalance {
-                        await send(.balanceUpdated(cachedBalance))
+                        await send(.balanceUpdated(cachedBalance, accountId, generation))
                     }
 
                     if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
-                       let freshBalance = localBalances[account.id] {
+                       let freshBalance = localBalances[accountId] {
                         if freshBalance != cachedBalance {
-                            await send(.balanceUpdated(freshBalance))
+                            await send(.balanceUpdated(freshBalance, accountId, generation))
                         }
                         return
                     }
@@ -270,19 +283,24 @@ struct WalletBalances {
                     // Do not let a masked visible balance replace a concrete local snapshot.
                     // Use the established API only when no local value is available.
                     guard cachedBalance == nil else { return }
-                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[account.id] {
-                        await send(.balanceUpdated(fallbackBalance))
-                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.balanceUpdated(fallbackBalance))
-                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        await send(.balanceUpdated(fallbackBalance))
+                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
                     }
                 }
-                
-            case .balanceUpdated(let accountBalance):
-                // Every path that reaches here looked the balance up by the account selected right
-                // now, so that is the account this figure answers for.
-                state.concreteBalanceAccountId = state.selectedWalletAccount?.id
+
+            case .balanceUpdated(let accountBalance, let accountId, let generation):
+                // Dropped rather than applied when either no longer holds: the account it was
+                // read for may no longer be selected, or a later `.updateBalances` dispatch may
+                // already have superseded the request this answers for.
+                guard accountId == state.selectedWalletAccount?.id, generation == state.balanceRequestGeneration else {
+                    LoggerProxy.event("[WalletBalances] dropped a balance for a previous account or request")
+                    return .none
+                }
+                state.concreteBalanceAccountId = accountId
 
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
                 // shielded pool) instead of hand-summing individual pools.
@@ -332,7 +350,7 @@ struct WalletBalances {
                 guard let accountBalance = latestState.data.localAccountsBalances[account.id] else {
                     return .none
                 }
-                return .send(.balanceUpdated(accountBalance))
+                return .send(.balanceUpdated(accountBalance, account.id, state.balanceRequestGeneration))
             }
         }
     }
