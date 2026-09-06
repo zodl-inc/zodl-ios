@@ -180,9 +180,30 @@ struct Root {
         /// has already run -- see `maxTerminalStallRebuildsPerForeground` and `.syncStalled`'s handler
         /// (`RootTransactions.swift`). A rebuild tears the synchronizer down and rebuilds it, which is
         /// disruptive if it happened without bound, so once the budget is spent the SDK's own error
-        /// state is left on screen for the user instead of retrying silently forever. Reset to 0 at
-        /// `.didEnterBackground`, same foreground-scoped shape as `didScheduleStartFailureRetry`.
+        /// state is left on screen for the user instead of retrying silently forever. Reset to 0 only
+        /// when the app enters the background (`.didEnterBackground`) -- unlike
+        /// `didScheduleStartFailureRetry`, which ALSO resets on a fresh foreground
+        /// (`.willEnterForeground`), this budget does not: an inactive-without-background cycle keeps
+        /// whatever count this foreground had already spent.
         var terminalStallRebuildsThisForeground = 0
+        /// MOB-1853: true from the moment a terminal-stall rebuild effect is dispatched (where
+        /// `terminalStallRebuildsThisForeground` increments, above) until it completes
+        /// (`.terminalStallRebuildFinished`). Covers exactly the window in which a benchmark
+        /// dispatched by an EARLIER `.refreshAutomaticServer` (attempt 2, before the give-up) can
+        /// still deliver its own `.autoServerCandidateReady` -- cancelling that benchmark's own
+        /// effect (`automaticServerRefreshCancelId`, in the same `.syncStalled` handler) cannot
+        /// guarantee its underlying network call actually stops, since Swift's task cancellation is
+        /// cooperative. Without this flag, `.autoServerCandidateReady` would see
+        /// `isSynchronizerIdleForSwitch` already true (because of `isSyncStalledSinceLastProgress`)
+        /// and run `applySwitch` on top of the rebuild the give-up just started -- a second teardown
+        /// outside the two-per-foreground budget. `.autoServerCandidateReady` checks this flag first
+        /// and DROPS a candidate that arrives while it is set, rather than stashing it as
+        /// `pendingServerCandidate`: `rebuildAfterStall` computes its own fresh candidate
+        /// independently, so the benchmark's stale one must never replay once the window closes.
+        /// Also cleared at `.didEnterBackground`, same as `terminalStallRebuildsThisForeground`, so a
+        /// completion dropped by that boundary's cancellation can never wedge the next foreground's
+        /// gate shut.
+        var isTerminalStallRebuildInFlight = false
         /// MOB-1856: single-flight coalescing latch for `.fetchTransactionsForTheSelectedAccount`.
         /// During catch-up sync this fetch is re-dispatched on every throttled synchronizer event
         /// (`.observeTransactions` -- see `RootTransactions.swift`), and on a long transaction
@@ -763,6 +784,17 @@ struct Root {
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
 
             case .autoServerCandidateReady(let candidate, let benchmarkedAt):
+                // MOB-1853: checked BEFORE `canApplyAutoServerSwitch` -- during a terminal-stall
+                // rebuild, `isSynchronizerIdleForSwitch` reads true (because of
+                // `isSyncStalledSinceLastProgress`), which would otherwise let a benchmark dispatched
+                // by an EARLIER `.refreshAutomaticServer` (attempt 2, before the give-up) apply on top
+                // of the rebuild the give-up just started -- a second teardown outside the
+                // two-per-foreground budget. Dropped, not stashed: `rebuildAfterStall` computes its
+                // own fresh candidate, so this one is already stale by the time the rebuild finishes.
+                guard !state.isTerminalStallRebuildInFlight else {
+                    LoggerProxy.event("[AutoServerSelection] Candidate dropped: terminal stall rebuild in flight")
+                    return .none
+                }
                 guard state.canApplyAutoServerSwitch else {
                     state.pendingServerCandidate = State.PendingServerCandidate(
                         endpoint: candidate,

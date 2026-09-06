@@ -67,14 +67,18 @@ extension AutoServerSelectionClient: DependencyKey {
             let candidate = await AutoServerSelectionClient.bestAutomaticCandidate() ?? current
 
             do {
-                let started = try await transactionGuard.switchIfIdle {
+                // MOB-1853: `switchWaiting`, not `switchIfIdle` -- a give-up already spent one of a
+                // small per-foreground rebuild budget on this attempt (see
+                // `Root.State.maxTerminalStallRebuildsPerForeground`), and the SDK only emits
+                // `gaveUp: true` once per handle, so a rebuild skipped outright just because a
+                // broadcast happens to hold the guard would waste that budget credit for nothing --
+                // it is never retried. Waiting for the broadcast to clear, then winning -- the same
+                // primitive the manual Server Setup save uses -- means the rebuild still happens
+                // instead of being silently dropped.
+                try await transactionGuard.switchWaiting {
                     try await withTimeout(serverSwitchTimeout) {
                         try await sdkSynchronizer.restartSync(candidate)
                     }
-                }
-                guard started else {
-                    LoggerProxy.event("[AutoServerSelection] Terminal stall rebuild skipped: transaction guard busy")
-                    return false
                 }
 
                 if candidate.host != current.host || candidate.port != current.port {

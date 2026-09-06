@@ -16,6 +16,21 @@
 //  still-unchanged benchmark-only path for `attempt >= 2, gaveUp: false`, plus a regression proving
 //  `rebuildAfterStall` stays untouched by it).
 //
+//  Also covers `Root.State.isTerminalStallRebuildInFlight`: a benchmark dispatched by an earlier
+//  `.refreshAutomaticServer` (attempt 2, before the give-up) can still be running when a later
+//  give-up starts the rebuild. The terminal branch cancels that benchmark's own effect
+//  (`automaticServerRefreshCancelId`), which is normally enough on its own -- TCA's `Send` already
+//  refuses to deliver an action once its effect's Task is cancelled (`Effect.swift`'s
+//  `Send.callAsFunction`) -- but leaves a residual window a genuine data race between two
+//  concurrently-running effects could still hit (the cancellation flag and the delivery are not one
+//  atomic step). `isTerminalStallRebuildInFlight` is the belt-and-suspenders for that window: the
+//  test below drives it directly, by sending `.autoServerCandidateReady` while a rebuild is in
+//  flight, rather than by racing a real cancelled effect -- a deterministically SEQUENCED test can
+//  never observe that race (the cancel always happens-before the delivery attempt, so `Send` always
+//  wins), only a genuinely concurrent one could, and that is not this framework's job to reproduce.
+//  Placed here rather than in `RootAutoServerIdleGateTests.swift` since it is a property of the
+//  REBUILD's own in-flight window, the same thing every other test in this file drives.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -207,6 +222,104 @@ import Testing
             await store.finish()
 
             #expect(applyCallCount.value == 0, "a candidate parked before the give-up is stale -- rebuildAfterStall already computed a fresh one")
+            #expect(store.state.pendingServerCandidate == nil)
+        }
+    }
+
+    // MARK: - A candidate arriving while a terminal rebuild is in flight must not apply
+
+    /// Regression: attempt 2 (no give-up yet) dispatches `.refreshAutomaticServer`, whose benchmark
+    /// can still be running when attempt 3 gives up and starts the terminal rebuild. The terminal
+    /// branch cancels that benchmark's own effect, which TCA's `Send` normally makes airtight on its
+    /// own -- but only against a happens-before-ordered cancel, never against a genuine data race
+    /// between two concurrently-running effects (see the file header). `isTerminalStallRebuildInFlight`
+    /// is the belt-and-suspenders for that residual window, so this test drives the arrival directly
+    /// -- `.autoServerCandidateReady` while the rebuild is still in flight -- rather than via a real
+    /// cancelled effect, which a deterministic test could never make land anyway. The handler must
+    /// drop it, not stash it: `rebuildAfterStall` computes its own fresh candidate independently, so a
+    /// stashed one would only replay a stale answer once the window closes.
+    @Test
+    func candidateArrivingWhileATerminalRebuildIsInFlightIsDroppedNotApplied() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let rebuildGate = ResumableGate()
+            let applyCallCount = LockIsolated(0)
+            let rebuildCallCount = LockIsolated(0)
+            let store = makeStore(
+                state: stalledState(),
+                applySwitch: { _ in
+                    applyCallCount.withValue { $0 += 1 }
+                    return true
+                },
+                rebuildAfterStall: {
+                    // Parked on a gate so this test controls exactly when the rebuild's own in-flight
+                    // window closes.
+                    await rebuildGate.wait()
+                    rebuildCallCount.withValue { $0 += 1 }
+                    return true
+                }
+            )
+
+            await store.send(.syncStalled(attempt: 3, gaveUp: true)) {
+                $0.isSyncStalledSinceLastProgress = true
+                $0.terminalStallRebuildsThisForeground = 1
+                $0.isTerminalStallRebuildInFlight = true
+            }
+
+            // A candidate arrives -- e.g. the stale benchmark from the scenario above -- while the
+            // rebuild still owns the window.
+            let candidate = endpoint("na.zec.rocks")
+            await store.send(.autoServerCandidateReady(candidate, Date(timeIntervalSince1970: 1_000_000)))
+
+            #expect(applyCallCount.value == 0, "a candidate arriving while a terminal rebuild is in flight must never apply")
+            #expect(store.state.pendingServerCandidate == nil, "dropped, not stashed -- rebuildAfterStall computes its own fresh candidate")
+
+            rebuildGate.open()
+            await store.receive(\.terminalStallRebuildFinished) {
+                $0.isTerminalStallRebuildInFlight = false
+            }
+            await store.finish()
+
+            #expect(rebuildCallCount.value == 1)
+        }
+    }
+
+    // MARK: - Once the rebuild's own window closes, a fresh candidate applies normally again
+
+    /// The gate `isTerminalStallRebuildInFlight` closes is scoped to the rebuild's own in-flight
+    /// window -- once `.terminalStallRebuildFinished` clears it, a candidate arriving afterward must
+    /// be treated exactly like any other, not left permanently shut by a rebuild that has long since
+    /// finished.
+    @Test
+    func freshCandidateAppliesNormallyOnceTheRebuildHasFinished() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let applyCallCount = LockIsolated(0)
+            let store = makeStore(
+                state: stalledState(),
+                applySwitch: { _ in
+                    applyCallCount.withValue { $0 += 1 }
+                    return true
+                },
+                rebuildAfterStall: { true }
+            )
+
+            await store.send(.syncStalled(attempt: 3, gaveUp: true)) {
+                $0.isSyncStalledSinceLastProgress = true
+                $0.terminalStallRebuildsThisForeground = 1
+                $0.isTerminalStallRebuildInFlight = true
+            }
+            await store.receive(\.terminalStallRebuildFinished) {
+                $0.isTerminalStallRebuildInFlight = false
+            }
+
+            let candidate = endpoint("na.zec.rocks")
+            await store.send(.autoServerCandidateReady(candidate, Date(timeIntervalSince1970: 1_000_000)))
+            await store.finish()
+
+            #expect(applyCallCount.value == 1, "the gate must reopen once the rebuild that closed it has finished")
             #expect(store.state.pendingServerCandidate == nil)
         }
     }

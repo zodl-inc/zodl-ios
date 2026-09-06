@@ -51,45 +51,55 @@ import ComposableArchitecture
     /// figure must already read zero from `accountSwitchedEffect`'s own synchronous reset, not
     /// however long it takes B's fetch to complete and correct it as a side effect.
     @Test func accountSwitchResetsUnminedMigrationPendingValueBeforeTheNewFetchLands() async {
-        let accountA = Self.walletAccount(idByte: 140)
-        let accountB = Self.walletAccount(idByte: 141)
-        let gate = ResumableGate()
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- `.serialized` only orders tests within THIS suite, and without this
+        // pin this suite's seeded `Zatoshi(12_345)` on the shared process-global default storage
+        // could interleave with `RootTransactionsAccountProvenanceTests.swift`'s own
+        // `.unminedMigrationPendingValue` writes, since Swift Testing runs different suites'
+        // tests concurrently.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 140)
+            let accountB = Self.walletAccount(idByte: 141)
+            let gate = ResumableGate()
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = accountA }
-        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
-        initialState.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(12_345) }
-        initialState.homeState.transactionListState.isInvalidated = false
-        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(12_345) }
+            initialState.homeState.transactionListState.isInvalidated = false
+            initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { _ in
-                await gate.wait()
-                return []
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getAllTransactions = { _ in
+                    await gate.wait()
+                    return []
+                }
             }
+
+            #expect(store.state.unminedMigrationPendingValue == Zatoshi(12_345), "setup must land A's non-zero figure before the switch")
+
+            // `Store.send` (unlike `TestStore.send`) runs the reducer's synchronous body immediately
+            // and returns once any effects it starts are merely spawned -- so by the time this call
+            // returns, `accountSwitchedEffect`'s own state mutations have already applied, while B's
+            // gated fetch has not.
+            let switchTask = store.send(.home(.walletAccountTapped(accountB)))
+
+            #expect(
+                store.state.unminedMigrationPendingValue == .zero,
+                "the previous account's figure must not survive an account switch, even before B's own fetch lands"
+            )
+
+            gate.open()
+            await switchTask.finish()
+
+            #expect(store.state.unminedMigrationPendingValue == .zero)
+            #expect(store.state.selectedWalletAccount == accountB)
         }
-
-        #expect(store.state.unminedMigrationPendingValue == Zatoshi(12_345), "setup must land A's non-zero figure before the switch")
-
-        // `Store.send` (unlike `TestStore.send`) runs the reducer's synchronous body immediately
-        // and returns once any effects it starts are merely spawned -- so by the time this call
-        // returns, `accountSwitchedEffect`'s own state mutations have already applied, while B's
-        // gated fetch has not.
-        let switchTask = store.send(.home(.walletAccountTapped(accountB)))
-
-        #expect(
-            store.state.unminedMigrationPendingValue == .zero,
-            "the previous account's figure must not survive an account switch, even before B's own fetch lands"
-        )
-
-        gate.open()
-        await switchTask.finish()
-
-        #expect(store.state.unminedMigrationPendingValue == .zero)
-        #expect(store.state.selectedWalletAccount == accountB)
     }
 }
 

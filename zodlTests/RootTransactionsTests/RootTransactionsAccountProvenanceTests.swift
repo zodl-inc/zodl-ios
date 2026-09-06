@@ -33,8 +33,12 @@
 //
 //  `.serialized`: constructing/driving `Root.State` touches the process-global
 //  `@Shared(.inMemory(.selectedWalletAccount))` / `.inMemory(.transactions)` /
-//  `.inMemory(.walletAccounts)` keys, same precedent as every other Root-level suite in this
-//  directory.
+//  `.inMemory(.walletAccounts)` / `.inMemory(.unminedMigrationPendingValue)` keys, same precedent
+//  as every other Root-level suite in this directory. `.serialized` alone only orders tests WITHIN
+//  this suite, though -- every test additionally pins a fresh `InMemoryStorage()` via
+//  `withDependencies` (state and store built INSIDE that scope), since otherwise this suite could
+//  still interleave with `RootAccountSwitchMigrationPendingResetTests.swift`, which seeds the same
+//  `.unminedMigrationPendingValue` slot on the shared process-global default storage.
 //
 
 import Foundation
@@ -72,49 +76,55 @@ import ComposableArchitecture
     /// `state.transactions`, which was still A's rows because nothing had cleared them on the
     /// switch. Both lists then cleared their placeholder over A's stale history.
     @Test func failedFetchForTheNewAccountNeverRevealsThePreviousAccountsRows() async {
-        let accountA = Self.walletAccount(idByte: 120)
-        let accountB = Self.walletAccount(idByte: 121)
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- see the file header for why.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 120)
+            let accountB = Self.walletAccount(idByte: 121)
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = accountA }
-        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
-        initialState.homeState.transactionListState.isInvalidated = false
-        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.homeState.transactionListState.isInvalidated = false
+            initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
-                if accountUUID == accountB.id {
-                    throw FetchStubError()
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getAllTransactions = { accountUUID in
+                    if accountUUID == accountB.id {
+                        throw FetchStubError()
+                    }
+                    return []
                 }
-                return []
             }
+
+            // Seed A's rows via a REAL `.fetchedTransactions` completion, establishing
+            // `transactionsAccountId == accountA.id` exactly the way `accountSwitchedEffect`'s own
+            // fetch would have.
+            let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1"), tx(id: "a-tx-2")])
+            store.send(.fetchedTransactions(accountA.id, aRows))
+            #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
+
+            // The real switch action -- reaches `accountSwitchedEffect`, which must clear the shared
+            // array up front, then immediately fires a fresh fetch for B, which the mock above fails.
+            // `finish()` awaits that whole chain, including B's own `.transactionsFetchFailed`.
+            await store.send(.home(.walletAccountTapped(accountB))).finish()
+
+            #expect(
+                store.state.transactions.isEmpty,
+                "B's failed fetch must never leave A's rows in the shared array as if they were B's history"
+            )
+            #expect(store.state.homeState.transactionListState.isInvalidated == false, "Home must still clear its placeholder")
+            #expect(
+                store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated == false,
+                "See All must still clear its placeholder"
+            )
+            #expect(store.state.selectedWalletAccount == accountB)
         }
-
-        // Seed A's rows via a REAL `.fetchedTransactions` completion, establishing
-        // `transactionsAccountId == accountA.id` exactly the way `accountSwitchedEffect`'s own
-        // fetch would have.
-        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1"), tx(id: "a-tx-2")])
-        store.send(.fetchedTransactions(accountA.id, aRows))
-        #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
-
-        // The real switch action -- reaches `accountSwitchedEffect`, which must clear the shared
-        // array up front, then immediately fires a fresh fetch for B, which the mock above fails.
-        // `finish()` awaits that whole chain, including B's own `.transactionsFetchFailed`.
-        await store.send(.home(.walletAccountTapped(accountB))).finish()
-
-        #expect(
-            store.state.transactions.isEmpty,
-            "B's failed fetch must never leave A's rows in the shared array as if they were B's history"
-        )
-        #expect(store.state.homeState.transactionListState.isInvalidated == false, "Home must still clear its placeholder")
-        #expect(
-            store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated == false,
-            "See All must still clear its placeholder"
-        )
-        #expect(store.state.selectedWalletAccount == accountB)
     }
 
     /// The defensive foreign-rows branch above clears `state.transactions`, but
@@ -127,35 +137,45 @@ import ComposableArchitecture
     /// switch, so this defensive branch is only reachable at all with a fixture that deliberately
     /// disagrees with that invariant, exactly as the surrounding code comment describes.
     @Test func transactionsFetchFailedClearsUnminedMigrationPendingValueWithForeignRows() async {
-        let accountA = Self.walletAccount(idByte: 128)
-        let accountB = Self.walletAccount(idByte: 129)
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- see the file header for why.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 128)
+            let accountB = Self.walletAccount(idByte: 129)
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = accountB }
-        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
-        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
-        initialState.$transactions.withLock { $0 = aRows }
-        initialState.transactionsAccountId = accountA.id
-        let previousUnminedMigrationPendingValue = initialState.unminedMigrationPendingValue
-        initialState.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(12_345) }
-        defer { initialState.$unminedMigrationPendingValue.withLock { $0 = previousUnminedMigrationPendingValue } }
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountB }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
+            initialState.$transactions.withLock { $0 = aRows }
+            initialState.transactionsAccountId = accountA.id
+            let previousUnminedMigrationPendingValue = initialState.unminedMigrationPendingValue
+            initialState.$unminedMigrationPendingValue.withLock { $0 = Zatoshi(12_345) }
+            defer { initialState.$unminedMigrationPendingValue.withLock { $0 = previousUnminedMigrationPendingValue } }
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+            }
+
+            // `Store.send` (unlike `TestStore.send`) runs the reducer's synchronous body immediately,
+            // so both assertions below hold as soon as this call returns, with no need to await
+            // whatever effects it also spawns.
+            store.send(.transactionsFetchFailed(accountUUID: accountB.id))
+
+            #expect(store.state.transactions.isEmpty, "the foreign rows must still be cleared")
+            #expect(
+                store.state.unminedMigrationPendingValue == .zero,
+                "the pending-migration figure derived from those same foreign rows must not outlive them"
+            )
+            #expect(
+                store.state.transactionsAccountId == nil,
+                "transactionsAccountId's own invariant (RootStore.swift) is that it names the account whose rows $transactions holds -- with the array just cleared to empty, it must follow back to nil"
+            )
         }
-
-        // `Store.send` (unlike `TestStore.send`) runs the reducer's synchronous body immediately,
-        // so both assertions below hold as soon as this call returns, with no need to await
-        // whatever effects it also spawns.
-        store.send(.transactionsFetchFailed(accountUUID: accountB.id))
-
-        #expect(store.state.transactions.isEmpty, "the foreign rows must still be cleared")
-        #expect(
-            store.state.unminedMigrationPendingValue == .zero,
-            "the pending-migration figure derived from those same foreign rows must not outlive them"
-        )
     }
 
     // MARK: - (2) An empty result for the NEW account while syncing must leave it empty, not resurrect the old rows
@@ -166,35 +186,41 @@ import ComposableArchitecture
     /// (`state.transactionsAccountId == accountUUID`) would refuse to treat A's old rows as B's
     /// answer even if something else had left them behind.
     @Test func emptyResultForTheNewAccountWhileSyncingLeavesItEmpty() async {
-        let accountA = Self.walletAccount(idByte: 122)
-        let accountB = Self.walletAccount(idByte: 123)
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- see the file header for why.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 122)
+            let accountB = Self.walletAccount(idByte: 123)
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = accountA }
-        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
-        initialState.homeState.transactionListState.isInvalidated = false
-        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
-        initialState.lastKnownSyncStatus = .syncing(0.4, false)
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.homeState.transactionListState.isInvalidated = false
+            initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+            initialState.lastKnownSyncStatus = .syncing(0.4, false)
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { _ in [] }
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getAllTransactions = { _ in [] }
+            }
+
+            let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
+            store.send(.fetchedTransactions(accountA.id, aRows))
+            #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
+
+            // B's own post-switch fetch (mocked above) answers empty while still mid-sync.
+            await store.send(.home(.walletAccountTapped(accountB))).finish()
+
+            #expect(
+                store.state.transactions.isEmpty,
+                "a legitimate empty result for the new account must never resurrect the previous account's rows"
+            )
+            #expect(store.state.selectedWalletAccount == accountB)
         }
-
-        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
-        store.send(.fetchedTransactions(accountA.id, aRows))
-        #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
-
-        // B's own post-switch fetch (mocked above) answers empty while still mid-sync.
-        await store.send(.home(.walletAccountTapped(accountB))).finish()
-
-        #expect(
-            store.state.transactions.isEmpty,
-            "a legitimate empty result for the new account must never resurrect the previous account's rows"
-        )
-        #expect(store.state.selectedWalletAccount == accountB)
     }
 
     // MARK: - (3) A stale failure for the account just LEFT must change nothing after the switch
@@ -206,57 +232,63 @@ import ComposableArchitecture
     /// its OWN legitimate `transactionsUpdated` clear the invalidation flags this test checks,
     /// masking whether the STALE failure wrongly did so instead.
     @Test func staleFailureForThePreviousAccountChangesNothingAfterTheSwitch() async {
-        let accountA = Self.walletAccount(idByte: 124)
-        let accountB = Self.walletAccount(idByte: 125)
-        let gate = ResumableGate()
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- see the file header for why.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 124)
+            let accountB = Self.walletAccount(idByte: 125)
+            let gate = ResumableGate()
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = accountA }
-        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
-        initialState.homeState.transactionListState.isInvalidated = false
-        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = accountA }
+            initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+            initialState.homeState.transactionListState.isInvalidated = false
+            initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { _ in
-                await gate.wait()
-                return []
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.sdkSynchronizer.getAllTransactions = { _ in
+                    await gate.wait()
+                    return []
+                }
             }
+
+            let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
+            store.send(.fetchedTransactions(accountA.id, aRows))
+            #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
+
+            // The switch's own state mutations (clearing the array, invalidating both lists) happen
+            // synchronously in the reducer, before the fresh fetch it dispatches for B has any chance
+            // to run -- true regardless of the gate above, which only matters once that fetch actually
+            // starts.
+            store.send(.home(.walletAccountTapped(accountB)))
+
+            #expect(store.state.selectedWalletAccount == accountB)
+            #expect(store.state.transactions.isEmpty, "the switch must clear A's rows up front")
+            #expect(store.state.homeState.transactionListState.isInvalidated)
+            #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+
+            // A stale failure for A, arriving after the switch -- the provenance guard
+            // (`accountUUID == state.selectedWalletAccount?.id`) must drop it before it can touch B's
+            // still-loading lists, regardless of what `transactionsAccountId` says.
+            store.send(.transactionsFetchFailed(accountUUID: accountA.id))
+
+            #expect(store.state.transactions.isEmpty, "a stale failure for the previous account must not resurrect its rows")
+            #expect(
+                store.state.homeState.transactionListState.isInvalidated,
+                "a stale failure must not clear the CURRENTLY selected account's Home invalidation"
+            )
+            #expect(
+                store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+                "a stale failure must not clear the CURRENTLY selected account's See All invalidation"
+            )
+
+            gate.open()
         }
-
-        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx-1")])
-        store.send(.fetchedTransactions(accountA.id, aRows))
-        #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
-
-        // The switch's own state mutations (clearing the array, invalidating both lists) happen
-        // synchronously in the reducer, before the fresh fetch it dispatches for B has any chance
-        // to run -- true regardless of the gate above, which only matters once that fetch actually
-        // starts.
-        store.send(.home(.walletAccountTapped(accountB)))
-
-        #expect(store.state.selectedWalletAccount == accountB)
-        #expect(store.state.transactions.isEmpty, "the switch must clear A's rows up front")
-        #expect(store.state.homeState.transactionListState.isInvalidated)
-        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
-
-        // A stale failure for A, arriving after the switch -- the provenance guard
-        // (`accountUUID == state.selectedWalletAccount?.id`) must drop it before it can touch B's
-        // still-loading lists, regardless of what `transactionsAccountId` says.
-        store.send(.transactionsFetchFailed(accountUUID: accountA.id))
-
-        #expect(store.state.transactions.isEmpty, "a stale failure for the previous account must not resurrect its rows")
-        #expect(
-            store.state.homeState.transactionListState.isInvalidated,
-            "a stale failure must not clear the CURRENTLY selected account's Home invalidation"
-        )
-        #expect(
-            store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
-            "a stale failure must not clear the CURRENTLY selected account's See All invalidation"
-        )
-
-        gate.open()
     }
 
     // MARK: - (4) A same-account failure must still keep its own rows and re-arm the poller
@@ -266,44 +298,50 @@ import ComposableArchitecture
     /// check. `transactionsAccountId` already matches, so the rows are kept exactly as before this
     /// change, and the reconciliation poller still re-arms from them.
     @Test func sameAccountFailureKeepsRowsAndPoller() async {
-        let account = Self.walletAccount(idByte: 126)
-        let scheduler = DispatchQueue.test
-        let fetchCalls = LockIsolated<Int>(0)
+        // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built
+        // INSIDE this scope -- see the file header for why.
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.walletAccount(idByte: 126)
+            let scheduler = DispatchQueue.test
+            let fetchCalls = LockIsolated<Int>(0)
 
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = account }
-        initialState.homeState.transactionListState.isInvalidated = false
-        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+            var initialState = Root.State.initial
+            initialState.$selectedWalletAccount.withLock { $0 = account }
+            initialState.homeState.transactionListState.isInvalidated = false
+            initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.mainQueue = scheduler.eraseToAnyScheduler()
-            $0.sdkSynchronizer.getAllTransactions = { _ in
-                fetchCalls.withValue { $0 += 1 }
-                throw FetchStubError()
+            let store = Store(initialState: initialState) {
+                Root()
+            } withDependencies: {
+                baseNoOpDependencies(&$0)
+                $0.mainQueue = scheduler.eraseToAnyScheduler()
+                $0.sdkSynchronizer.getAllTransactions = { _ in
+                    fetchCalls.withValue { $0 += 1 }
+                    throw FetchStubError()
+                }
             }
+
+            // Seed the account's own rows via a REAL `.fetchedTransactions` completion -- a pending row
+            // so the reconciliation poller below has something to arm on -- establishing
+            // `transactionsAccountId == account.id` exactly the way production does.
+            let ownRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "own-pending-tx", status: .sending)])
+            store.send(.fetchedTransactions(account.id, ownRows))
+            #expect(store.state.transactions == ownRows, "setup must land the account's own rows")
+
+            // The SAME account's own fetch fails -- `transactionsAccountId` already matches, so the
+            // defensive foreign-rows check must not fire.
+            store.send(.transactionsFetchFailed(accountUUID: account.id))
+
+            #expect(store.state.transactions == ownRows, "a same-account failure must never clear its own kept rows")
+
+            while fetchCalls.value < 1 {
+                await scheduler.advance(by: .seconds(1))
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            #expect(fetchCalls.value >= 1, "the reconciliation poller was not armed from the kept rows after a same-account failure")
         }
-
-        // Seed the account's own rows via a REAL `.fetchedTransactions` completion -- a pending row
-        // so the reconciliation poller below has something to arm on -- establishing
-        // `transactionsAccountId == account.id` exactly the way production does.
-        let ownRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "own-pending-tx", status: .sending)])
-        store.send(.fetchedTransactions(account.id, ownRows))
-        #expect(store.state.transactions == ownRows, "setup must land the account's own rows")
-
-        // The SAME account's own fetch fails -- `transactionsAccountId` already matches, so the
-        // defensive foreign-rows check must not fire.
-        store.send(.transactionsFetchFailed(accountUUID: account.id))
-
-        #expect(store.state.transactions == ownRows, "a same-account failure must never clear its own kept rows")
-
-        while fetchCalls.value < 1 {
-            await scheduler.advance(by: .seconds(1))
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        #expect(fetchCalls.value >= 1, "the reconciliation poller was not armed from the kept rows after a same-account failure")
     }
 }
 
