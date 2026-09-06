@@ -287,7 +287,7 @@ extension Root {
                     migrationTickLoopEffect(state: state)
                 )
 
-            // G1 (field 2026-08-05): THE IN-FLOW COMMIT CURE. `flowFinished` below re-spawns the
+            // The in-flow commit cure for the 2026-08-05 field incident. `flowFinished` below re-spawns the
             // tick loop for a run committed mid-session — but only when the user LEAVES the flow,
             // and the session that commits then sits watching the progress screen never does: its
             // R0 open-lane credit is long spent (the log's "afterSync SKIPPED — already driven"),

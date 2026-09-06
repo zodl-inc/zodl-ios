@@ -1831,7 +1831,7 @@ extension Root {
             selectedAccountUUID: state.selectedWalletAccount?.id,
             walletAccounts: state.walletAccounts
         )
-        // ANY committed run spawns the loop, immediate mode included (G1 fix, field 2026-08-05 —
+        // ANY committed run spawns the loop, immediate mode included (the 2026-08-05 field-incident fix —
         // a fresh-commit session sat under "Keep Zodl open" forever): a run's note-PREPARATIONS
         // are engine-paced wallet plumbing in EVERY mode, and the tick lane is what proves and
         // delivers them between opens (AUD-3 F4 exempts preps from the tick's mode belt; D2 sends
