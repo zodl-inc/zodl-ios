@@ -28,7 +28,7 @@ import ComposableArchitecture
     }
 
     @Test func automaticModeUsesAllKnownMainnetServers() {
-        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+        let endpoints = SDKSynchronizerClient.intendedEndpoints(
             userStoredPreferences: preferences(automaticServerSelection: true),
             zcashSDKEnvironment: environment(networkType: .mainnet, endpointHost: "fallback.server")
         )
@@ -50,7 +50,7 @@ import ComposableArchitecture
     }
 
     @Test func manualModeUsesSelectedServerOnly() {
-        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+        let endpoints = SDKSynchronizerClient.intendedEndpoints(
             userStoredPreferences: preferences(automaticServerSelection: false),
             zcashSDKEnvironment: environment(networkType: .mainnet, endpointHost: "manual.server")
         )
@@ -59,7 +59,7 @@ import ComposableArchitecture
     }
 
     @Test func uninitializedModeFallsBackToCurrentEnvironmentEndpoint() {
-        let endpoints = SDKSynchronizerClient.selectedSubmissionEndpoints(
+        let endpoints = SDKSynchronizerClient.intendedEndpoints(
             userStoredPreferences: preferences(automaticServerSelection: nil),
             zcashSDKEnvironment: environment(networkType: .mainnet, endpointHost: "fallback.server")
         )

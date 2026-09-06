@@ -321,6 +321,10 @@ extension SDKSynchronizerClient: DependencyKey {
                     transactionGuard: transactionGuard,
                     timeout: submissionGuardTimeout,
                     logPrefix: "[MultiSubmit]",
+                    intendedEndpoints: Self.intendedEndpoints(
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment
+                    ),
                     prove: {
                         try await synchronizer.broadcaster.createProposedTransactions(
                             proposal: proposal,
@@ -339,6 +343,9 @@ extension SDKSynchronizerClient: DependencyKey {
                                 }
                             }
                         )
+                    },
+                    release: { transactions, endpoints in
+                        await synchronizer.broadcaster.releaseForResubmission(transactions: transactions, to: endpoints)
                     }
                 )
             },
@@ -414,6 +421,10 @@ extension SDKSynchronizerClient: DependencyKey {
                     transactionGuard: transactionGuard,
                     timeout: submissionGuardTimeout,
                     logPrefix: "[MultiSubmit/PCZT]",
+                    intendedEndpoints: Self.intendedEndpoints(
+                        userStoredPreferences: userStoredPreferences,
+                        zcashSDKEnvironment: zcashSDKEnvironment
+                    ),
                     prove: {
                         try await synchronizer.broadcaster.createTransactionFromPCZT(
                             pcztWithProofs: pcztWithProofs,
@@ -432,6 +443,9 @@ extension SDKSynchronizerClient: DependencyKey {
                                 }
                             }
                         )
+                    },
+                    release: { transactions, endpoints in
+                        await synchronizer.broadcaster.releaseForResubmission(transactions: transactions, to: endpoints)
                     }
                 )
             },
@@ -528,15 +542,20 @@ extension SDKSynchronizerClient {
     /// it made a send wait out every unrelated guarded operation — and made them wait out a
     /// multi-second proof — for no protection at all. Only `submit` races a server switch.
     ///
-    /// A guard still busy after `timeout` fails the send definitively rather than hanging: nothing
-    /// was created on-chain, so the user can simply try again. A proving failure is untouched and
-    /// keeps propagating to the caller.
+    /// A guard still busy after `timeout`, or a send cancelled while it waited, must not report a
+    /// plain failure: proving already created the transactions and reserved their inputs in the
+    /// wallet database, so telling the user "nothing happened, try again" risks a double payment.
+    /// Instead the transactions are released to the SDK's background resubmission (`intendedEndpoints`,
+    /// the same ones a normal submission would have used) and reported as pending. A proving
+    /// failure is untouched and keeps propagating to the caller — nothing was created yet.
     static func createThenSubmitUnderGuard(
         transactionGuard: TransactionGuardClient,
         timeout: Duration,
         logPrefix: String,
+        intendedEndpoints: [LightWalletEndpoint],
         prove: () async throws -> [CreatedTransaction],
-        submit: ([CreatedTransaction]) async -> CreateProposedTransactionsResult
+        submit: ([CreatedTransaction]) async -> CreateProposedTransactionsResult,
+        release: ([CreatedTransaction], [LightWalletEndpoint]) async -> Void
     ) async throws -> CreateProposedTransactionsResult {
         let transactions = try await prove()
 
@@ -545,14 +564,57 @@ extension SDKSynchronizerClient {
                 await submit(transactions)
             }
         } catch is TransactionGuardBusyError {
-            LoggerProxy.error("\(logPrefix) Gave up waiting \(timeout) for exclusive access; nothing was broadcast.")
+            return await releaseAfterMissedBroadcast(
+                transactions,
+                to: intendedEndpoints,
+                logPrefix: logPrefix,
+                reason: "gave up waiting \(timeout) for exclusive access",
+                release: release
+            )
+        } catch is CancellationError {
+            // The effect that would have `send`-ed this result is itself cancelled, so nothing
+            // downstream reads the return value — but `release` still runs to completion (Swift's
+            // cooperative cancellation does not abort it), and that's the side effect that
+            // matters: the plan gets recorded before this call returns.
+            return await releaseAfterMissedBroadcast(
+                transactions,
+                to: intendedEndpoints,
+                logPrefix: logPrefix,
+                reason: "the send was cancelled before the broadcast",
+                release: release
+            )
+        }
+    }
 
+    /// Shared tail for `createThenSubmitUnderGuard`'s two missed-broadcast paths (guard busy,
+    /// cancelled before broadcast). With nothing proved there is nothing to release; otherwise the
+    /// transactions already exist in the wallet database with their inputs reserved, so handing
+    /// them to the SDK's background resubmission keeps the same transaction ids (no duplicate
+    /// payment) and the endpoints the user intended, and lets the confirmation screen show them as
+    /// pending instead of a plain failure that would leave them stranded.
+    private static func releaseAfterMissedBroadcast(
+        _ transactions: [CreatedTransaction],
+        to endpoints: [LightWalletEndpoint],
+        logPrefix: String,
+        reason: String,
+        release: ([CreatedTransaction], [LightWalletEndpoint]) async -> Void
+    ) async -> CreateProposedTransactionsResult {
+        guard !transactions.isEmpty else {
+            LoggerProxy.error("\(logPrefix) \(reason); nothing was created or broadcast.")
             return CreateProposedTransactionsResult.failure(
                 txIds: [],
                 code: MultiServerSubmission.guardBusyCode,
                 description: String(localizable: .transactionGuardBusy)
             )
         }
+
+        await release(transactions, endpoints)
+        LoggerProxy.error("\(logPrefix) \(reason); \(transactions.count) created transaction(s) released to background resubmission.")
+
+        return CreateProposedTransactionsResult.grpcFailure(
+            txIds: transactions.map { $0.txId.toHexStringTxId() },
+            reason: .guardBusy
+        )
     }
 
     /// Submits one transaction at a time so every one of them gets its retry plan recorded by the
@@ -595,7 +657,7 @@ extension SDKSynchronizerClient {
         }
 
         let txIds = transactions.map { $0.txId.toHexStringTxId() }
-        let endpoints = selectedSubmissionEndpoints(
+        let endpoints = intendedEndpoints(
             userStoredPreferences: userStoredPreferences,
             zcashSDKEnvironment: zcashSDKEnvironment
         )
@@ -644,7 +706,12 @@ extension SDKSynchronizerClient {
     /// Endpoint selection policy for multi-server submission:
     /// - Automatic connection mode -> all known endpoints for the current network
     /// - Manual connection mode (or mode not yet initialized) -> the currently selected endpoint
-    static func selectedSubmissionEndpoints(
+    ///
+    /// Also the endpoint list `createThenSubmitUnderGuard` releases created transactions to when
+    /// the broadcast itself never ran (guard busy, or cancelled first): those are the servers the
+    /// user's connection mode intended the transaction to reach, so background resubmission should
+    /// still target them.
+    static func intendedEndpoints(
         userStoredPreferences: UserPreferencesStorageClient,
         zcashSDKEnvironment: ZcashSDKEnvironment
     ) -> [LightWalletEndpoint] {

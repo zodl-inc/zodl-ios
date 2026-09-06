@@ -23,6 +23,11 @@ struct SDKSynchronizerClient: Sendable {
     enum CreateProposedTransactionsResult: Equatable, Sendable {
         enum GrpcFailureReason: Equatable, Sendable {
             case timeout
+            // A submission guard still busy after its acquisition timeout, or a send cancelled
+            // while waiting for it. Either way nothing was broadcast, but the transactions were
+            // already created and are released to the SDK's background resubmission — the UI
+            // treats this exactly like `.timeout`, just with its own copy.
+            case guardBusy
         }
 
         case failure(txIds: [String], code: Int, description: String)
@@ -303,7 +308,7 @@ struct SDKSynchronizerClient: Sendable {
     var sendMaxAmount: @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi
     /// Creates the proposal's transactions via the SDK `Broadcaster` and submits them to the
     /// endpoints chosen by the user's connection mode (Automatic -> all known servers,
-    /// Manual -> the selected server). See `selectedSubmissionEndpoints`.
+    /// Manual -> the selected server). See `intendedEndpoints`.
     var createAndSubmitProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
     var proposeShielding: @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
     
