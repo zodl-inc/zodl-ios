@@ -11,9 +11,19 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
 
 ### Changed
+- [MOB-1858] Sending no longer waits behind unrelated network work. Preparing a payment now runs alongside other activity instead of blocking it, and if the wallet is still busy with something else by the time it's ready to broadcast, the transaction is shown as pending and submitted automatically in the background instead of being reported as a failure.
 - [MOB-1831] Automatic server selection no longer switches servers for marginal gains. The app switches only when the benchmark shows the new server is meaningfully faster than the current one — at least 200 ms and at least 25% faster — or when the current server fails its health checks. Practically equal servers no longer cause needless sync restarts.
+- [MOB-1863] A sent transaction now shows "Sent · awaiting confirmation" once a server has accepted it, instead of "Sending" until the wallet catches up.
 
 ### Fixed
+- [MOB-1854] Sync now resumes after a migration broadcast even when the resume request arrives while the previous start is still finishing.
+- [MOB-1862] After switching accounts, a balance or pending amount that was still loading for the previous account can no longer be shown as the new account's. The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain — shown as updating during that check, with Send and Swap waiting for it rather than claiming you have insufficient funds. Funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent, and swapping another asset into ZEC no longer waits for the wallet's spendable balance to be confirmed, since that swap doesn't spend it.
+- [MOB-1860] Leaving a voting screen while a proof is being prepared stops that work instead of letting it run in the background.
+- [MOB-1859] Opening the wallet no longer generates a fresh receive address for every account on each load, so loading is faster during sync.
+- [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.
+- [MOB-1856] The app stays responsive while it catches up on a long transaction history.
+- [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync, and after switching accounts, a failed refresh can no longer show the previous account's transactions as the new account's history.
+- [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself. When the wallet's own reconnection attempts give up, the app rebuilds the connection instead — to a better server when one is available, otherwise the current one — waiting for an in-progress send to finish first instead of giving up on the rebuild, and never switching servers a second time on top of it; after two rebuilds in one session it shows the error state.
 - [MOB-1831] Opening Send immediately after launching ZODL now shows the saved spendable balance while automatic server selection completes.
 - The Keystone hardware wallet connection screen now refers to Zodl instead of Zashi in the note that a previously connected wallet needs to sync to find its transaction history.
 

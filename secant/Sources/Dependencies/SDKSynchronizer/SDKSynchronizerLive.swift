@@ -297,6 +297,9 @@ extension SDKSynchronizerClient: DependencyKey {
             switchToEndpoint: { endpoint in
                 try await synchronizer.switchTo(endpoint: endpoint)
             },
+            restartSync: { endpoint in
+                try await synchronizer.restartSync(at: endpoint)
+            },
             proposeTransfer: { accountUUID, recipient, amount, memo in
                 try await synchronizer.proposeTransfer(
                     accountUUID: accountUUID,
@@ -317,24 +320,37 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             createAndSubmitProposedTransactions: { proposal, spendingKey in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let transactions = try await synchronizer.broadcaster.createProposedTransactions(
-                        proposal: proposal,
-                        spendingKey: spendingKey
-                    )
-
-                    return await Self.submitCreatedTransactions(
-                        transactions,
-                        logPrefix: "[MultiSubmit]",
+                return try await Self.createThenSubmitUnderGuard(
+                    transactionGuard: transactionGuard,
+                    timeout: submissionGuardTimeout,
+                    logPrefix: "[MultiSubmit]",
+                    intendedEndpoints: Self.intendedEndpoints(
                         userStoredPreferences: userStoredPreferences,
-                        zcashSDKEnvironment: zcashSDKEnvironment,
-                        submit: { createdTransactions, endpoints in
-                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                        zcashSDKEnvironment: zcashSDKEnvironment
+                    ),
+                    prove: {
+                        try await synchronizer.broadcaster.createProposedTransactions(
+                            proposal: proposal,
+                            spendingKey: spendingKey
+                        )
+                    },
+                    submit: { transactions in
+                        await Self.submitCreatedTransactions(
+                            transactions,
+                            logPrefix: "[MultiSubmit]",
+                            userStoredPreferences: userStoredPreferences,
+                            zcashSDKEnvironment: zcashSDKEnvironment,
+                            submit: { createdTransactions, endpoints in
+                                await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                    await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                                }
                             }
-                        }
-                    )
-                }
+                        )
+                    },
+                    release: { transactions, endpoints in
+                        await synchronizer.broadcaster.releaseForResubmission(transactions: transactions, to: endpoints)
+                    }
+                )
             },
             proposeShielding: { accountUUID, shieldingThreshold, memo, transparentReceiver in
                 try await synchronizer.proposeShielding(
@@ -373,19 +389,18 @@ extension SDKSynchronizerClient: DependencyKey {
                 var walletAccounts = try await synchronizer.listAccounts().map {
                     WalletAccount($0)
                 }
-                
-                // Enrich the WalletAccounts with UnifiedAddresses
+
+                // Enrich the WalletAccounts with the default UnifiedAddress only. The rotation
+                // stash (`nextPrivateUA`) is deliberately left nil here (MOB-1859): generating it
+                // is a wallet-database write, and doing that for every account on every single
+                // load contended with the sync engine during catch-up. Callers merge in whatever
+                // stash the previous in-memory accounts already had
+                // (`WalletAccount.mergingPrivateUAStash`) and refill a still-empty one lazily in
+                // the background — see `PrivateUAStash`.
                 for i in 0..<walletAccounts.count {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
-                    // This fills the rotation stash (`nextPrivateUA`), not the displayed slot:
-                    // `privateUA` is only ever set by promotion at tap time, so a Receive/Swap
-                    // visit never re-shows an address that was already on screen (MOB-1803).
-                    walletAccounts[i].nextPrivateUA = try? await synchronizer.getCustomUnifiedAddress(
-                        accountUUID: walletAccounts[i].id,
-                        receivers: walletAccounts[i].vendor == .keystone ? [.orchard] : [.sapling, .orchard]
-                    )
                 }
-                
+
                 // Put the Zashi account to the top
                 let sortedWalletAccounts = walletAccounts.sorted { $0.vendor.rawValue > $1.vendor.rawValue }
 
@@ -405,24 +420,37 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             createAndSubmitTransactionFromPCZT: { pcztWithProofs, pcztWithSigs in
                 @Dependency(\.transactionGuard) var transactionGuard
-                return try await transactionGuard.withSubmission {
-                    let transactions = try await synchronizer.broadcaster.createTransactionFromPCZT(
-                        pcztWithProofs: pcztWithProofs,
-                        pcztWithSigs: pcztWithSigs
-                    )
-
-                    return await Self.submitCreatedTransactions(
-                        transactions,
-                        logPrefix: "[MultiSubmit/PCZT]",
+                return try await Self.createThenSubmitUnderGuard(
+                    transactionGuard: transactionGuard,
+                    timeout: submissionGuardTimeout,
+                    logPrefix: "[MultiSubmit/PCZT]",
+                    intendedEndpoints: Self.intendedEndpoints(
                         userStoredPreferences: userStoredPreferences,
-                        zcashSDKEnvironment: zcashSDKEnvironment,
-                        submit: { createdTransactions, endpoints in
-                            await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
-                                await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                        zcashSDKEnvironment: zcashSDKEnvironment
+                    ),
+                    prove: {
+                        try await synchronizer.broadcaster.createTransactionFromPCZT(
+                            pcztWithProofs: pcztWithProofs,
+                            pcztWithSigs: pcztWithSigs
+                        )
+                    },
+                    submit: { transactions in
+                        await Self.submitCreatedTransactions(
+                            transactions,
+                            logPrefix: "[MultiSubmit/PCZT]",
+                            userStoredPreferences: userStoredPreferences,
+                            zcashSDKEnvironment: zcashSDKEnvironment,
+                            submit: { createdTransactions, endpoints in
+                                await Self.submitTransactionsIndividually(createdTransactions, to: endpoints) { transaction, endpoints in
+                                    await synchronizer.broadcaster.submit(transaction: transaction, to: endpoints)
+                                }
                             }
-                        }
-                    )
-                }
+                        )
+                    },
+                    release: { transactions, endpoints in
+                        await synchronizer.broadcaster.releaseForResubmission(transactions: transactions, to: endpoints)
+                    }
+                )
             },
             urEncoderForPCZT: { pczt in
                 let keystoneSDK = KeystoneZcashSDK()
@@ -502,6 +530,94 @@ extension SDKSynchronizerClient {
         // no server-level rejection was observed — never label that "rejected" in support data.
         static let unreachableStatus = "all servers unreachable"
         static let cancelledStatus = "submission cancelled"
+        /// Distinct from every other submission failure code (-1 nothing created, -996/-999 on the
+        /// PCZT path) so a support report tells "gave up waiting for the guard" apart from a server
+        /// rejection. Nothing was broadcast when it is reported.
+        static let guardBusyCode = -995
+    }
+
+    /// The submission guard's scope for the two send paths: create (and prove) the transactions
+    /// *outside* the guard, then hold it only across the broadcast.
+    ///
+    /// Proving runs through the Rust backend against the wallet database and records its submit
+    /// plans in the SDK's own plan store; it never touches the engine handle that
+    /// `switchTo(endpoint:)` tears down, so it does not need exclusivity. Holding the guard across
+    /// it made a send wait out every unrelated guarded operation — and made them wait out a
+    /// multi-second proof — for no protection at all. Only `submit` races a server switch.
+    ///
+    /// A guard still busy after `timeout`, or a send cancelled while it waited, must not report a
+    /// plain failure: proving already created the transactions and reserved their inputs in the
+    /// wallet database, so telling the user "nothing happened, try again" risks a double payment.
+    /// Instead the transactions are released to the SDK's background resubmission (`intendedEndpoints`,
+    /// the same ones a normal submission would have used) and reported as pending. A proving
+    /// failure is untouched and keeps propagating to the caller — nothing was created yet.
+    static func createThenSubmitUnderGuard(
+        transactionGuard: TransactionGuardClient,
+        timeout: Duration,
+        logPrefix: String,
+        intendedEndpoints: [LightWalletEndpoint],
+        prove: () async throws -> [CreatedTransaction],
+        submit: ([CreatedTransaction]) async -> CreateProposedTransactionsResult,
+        release: ([CreatedTransaction], [LightWalletEndpoint]) async -> Void
+    ) async throws -> CreateProposedTransactionsResult {
+        let transactions = try await prove()
+
+        do {
+            return try await transactionGuard.withSubmission(timeout: timeout) {
+                await submit(transactions)
+            }
+        } catch is TransactionGuardBusyError {
+            return await releaseAfterMissedBroadcast(
+                transactions,
+                to: intendedEndpoints,
+                logPrefix: logPrefix,
+                reason: "gave up waiting \(timeout) for exclusive access",
+                release: release
+            )
+        } catch is CancellationError {
+            // The effect that would have `send`-ed this result is itself cancelled, so nothing
+            // downstream reads the return value — but `release` still runs to completion (Swift's
+            // cooperative cancellation does not abort it), and that's the side effect that
+            // matters: the plan gets recorded before this call returns.
+            return await releaseAfterMissedBroadcast(
+                transactions,
+                to: intendedEndpoints,
+                logPrefix: logPrefix,
+                reason: "the send was cancelled before the broadcast",
+                release: release
+            )
+        }
+    }
+
+    /// Shared tail for `createThenSubmitUnderGuard`'s two missed-broadcast paths (guard busy,
+    /// cancelled before broadcast). With nothing proved there is nothing to release; otherwise the
+    /// transactions already exist in the wallet database with their inputs reserved, so handing
+    /// them to the SDK's background resubmission keeps the same transaction ids (no duplicate
+    /// payment) and the endpoints the user intended, and lets the confirmation screen show them as
+    /// pending instead of a plain failure that would leave them stranded.
+    private static func releaseAfterMissedBroadcast(
+        _ transactions: [CreatedTransaction],
+        to endpoints: [LightWalletEndpoint],
+        logPrefix: String,
+        reason: String,
+        release: ([CreatedTransaction], [LightWalletEndpoint]) async -> Void
+    ) async -> CreateProposedTransactionsResult {
+        guard !transactions.isEmpty else {
+            LoggerProxy.error("\(logPrefix) \(reason); nothing was created or broadcast.")
+            return CreateProposedTransactionsResult.failure(
+                txIds: [],
+                code: MultiServerSubmission.guardBusyCode,
+                description: String(localizable: .transactionGuardBusy)
+            )
+        }
+
+        await release(transactions, endpoints)
+        LoggerProxy.error("\(logPrefix) \(reason); \(transactions.count) created transaction(s) released to background resubmission.")
+
+        return CreateProposedTransactionsResult.grpcFailure(
+            txIds: transactions.map { $0.txId.toHexStringTxId() },
+            reason: .guardBusy
+        )
     }
 
     /// Submits one transaction at a time so every one of them gets its retry plan recorded by the
@@ -544,7 +660,7 @@ extension SDKSynchronizerClient {
         }
 
         let txIds = transactions.map { $0.txId.toHexStringTxId() }
-        let endpoints = selectedSubmissionEndpoints(
+        let endpoints = intendedEndpoints(
             userStoredPreferences: userStoredPreferences,
             zcashSDKEnvironment: zcashSDKEnvironment
         )
@@ -593,7 +709,12 @@ extension SDKSynchronizerClient {
     /// Endpoint selection policy for multi-server submission:
     /// - Automatic connection mode -> all known endpoints for the current network
     /// - Manual connection mode (or mode not yet initialized) -> the currently selected endpoint
-    static func selectedSubmissionEndpoints(
+    ///
+    /// Also the endpoint list `createThenSubmitUnderGuard` releases created transactions to when
+    /// the broadcast itself never ran (guard busy, or cancelled first): those are the servers the
+    /// user's connection mode intended the transaction to reach, so background resubmission should
+    /// still target them.
+    static func intendedEndpoints(
         userStoredPreferences: UserPreferencesStorageClient,
         zcashSDKEnvironment: ZcashSDKEnvironment
     ) -> [LightWalletEndpoint] {
@@ -736,7 +857,19 @@ extension SDKSynchronizerClient {
                 currentChainTip: currentChainTip
             )
 
-            let recipients = await synchronizer.getRecipients(for: clearedTransaction)
+            // MOB-1863: a `.sending` row can already be accepted by a server for broadcast even
+            // though this device's own scan hasn't caught up yet. Only look this up for rows
+            // that need it, so mined/received rows don't pay for an extra query.
+            if transaction.status == .sending {
+                if case .accepted = await synchronizer.transactionSubmissionStatus(for: clearedTransaction.rawID) {
+                    transaction.isAcceptedBySubmitter = true
+                }
+            }
+
+            // MOB-1856: the SDK's `getRecipients(for:)` is itself just
+            // `getTransactionOutputs(for:).map { $0.recipient }` -- reuse the `outputs` already read
+            // above instead of a second call that re-reads the exact same rows from the database.
+            let recipients = outputs.map(\.recipient)
             let addresses = recipients.compactMap {
                 if case let .address(address) = $0 {
                     return address

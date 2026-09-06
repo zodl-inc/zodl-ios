@@ -9,40 +9,7 @@ import ComposableArchitecture
 extension AutoServerSelectionClient: DependencyKey {
     static let liveValue = AutoServerSelectionClient(
         findBestServer: {
-            @Dependency(\.migrationManager) var migrationManager
-            @Dependency(\.userStoredPreferences) var userStoredPreferences
-            @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-            @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-
-            guard userStoredPreferences.automaticServerSelection() == true else { return nil }
-
-            let network = zcashSDKEnvironment.network().networkType
-            let allEndpoints = ZcashSDKEnvironment.endpoints(for: network)
-
-            // N4: while ANY account has an active migration network snapshot, auto-selection stays
-            // within the snapshotted sync-provider family — never propose a switch that would drift
-            // the wallet away from an in-flight run's deliberately-separated broadcast provider. No
-            // active snapshots means no filtering, byte-identical to the pre-migration behaviour.
-            let snapshots = migrationManager.activeNetworkSnapshots()
-            let candidates = allEndpoints.filter {
-                MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: snapshots)
-            }
-            guard !candidates.isEmpty else {
-                if !snapshots.isEmpty {
-                    LoggerProxy.event("[AutoServerSelection] Skipped: migration pinning left no candidates")
-                }
-                return nil
-            }
-
-            // The switch decision — benchmark plus hysteresis — lives in the SDK. nil means the
-            // improvement was not worth a synchronizer teardown (or nothing healthier exists).
-            return await sdkSynchronizer.evaluateServerSwitch(
-                zcashSDKEnvironment.endpoint(),
-                candidates,
-                AutoServerSelectionConstants.evaluationTimeoutSeconds,
-                AutoServerSelectionConstants.blocksToDownload,
-                network
-            )
+            await AutoServerSelectionClient.bestAutomaticCandidate()
         },
         applySwitch: { candidate in
             @Dependency(\.migrationManager) var migrationManager
@@ -84,6 +51,88 @@ extension AutoServerSelectionClient: DependencyKey {
                 LoggerProxy.error("[AutoServerSelection] Failed to switch endpoint: \(error)")
                 return false
             }
+        },
+        rebuildAfterStall: {
+            @Dependency(\.userStoredPreferences) var userStoredPreferences
+            @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+            @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+            @Dependency(\.transactionGuard) var transactionGuard
+
+            let current = zcashSDKEnvironment.endpoint()
+            // Unlike `applySwitch`'s candidate (which can be minutes stale by the time it applies),
+            // this benchmark runs synchronously right here -- a fresh read every time, never deferred.
+            // Automatic mode off, no qualifying candidate, or migration pinning excluding every one
+            // all fall back to the SAME endpoint that's already configured: restarting there is still
+            // useful when recovery gave up with no engine handle left behind.
+            let candidate = await AutoServerSelectionClient.bestAutomaticCandidate() ?? current
+
+            do {
+                // MOB-1853: `switchWaiting`, not `switchIfIdle` -- a give-up already spent one of a
+                // small per-foreground rebuild budget on this attempt (see
+                // `Root.State.maxTerminalStallRebuildsPerForeground`), and the SDK only emits
+                // `gaveUp: true` once per handle, so a rebuild skipped outright just because a
+                // broadcast happens to hold the guard would waste that budget credit for nothing --
+                // it is never retried. Waiting for the broadcast to clear, then winning -- the same
+                // primitive the manual Server Setup save uses -- means the rebuild still happens
+                // instead of being silently dropped.
+                try await transactionGuard.switchWaiting {
+                    try await withTimeout(serverSwitchTimeout) {
+                        try await sdkSynchronizer.restartSync(candidate)
+                    }
+                }
+
+                if candidate.host != current.host || candidate.port != current.port {
+                    try userStoredPreferences.setServer(candidate.serverConfig(isCustom: false))
+                }
+                return true
+            } catch {
+                LoggerProxy.error("[AutoServerSelection] Terminal stall rebuild failed: \(error)")
+                return false
+            }
         }
     )
+}
+
+extension AutoServerSelectionClient {
+    /// Shared by `findBestServer` and `rebuildAfterStall`: benchmarks the known endpoints when
+    /// Automatic mode is enabled and asks the SDK whether switching is worth it
+    /// (`evaluateServerSwitch`), filtered to whatever migration pinning currently allows. Returns
+    /// nil when Automatic is off, migration pinning leaves no candidates, or staying on the current
+    /// server is the right call.
+    static func bestAutomaticCandidate() async -> LightWalletEndpoint? {
+        @Dependency(\.migrationManager) var migrationManager
+        @Dependency(\.userStoredPreferences) var userStoredPreferences
+        @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+
+        guard userStoredPreferences.automaticServerSelection() == true else { return nil }
+
+        let network = zcashSDKEnvironment.network().networkType
+        let allEndpoints = ZcashSDKEnvironment.endpoints(for: network)
+
+        // N4: while ANY account has an active migration network snapshot, auto-selection stays
+        // within the snapshotted sync-provider family — never propose a switch that would drift
+        // the wallet away from an in-flight run's deliberately-separated broadcast provider. No
+        // active snapshots means no filtering, byte-identical to the pre-migration behaviour.
+        let snapshots = migrationManager.activeNetworkSnapshots()
+        let candidates = allEndpoints.filter {
+            MigrationServerPinning.isCandidateAllowed(host: $0.host, activeSnapshots: snapshots)
+        }
+        guard !candidates.isEmpty else {
+            if !snapshots.isEmpty {
+                LoggerProxy.event("[AutoServerSelection] Skipped: migration pinning left no candidates")
+            }
+            return nil
+        }
+
+        // The switch decision — benchmark plus hysteresis — lives in the SDK. nil means the
+        // improvement was not worth a synchronizer teardown (or nothing healthier exists).
+        return await sdkSynchronizer.evaluateServerSwitch(
+            zcashSDKEnvironment.endpoint(),
+            candidates,
+            AutoServerSelectionConstants.evaluationTimeoutSeconds,
+            AutoServerSelectionConstants.blocksToDownload,
+            network
+        )
+    }
 }

@@ -109,6 +109,10 @@ struct RedactableSynchronizerState: Equatable, Redactable {
         var syncStatus: SyncStatus
         var latestBlockHeight: BlockHeight
         var fullyScannedHeight: BlockHeight
+        /// True while the SDK is withholding every pool's spendable value because it has not
+        /// confirmed a fresh chain tip. Mirrored here because a zero spendable balance cannot be
+        /// told apart from an empty wallet or funds still confirming without it.
+        var isSpendableMasked: Bool
     }
 
     let data: SynchronizerStateWrapper
@@ -120,7 +124,8 @@ struct RedactableSynchronizerState: Equatable, Redactable {
             localAccountsBalances: data.localAccountsBalances,
             syncStatus: data.syncStatus,
             latestBlockHeight: data.latestBlockHeight,
-            fullyScannedHeight: data.fullyScannedHeight
+            fullyScannedHeight: data.fullyScannedHeight,
+            isSpendableMasked: data.isSpendableMasked
         )
     }
 }

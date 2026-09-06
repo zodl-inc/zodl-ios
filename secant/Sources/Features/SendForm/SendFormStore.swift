@@ -139,9 +139,16 @@ struct SendForm {
             && !isMaxRequestInFlight
         }
 
+        /// The SDK has not said what is spendable yet. Distinct from "nothing is spendable":
+        /// the answer is still coming, so the form waits for it instead of judging on a zero.
+        var isSpendabilityBeingDetermined: Bool {
+            walletBalancesState.isSpendableMasked
+        }
+
         var isValidForm: Bool {
             isValidAddress
             && !isInsufficientFunds
+            && !isSpendabilityBeingDetermined
             && memoState.isValid
             && isValidAmount
             && isTexSendSupported
@@ -156,6 +163,12 @@ struct SendForm {
 
         var isInsufficientFunds: Bool {
             guard isValidAmount else { return false }
+            // A masked spendable value arrives as zero, so every typed amount would exceed it and
+            // the form would accuse the user of insufficient funds over a figure the SDK has
+            // simply declined to state. Holding the error needs the matching gate in `isValidForm`
+            // to go with it: without that, Send would look enabled while the answer is unknown,
+            // and with only that, the error would still be on screen underneath it.
+            guard !isSpendabilityBeingDetermined else { return false }
 
             return amount.amount > shieldedBalance.amount
         }
@@ -415,14 +428,12 @@ struct SendForm {
                     }
                 }
                 
-            case let .sendFailed(error, confirmationType):
+            case let .sendFailed(error, _):
                 if error.isInsufficientBalance {
                     state.isInsufficientBalance = error.isInsufficientBalance
                     return .none
                 }
-                if confirmationType == .send {
-                    state.alert = AlertState.sendFailure(error)
-                }
+                state.alert = AlertState.sendFailure(error)
                 return .none
 
             case .confirmationRequired:

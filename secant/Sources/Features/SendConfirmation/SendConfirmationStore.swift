@@ -348,9 +348,13 @@ struct SendConfirmation {
 
                         switch result {
                         case let .grpcFailure(txIds, reason):
-                            await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
-                            ))
+                            let pendingDescription: String?
+                            switch reason {
+                            case .timeout: pendingDescription = String(localizable: .sendPendingTimeoutInfo)
+                            case .guardBusy: pendingDescription = String(localizable: .sendPendingGuardBusyInfo)
+                            case nil: pendingDescription = nil
+                            }
+                            await send(.updatePendingDescription(pendingDescription))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
@@ -662,9 +666,13 @@ struct SendConfirmation {
 
                         switch result {
                         case let .grpcFailure(txIds, reason):
-                            await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
-                            ))
+                            let pendingDescription: String?
+                            switch reason {
+                            case .timeout: pendingDescription = String(localizable: .sendPendingTimeoutInfo)
+                            case .guardBusy: pendingDescription = String(localizable: .sendPendingGuardBusyInfo)
+                            case nil: pendingDescription = nil
+                            }
+                            await send(.updatePendingDescription(pendingDescription))
                             await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)

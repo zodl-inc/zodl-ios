@@ -78,15 +78,52 @@ import ComposableArchitecture
         #expect(shielding.isShieldingButtonDisabled) // disabled while shielding even if available
     }
 
+    /// "Processing with zero available" means the spendable value is still being worked out, and
+    /// no shape of the balance says that. A zero spendable balance is a settled answer — nothing
+    /// to spend right now — whether the rest of the wallet is confirming or transparent.
     @Test func isProcessingZeroAvailableBalance() {
-        var processing = state(shieldedBalance: .zero, transparentBalance: Zatoshi(10))
-        processing.autoShieldingThreshold = Zatoshi(50)
-        processing.totalBalance = Zatoshi(10)
-        #expect(processing.isProcessingZeroAvailableBalance)
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var confirming = state(shieldedBalance: .zero, transparentBalance: Zatoshi(10))
+            confirming.autoShieldingThreshold = Zatoshi(50)
+            confirming.totalBalance = Zatoshi(10)
+            #expect(!confirming.isProcessingZeroAvailableBalance)
 
-        var hasTransparentAboveThreshold = state(shieldedBalance: .zero, transparentBalance: Zatoshi(100))
-        hasTransparentAboveThreshold.autoShieldingThreshold = Zatoshi(50)
-        #expect(!hasTransparentAboveThreshold.isProcessingZeroAvailableBalance)
+            var hasTransparentAboveThreshold = state(shieldedBalance: .zero, transparentBalance: Zatoshi(100))
+            hasTransparentAboveThreshold.autoShieldingThreshold = Zatoshi(50)
+            #expect(!hasTransparentAboveThreshold.isProcessingZeroAvailableBalance)
+
+            // The SDK declining to state the spendable value is the case that IS unresolved.
+            var masked = confirming
+            masked.isSpendableMasked = true
+            #expect(masked.isProcessingZeroAvailableBalance)
+
+            // So is a running sync that has not published a balance for this account yet.
+            var syncingBeforeFirstBalance = state()
+            syncingBeforeFirstBalance.isSyncInProgress = true
+            #expect(!syncingBeforeFirstBalance.hasConcreteBalance)
+            #expect(syncingBeforeFirstBalance.isProcessingZeroAvailableBalance)
+        }
+    }
+
+    /// The breakdown must say the spendable figure is still updating while the SDK masks it, even
+    /// with nothing pending -- otherwise the one case `BalancesView`'s header goes silent for
+    /// (its condition and the spendable row's progress indicator are both keyed off this flag).
+    @Test func breakdownReportsUpdatingWhileMaskedWithNoPending() {
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var masked = state(shieldedBalance: Zatoshi(1_000))
+            masked.spendability = .nothing
+            masked.isSpendableMasked = true
+
+            #expect(masked.isSpendableValueUpdating)
+            #expect(!masked.isDisplayedPendingInProcess, "nothing pending is exactly the case the header would otherwise go silent for")
+
+            masked.isSpendableMasked = false
+            #expect(!masked.isSpendableValueUpdating)
+        }
     }
 
     @Test func isPendingTransactionReflectsSharedTransactions() {
@@ -104,7 +141,7 @@ import ComposableArchitecture
             $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
         }
         store.exhaustivity = .off
-        await store.send(.updateBalance(nil))
+        await store.send(.updateBalance(nil, nil, 0))
         await store.receive(\.everythingSpendable)
         #expect(store.state.shieldedBalance == .zero)
         #expect(store.state.totalBalance == .zero)
@@ -112,59 +149,71 @@ import ComposableArchitecture
     }
 
     @MainActor @Test func updateBalanceAggregatesSaplingOrchardAndTransparent() async {
-        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
-            Balances()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            let balance = AccountBalance(
+                saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+                orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+                unshielded: Zatoshi(5),
+                awaitingResolution: Zatoshi(1)
+            )
+
+            // No account is selected in this isolated storage, so `nil` is the matching account
+            // id for the provenance guard -- this test is about pool aggregation, not provenance.
+            await store.send(.updateBalance(balance, nil, 0))
+
+            #expect(store.state.changePending == Zatoshi(40))             // 10 + 30
+            #expect(store.state.pendingTransactions == Zatoshi(60))       // 20 + 40
+            #expect(store.state.shieldedBalance == Zatoshi(300))          // 100 + 200
+            #expect(store.state.transparentBalance == Zatoshi(5))         // unshielded
+            #expect(store.state.shieldedWithPendingBalance == Zatoshi(400)) // 130 + 270 totals
+            #expect(store.state.totalBalance == Zatoshi(406))            // 400 + 5 + 1 awaiting
+            #expect(store.state.spendability == .something)
         }
-        store.exhaustivity = .off
-
-        let balance = AccountBalance(
-            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
-            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
-            unshielded: Zatoshi(5),
-            awaitingResolution: Zatoshi(1)
-        )
-
-        await store.send(.updateBalance(balance))
-
-        #expect(store.state.changePending == Zatoshi(40))             // 10 + 30
-        #expect(store.state.pendingTransactions == Zatoshi(60))       // 20 + 40
-        #expect(store.state.shieldedBalance == Zatoshi(300))          // 100 + 200
-        #expect(store.state.transparentBalance == Zatoshi(5))         // unshielded
-        #expect(store.state.shieldedWithPendingBalance == Zatoshi(400)) // 130 + 270 totals
-        #expect(store.state.totalBalance == Zatoshi(406))            // 400 + 5 + 1 awaiting
-        #expect(store.state.spendability == .something)
     }
 
     // Ironwood is a third shielded pool (NU6.3 / Orchard note-version V3). The reducer must
     // pick it up through the SDK's pool-agnostic `shielded*` accessors on `AccountBalance`
     // rather than a hand-summed sapling+orchard pair, or Ironwood funds would be invisible.
     @MainActor @Test func updateBalanceAggregatesSaplingOrchardIronwoodAndTransparent() async {
-        let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
-            Balances()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = TestStore(initialState: state(autoShieldingThreshold: Zatoshi(1_000_000))) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            let balance = AccountBalance(
+                saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+                orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+                ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
+                unshielded: Zatoshi(5),
+                awaitingResolution: Zatoshi(1)
+            )
+
+            // No account is selected in this isolated storage, so `nil` is the matching account
+            // id for the provenance guard -- this test is about pool aggregation, not provenance.
+            await store.send(.updateBalance(balance, nil, 0))
+
+            #expect(store.state.changePending == Zatoshi(90))              // 10 + 30 + 50
+            #expect(store.state.pendingTransactions == Zatoshi(120))       // 20 + 40 + 60
+            #expect(store.state.shieldedBalance == Zatoshi(600))           // 100 + 200 + 300
+            #expect(store.state.transparentBalance == Zatoshi(5))          // unshielded
+            #expect(store.state.shieldedWithPendingBalance == Zatoshi(810)) // 130 + 270 + 410 totals
+            #expect(store.state.totalBalance == Zatoshi(816))              // 810 + 5 + 1 awaiting
+            #expect(store.state.spendability == .something)
         }
-        store.exhaustivity = .off
-
-        let balance = AccountBalance(
-            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
-            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
-            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
-            unshielded: Zatoshi(5),
-            awaitingResolution: Zatoshi(1)
-        )
-
-        await store.send(.updateBalance(balance))
-
-        #expect(store.state.changePending == Zatoshi(90))              // 10 + 30 + 50
-        #expect(store.state.pendingTransactions == Zatoshi(120))       // 20 + 40 + 60
-        #expect(store.state.shieldedBalance == Zatoshi(600))           // 100 + 200 + 300
-        #expect(store.state.transparentBalance == Zatoshi(5))          // unshielded
-        #expect(store.state.shieldedWithPendingBalance == Zatoshi(810)) // 130 + 270 + 410 totals
-        #expect(store.state.totalBalance == Zatoshi(816))              // 810 + 5 + 1 awaiting
-        #expect(store.state.spendability == .something)
     }
 
     @MainActor @Test func shieldingProcessorRequestedMarksShielding() async {
@@ -208,6 +257,281 @@ import ComposableArchitecture
         await store.send(.shieldFundsTapped)
 
         #expect(shieldCalled.value)
+    }
+
+    // MARK: - The breakdown reads the same unmasked local balances as the home screen
+
+    /// A replayed `.zero` synchronizer state carries no entry for the selected account. The
+    /// breakdown must publish nothing from it — anything else would replace the concrete
+    /// balance on screen with zeros the moment the stream replays its seed value.
+    @MainActor @Test func replayedZeroSynchronizerStatePublishesNoBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = state(shieldedBalance: Zatoshi(600), transparentBalance: Zatoshi(5))
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            initialState.totalBalance = Zatoshi(816)
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+
+            await store.send(.synchronizerStateChanged(SynchronizerState.zero.redacted)) {
+                // `spendability` is re-derived on every `.synchronizerStateChanged`, from the
+                // concrete balance already on screen — unrelated to, and not proof against, the
+                // "no `.updateBalance` follows" assertion below.
+                $0.spendability = .something
+            }
+            // The relay hop still runs; what must NOT follow is an `.updateBalance`. The store is
+            // exhaustive here, so one would be reported as an unhandled action.
+            await store.receive(\.updateBalances)
+            await store.finish()
+
+            #expect(store.state.shieldedBalance == Zatoshi(600))
+            #expect(store.state.totalBalance == Zatoshi(816))
+        }
+    }
+
+    /// The state stream carries both a possibly masked visible balance and the unmasked local
+    /// snapshot. The breakdown must read the local one, so it agrees with the home screen
+    /// instead of showing zeros while the engine withholds the spendable value.
+    @MainActor @Test func synchronizerStateUsesUnmaskedLocalBalance() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let localBalance = fullPoolAccountBalance()
+            let maskedBalance = AccountBalance(
+                saplingBalance: .zero,
+                orchardBalance: .zero,
+                ironwoodBalance: .zero,
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            var snapshot = SynchronizerState.zero
+            snapshot.accountsBalances = [testWalletAccount.id: maskedBalance]
+            snapshot.localAccountsBalances = [testWalletAccount.id: localBalance]
+
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.synchronizerStateChanged(snapshot.redacted))
+            await store.receive(\.updateBalances)
+            await store.receive(\.updateBalance)
+
+            #expect(store.state.shieldedBalance == localBalance.shieldedSpendableValue)
+            #expect(store.state.shieldedBalance != .zero)
+        }
+    }
+
+    /// The instant read on appear prefers the unmasked local balances too, so opening the sheet
+    /// during a server switch does not momentarily show a masked zero.
+    @MainActor @Test func updateBalancesOnAppearPrefersLocalAccountBalances() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let localBalance = fullPoolAccountBalance()
+            let maskedBalance = AccountBalance(
+                saplingBalance: .zero,
+                orchardBalance: .zero,
+                ironwoodBalance: .zero,
+                unshielded: .zero,
+                awaitingResolution: .zero
+            )
+            let accountUUID = testWalletAccount.id
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.sdkSynchronizer = .mocked(
+                    getAccountsBalances: { [accountUUID: maskedBalance] },
+                    getLocalAccountBalances: { [accountUUID: localBalance] }
+                )
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalancesOnAppear)
+            await store.receive(\.updateBalance)
+
+            #expect(store.state.shieldedBalance == localBalance.shieldedSpendableValue)
+        }
+    }
+
+    // MARK: - Funds pending confirmation are something to spend later, not nothing at all
+
+    /// A self-shield waiting for confirmations: the shielded total exceeds the spendable value and
+    /// there is no transparent balance left. That is a complete answer — nothing spendable right
+    /// now, something spendable soon — so the breakdown must not report it as unresolved.
+    @MainActor @Test func fundsPendingConfirmationAreSomethingRatherThanNothing() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.updateBalance(pendingSelfShieldBalance(), testWalletAccount.id, 0))
+
+            #expect(store.state.shieldedBalance == .zero)
+            #expect(store.state.transparentBalance == .zero)
+            #expect(store.state.shieldedWithPendingBalance == Zatoshi(500))
+            #expect(!store.state.isProcessingZeroAvailableBalance)
+            #expect(store.state.spendability == .something)
+        }
+    }
+
+    /// The same wallet while the SDK withholds the spendable value: now it IS unresolved, and the
+    /// sheet must say so rather than presenting the withheld zero as a real figure.
+    @MainActor @Test func aMaskedSpendableValueIsReportedAsStillBeingDetermined() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var masked = SynchronizerState.zero
+            masked.isSpendableMasked = true
+            masked.localAccountsBalances = [testWalletAccount.id: pendingSelfShieldBalance()]
+
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.synchronizerStateChanged(masked.redacted))
+            await store.receive(\.updateBalances)
+            await store.receive(\.updateBalance)
+
+            #expect(store.state.isSpendableMasked)
+            #expect(store.state.isProcessingZeroAvailableBalance)
+            #expect(store.state.spendability == .nothing)
+        }
+    }
+
+    // MARK: - `spendability` must not go on repeating a stale answer once the flags it depends on move
+
+    /// A masked state with no local entry for the account never reaches `.updateBalance`, where
+    /// `spendability` is otherwise recomputed. Without a re-derivation here the stored answer is
+    /// simply whatever it was before the mask arrived — `.everything` for a sheet that has not
+    /// published a balance yet — which is exactly wrong while the SDK is still working it out.
+    @MainActor @Test func aMaskWithNoLocalSnapshotLeavesSpendabilityAsStillBeingDetermined() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            var masked = SynchronizerState.zero
+            masked.isSpendableMasked = true
+            await store.send(.synchronizerStateChanged(masked.redacted))
+
+            #expect(store.state.isProcessingZeroAvailableBalance)
+            #expect(store.state.spendability == .nothing)
+        }
+    }
+
+    /// The published balance vouches for the account it was read for. Switching account while a
+    /// sync is running, before anything is published for the new account, must stop `spendability`
+    /// from going on answering for the account that is no longer selected.
+    @MainActor @Test func spendabilityStopsAnsweringForThePreviousAccountAfterASwitch() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var syncing = SynchronizerState.zero
+            syncing.syncStatus = .syncing(0.5, false)
+
+            var initialState = state()
+            initialState.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+            let store = TestStore(initialState: initialState) {
+                Balances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.synchronizerStateChanged(syncing.redacted))
+            await store.send(.updateBalance(pendingSelfShieldBalance(), testWalletAccount.id, 0))
+            #expect(store.state.hasConcreteBalance)
+            #expect(store.state.spendability == .something)
+
+            store.state.$selectedWalletAccount.withLock { $0 = otherWalletAccount }
+            #expect(!store.state.hasConcreteBalance)
+            #expect(store.state.isProcessingZeroAvailableBalance)
+
+            // No balance has been published for the new account yet, but the next state-stream
+            // tick must still stop `spendability` from going on answering for the OLD one.
+            await store.send(.synchronizerStateChanged(syncing.redacted))
+            #expect(store.state.isProcessingZeroAvailableBalance)
+            #expect(store.state.spendability == .nothing)
+        }
+    }
+
+    private var testWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 9, count: 16)),
+                name: "Zodl",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    private var otherWalletAccount: WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 10, count: 16)),
+                name: "Keystone",
+                keySource: nil,
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
+    private func pendingSelfShieldBalance() -> AccountBalance {
+        AccountBalance(
+            saplingBalance: .zero,
+            orchardBalance: PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: Zatoshi(500)),
+            ironwoodBalance: .zero,
+            unshielded: .zero,
+            awaitingResolution: .zero
+        )
+    }
+
+    private func fullPoolAccountBalance() -> AccountBalance {
+        AccountBalance(
+            saplingBalance: PoolBalance(spendableValue: Zatoshi(100), changePendingConfirmation: Zatoshi(10), valuePendingSpendability: Zatoshi(20)),
+            orchardBalance: PoolBalance(spendableValue: Zatoshi(200), changePendingConfirmation: Zatoshi(30), valuePendingSpendability: Zatoshi(40)),
+            ironwoodBalance: PoolBalance(spendableValue: Zatoshi(300), changePendingConfirmation: Zatoshi(50), valuePendingSpendability: Zatoshi(60)),
+            unshielded: Zatoshi(5),
+            awaitingResolution: Zatoshi(1)
+        )
     }
 
     private func state(

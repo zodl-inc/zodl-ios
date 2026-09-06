@@ -37,8 +37,18 @@ struct Root {
                 now.timeIntervalSince(benchmarkedAt) >= AutoServerSelectionConstants.pendingCandidateTTL
             }
         }
-        
+
+        /// MOB-1853: how many terminal-stall rebuilds (`.syncStalled(gaveUp: true)`) one foreground
+        /// may run -- see `terminalStallRebuildsThisForeground`.
+        static let maxTerminalStallRebuildsPerForeground = 2
+
         var CancelEventId = UUID()
+        /// MOB-1853: the `.syncStalled` event channel's own cancel id -- a dedicated `.publisher`
+        /// branch in the same `.observeTransactions` `.merge`, kept separate from `CancelEventId`'s
+        /// transaction-event channel so the two can never silently drop each other's event under a
+        /// shared "latest wins" throttle window (see `RootTransactions.swift`). Cancelled everywhere
+        /// `CancelEventId` is cancelled at `.didEnterBackground`.
+        var CancelSyncStalledEventId = UUID()
         var CancelId = UUID()
         var CancelResyncStateId = UUID()
         var CancelStateId = UUID()
@@ -63,6 +73,11 @@ struct Root {
         var CancelFlexaId = UUID()
         var shieldingProcessorCancelId = UUID()
         var automaticServerRefreshCancelId = UUID()
+        /// MOB-1853: the terminal-stall rebuild effect's own cancel id -- separate from
+        /// `automaticServerRefreshCancelId` (that one only ever covers a benchmark-and-maybe-switch,
+        /// never a rebuild). Cancelled at `.didEnterBackground`, same as every other foreground-only
+        /// mechanism.
+        var terminalStallRebuildCancelId = UUID()
         var staleWalletHealedAlertCancelId = UUID()
         var migrationSyncGateCancelId = UUID()
         /// MOB-1466: the foreground migration TICK LOOP's cancel id — one recurring 30s wake-up,
@@ -77,6 +92,11 @@ struct Root {
         /// Audit 2026-08-03 (#7): the one-shot delayed `.retryStart` a failed `start()` schedules —
         /// cancelled at background, re-armed (the one-shot latch below resets) each foreground.
         var startFailureRetryCancelId = UUID()
+        /// MOB-1859: the background `PrivateUAStash.refill` dispatched from
+        /// `.initialization(.loadedWalletAccounts)` for accounts whose rotation stash is still
+        /// nil after merging in the previous in-memory accounts. A newer load's refill supersedes
+        /// whichever one is still running for a now-stale accounts list.
+        var privateUAStashRefillCancelId = UUID()
         /// One retry per foreground: a `start()` that keeps failing must not self-retry in a loop —
         /// the second failure waits for the next external trigger (foreground, gate emission).
         var didScheduleStartFailureRetry = false
@@ -130,8 +150,101 @@ struct Root {
         var isInitializingSDK = false
         var isLockedInKeychainUnavailableState = false
         var isRestoringWallet = false
+        /// MOB-1854: single-flight latch for `.initialization(.retryStart)` — `start()` has no
+        /// cancellation points, so a re-entrant retryStart is dropped (and logged) rather than
+        /// cancelling the in-flight pipeline. Reset at `.didEnterBackground` so a pipeline whose
+        /// finishing `send` was dropped by cancellation can never wedge the next foreground.
+        var isRetryStartInFlight = false
+        /// MOB-1854: which admitted `.retryStart` pipeline owns the latch above, incremented every
+        /// time one is admitted (and at `.didEnterBackground`, so a pipeline still running when the
+        /// app backgrounds can never be mistaken for the one a later foreground starts). Tags
+        /// `.retryStartFinished`/`.registerForSynchronizersUpdate` so a stale pipeline's completion
+        /// can neither release a newer pipeline's latch nor re-subscribe the synchronizer streams on
+        /// its behalf.
+        var retryStartGeneration = 0
+        /// MOB-1854: set when `.retryStart` is dropped because a pipeline is already in flight —
+        /// that pipeline may be a broadcast-only pass that never calls `start()`, so the request must
+        /// not simply be lost. Consumed (and replayed once, via `.send(.retryStart)`) by that
+        /// pipeline's own `.retryStartFinished`; reset at `.didEnterBackground` along with the latch
+        /// it shadows.
+        var retryStartRequestedWhileInFlight = false
         var isStaleWalletHealedAlertPending = false
+        /// MOB-1853: true from the stall hook's own reaction (`gaveUp || attempt >= 2`, see
+        /// `Root.Action.syncStalled`'s handler) until the next `.synchronizerStateChanged` reports
+        /// either `.upToDate` or `.syncing` progress past `lastKnownSyncProgress` -- i.e. the engine
+        /// visibly moving again. While true, `isSynchronizerIdleForSwitch` treats a `.syncing`
+        /// status as idle too, since a stalled sync has nothing left for an automatic switch to
+        /// interrupt. Reset at `.didEnterBackground`, same as `lastKnownSyncStatus`.
+        var isSyncStalledSinceLastProgress = false
+        /// MOB-1853: how many terminal-stall rebuilds (`.syncStalled(gaveUp: true)`) this foreground
+        /// has already run -- see `maxTerminalStallRebuildsPerForeground` and `.syncStalled`'s handler
+        /// (`RootTransactions.swift`). A rebuild tears the synchronizer down and rebuilds it, which is
+        /// disruptive if it happened without bound, so once the budget is spent the SDK's own error
+        /// state is left on screen for the user instead of retrying silently forever. Reset to 0 only
+        /// when the app enters the background (`.didEnterBackground`) -- unlike
+        /// `didScheduleStartFailureRetry`, which ALSO resets on a fresh foreground
+        /// (`.willEnterForeground`), this budget does not: an inactive-without-background cycle keeps
+        /// whatever count this foreground had already spent.
+        var terminalStallRebuildsThisForeground = 0
+        /// MOB-1853: true from the moment a terminal-stall rebuild effect is dispatched (where
+        /// `terminalStallRebuildsThisForeground` increments, above) until it completes
+        /// (`.terminalStallRebuildFinished`). Covers exactly the window in which a benchmark
+        /// dispatched by an EARLIER `.refreshAutomaticServer` (attempt 2, before the give-up) can
+        /// still deliver its own `.autoServerCandidateReady` -- cancelling that benchmark's own
+        /// effect (`automaticServerRefreshCancelId`, in the same `.syncStalled` handler) cannot
+        /// guarantee its underlying network call actually stops, since Swift's task cancellation is
+        /// cooperative. Without this flag, `.autoServerCandidateReady` would see
+        /// `isSynchronizerIdleForSwitch` already true (because of `isSyncStalledSinceLastProgress`)
+        /// and run `applySwitch` on top of the rebuild the give-up just started -- a second teardown
+        /// outside the two-per-foreground budget. `.autoServerCandidateReady` checks this flag first
+        /// and DROPS a candidate that arrives while it is set, rather than stashing it as
+        /// `pendingServerCandidate`: `rebuildAfterStall` computes its own fresh candidate
+        /// independently, so the benchmark's stale one must never replay once the window closes.
+        /// Also cleared at `.didEnterBackground`, same as `terminalStallRebuildsThisForeground`, so a
+        /// completion dropped by that boundary's cancellation can never wedge the next foreground's
+        /// gate shut.
+        var isTerminalStallRebuildInFlight = false
+        /// MOB-1856: single-flight coalescing latch for `.fetchTransactionsForTheSelectedAccount`.
+        /// During catch-up sync this fetch is re-dispatched on every throttled synchronizer event
+        /// (`.observeTransactions` -- see `RootTransactions.swift`), and on a long transaction
+        /// history `getAllTransactions` can easily take longer than one throttle window, so without
+        /// this latch concurrent full-history fetches piled up. While `true`, a fresh dispatch sets
+        /// `isTransactionsFetchDirty` and returns immediately instead of starting another fetch; the
+        /// in-flight fetch's own completion (`.fetchedTransactions`/`.transactionsFetchFailed`)
+        /// clears this flag and, if dirty, sends exactly one follow-up fetch. Also reset by
+        /// `accountSwitchedEffect` (`RootCoordinator.swift`), whose `.cancel` drops any pending
+        /// completion for the fetch it just cancelled -- see that reset's own comment for why.
+        var isTransactionsFetchInFlight = false
+        /// Set by `.fetchTransactionsForTheSelectedAccount` when a dispatch arrives while
+        /// `isTransactionsFetchInFlight` is already `true`. Cleared by the in-flight fetch's own
+        /// completion, which folds every dispatch coalesced during its run into exactly one
+        /// follow-up fetch for whichever account is selected at that point.
+        var isTransactionsFetchDirty = false
+        /// Which account the shared `transactions` array currently holds rows for. Set by
+        /// `.fetchedTransactions` (`RootTransactions.swift`) the moment it writes `$transactions`, so
+        /// it always names the account whose fetch actually produced the array's current contents --
+        /// never the account merely selected right now. `nil` after `accountSwitchedEffect`
+        /// (`RootCoordinator.swift`) clears both together on every switch, and stays `nil` until the
+        /// newly-selected account's own fetch lands. Read by the empty-fetch keep-guard and the
+        /// failure path in `RootTransactions.swift` so neither can ever treat a foreign account's
+        /// leftover rows as belonging to the account a fetch just completed (or failed) for.
+        var transactionsAccountId: AccountUUID?
         @Shared(.appStorage(.lastAuthenticationTimestamp)) var lastAuthenticationTimestamp: Int = 0
+        /// The most recent `.syncing` progress value seen via `.synchronizerStateChanged`, kept
+        /// solely so that handler can detect a NEW tick's progress advancing past this one and
+        /// clear `isSyncStalledSinceLastProgress`. Not reset at `.didEnterBackground` -- the first
+        /// `.syncing` tick after a foreground restart is compared against this stale pre-background
+        /// value BEFORE it gets overwritten with the fresh one. That comparison can spuriously
+        /// "clear" a stall that this session never armed, but it is harmless:
+        /// `isSyncStalledSinceLastProgress` is already `false` from that same `.didEnterBackground`
+        /// reset, so there is nothing left for it to (no-op) clear.
+        var lastKnownSyncProgress: Float?
+        /// The last sync status `.synchronizerStateChanged` reported, read by
+        /// `isSynchronizerIdleForSwitch`. `nil` (nothing observed yet this session, or just reset at
+        /// `.didEnterBackground`) deliberately does NOT count as idle -- an automatic switch must
+        /// never run against an unknown sync state. A later task (transaction-list guards) reads
+        /// this too, hence a plain optional here rather than something private to the switch gate.
+        var lastKnownSyncStatus: SyncStatus?
         var maxResetZashiAppAttempts = ResetZashiConstants.maxResetZashiAppAttempts
         var maxResetZashiSDKAttempts = ResetZashiConstants.maxResetZashiSDKAttempts
         var messageToBeShared = ""
@@ -212,9 +325,27 @@ struct Root {
             }
         }
 
-        /// The local-snapshot read is completed before a candidate reaches this gate.
+        /// True once the synchronizer has told us enough to believe an automatic switch (which
+        /// tears down and rebuilds the synchronizer) will not interrupt an active sync: either the
+        /// last known status carries no progress a switch could lose (`.upToDate`, `.stopped`,
+        /// `.unprepared`, `.error`), or the sync has stalled since its last observed progress. `nil`
+        /// -- nothing observed yet, or just cleared at `.didEnterBackground` -- is deliberately NOT
+        /// idle.
+        var isSynchronizerIdleForSwitch: Bool {
+            if isSyncStalledSinceLastProgress { return true }
+            guard let lastKnownSyncStatus else { return false }
+            switch lastKnownSyncStatus {
+            case .upToDate, .stopped, .unprepared, .error: return true
+            case .syncing: return false
+            }
+        }
+
+        /// The local-snapshot read is completed before a candidate reaches this gate. Also
+        /// requires the synchronizer to be idle (`isSynchronizerIdleForSwitch`) -- a switch tears
+        /// down and rebuilds the synchronizer, so it must never land while a sync is actively
+        /// making progress.
         var canApplyAutoServerSwitch: Bool {
-            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive
+            bgTask == nil && !isServerSetupVisible && !isSensitiveFlowActive && isSynchronizerIdleForSwitch
         }
 
         /// Gate for taking the screen over with the one-time Ironwood announcement.
@@ -318,6 +449,16 @@ struct Root {
         /// requires returning an `Effect` from the REDUCER, which a `.run` closure's body cannot do
         /// on its own partway through.
         case migrationTickAdvanced(MigrationStepVerdict)
+        /// MOB-1859: the result of one account's background rotation-stash refill, dispatched
+        /// from `.initialization(.loadedWalletAccounts)` for whichever accounts still had no
+        /// stash after merging in the previous in-memory accounts. A Root-owned action rather
+        /// than `.home(.updateNextPrivateUA(...))` — Home's handler only ever updates
+        /// `state.selectedWalletAccount`, so routing a multi-account refill through it would
+        /// silently discard the result for every account except whichever one happens to be
+        /// selected. The handler writes through `PrivateUAStash.write`, which keeps the
+        /// `walletAccounts` array (the source of truth an account switch installs as the new
+        /// selection, `WalletAccountsSheet`) in sync for every account, not only the selected one.
+        case privateUAStashRefilled(UnifiedAddress?, AccountUUID)
         case synchronizerStateChanged(RedactableSynchronizerState)
         case transactionDetailsOpen(String)
         case updateStateAfterConfigUpdate(WalletConfig)
@@ -348,8 +489,30 @@ struct Root {
         case observeTransactions
         case foundTransactions([ZcashTransaction.Overview])
         case minedTransaction(ZcashTransaction.Overview)
+        /// MOB-1853: mapped from `SynchronizerEvent.syncStalled` (see `.observeTransactions`) --
+        /// sent right before each recovery restart (`attempt`, 1-based) and once more when
+        /// recovery gives up. The handler always logs it; only `gaveUp || attempt >= 2` unblocks
+        /// an automatic server switch, since attempt 1 is the SDK's own cheap same-server
+        /// reconnect and must get its chance first.
+        case syncStalled(attempt: Int, gaveUp: Bool)
+        /// MOB-1853: completion of the terminal-stall rebuild effect `.syncStalled` starts when
+        /// recovery gives up -- `started` is `autoServerSelection.rebuildAfterStall()`'s own return,
+        /// true when a pass actually got underway. Logged either way; no further state change, since
+        /// the ordinary synchronizer-state/transaction pipeline reports whatever happens next.
+        case terminalStallRebuildFinished(Bool)
         case fetchTransactionsForTheSelectedAccount
         case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
+        /// MOB-1855: sent from `.fetchTransactionsForTheSelectedAccount`'s `catch` when
+        /// `getAllTransactions` throws, carrying the account the failed fetch was for. The handler
+        /// applies the same provenance guard as `.fetchedTransactions` above -- a failure for an
+        /// account the user has since switched away from must change nothing, or it would clear the
+        /// NEWLY selected account's `isInvalidated` flags and re-arm the poller using the PREVIOUS
+        /// account's leftover `state.transactions`, marking the new account "loaded" while the old
+        /// rows are still what is on screen. For the current account, the list keeps its previous
+        /// contents either way, but a failed fetch must still clear any list still showing its
+        /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
+        /// `RootTransactions.swift`.
+        case transactionsFetchFailed(accountUUID: AccountUUID)
         case noChangeInTransactions
         
         // Address Book
@@ -544,8 +707,9 @@ struct Root {
     }
     
     /// The `onChange` wrapper must observe every reducer that can mutate an input of
-    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path) — keep ALL
-    /// composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
+    /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path, and — via
+    /// `isSynchronizerIdleForSwitch` — `lastKnownSyncStatus` / `isSyncStalledSinceLastProgress`)
+    /// — keep ALL composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
         combinedCore
             .onChange(of: \.canApplyAutoServerSwitch) { _, state in
@@ -620,14 +784,26 @@ struct Root {
                 .cancellable(id: state.automaticServerRefreshCancelId, cancelInFlight: true)
 
             case .autoServerCandidateReady(let candidate, let benchmarkedAt):
+                // MOB-1853: checked BEFORE `canApplyAutoServerSwitch` -- during a terminal-stall
+                // rebuild, `isSynchronizerIdleForSwitch` reads true (because of
+                // `isSyncStalledSinceLastProgress`), which would otherwise let a benchmark dispatched
+                // by an EARLIER `.refreshAutomaticServer` (attempt 2, before the give-up) apply on top
+                // of the rebuild the give-up just started -- a second teardown outside the
+                // two-per-foreground budget. Dropped, not stashed: `rebuildAfterStall` computes its
+                // own fresh candidate, so this one is already stale by the time the rebuild finishes.
+                guard !state.isTerminalStallRebuildInFlight else {
+                    LoggerProxy.event("[AutoServerSelection] Candidate dropped: terminal stall rebuild in flight")
+                    return .none
+                }
                 guard state.canApplyAutoServerSwitch else {
                     state.pendingServerCandidate = State.PendingServerCandidate(
                         endpoint: candidate,
                         benchmarkedAt: benchmarkedAt
                     )
                     let hardGates = "bgTask: \(state.bgTask != nil), serverSetup: \(state.isServerSetupVisible)"
-                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive)"
-                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates))")
+                    let gates = "\(hardGates), sensitiveFlow: \(state.isSensitiveFlowActive), idle: \(state.isSynchronizerIdleForSwitch)"
+                    let status = String(describing: state.lastKnownSyncStatus)
+                    LoggerProxy.event("[AutoServerSelection] Candidate deferred (\(gates), lastKnownSyncStatus: \(status))")
                     return .none
                 }
                 state.pendingServerCandidate = nil

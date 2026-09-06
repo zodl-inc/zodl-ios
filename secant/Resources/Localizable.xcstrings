@@ -17051,6 +17051,23 @@
         }
       }
     },
+    "send.pendingGuardBusyInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your transaction was created and will be handed to a server as soon as the wallet finishes its current network work."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu transacción se ha creado y se enviará a un servidor en cuanto la billetera termine su trabajo de red actual."
+          }
+        }
+      }
+    },
     "send.pendingInfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23457,6 +23474,23 @@
         }
       }
     },
+    "transaction.sentAwaitingConfirmation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent · awaiting confirmation"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado · esperando confirmación"
+          }
+        }
+      }
+    },
     "transaction.shieldedFunds" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23538,6 +23572,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Comisión"
+          }
+        }
+      }
+    },
+    "transactionGuard.busy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The wallet is busy with another network operation. Try again in a moment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La billetera está ocupada con otra operación de red. Inténtalo de nuevo en un momento."
           }
         }
       }
