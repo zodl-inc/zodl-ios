@@ -37,6 +37,7 @@ final class SignalledRecords<Element: Sendable>: @unchecked Sendable {
 
     var values: [Element] { state.withLockUnchecked { $0.records } }
     var count: Int { state.withLockUnchecked { $0.records.count } }
+    var isEmpty: Bool { state.withLockUnchecked { $0.records.isEmpty } }
 
     /// Appends `element`, resumes every waiter the updated history now satisfies, and returns
     /// the new record count (this call's ordinal, for mocks that branch on it).
