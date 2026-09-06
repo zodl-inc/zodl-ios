@@ -242,6 +242,12 @@ extension Root {
                 // MOB-1853: the terminal-stall rebuild budget is foreground-scoped, same reasoning
                 // as `isSyncStalledSinceLastProgress` above -- a fresh foreground gets a fresh budget.
                 state.terminalStallRebuildsThisForeground = 0
+                // MOB-1853: a rebuild's own completion (`.terminalStallRebuildFinished`) may be
+                // dropped by this same boundary's cancellation below -- see
+                // `isTerminalStallRebuildInFlight`'s doc comment (`RootStore.swift`) -- so it must be
+                // reset here too, or a rebuild that never got to report back would leave the next
+                // foreground's `.autoServerCandidateReady` gate wedged shut.
+                state.isTerminalStallRebuildInFlight = false
                 // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
                 // cancellation (store teardown) must never wedge the next foreground's retryStart.
                 state.isRetryStartInFlight = false

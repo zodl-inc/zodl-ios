@@ -156,6 +156,10 @@ import ComposableArchitecture
             store.state.unminedMigrationPendingValue == .zero,
             "the pending-migration figure derived from those same foreign rows must not outlive them"
         )
+        #expect(
+            store.state.transactionsAccountId == nil,
+            "transactionsAccountId's own invariant (RootStore.swift) is that it names the account whose rows $transactions holds -- with the array just cleared to empty, it must follow back to nil"
+        )
     }
 
     // MARK: - (2) An empty result for the NEW account while syncing must leave it empty, not resurrect the old rows

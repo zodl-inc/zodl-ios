@@ -95,17 +95,30 @@ extension Root {
                 }
                 guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
                 state.terminalStallRebuildsThisForeground += 1
+                // MOB-1853: marks the window `.autoServerCandidateReady` must not act in -- see
+                // `isTerminalStallRebuildInFlight`'s doc comment (`RootStore.swift`).
+                state.isTerminalStallRebuildInFlight = true
                 // A candidate parked earlier this foreground is stale now -- rebuildAfterStall
                 // computes its own fresh one, so drop it before it can replay through applySwitch.
                 state.pendingServerCandidate = nil
-                return .run { send in
-                    let started = await autoServerSelection.rebuildAfterStall()
-                    await send(.terminalStallRebuildFinished(started))
-                }
-                .cancellable(id: state.terminalStallRebuildCancelId, cancelInFlight: true)
+                return .merge(
+                    // MOB-1853: a benchmark dispatched by an EARLIER `.refreshAutomaticServer`
+                    // (attempt 2, before this give-up) may still be running -- it must not be left to
+                    // deliver `.autoServerCandidateReady` out from under the rebuild this give-up is
+                    // about to start. `applySwitch` itself carries no cancel id of its own (see
+                    // `automaticServerRefreshCancelId`'s doc comment) and is not touched here; a
+                    // switch already applying keeps running to completion regardless.
+                    .cancel(id: state.automaticServerRefreshCancelId),
+                    .run { send in
+                        let started = await autoServerSelection.rebuildAfterStall()
+                        await send(.terminalStallRebuildFinished(started))
+                    }
+                    .cancellable(id: state.terminalStallRebuildCancelId, cancelInFlight: true)
+                )
 
             case .terminalStallRebuildFinished(let started):
                 LoggerProxy.event("[AutoServerSelection] Terminal stall rebuild \(started ? "started a pass" : "did not start a pass")")
+                state.isTerminalStallRebuildInFlight = false
                 return .none
 
             case .fetchTransactionsForTheSelectedAccount:
@@ -383,6 +396,11 @@ extension Root {
                     // together with them instead of continuing to describe an account that is no
                     // longer on screen.
                     state.$unminedMigrationPendingValue.withLock { $0 = .zero }
+                    // MOB-1853: `transactionsAccountId`'s own invariant (`RootStore.swift`) is that it
+                    // always names the account whose rows `$transactions` currently holds -- with the
+                    // array just cleared to empty, the field must follow it back to `nil` rather than
+                    // keep naming the foreign account whose rows are now gone.
+                    state.transactionsAccountId = nil
                 }
                 // The list keeps its previous contents (nothing to overwrite here at all), but
                 // either list may already be showing its loading placeholder -- clear it exactly
