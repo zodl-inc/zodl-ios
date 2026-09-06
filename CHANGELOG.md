@@ -16,7 +16,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1863] A sent transaction now shows "Sent · awaiting confirmation" once a server has accepted it, instead of "Sending" until the wallet catches up.
 
 ### Fixed
-- [MOB-1862] The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain. During that check the balance is shown as updating and Send and Swap wait for it rather than claiming you have insufficient funds, and funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent.
+- [MOB-1862] The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain. During that check the balance is shown as updating and Send and Swap wait for it rather than claiming you have insufficient funds, and funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent. Swapping another asset into ZEC no longer waits for the wallet's spendable balance to be confirmed, since that swap doesn't spend it.
 - [MOB-1860] Leaving a voting screen while a proof is being prepared stops that work instead of letting it run in the background.
 - [MOB-1859] Opening the wallet no longer generates a fresh receive address for every account on each load, so loading is faster during sync.
 - [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.

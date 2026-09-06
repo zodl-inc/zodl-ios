@@ -540,4 +540,38 @@ private enum SwapMaxButtonTestError: Error {
         state.walletBalancesState.isSpendableMasked = false
         #expect(state.isCrossPayInsufficientFunds)
     }
+
+    // MARK: - Incoming-swap exemption from the masked gate (MOB-1862 follow-on): an incoming
+    // swap deposits another asset and pays ZEC out to this wallet, so it never spends local ZEC.
+    // Masking the wallet's own spendable value must not block it the way it blocks Swap/Pay above.
+
+    @Test func incomingSwapCanRequestAQuoteWhileLocalSpendabilityIsMasked() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = true
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(state.isValidForm)
+    }
+
+    @Test func outgoingSwapStaysBlockedWhileMasked() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = false
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(!state.isValidForm)
+    }
+
+    @Test func incomingSwapWithEmptyAddressStaysInvalid() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = true
+        state.address = ""
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(!state.isValidForm)
+    }
 }
