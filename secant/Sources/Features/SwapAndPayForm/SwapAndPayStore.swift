@@ -105,12 +105,15 @@ struct SwapAndPay {
             walletBalancesState.isSpendableMasked
         }
 
+        /// Only a flow that spends local ZEC has to wait for the spendable value; an incoming swap
+        /// deposits another asset and receives ZEC, so masking must not block funding a wallet
+        /// that is still syncing. Mirrors the exemption in `isInsufficientFunds`.
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
             && amount > 0
             && !isInsufficientFunds
-            && !isSpendabilityBeingDetermined
+            && (isSwapToZecExperienceEnabled || !isSpendabilityBeingDetermined)
         }
 
         var isInsufficientFunds: Bool {
@@ -208,10 +211,16 @@ struct SwapAndPay {
 
                 return numberFormatter.number(amountText)?.decimalValue ?? 0.0
             } else {
-                return 0.0
+                // Test builds have no live formatter; a test that needs a positive amount sets this.
+                return amountOverrideForTesting ?? 0.0
             }
         }
-        
+
+        /// Interim seam: test builds can't run `amount` through the live formatter dependency
+        /// above, so it always reads zero there unless a test opts in here. Remove once the
+        /// formatter dependency is injectable in tests (MOB-1873).
+        var amountOverrideForTesting: Decimal?
+
         var assetAmount: Decimal {
             if !_XCTIsTesting {
                 @Dependency(\.numberFormatter) var numberFormatter
