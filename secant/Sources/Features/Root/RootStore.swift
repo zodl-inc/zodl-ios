@@ -155,6 +155,19 @@ struct Root {
         /// cancelling the in-flight pipeline. Reset at `.didEnterBackground` so a pipeline whose
         /// finishing `send` was dropped by cancellation can never wedge the next foreground.
         var isRetryStartInFlight = false
+        /// MOB-1854: which admitted `.retryStart` pipeline owns the latch above, incremented every
+        /// time one is admitted (and at `.didEnterBackground`, so a pipeline still running when the
+        /// app backgrounds can never be mistaken for the one a later foreground starts). Tags
+        /// `.retryStartFinished`/`.registerForSynchronizersUpdate` so a stale pipeline's completion
+        /// can neither release a newer pipeline's latch nor re-subscribe the synchronizer streams on
+        /// its behalf.
+        var retryStartGeneration = 0
+        /// MOB-1854: set when `.retryStart` is dropped because a pipeline is already in flight —
+        /// that pipeline may be a broadcast-only pass that never calls `start()`, so the request must
+        /// not simply be lost. Consumed (and replayed once, via `.send(.retryStart)`) by that
+        /// pipeline's own `.retryStartFinished`; reset at `.didEnterBackground` along with the latch
+        /// it shadows.
+        var retryStartRequestedWhileInFlight = false
         var isStaleWalletHealedAlertPending = false
         /// MOB-1853: true from the stall hook's own reaction (`gaveUp || attempt >= 2`, see
         /// `Root.Action.syncStalled`'s handler) until the next `.synchronizerStateChanged` reports

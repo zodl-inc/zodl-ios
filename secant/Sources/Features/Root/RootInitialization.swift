@@ -87,9 +87,17 @@ extension Root {
         case restoreExistingWallet
         case seedValidationResult(Bool)
         case synchronizerStartFailed(ZcashError)
-        case registerForSynchronizersUpdate
+        /// MOB-1854: `generation` is `nil` for a call that did not originate from a `.retryStart`
+        /// pipeline (cold launch's `.initializeSDK` cascade) — always accepted. A non-nil generation
+        /// is a `.retryStart` pipeline's own tag; it is honored only while it still matches
+        /// `Root.State.retryStartGeneration`, so a pipeline superseded by a newer one (background,
+        /// or a fresh `.retryStart`) can never re-subscribe the synchronizer streams on its behalf.
+        case registerForSynchronizersUpdate(generation: Int?)
         case retryStart
-        case retryStartFinished
+        /// MOB-1854: tagged with the generation the admitting `.retryStart` assigned its pipeline —
+        /// see `Root.State.retryStartGeneration`'s doc for why a stale tag must not release a newer
+        /// pipeline's latch.
+        case retryStartFinished(generation: Int)
         case walletConfigChanged(WalletConfig)
     }
 
@@ -237,6 +245,14 @@ extension Root {
                 // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
                 // cancellation (store teardown) must never wedge the next foreground's retryStart.
                 state.isRetryStartInFlight = false
+                // MOB-1854 follow-up: bump the generation so a pre-background pipeline that is
+                // still somehow running (its `.run` effect carries no cancellable id of its own)
+                // cannot have its eventual `.retryStartFinished`/`.registerForSynchronizersUpdate`
+                // mistaken for the pipeline the next foreground's `.retryStart` admits. A request
+                // dropped behind the OLD pipeline is moot once backgrounding has already reset the
+                // latch — the next foreground starts its own resume from scratch.
+                state.retryStartGeneration += 1
+                state.retryStartRequestedWhileInFlight = false
                 // Tear down ALL synchronizer-driven subscriptions (plus the pending-transactions
                 // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
                 // every one of them.
@@ -766,23 +782,33 @@ extension Root {
                 }
                 // (The Send-now silence-window fence read that lived here was REMOVED 2026-08-07
                 // with the Send-now lanes — nothing sets the fence anymore.)
-                // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
-                // #12 — see the gate-resume comment above). An early return above leaves them
-                // armed so the gate's next emission can retry the whole resume.
-                state.syncDeferredByMigrationGate = false
-                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
-                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
                 // MOB-1854: drop a re-entrant retryStart rather than cancelling the in-flight
                 // pipeline — `SlipstreamSynchronizer.start()` has no cancellation points, so
                 // cancelling it mid-flight would let it run to completion anyway and a second
                 // pipeline would then call `start()` again, draining and restarting the engine. The
                 // in-flight pipeline performs the same work this one would have.
+                //
+                // MOB-1854 follow-up: checked BEFORE the migration-resume flags below are touched.
+                // The in-flight pipeline may be a broadcast-only pass that never calls `start()` at
+                // all, so a request dropped here is not lost — it is replayed once, by the in-flight
+                // pipeline's own `.retryStartFinished`, and until then the resume flags must stay
+                // exactly as armed as they were, not consumed by a request that never actually ran.
                 guard !state.isRetryStartInFlight else {
-                    LoggerProxy.event("[Root] retryStart ignored: a start pipeline is already in flight")
+                    state.retryStartRequestedWhileInFlight = true
+                    LoggerProxy.event("[Root] retryStart deferred: a start pipeline is already in flight")
                     return .none
                 }
+                // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
+                // #12 — see the gate-resume comment above). An early return above leaves them
+                // armed so the gate's next emission (or the in-flight pipeline's own finish) can
+                // retry the whole resume.
+                state.syncDeferredByMigrationGate = false
+                @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
+                $migrationStoppedSyncForBroadcast.withLock { $0 = false }
                 state.isRetryStartInFlight = true
-                return .run { [state] send in
+                state.retryStartGeneration += 1
+                let generation = state.retryStartGeneration
+                return .run { [state, generation] send in
                     do {
                         // ZIP 318 session separation, decided BEFORE the wire is touched: if any
                         // account has a proven transfer due, this open is a BROADCAST session and
@@ -890,7 +916,7 @@ extension Root {
                         // repairs a dropped nudge on every registration that genuinely happens —
                         // this only stops a no-op pass from manufacturing one.
                         if startedSyncThisPass {
-                            await send(.initialization(.registerForSynchronizersUpdate))
+                            await send(.initialization(.registerForSynchronizersUpdate(generation: generation)))
                         }
                         // Backgrounding cancels the transaction subscriptions (event stream and
                         // `.upToDate` fetch trigger); without re-establishing them here, the first
@@ -907,7 +933,7 @@ extension Root {
                         // MOB-1854: clears `isRetryStartInFlight` — must be the LAST statement of
                         // this exit path so a re-entrant retryStart is only ever dropped while this
                         // pipeline is genuinely still doing something.
-                        await send(.initialization(.retryStartFinished))
+                        await send(.initialization(.retryStartFinished(generation: generation)))
                     } catch {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
@@ -917,19 +943,35 @@ extension Root {
                         // transient start error left BOTH the sync state stream and the migration
                         // gate feed unsubscribed for the whole foreground — no edges, no gate
                         // emissions, no resume until the next background→foreground round trip.
-                        await send(.initialization(.registerForSynchronizersUpdate))
+                        await send(.initialization(.registerForSynchronizersUpdate(generation: generation)))
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
                         // MOB-1854: same latch clear as the success path above — the last statement
                         // of this exit path too, so a start failure can't leave retryStart wedged.
-                        await send(.initialization(.retryStartFinished))
+                        await send(.initialization(.retryStartFinished(generation: generation)))
                     }
                 }
 
-            case .initialization(.retryStartFinished):
+            case .initialization(.retryStartFinished(let generation)):
+                // MOB-1854: a pipeline superseded by a newer one (background, or a fresh admitted
+                // retryStart) must not release that newer pipeline's latch — only the CURRENT
+                // generation's own finish may clear it.
+                guard generation == state.retryStartGeneration else { return .none }
                 state.isRetryStartInFlight = false
-                return .none
+                // A request dropped while this pipeline was in flight is replayed exactly once,
+                // now that this (still-current) pipeline is actually done — see the deferred guard
+                // in `.retryStart` above.
+                guard state.retryStartRequestedWhileInFlight else { return .none }
+                state.retryStartRequestedWhileInFlight = false
+                return .send(.initialization(.retryStart))
 
-            case .initialization(.registerForSynchronizersUpdate):
+            case .initialization(.registerForSynchronizersUpdate(let generation)):
+                // MOB-1854: `nil` (the cold-launch call site) is always honored; a `.retryStart`
+                // pipeline's own generation is honored only while it is still current — a pipeline
+                // superseded by a newer one must not re-subscribe the synchronizer streams on that
+                // newer pipeline's behalf.
+                if let generation, generation != state.retryStartGeneration {
+                    return .none
+                }
                 let stateStreamEffect = Effect.publisher {
                     sdkSynchronizer.stateStream()
                         .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
@@ -1317,7 +1359,7 @@ extension Root {
                 // going to do, so there is nothing to defer and nothing to replay. Entry parity
                 // stopped being maintained and became structural.
                 return .merge(
-                    .send(.initialization(.registerForSynchronizersUpdate)),
+                    .send(.initialization(.registerForSynchronizersUpdate(generation: nil))),
                     // Audit 2026-08-03 (#6): the launch-time sweep the snapshot docs always named
                     // but nothing implemented. A provisional network snapshot formed at the Tor
                     // sheet and abandoned (flow closed, app killed before commit) otherwise
