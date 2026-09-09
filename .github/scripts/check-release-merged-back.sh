@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+#
+# Check that every tagged release/ branch has been merged back into its
+# maintenance line, and forward down to main.
+#
+# Usage: check-release-merged-back.sh [pr-base] [pr-ref]
+#
+#   pr-base   branch a pending change targets; that branch is then evaluated
+#             as it would be with the change applied. Omit to check the
+#             branches as they stand.
+#   pr-ref    the pending change; defaults to HEAD (refs/pull/N/merge in CI).
+#
+# A release/X.Y.Z branch counts as released once a release-shaped tag (X.Y.Z)
+# not older than the version in the branch name is reachable from its tip --
+# reachable, not at the tip, so commits landing after the tag do not unmark
+# the branch. A branch prepare-release.sh has freshly cut reaches only the
+# PREVIOUS release's tag, so it is skipped as in-flight until its own tag
+# lands. A release/ branch with no version in its name is released only while
+# a release tag points at its tip. The maintenance line comes from the tag
+# rather than the branch name and is always maint/vX.Y.x -- the shape the
+# release tooling names; a maint/ branch of any other shape is reported and
+# ignored.
+#
+# Branches resolve under refs/remotes/$REMOTE, which defaults to origin -- what
+# CI checks out. Set REMOTE to run this against a local clone whose canonical
+# remote has another name, and run `git fetch` first.
+#
+# Exit codes: 0 = every checked branch is merged back; 1 = advisory findings
+# (a tagged release missing from a branch it should be in); 2 = the check
+# could not run at all -- refs unreadable, git failing -- which callers must
+# not report as a clean result.
+
+set -euo pipefail
+
+PR_BASE="${1:-}"
+PR_REF="${2:-HEAD}"
+REMOTE="${REMOTE:-origin}"
+
+# RELEASE_TAG_RE, version_sort, version_le, release_tags_merged_into and
+# maint_line_for_version come from the release library, so the tag shapes this
+# check recognises are the ones the release tooling actually cuts, and the
+# maintenance line it enforces is the branch that tooling names.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=Scripts/lib/release-lib.sh
+. "${SCRIPT_DIR}/../../Scripts/lib/release-lib.sh"
+
+say() {
+  printf '%s\n' "$*"
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
+}
+
+# An infrastructure failure: the check could not run. Distinct from findings
+# (exit 1) so a caller that treats findings as advisory does not also
+# swallow a broken run as green.
+infra_fail() {
+  say ":stop_sign: the merged-back check could not run: $1"
+  echo "error: $1" >&2
+  exit 2
+}
+
+# Is $1 an ancestor of $2? Status 1 means genuinely not an ancestor; anything
+# above 1 means git could not answer (an unresolvable ref, a broken repo),
+# which must not be mistaken for a finding.
+in_branch() {
+  local rc=0
+  git merge-base --is-ancestor "$1" "$2" || rc=$?
+  [ "$rc" -le 1 ] || infra_fail "git merge-base --is-ancestor '$1' '$2' failed (exit ${rc})"
+  return "$rc"
+}
+
+# The pending change, resolved once up front: a bad ref argument is an
+# infrastructure problem, not a property of any release branch.
+PR_SHA=''
+if [ -n "$PR_BASE" ]; then
+  if ! PR_SHA="$(git rev-parse -q --verify "${PR_REF}^{commit}")"; then
+    infra_fail "cannot resolve pr-ref '${PR_REF}'"
+  fi
+fi
+
+# Maintenance lines in version order, then main. A line is always named
+# maint/vX.Y.x; a maint/ branch of any other shape is set aside and reported
+# below, never silently dropped.
+# Enumerated through a checked substitution: a for-each-ref failure must be a
+# loud infrastructure error, not an empty chain.
+if ! maint_refs="$(git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/maint/*")"; then
+  infra_fail "listing refs/remotes/${REMOTE}/maint/* failed"
+fi
+UNRECOGNISED=()
+pairs=()
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  if printf '%s\n' "$b" | grep -qE '^maint/v[0-9]+\.[0-9]+\.x$'; then
+    pairs+=("${b#maint/v} ${b}")
+  else
+    UNRECOGNISED+=("$b")
+  fi
+done <<< "$maint_refs"
+sorted_maint="$(printf '%s\n' ${pairs[@]+"${pairs[@]}"} | sort -k1,1 -V | cut -d' ' -f2)"
+CHAIN=()
+while IFS= read -r ref; do
+  [ -n "$ref" ] || continue
+  CHAIN+=("$ref")
+done <<< "$sorted_maint"
+CHAIN+=('main')
+
+# Resolve a chain branch, substituting the pending change when it targets it.
+resolve() {
+  if [ -n "$PR_BASE" ] && [ "$1" = "$PR_BASE" ]; then
+    printf '%s\n' "$PR_SHA"
+  else
+    printf '%s/%s\n' "$REMOTE" "$1"
+  fi
+}
+
+if ! release_refs="$(git for-each-ref --sort=v:refname --format='%(refname:lstrip=3)' "refs/remotes/${REMOTE}/release/*")"; then
+  infra_fail "listing refs/remotes/${REMOTE}/release/* failed"
+fi
+
+say '## Release branches merged back'
+say ''
+
+for b in ${UNRECOGNISED[@]+"${UNRECOGNISED[@]}"}; do
+  say ":grey_question: \`${b}\` does not match maint/vX.Y.x; not a maintenance line, ignored."
+done
+
+failed=0
+checked=0
+
+while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  ref="${REMOTE}/${rel}"
+
+  # Only release-shaped tags mark a release: the repo also multi-tags commits
+  # with build tags (0.0.1-42-mainnet) and the odd pre-release, and those must
+  # not elect a maintenance line. Of several, the newest wins.
+  branch_ver="${rel#release/}"
+  if printf '%s\n' "$branch_ver" | grep -qE "$RELEASE_TAG_RE"; then
+    # A version-named branch is released once its release tag is reachable
+    # from the tip. Reachable, not at the tip: a commit landing after the tag
+    # must not unmark the branch -- an unreachable tag behind a moved tip is
+    # exactly the state this check exists to catch.
+    if ! tag="$(release_tags_merged_into "$ref" | tail -1)"; then
+      infra_fail "listing release tags merged into '${ref}' failed"
+    fi
+    if [ -z "$tag" ]; then
+      say ":grey_question: \`${rel}\` has no release tag in its history; not yet released, skipped."
+      continue
+    fi
+    # A branch prepare-release.sh has cut but not yet released reaches only
+    # the previous release's tag, older than the version in its own name. It
+    # has released nothing yet, so skip it.
+    if [ "$tag" != "$branch_ver" ] && version_le "$tag" "$branch_ver"; then
+      say ":grey_question: \`${rel}\` is freshly cut from \`${tag}\` and not yet released; skipped."
+      continue
+    fi
+  else
+    # A branch with no version in its name has no tag of its own to wait for;
+    # only a release tag at its tip marks it released. Reachability would let
+    # any branch cut above a release inherit that release's obligation.
+    if ! tag="$(git tag --points-at "$ref" | { grep -E "$RELEASE_TAG_RE" || true; } | version_sort | tail -1)"; then
+      infra_fail "listing tags at the tip of '${ref}' failed"
+    fi
+    if [ -z "$tag" ]; then
+      say ":grey_question: \`${rel}\` has no release tag at its tip; not a released branch, skipped."
+      continue
+    fi
+  fi
+
+  # X.Y.Z -> its maintenance line, named by the same library function that
+  # tells the operator where to merge, so the branch this check enforces is
+  # the branch the tooling instructed.
+  maint="$(maint_line_for_version "$tag")"
+
+  # Its own line is the obligation. Anything downstream of it is merge-forward
+  # lag, which the merge-forward jobs already track, so it warns rather than
+  # fails; otherwise the merge-back PR itself would report red for main.
+  # When the line does not exist, main takes over as the obligation below.
+  own=''
+  downstream=()
+  seen=0
+  for b in ${CHAIN[@]+"${CHAIN[@]}"}; do
+    if [ "$b" = "$maint" ]; then seen=1; own="$b"; continue; fi
+    if [ "$seen" -eq 1 ]; then downstream+=("$b"); fi
+  done
+  checked=$((checked + 1))
+
+  if [ "$seen" -eq 0 ]; then
+    # The line was never created, or has been retired. With no line, main is
+    # the one permanent branch that can keep the tag reachable, so reaching
+    # main is this release's obligation -- the unreachable-tag hazard itself,
+    # not merge-forward lag. Every release that opens a new minor line passes
+    # through this state, since cutting a release creates no maint branch.
+    say ":grey_question: \`${rel}\` (\`${tag}\`) belongs to \`${maint}\`, which does not exist; checking main only."
+    if in_branch "$ref" "$(resolve main)"; then
+      say ":white_check_mark: \`${rel}\` (\`${tag}\`) is in \`main\`."
+    else
+      failed=1
+      say ":x: \`${rel}\` (\`${tag}\`) has no maintenance line and has not reached \`main\`; create \`${maint}\` from it (or merge it into \`main\`) so the tag stays reachable."
+    fi
+    continue
+  fi
+
+  lagging=()
+  for b in ${downstream[@]+"${downstream[@]}"}; do
+    if ! in_branch "$ref" "$(resolve "$b")"; then
+      lagging+=("$b")
+    fi
+  done
+
+  if ! in_branch "$ref" "$(resolve "$own")"; then
+    failed=1
+    say ":x: \`${rel}\` (\`${tag}\`) is **not** merged back into \`${own}\`."
+  elif [ "${#lagging[@]}" -ne 0 ]; then
+    list="$(printf '%s, ' "${lagging[@]}")"
+    say ":warning: \`${rel}\` (\`${tag}\`) is in \`${own}\` but has not reached ${list%, } yet."
+  else
+    say ":white_check_mark: \`${rel}\` (\`${tag}\`) is in \`${own}\` and downstream."
+  fi
+done <<< "$release_refs"
+
+say ''
+
+if [ "$checked" -eq 0 ]; then
+  say 'No tagged release branches to check.'
+  exit 0
+fi
+
+if [ "$failed" -eq 0 ]; then
+  say "All ${checked} tagged release branches are merged back."
+  exit 0
+fi
+
+say 'Advisory only. Merge the release branch back into its maintenance line and'
+say 'let it flow forward, rather than cherry-picking, so the tag stays reachable.'
+exit 1

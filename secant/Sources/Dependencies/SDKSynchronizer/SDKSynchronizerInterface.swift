@@ -23,6 +23,11 @@ struct SDKSynchronizerClient: Sendable {
     enum CreateProposedTransactionsResult: Equatable, Sendable {
         enum GrpcFailureReason: Equatable, Sendable {
             case timeout
+            // A submission guard still busy after its acquisition timeout, or a send cancelled
+            // while waiting for it. Either way nothing was broadcast, but the transactions were
+            // already created and are released to the SDK's background resubmission — the UI
+            // treats this exactly like `.timeout`, just with its own copy.
+            case guardBusy
         }
 
         case failure(txIds: [String], code: Int, description: String)
@@ -290,17 +295,25 @@ struct SDKSynchronizerClient: Sendable {
     let getSaplingAddress: @Sendable (_ account: AccountUUID) async throws -> SaplingAddress?
     
     let getAccountsBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]
+    /// Returns the unmasked balance snapshot persisted in the wallet database.
+    /// `nil` means the synchronizer is not prepared or does not support this read.
+    let getLocalAccountBalances: @Sendable () async throws -> [AccountUUID: AccountBalance]?
     
     var wipe: @Sendable () -> AnyPublisher<Void, Error>?
     
     var switchToEndpoint: @Sendable (LightWalletEndpoint) async throws -> Void
-    
+    /// Rebuilds the engine at `endpoint` (same or different server) and starts a pass regardless
+    /// of prior running state -- the bounded way back to a running sync once the SDK's own stall
+    /// recovery has given up and possibly left no engine handle behind. See
+    /// `AutoServerSelectionClient.rebuildAfterStall`, the one caller.
+    var restartSync: @Sendable (LightWalletEndpoint) async throws -> Void
+
     // Proposals
     var proposeTransfer: @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal
     var sendMaxAmount: @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi
     /// Creates the proposal's transactions via the SDK `Broadcaster` and submits them to the
     /// endpoints chosen by the user's connection mode (Automatic -> all known servers,
-    /// Manual -> the selected server). See `selectedSubmissionEndpoints`.
+    /// Manual -> the selected server). See `intendedEndpoints`.
     var createAndSubmitProposedTransactions: @Sendable (Proposal, UnifiedSpendingKey) async throws -> CreateProposedTransactionsResult
     var proposeShielding: @Sendable (AccountUUID, Zatoshi, Memo, TransparentAddress?) async throws -> Proposal?
     
@@ -309,6 +322,11 @@ struct SDKSynchronizerClient: Sendable {
     var refreshExchangeRateUSD: @Sendable () -> Void
     
     var evaluateBestOf: @Sendable ([LightWalletEndpoint], Double, UInt64, Int, NetworkType) async -> [LightWalletEndpoint] = { _,_,_,_,_ in [] }
+
+    /// SDK-side automatic-switch decision: benchmarks the candidates, compares the winner
+    /// against the current endpoint, and returns the endpoint worth switching to — or nil
+    /// when staying is the right call. See `AutoServerSelectionClient.findBestServer`.
+    var evaluateServerSwitch: @Sendable (LightWalletEndpoint, [LightWalletEndpoint], Double, UInt64, NetworkType) async -> LightWalletEndpoint? = { _, _, _, _, _ in nil }
 
     var walletAccounts: @Sendable () async throws -> [WalletAccount] = { [] }
     
@@ -391,4 +409,3 @@ extension SDKSynchronizerClient {
         $migrationStoppedSyncForBroadcast.withLock { $0 = true }
     }
 }
-

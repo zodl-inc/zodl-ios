@@ -17,13 +17,26 @@ struct WalletBalances {
         var CancelStateId = UUID()
         var CancelRateId = UUID()
         var CancelMigrationSnapshotId = UUID()
-        var autoShieldingThreshold: Zatoshi = .zero
+        /// The account the published balance was read for — see `hasConcreteBalance`.
+        var concreteBalanceAccountId: AccountUUID?
+        /// Bumped every time `.updateBalances` starts a new request, and carried on every
+        /// `.balanceUpdated` that request produces. A response whose generation no longer matches
+        /// is from a superseded request — answering for the right account is not enough on its
+        /// own, since two requests for the SAME account can still resolve out of order. Also
+        /// bumped by `.synchronizerStateChanged`, so a stream update orders itself against, and
+        /// retires, any instant read still in flight for the same account.
+        var balanceRequestGeneration = 0
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         var fiatCurrencyResult: FiatCurrencyResult?
         var isAvailableBalanceTappable = true
         var isExchangeRateFeatureOn = false
         var isExchangeRateRefreshEnabled = false
         var isExchangeRateStale = false
+        /// The SDK is withholding the spendable value until it confirms a fresh chain tip. Not a
+        /// balance: it says the number is not knowable yet, which a zero balance never can.
+        var isSpendableMasked = false
+        /// A sync is running, so a balance may still be on its way.
+        var isSyncInProgress = false
         var migratingDatabase = false
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         var shieldedBalance: Zatoshi
@@ -40,16 +53,27 @@ struct WalletBalances {
             fiatCurrencyResult?.state == .fetching
         }
 
-        var isProcessingZeroAvailableBalance: Bool {
-            if shieldedBalance.amount == 0 && ShieldingProcessorClient.isShieldable(balance: transparentBalance, threshold: autoShieldingThreshold) {
-                return false
-            }
+        /// Whether a real balance for the CURRENTLY selected account has already been published.
+        /// Recorded against the account rather than as a bare flag: nothing tells this reducer
+        /// when the selection changes, so a flag would go on vouching for the previous account.
+        var hasConcreteBalance: Bool {
+            guard let concreteBalanceAccountId else { return false }
 
-            return totalBalance.amount != shieldedBalance.amount && shieldedBalance.amount == 0
+            return concreteBalanceAccountId == selectedWalletAccount?.id
         }
 
-        // Display-only: deliberately not folded into `transparentBalance`, which feeds
-        // `isProcessingZeroAvailableBalance`, the auto-shielding threshold comparison, and spendability.
+        /// The spendable value is still being worked out — the only situation that deserves an
+        /// "updating" affordance. Deliberately not derived from the balance: a zero spendable
+        /// value is a settled answer for an empty wallet and for funds waiting on confirmations
+        /// alike, and reading it as unfinished left the indicator up forever and the Send screen
+        /// gated on value that was simply not spendable yet. Only two things are genuinely
+        /// unfinished — the SDK withholding the value, and a sync that has published nothing yet.
+        var isProcessingZeroAvailableBalance: Bool {
+            isSpendableMasked || (isSyncInProgress && !hasConcreteBalance)
+        }
+
+        // Display-only: deliberately not folded into `transparentBalance`, which feeds the
+        // auto-shielding threshold comparison and spendability.
         var transparentPoolBalance: Zatoshi {
             transparentBalance + awaitingResolutionBalance
         }
@@ -94,7 +118,7 @@ struct WalletBalances {
     enum Action: Equatable {
         case availableBalanceTapped
         case balanceTapped
-        case balanceUpdated(AccountBalance?)
+        case balanceUpdated(AccountBalance, AccountUUID, Int)
         case exchangeRateRefreshTapped
         case exchangeRateEvent(ExchangeRateClient.EchangeRateEvent)
         case onAppear
@@ -113,12 +137,29 @@ struct WalletBalances {
 
     init() { }
 
+    /// The one `spendability` derivation, shared by every place that can move one of its inputs —
+    /// a fresh balance in `.balanceUpdated`, or the mask/sync flags mirrored in
+    /// `.synchronizerStateChanged` — so the two can never compute a different answer for the same
+    /// state.
+    private func spendability(for state: State) -> Spendability {
+        let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
+        || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold())
+            && state.shieldedBalance == state.totalBalance - state.transparentBalance))
+        || state.totalBalance == .zero
+
+        if state.isProcessingZeroAvailableBalance {
+            return .nothing
+        } else if everythingCondition {
+            return .everything
+        } else {
+            return .something
+        }
+    }
+
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
             case .onAppear:
-                // __LD TESTED
-                 state.autoShieldingThreshold = zcashSDKEnvironment.shieldingThreshold()
                 if let exchangeRate = userStoredPreferences.exchangeRate(), exchangeRate.automatic {
                     state.isExchangeRateFeatureOn = true
                 } else {
@@ -217,42 +258,68 @@ struct WalletBalances {
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
+                // The selection may have just changed; `hasConcreteBalance` already answers for
+                // the new account, so the stored spendability must follow before any balance
+                // arrives — otherwise it would go on repeating whatever the PREVIOUS account's
+                // answer was for however long this request takes to resolve.
+                state.spendability = spendability(for: state)
+                state.balanceRequestGeneration += 1
+                let generation = state.balanceRequestGeneration
+                let accountId = account.id
+                // Use the unmasked local snapshot for display continuity. The SDK's visible
+                // balances can be spendable-masked until the new server reports a fresh tip.
+                let cachedBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId]
                 return .run { send in
-                    if let accountBalance = try? await sdkSynchronizer.getAccountsBalances()[account.id] {
-                        await send(.balanceUpdated(accountBalance))
-                    } else if let accountBalance = sdkSynchronizer.latestState().accountsBalances[account.id] {
-                        await send(.balanceUpdated(accountBalance))
+                    if let cachedBalance {
+                        await send(.balanceUpdated(cachedBalance, accountId, generation))
+                    }
+
+                    if let localBalances = try? await sdkSynchronizer.getLocalAccountBalances(),
+                       let freshBalance = localBalances[accountId] {
+                        if freshBalance != cachedBalance {
+                            await send(.balanceUpdated(freshBalance, accountId, generation))
+                        }
+                        return
+                    }
+
+                    // Do not let a masked visible balance replace a concrete local snapshot.
+                    // Use the established API only when no local value is available.
+                    guard cachedBalance == nil else { return }
+                    if let fallbackBalance = sdkSynchronizer.latestState().localAccountsBalances[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = try? await sdkSynchronizer.getAccountsBalances()[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
+                    } else if let fallbackBalance = sdkSynchronizer.latestState().accountsBalances[accountId] {
+                        await send(.balanceUpdated(fallbackBalance, accountId, generation))
                     }
                 }
-                
-            case .balanceUpdated(let accountBalance):
+
+            case .balanceUpdated(let accountBalance, let accountId, let generation):
+                // Dropped rather than applied when either no longer holds: the account it was
+                // read for may no longer be selected, or a later `.updateBalances` dispatch may
+                // already have superseded the request this answers for.
+                guard accountId == state.selectedWalletAccount?.id, generation == state.balanceRequestGeneration else {
+                    LoggerProxy.event("[WalletBalances] dropped a balance for a previous account or request")
+                    return .none
+                }
+                state.concreteBalanceAccountId = accountId
+
                 // Pool-agnostic accessors: sum sapling + orchard + ironwood (and any future
                 // shielded pool) instead of hand-summing individual pools.
-                state.shieldedBalance = accountBalance?.shieldedSpendableValue ?? .zero
-                state.shieldedWithPendingBalance = accountBalance?.shieldedTotal() ?? .zero
-                state.transparentBalance = accountBalance?.unshielded ?? .zero
-                state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + (accountBalance?.awaitingResolution ?? .zero)
-                state.saplingPoolBalance = accountBalance?.saplingBalance.total() ?? .zero
+                state.shieldedBalance = accountBalance.shieldedSpendableValue
+                state.shieldedWithPendingBalance = accountBalance.shieldedTotal()
+                state.transparentBalance = accountBalance.unshielded
+                state.totalBalance = state.shieldedWithPendingBalance + state.transparentBalance + accountBalance.awaitingResolution
+                state.saplingPoolBalance = accountBalance.saplingBalance.total()
 
                 // Display the SDK's pool summary without interpreting migration-engine status.
                 // The pinned SDK updates wallet accounting when it stores the transaction at the
                 // broadcast seam; confirmation only changes the balance's pending classifications.
-                state.orchardPoolBalance = accountBalance?.orchardBalance.total() ?? .zero
-                state.ironwoodPoolBalance = accountBalance?.ironwoodBalance.total() ?? .zero
-                state.awaitingResolutionBalance = accountBalance?.awaitingResolution ?? .zero
+                state.orchardPoolBalance = accountBalance.orchardBalance.total()
+                state.ironwoodPoolBalance = accountBalance.ironwoodBalance.total()
+                state.awaitingResolutionBalance = accountBalance.awaitingResolution
 
-                let everythingCondition = state.shieldedBalance.amount > 0 && ((state.shieldedBalance == state.totalBalance)
-                || (!ShieldingProcessorClient.isShieldable(balance: state.transparentBalance, threshold: zcashSDKEnvironment.shieldingThreshold()) && state.shieldedBalance == state.totalBalance - state.transparentBalance))
-                || state.totalBalance == .zero
-
-                // spendability
-                if state.isProcessingZeroAvailableBalance {
-                    state.spendability = .nothing
-                } else if everythingCondition {
-                    state.spendability = .everything
-                } else {
-                    state.spendability = .something
-                }
+                state.spendability = spendability(for: state)
                 return .none
 
             case .synchronizerStateChanged(let latestState):
@@ -262,11 +329,33 @@ struct WalletBalances {
                     state.migratingDatabase = false
                 }
 
+                // Recorded before either guard below. The mask is a property of the synchronizer,
+                // not of any one account's balance, and the states that carry it are precisely the
+                // ones with nothing to publish — so deferring it past the guards would leave the
+                // screen silent exactly while it should be saying it is still working this out.
+                state.isSpendableMasked = latestState.data.isSpendableMasked
+                state.isSyncInProgress = latestState.data.syncStatus.isSyncing
+
+                // Re-derived here too, unconditionally: `isProcessingZeroAvailableBalance` (and an
+                // account switch invalidating `hasConcreteBalance`) can change on this action alone,
+                // with no balance publish following — most visibly when the guards below return
+                // because there is nothing to publish for this account, which is exactly when a
+                // stored `spendability` would otherwise go on repeating a now-stale answer.
+                state.spendability = spendability(for: state)
+
                 guard let account = state.selectedWalletAccount else {
                     return .none
                 }
 
-                return .send(.balanceUpdated(latestState.data.accountsBalances[account.id]))
+                // An absent local entry means the synchronizer does not know the selected account
+                // yet. Keep the last concrete value until a durable snapshot arrives.
+                guard let accountBalance = latestState.data.localAccountsBalances[account.id] else {
+                    return .none
+                }
+                // A stream update is fresher than any instant read still in flight for this account, so it
+                // retires those reads: their responses carry the previous generation and are dropped.
+                state.balanceRequestGeneration += 1
+                return .send(.balanceUpdated(accountBalance, account.id, state.balanceRequestGeneration))
             }
         }
     }

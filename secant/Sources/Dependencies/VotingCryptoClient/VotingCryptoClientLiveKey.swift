@@ -1,6 +1,7 @@
 #if VOTING_ENABLED
 @preconcurrency import Combine
 import ComposableArchitecture
+import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -31,6 +32,18 @@ extension VotingCryptoClient: DependencyKey {
             )
             stateSubject.send(dbState)
         }
+
+        // VotingRecovery: the one place the module is handed the app's open
+        // database and logger. Delete with the package.
+        VotingRecovery.configure(
+            logger: { walletLogger },
+            backend: { try await dbActor.backend() },
+            didRestore: { roundId in
+                if let backend = try? await dbActor.backend() {
+                    publishState(backend: backend, roundId: roundId)
+                }
+            }
+        )
 
         return Self(
             stateStream: {
@@ -244,6 +257,19 @@ extension VotingCryptoClient: DependencyKey {
                 let rseedSigned: Data = Data(result.rseedSigned)
                 let rseedOutput: Data = Data(result.rseedOutput)
                 let actionBytes: Data = Data(result.actionBytes)
+
+                // VotingRecovery: escrow the blinding factor before anything
+                // else can touch the round. This is the only moment it exists
+                // outside `voting.sqlite3`. A failed write is logged, never
+                // thrown, so it cannot abort a delegation the user paid for.
+                await VotingRecovery.captureLiveDelegation(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    vanCommRand: vanCommRand,
+                    van: van,
+                    totalNoteValue: notes.reduce(UInt64(0)) { $0 + $1.value }
+                )
+
                 return VotingPcztResult(
                     pcztBytes: pcztBytes,
                     pcztSighash: pcztSighash,
@@ -300,54 +326,48 @@ extension VotingCryptoClient: DependencyKey {
             },
             // swiftlint:disable:next line_length
             buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
-                AsyncThrowingStream<ProofEvent, Error> { continuation in
-                    Task.detached {
-                        do {
-                            let backend = try await dbActor.backend()
-                            let inputs = try VotingRustBackend.generateDelegationInputs(
-                                senderSeed: senderSeed,
-                                hotkeyStoredSecret: hotkeyStoredSecret,
-                                networkId: networkId,
-                                accountIndex: accountIndex
-                            )
-                            let sdkNotes = bundleNotes.map { $0.toSDK() }
-                            let keys = VotingDelegationKeyInputs(
-                                fvk: inputs.fvkBytes,
-                                hotkeyStoredSecret: hotkeyStoredSecret,
-                                seedFingerprint: inputs.seedFingerprint,
-                                accountIndex: accountIndex,
-                                roundName: roundName
-                            )
-                            let params = VotingDelegationProofParams(
-                                roundId: roundId,
-                                bundleIndex: bundleIndex,
-                                notes: sdkNotes,
-                                keys: keys
-                            )
-                            let result = try await backend.buildAndProveDelegation(
-                                params,
-                                pirEndpoints: pirEndpoints,
-                                expectedSnapshotHeight: expectedSnapshotHeight,
-                                pirLayout: VotingPirLayout(
-                                    pirDepth: pirDepth,
-                                    tier0Layers: tier0Layers,
-                                    tier1Layers: tier1Layers,
-                                    polyLen: polyLen
-                                ),
-                                progress: { progress in
-                                    continuation.yield(.progress(progress))
-                                }
-                            )
-                            // Don't call publishState here — the Rust FFI may still hold
-                            // a brief RefCell borrow on the DB connection, and publishState
-                            // borrows it again. Let the store call refreshState after
-                            // receiving .completed to avoid the concurrent borrow panic.
-                            continuation.yield(.completed(Data(result.proof)))
-                            continuation.finish()
-                        } catch {
-                            continuation.finish(throwing: error)
-                        }
-                    }
+                VotingCryptoClient.makeDelegationProofStream { progress in
+                    let backend = try await dbActor.backend()
+                    let inputs = try VotingRustBackend.generateDelegationInputs(
+                        senderSeed: senderSeed,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        networkId: networkId,
+                        accountIndex: accountIndex
+                    )
+                    let sdkNotes = bundleNotes.map { $0.toSDK() }
+                    let keys = VotingDelegationKeyInputs(
+                        fvk: inputs.fvkBytes,
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        seedFingerprint: inputs.seedFingerprint,
+                        accountIndex: accountIndex,
+                        roundName: roundName
+                    )
+                    let params = VotingDelegationProofParams(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        notes: sdkNotes,
+                        keys: keys
+                    )
+                    // Re-check cancellation after the awaits above — the FFI call below cannot be
+                    // interrupted once entered, so an abandoned proof must not cross into it.
+                    try Task.checkCancellation()
+                    let result = try await backend.buildAndProveDelegation(
+                        params,
+                        pirEndpoints: pirEndpoints,
+                        expectedSnapshotHeight: expectedSnapshotHeight,
+                        pirLayout: VotingPirLayout(
+                            pirDepth: pirDepth,
+                            tier0Layers: tier0Layers,
+                            tier1Layers: tier1Layers,
+                            polyLen: polyLen
+                        ),
+                        progress: progress
+                    )
+                    // Don't call publishState here — the Rust FFI may still hold
+                    // a brief RefCell borrow on the DB connection, and publishState
+                    // borrows it again. Let the store call refreshState after
+                    // receiving .completed to avoid the concurrent borrow panic.
+                    return Data(result.proof)
                 }
             },
             extractOrchardFvkFromUfvk: { ufvkStr, networkId in
@@ -639,6 +659,44 @@ extension VotingCryptoClient: DependencyKey {
     }
 }
 
+// MARK: - Delegation proof stream
+
+extension VotingCryptoClient {
+    /// Builds the `AsyncThrowingStream` of `ProofEvent`s that `buildAndProveDelegation` returns,
+    /// running `prove` on a detached task so the long proving FFI call never blocks the caller's
+    /// executor. `onTermination` cancels that task when the stream's consumer goes away — e.g. a
+    /// coordinator effect torn down by `.cancellable(cancelInFlight: true)` when the next proof
+    /// starts — and the task checks `Task.isCancelled` before calling `prove` so an abandoned proof
+    /// that has not reached the FFI yet is skipped outright instead of running to completion at
+    /// proving priority in the background. A proof already inside the FFI cannot be interrupted
+    /// mid-call; cancelling at that point only stops it from yielding further progress or a
+    /// completed proof to a stream nobody is consuming anymore.
+    /// Factored out of `liveValue` so a test can substitute a spy `prove` and drive the stream's
+    /// cancellation behavior directly.
+    static func makeDelegationProofStream(
+        prove: @escaping @Sendable (_ progress: @escaping @Sendable (Double) -> Void) async throws -> Data
+    ) -> AsyncThrowingStream<ProofEvent, Error> {
+        AsyncThrowingStream<ProofEvent, Error> { continuation in
+            let task = Task.detached {
+                guard !Task.isCancelled else {
+                    continuation.finish()
+                    return
+                }
+                do {
+                    let proof = try await prove { progress in
+                        continuation.yield(.progress(progress))
+                    }
+                    continuation.yield(.completed(proof))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 // MARK: - DatabaseActor
 
 /// Thread-safe holder for the VotingRustBackend instance.
@@ -651,7 +709,7 @@ private actor DatabaseActor {
         // unlink the WAL — and the WAL is the only place a cleared round's
         // original secrets still exist. Once this line has run, the evidence
         // is safe whatever the rest of the flow does.
-        VotingDatabaseSnapshot.capture(databasePath: path)
+        VotingRecovery.preserve(databasePath: path) // VotingRecovery
 
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).

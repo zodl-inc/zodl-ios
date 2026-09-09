@@ -11,6 +11,7 @@ Usage: Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n
   --submit-review  appstore only: submit the build to App Review after upload;
                    without --ref, submits a build already on App Store Connect
   --ref         branch, tag, or commit SHA to build (optional with --submit-review)
+  --remote      git remote the release lives on (default: origin)
   --version     marketing version you intend to ship (X.Y.Z)
   --build       build number (integer)
   --dry-run     run all preflight checks, then stop before building
@@ -20,13 +21,14 @@ Usage: Scripts/release.sh --variant <v> --ref <ref> --version <X.Y.Z> --build <n
 EOF
 }
 
-VARIANT="" ; REF="" ; VERSION="" ; BUILD=""
+VARIANT="" ; REF="" ; REMOTE="origin" ; VERSION="" ; BUILD=""
 DRY_RUN=false ; YES=false ; SKIP_TESTS=false ; SUBMIT_REVIEW=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --variant) VARIANT="$2" ; shift 2 ;;
     --ref) REF="$2" ; shift 2 ;;
+    --remote) REMOTE="$2" ; shift 2 ;;
     --version) VERSION="$2" ; shift 2 ;;
     --build) BUILD="$2" ; shift 2 ;;
     --submit-review) SUBMIT_REVIEW=true ; shift ;;
@@ -52,5 +54,5 @@ fi
 
 FASTLANE="${FASTLANE_CMD:-bundle exec fastlane}"
 exec $FASTLANE release \
-  variant:"$VARIANT" ref:"$REF" version:"$VERSION" build:"$BUILD" \
+  variant:"$VARIANT" ref:"$REF" remote:"$REMOTE" version:"$VERSION" build:"$BUILD" \
   dry_run:"$DRY_RUN" yes:"$YES" skip_tests:"$SKIP_TESTS" submit_review:"$SUBMIT_REVIEW"

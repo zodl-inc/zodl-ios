@@ -178,8 +178,13 @@ struct AddKeystoneHWWallet {
                 return .none
 
             case let .loadedWalletAccounts(walletAccounts, uuid):
-                state.$walletAccounts.withLock { $0 = walletAccounts }
-                for walletAccount in walletAccounts {
+                // MOB-1859: preserve any rotation stash the in-memory accounts already carried —
+                // `walletAccounts()` no longer generates one on every load (that was a
+                // wallet-database write per account). The newly-imported account has none yet
+                // either way; it gets one lazily at its first Receive/Swap visit.
+                let mergedWalletAccounts = WalletAccount.mergingPrivateUAStash(from: state.walletAccounts, into: walletAccounts)
+                state.$walletAccounts.withLock { $0 = mergedWalletAccounts }
+                for walletAccount in mergedWalletAccounts {
                     if walletAccount.id == uuid {
                         state.$selectedWalletAccount.withLock { $0 = walletAccount }
                         break

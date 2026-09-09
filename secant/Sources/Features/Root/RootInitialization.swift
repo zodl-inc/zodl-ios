@@ -7,6 +7,7 @@
 
 import Combine
 import ComposableArchitecture
+import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -87,8 +88,17 @@ extension Root {
         case restoreExistingWallet
         case seedValidationResult(Bool)
         case synchronizerStartFailed(ZcashError)
-        case registerForSynchronizersUpdate
+        /// MOB-1854: `generation` is `nil` for a call that did not originate from a `.retryStart`
+        /// pipeline (cold launch's `.initializeSDK` cascade) — always accepted. A non-nil generation
+        /// is a `.retryStart` pipeline's own tag; it is honored only while it still matches
+        /// `Root.State.retryStartGeneration`, so a pipeline superseded by a newer one (background,
+        /// or a fresh `.retryStart`) can never re-subscribe the synchronizer streams on its behalf.
+        case registerForSynchronizersUpdate(generation: Int?)
         case retryStart
+        /// MOB-1854: tagged with the generation the admitting `.retryStart` assigned its pipeline —
+        /// see `Root.State.retryStartGeneration`'s doc for why a stale tag must not release a newer
+        /// pipeline's latch.
+        case retryStartFinished(generation: Int)
         case walletConfigChanged(WalletConfig)
     }
 
@@ -106,11 +116,38 @@ extension Root {
                 state.appStartState = .didFinishLaunching
                 // TODO: [#704], trigger the review request logic when approved by the team,
                 // https://github.com/Electric-Coin-Company/zashi-ios/issues/704
-                return .run { send in
+                let setup = Effect<Root.Action>
+                    .run { send in
                         try await mainQueue.sleep(for: .seconds(0.5))
                         await send(.initialization(.initialSetups))
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
+
+                // Delegation recovery, on every cold launch, invisible to the
+                // user. An older build could delete a round's blinding factor
+                // and rebuild the round in its place, which makes that poll
+                // permanently unvotable; this copies the original back out of
+                // the preserved files before anything else opens them.
+                //
+                // Deliberately fire-and-forget and merged rather than chained:
+                // it must never delay launch, and it sends no action, so a slow
+                // or failing carve cannot affect what the user sees. What it
+                // did is in the log under "[poll-recovery]".
+                //
+                // A wallet reset cancels it (`.resetZashi`), and the escrow
+                // refuses writes from a run that began before the reset, so
+                // the old wallet's secrets cannot be written back for the new
+                // one whichever of the two lands first.
+                //
+                // It costs almost nothing for the overwhelming majority of
+                // wallets, which have no voting round at all and are turned
+                // away by `holdsRoundData` after one file read.
+                return .merge(
+                    setup,
+                    // VotingRecovery
+                    .run { _ in _ = await delegationRecovery.run() }
+                        .cancellable(id: VotingRecovery.CancelID.launch, cancelInFlight: true)
+                )
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 // See the cold-launch marker above. The tip rides along because it is the one piece
@@ -225,13 +262,45 @@ extension Root {
                 // (#7) The one-shot start-failure retry is a foreground mechanism, same as the
                 // tick loop: cancel it and reset its latch so the next foreground starts clean.
                 state.didScheduleStartFailureRetry = false
+                // MOB-1853: an unknown sync state must never read as idle (see
+                // `isSynchronizerIdleForSwitch`), so the gate closes at background and stays closed
+                // until a fresh `.synchronizerStateChanged` tick reports in next foreground.
+                state.lastKnownSyncStatus = nil
+                state.isSyncStalledSinceLastProgress = false
+                // MOB-1853: an honest terminal state must not outlive the foreground that raised it
+                // either -- the SmartBanner is told, same as every other clearing site, so a stalled
+                // banner left on screen at background does not silently reappear stuck at the next
+                // foreground.
+                let terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
+                // MOB-1853: the terminal-stall rebuild budget is foreground-scoped, same reasoning
+                // as `isSyncStalledSinceLastProgress` above -- a fresh foreground gets a fresh budget.
+                state.terminalStallRebuildsThisForeground = 0
+                // MOB-1853: a rebuild's own completion (`.terminalStallRebuildFinished`) may be
+                // dropped by this same boundary's cancellation below -- see
+                // `isTerminalStallRebuildInFlight`'s doc comment (`RootStore.swift`) -- so it must be
+                // reset here too, or a rebuild that never got to report back would leave the next
+                // foreground's `.autoServerCandidateReady` gate wedged shut.
+                state.isTerminalStallRebuildInFlight = false
+                // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
+                // cancellation (store teardown) must never wedge the next foreground's retryStart.
+                state.isRetryStartInFlight = false
+                // MOB-1854 follow-up: bump the generation so a pre-background pipeline that is
+                // still somehow running (its `.run` effect carries no cancellable id of its own)
+                // cannot have its eventual `.retryStartFinished`/`.registerForSynchronizersUpdate`
+                // mistaken for the pipeline the next foreground's `.retryStart` admits. A request
+                // dropped behind the OLD pipeline is moot once backgrounding has already reset the
+                // latch — the next foreground starts its own resume from scratch.
+                state.retryStartGeneration += 1
+                state.retryStartRequestedWhileInFlight = false
                 // Tear down ALL synchronizer-driven subscriptions (plus the pending-transactions
                 // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
                 // every one of them.
                 return .merge(
+                    terminalStallClearedEffect,
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId),
                     .cancel(id: state.CancelEventId),
+                    .cancel(id: state.CancelSyncStalledEventId),
                     .cancel(id: state.CancelPendingTxPollId),
                     // MOB-1466: the tick loop is a FOREGROUND-only mechanism — the app cannot poll
                     // anything once backgrounded (there is no background lane), so its whole reason
@@ -239,12 +308,31 @@ extension Root {
                     // foreground respawns it fresh if the spawn condition still holds.
                     .cancel(id: state.migrationTickCancelId),
                     .cancel(id: state.startFailureRetryCancelId),
+                    // MOB-1854: the `.retryStart` pipeline itself — a pass still parked in
+                    // migration work (or in the SDK's own `start()`) when backgrounding lands must
+                    // not resume into calling `start()`, re-subscribing transaction observation, or
+                    // running automatic server selection for a foreground that has already ended.
+                    // See `Root.State.retryStartCancelId`'s doc and the `try Task.checkCancellation()`
+                    // checkpoints inside `.retryStart` below for the other half of this.
+                    .cancel(id: state.retryStartCancelId),
                     // Audit 2026-08-03 (#19): the merged gate subscription (SDK stream + app feed)
                     // is FOREGROUND machinery like everything above — left alive, a background
                     // gate emission ran the full resume (clearing the arming flags, sending
                     // `.retryStart`, restarting the sync this boundary just stopped). The next
                     // foreground's `.registerForSynchronizersUpdate` respawns it.
-                    .cancel(id: state.migrationSyncGateCancelId)
+                    .cancel(id: state.migrationSyncGateCancelId),
+                    // MOB-1853: cancels only the benchmark (`.refreshAutomaticServer`'s effect,
+                    // the one thing this id covers). An apply already in flight (`applySwitch`,
+                    // `RootStore.swift`) carries no cancel id of its own and keeps running to
+                    // completion regardless, under `switchIfIdle`/`withTimeout(serverSwitchTimeout)`
+                    // — cancelling a switch mid-apply is a behaviour change left for a follow-up,
+                    // not something this background-teardown path attempts.
+                    .cancel(id: state.automaticServerRefreshCancelId),
+                    // MOB-1853: cancels only an in-flight terminal-stall rebuild's own effect --
+                    // `terminalStallRebuildsThisForeground` was already reset above, and the next
+                    // foreground starts this budget fresh regardless of whether a rebuild was
+                    // actually running here.
+                    .cancel(id: state.terminalStallRebuildCancelId)
                 )
 
             case .initialization(.appDelegate(.backgroundTask(let task))):
@@ -268,6 +356,34 @@ extension Root {
                 }
                 
             case .synchronizerStateChanged(let latestState):
+                // MOB-1853: feeds `Root.State.isSynchronizerIdleForSwitch` -- like the announcement
+                // gate below, this must run above every early return in this case body, on every
+                // tick, regardless of whether an account is selected or a background task is in
+                // flight. `.upToDate` and a `.syncing` tick whose progress advanced past the last
+                // one recorded both mean the engine is visibly making progress again, so either
+                // clears a stall the `.syncStalled` hook (`RootTransactions.swift`) may have armed.
+                let newSyncStatus = latestState.data.syncStatus
+                // MOB-1853: mirrors `isSyncStalledSinceLastProgress` below, one step behind -- an
+                // honest terminal state must retire the moment the engine visibly makes progress
+                // again, same as the ordinary stall flag it rides alongside. `clearSyncStalledTerminally`
+                // is a guarded no-op when the flag was already clear, so threading it through every
+                // arm below costs nothing on the common (never-stalled) path.
+                var terminalStallClearedEffect: Effect<Action> = .none
+                switch newSyncStatus {
+                case .upToDate:
+                    state.isSyncStalledSinceLastProgress = false
+                    terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
+                case .syncing(let progress, _):
+                    if let lastKnownSyncProgress = state.lastKnownSyncProgress, progress > lastKnownSyncProgress {
+                        state.isSyncStalledSinceLastProgress = false
+                        terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
+                    }
+                    state.lastKnownSyncProgress = progress
+                case .unprepared, .stopped, .error:
+                    break
+                }
+                state.lastKnownSyncStatus = newSyncStatus
+
                 // Must run above the `selectedWalletAccount` guard and the background-task
                 // branch below — both early-return, but the announcement gate has to keep
                 // evaluating on every sync tick regardless of whether an account is selected
@@ -342,7 +458,7 @@ extension Root {
                 // return different things and each one is reachable at a sync-complete edge. The
                 // effect is `.none` unless this tick IS that edge, so merging costs nothing.
                 guard let account = state.selectedWalletAccount else {
-                    return migrationReconcileEffect
+                    return .merge(migrationReconcileEffect, terminalStallClearedEffect)
                 }
                 
                 // update flexa balance
@@ -370,6 +486,7 @@ extension Root {
                 guard state.bgTask != nil else {
                     return .merge(
                         migrationReconcileEffect,
+                        terminalStallClearedEffect,
                         .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                     )
                 }
@@ -405,6 +522,7 @@ extension Root {
                     state.wasSyncUpToDateForMigration = false
                     return .merge(
                         migrationReconcileEffect,
+                        terminalStallClearedEffect,
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId),
                         .cancel(id: state.CancelEventId),
@@ -414,6 +532,7 @@ extension Root {
 
                 return .merge(
                     migrationReconcileEffect,
+                    terminalStallClearedEffect,
                     .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                 )
                 
@@ -721,13 +840,44 @@ extension Root {
                 }
                 // (The Send-now silence-window fence read that lived here was REMOVED 2026-08-07
                 // with the Send-now lanes — nothing sets the fence anymore.)
+                // MOB-1854: drop a re-entrant retryStart rather than cancelling the in-flight
+                // pipeline — `SlipstreamSynchronizer.start()` has no cancellation points, so
+                // cancelling it mid-flight would let it run to completion anyway and a second
+                // pipeline would then call `start()` again, draining and restarting the engine. The
+                // in-flight pipeline performs the same work this one would have.
+                //
+                // MOB-1854 follow-up: checked BEFORE the migration-resume flags below are touched.
+                // The in-flight pipeline may be a broadcast-only pass that never calls `start()` at
+                // all, so a request dropped here is not lost — it is replayed once, by the in-flight
+                // pipeline's own `.retryStartFinished`, and until then the resume flags must stay
+                // exactly as armed as they were, not consumed by a request that never actually ran.
+                guard !state.isRetryStartInFlight else {
+                    state.retryStartRequestedWhileInFlight = true
+                    LoggerProxy.event("[Root] retryStart deferred: a start pipeline is already in flight")
+                    return .none
+                }
                 // PAST the guards: consume the migration-resume arming flags (audit 2026-08-03,
                 // #12 — see the gate-resume comment above). An early return above leaves them
-                // armed so the gate's next emission can retry the whole resume.
+                // armed so the gate's next emission (or the in-flight pipeline's own finish) can
+                // retry the whole resume.
                 state.syncDeferredByMigrationGate = false
                 @Shared(.inMemory(.migrationStoppedSyncForBroadcast)) var migrationStoppedSyncForBroadcast: Bool = false
                 $migrationStoppedSyncForBroadcast.withLock { $0 = false }
-                return .run { [state] send in
+                state.isRetryStartInFlight = true
+                state.retryStartGeneration += 1
+                let generation = state.retryStartGeneration
+                // MOB-1854: `state.retryStartGeneration` above is plain `Root.State` — the `.run`
+                // effect below captures it BY VALUE (`[state, generation]`), so that capture is
+                // frozen at admission and can never see a later pipeline's own admission bump. The
+                // post-`start()` undo needs to be able to see that, which is what this
+                // process-shared counter is for: bumped here, at every admission, and re-read live
+                // (not from the frozen capture) at undo time.
+                @Shared(.inMemory(.retryStartAdmissionGeneration)) var retryStartAdmissionGeneration: Int = 0
+                let admission = $retryStartAdmissionGeneration.withLock { counter -> Int in
+                    counter += 1
+                    return counter
+                }
+                return .run { [state, generation, admission] send in
                     do {
                         // ZIP 318 session separation, decided BEFORE the wire is touched: if any
                         // account has a proven transfer due, this open is a BROADCAST session and
@@ -772,6 +922,14 @@ extension Root {
                             // background lane on iOS this open IS the delivery window — suppressing
                             // sync without broadcasting would just stall a schedule the user
                             // already confirmed.
+                            //
+                            // MOB-1854: checked immediately before every `advance(.beforeSync)` call
+                            // in this block (and again right before `start()` below) — backgrounding
+                            // cancels `retryStartCancelId`, and a pipeline still parked in migration
+                            // work at that instant must not discharge the engine's next step for a
+                            // foreground that has already ended. `catch is CancellationError` below
+                            // is what actually stops the pipeline once this throws.
+                            try Task.checkCancellation()
                             await migrationManager.advance(.beforeSync)
                         } else {
                             startedSyncThisPass = true
@@ -782,9 +940,45 @@ extension Root {
                             // wake-ups are re-armed here, and, crucially, this open now LOGS a
                             // verdict whether or not it did anything. A session that did nothing and
                             // said nothing is indistinguishable from a frozen app.
+                            //
+                            // MOB-1854: see the `.send`-branch twin of this checkpoint above.
+                            try Task.checkCancellation()
                             await migrationManager.advance(.beforeSync)
                             do {
+                                // MOB-1854: the LAST checkpoint before the SDK is actually touched.
+                                // Past this line `sdkSynchronizer.start()` has no cancellation points
+                                // of its own (see the re-entrancy guard's doc above this whole case)
+                                // and will run to completion regardless of a background landing
+                                // mid-call — the `Task.isCancelled` check right after it is what
+                                // undoes a start this pipeline no longer owns by the time it returns.
+                                try Task.checkCancellation()
                                 try await sdkSynchronizer.start(true)
+                                if Task.isCancelled {
+                                    // Backgrounding cancelled this pipeline while the SDK was
+                                    // admitting the start; the background's own stop ran before that
+                                    // start, so this pipeline owes it an undo — UNLESS a newer
+                                    // pipeline has been admitted since. The SDK's lifecycle queue is
+                                    // FIFO: if that newer pipeline's own `start()` is already enqueued
+                                    // behind this cancelled pipeline's undo, an unconditional `stop()`
+                                    // here would run AFTER it and tear down a start this pipeline
+                                    // never made — and Root would never restart on the resulting
+                                    // `.stopped`, since nothing here owns that newer pipeline's
+                                    // latch. `retryStartAdmissionGeneration` (bumped once per
+                                    // admission, above) says whether this pipeline is still the most
+                                    // recently admitted one; only then is the stop this pipeline's to
+                                    // make. Background alone must never suppress this — that is
+                                    // exactly the case this undo exists for — only a NEWER admission
+                                    // may. A newer admission that turns out to be a broadcast-only
+                                    // pass also suppresses this undo; that pass's own
+                                    // stop-before-broadcast queues behind this pipeline's start on
+                                    // the SDK's FIFO lifecycle queue, so it still ends the pass this
+                                    // start began.
+                                    @Shared(.inMemory(.retryStartAdmissionGeneration)) var retryStartAdmissionGeneration: Int = 0
+                                    if retryStartAdmissionGeneration == admission {
+                                        sdkSynchronizer.stop()
+                                    }
+                                    return
+                                }
                             } catch ZcashError.migrationSyncBlocked {
                                 // Same signal as the cold-launch site in `.initializeSDK`: the gate
                                 // refusing start() up front IS the send-visit signal — `visitKind()`
@@ -801,6 +995,11 @@ extension Root {
                                 let refusalReason = "start refused — migration gate active; running broadcast session"
                                 LoggerProxy.event("\(MigrationManagerImpl.logTag) \(refusalReason)")
                                 await send(.migrationGateDeferredSyncStart)
+                                // MOB-1854: same checkpoint as the other `advance(.beforeSync)` call
+                                // sites above — a `CancellationError` here propagates past this
+                                // `catch ZcashError.migrationSyncBlocked` to the outer
+                                // `catch is CancellationError` below.
+                                try Task.checkCancellation()
                                 await migrationManager.advance(.beforeSync)
                             }
                         }
@@ -835,7 +1034,7 @@ extension Root {
                         // repairs a dropped nudge on every registration that genuinely happens —
                         // this only stops a no-op pass from manufacturing one.
                         if startedSyncThisPass {
-                            await send(.initialization(.registerForSynchronizersUpdate))
+                            await send(.initialization(.registerForSynchronizersUpdate(generation: generation)))
                         }
                         // Backgrounding cancels the transaction subscriptions (event stream and
                         // `.upToDate` fetch trigger); without re-establishing them here, the first
@@ -849,6 +1048,17 @@ extension Root {
                         // the list observing what its own broadcast creates.
                         await send(.observeTransactions)
                         await send(.refreshAutomaticServer)
+                        // MOB-1854: clears `isRetryStartInFlight` — must be the LAST statement of
+                        // this exit path so a re-entrant retryStart is only ever dropped while this
+                        // pipeline is genuinely still doing something.
+                        await send(.initialization(.retryStartFinished(generation: generation)))
+                    } catch is CancellationError {
+                        // MOB-1854: a cancelled pipeline sends nothing. TCA already drops any
+                        // `send` from a cancelled effect (`Send.callAsFunction`'s own
+                        // `guard !Task.isCancelled`), but returning here up front keeps the failure
+                        // branch below — re-arming subscriptions, scheduling a start-failure retry —
+                        // from running at all for a pipeline that no longer owns anything.
+                        return
                     } catch {
                         if state.bgTask != nil {
                             LoggerProxy.event("BGTask synchronizer.start() failed \(error.toZcashError())")
@@ -858,12 +1068,50 @@ extension Root {
                         // transient start error left BOTH the sync state stream and the migration
                         // gate feed unsubscribed for the whole foreground — no edges, no gate
                         // emissions, no resume until the next background→foreground round trip.
-                        await send(.initialization(.registerForSynchronizersUpdate))
+                        await send(.initialization(.registerForSynchronizersUpdate(generation: generation)))
                         await send(.initialization(.synchronizerStartFailed(error.toZcashError())))
+                        // MOB-1854: same latch clear as the success path above — the last statement
+                        // of this exit path too, so a start failure can't leave retryStart wedged.
+                        await send(.initialization(.retryStartFinished(generation: generation)))
                     }
                 }
+                // MOB-1854: makes the whole pipeline cancellable at background — see
+                // `Root.State.retryStartCancelId`'s doc and `.didEnterBackground`'s `.cancel` above.
+                // No `cancelInFlight`: a cancelled pipeline and a newly admitted one CAN briefly
+                // coexist under this same id — `isRetryStartInFlight` only ever refuses a second
+                // ADMISSION while a pipeline is running un-cancelled; backgrounding cancels this
+                // pipeline and clears that latch (`.didEnterBackground`) while this pipeline may
+                // still be unwinding (parked in migration work, or in the SDK's own `start()`),
+                // letting a foreground `.retryStart` admit a new one before the old task has
+                // actually finished. TCA cancels the tasks registered under an id at the moment
+                // `.cancel` runs — it has no notion of "generation" — so a still-finishing cancelled
+                // pipeline has no way to deregister the new one that superseded it. That is exactly
+                // why the post-`start()` undo above is gated on `retryStartAdmissionGeneration`
+                // rather than running unconditionally: an ungated undo could tear down the newer
+                // pipeline's fresh start instead of anything of its own.
+                .cancellable(id: state.retryStartCancelId)
 
-            case .initialization(.registerForSynchronizersUpdate):
+            case .initialization(.retryStartFinished(let generation)):
+                // MOB-1854: a pipeline superseded by a newer one (background, or a fresh admitted
+                // retryStart) must not release that newer pipeline's latch — only the CURRENT
+                // generation's own finish may clear it.
+                guard generation == state.retryStartGeneration else { return .none }
+                state.isRetryStartInFlight = false
+                // A request dropped while this pipeline was in flight is replayed exactly once,
+                // now that this (still-current) pipeline is actually done — see the deferred guard
+                // in `.retryStart` above.
+                guard state.retryStartRequestedWhileInFlight else { return .none }
+                state.retryStartRequestedWhileInFlight = false
+                return .send(.initialization(.retryStart))
+
+            case .initialization(.registerForSynchronizersUpdate(let generation)):
+                // MOB-1854: `nil` (the cold-launch call site) is always honored; a `.retryStart`
+                // pipeline's own generation is honored only while it is still current — a pipeline
+                // superseded by a newer one must not re-subscribe the synchronizer streams on that
+                // newer pipeline's behalf.
+                if let generation, generation != state.retryStartGeneration {
+                    return .none
+                }
                 let stateStreamEffect = Effect.publisher {
                     sdkSynchronizer.stateStream()
                         .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
@@ -1251,7 +1499,7 @@ extension Root {
                 // going to do, so there is nothing to defer and nothing to replay. Entry parity
                 // stopped being maintained and became structural.
                 return .merge(
-                    .send(.initialization(.registerForSynchronizersUpdate)),
+                    .send(.initialization(.registerForSynchronizersUpdate(generation: nil))),
                     // Audit 2026-08-03 (#6): the launch-time sweep the snapshot docs always named
                     // but nothing implemented. A provisional network snapshot formed at the Tor
                     // sheet and abandoned (flow closed, app killed before commit) otherwise
@@ -1284,9 +1532,15 @@ extension Root {
                 )
                 
             case .initialization(.loadedWalletAccounts(let walletAccounts)):
-                state.$walletAccounts.withLock { $0 = walletAccounts }
+                // MOB-1859: `walletAccounts()` no longer generates each account's rotation stash
+                // (`nextPrivateUA`) — that was a wallet-database write on every single load, which
+                // contended with the sync engine. Carry forward whatever stash the in-memory
+                // accounts already had (a foreground refresh, a Keystone disconnect/reconnect, …)
+                // before the wholesale overwrite below would otherwise silently drop it.
+                let mergedWalletAccounts = WalletAccount.mergingPrivateUAStash(from: state.walletAccounts, into: walletAccounts)
+                state.$walletAccounts.withLock { $0 = mergedWalletAccounts }
                 if state.selectedWalletAccount == nil {
-                    for account in walletAccounts {
+                    for account in mergedWalletAccounts {
                         if account.vendor == .zcash {
                             state.$selectedWalletAccount.withLock { $0 = account }
                             state.$zashiWalletAccount.withLock { $0 = account }
@@ -1294,6 +1548,19 @@ extension Root {
                         }
                     }
                 }
+                // Refill, in the background, only the accounts the merge above left without a
+                // stash — never awaited on this load path, which is the entire point of MOB-1859.
+                // A Receive/Swap tap before this lands still self-heals on its own (`PrivateUAStash`
+                // there too), so there is nothing for the UI to wait on.
+                let accountsNeedingStash = mergedWalletAccounts.filter { $0.nextPrivateUA == nil }
+                let stashRefillEffect: Effect<Root.Action> = accountsNeedingStash.isEmpty
+                    ? .none
+                    : .run { send in
+                        await PrivateUAStash.refill(accounts: accountsNeedingStash, sdkSynchronizer: sdkSynchronizer) { ua, accountId in
+                            await send(.privateUAStashRefilled(ua, accountId))
+                        }
+                    }
+                    .cancellable(id: state.privateUAStashRefillCancelId, cancelInFlight: true)
                 return .merge(
                     .send(.loadContacts),
                     .send(.loadUserMetadata),
@@ -1312,8 +1579,24 @@ extension Root {
                     // Sent unconditionally: a duplicate walk is harmless (the ladder is idempotent —
                     // it re-reads and re-seats the same occupant), while a missed one costs the whole
                     // launch, which is precisely the bug.
-                    .send(.home(.smartBanner(.evaluatePriority1)))
+                    .send(.home(.smartBanner(.evaluatePriority1))),
+                    stashRefillEffect
                 )
+
+            case let .privateUAStashRefilled(nextPrivateUA, accountId):
+                // Writes through the shared helper rather than directly, so the `walletAccounts`
+                // array entry (what an account switch installs as the new selection,
+                // `WalletAccountsSheet`) and `zashiWalletAccount` stay in sync with
+                // `selectedWalletAccount` for every account this background refill reaches, not
+                // only whichever one happens to be selected when the result lands.
+                PrivateUAStash.write(
+                    nextPrivateUA,
+                    forAccountId: accountId,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount,
+                    zashiWalletAccount: state.$zashiWalletAccount
+                )
+                return .none
 
             case .resolveMetadataEncryptionKeys:
                 do {
@@ -1384,17 +1667,25 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
+                // VotingRecovery: launch-time recovery may still be reading this
+                // wallet's files. Stop it before anything is wiped; the escrow
+                // also refuses its writes once the reset has run, whether or
+                // not cancellation reached it first.
+                let stopRecovery: Effect<Root.Action> = .cancel(id: VotingRecovery.CancelID.launch)
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
-                    return .send(.resetZashiSDKFailed)
+                    return .merge(stopRecovery, .send(.resetZashiSDKFailed))
                 }
-                return .publisher {
-                    wipePublisher
-                        .replaceEmpty(with: Void())
-                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                        .replaceError(with: Root.Action.resetZashiSDKFailed)
-                        .receive(on: mainQueue)
-                }
-                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                return .merge(
+                    stopRecovery,
+                    .publisher {
+                        wipePublisher
+                            .replaceEmpty(with: Void())
+                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
+                            .replaceError(with: Root.Action.resetZashiSDKFailed)
+                            .receive(on: mainQueue)
+                    }
+                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
+                )
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true
@@ -1730,7 +2021,7 @@ extension Root {
             selectedAccountUUID: state.selectedWalletAccount?.id,
             walletAccounts: state.walletAccounts
         )
-        // ANY committed run spawns the loop, immediate mode included (G1 fix, field 2026-08-05 —
+        // ANY committed run spawns the loop, immediate mode included (the 2026-08-05 field-incident fix —
         // a fresh-commit session sat under "Keep Zodl open" forever): a run's note-PREPARATIONS
         // are engine-paced wallet plumbing in EVERY mode, and the tick lane is what proves and
         // delivers them between opens (AUD-3 F4 exempts preps from the tick's mode belt; D2 sends

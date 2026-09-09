@@ -348,9 +348,13 @@ struct SendConfirmation {
 
                         switch result {
                         case let .grpcFailure(txIds, reason):
-                            await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
-                            ))
+                            let pendingDescription: String?
+                            switch reason {
+                            case .timeout: pendingDescription = String(localizable: .sendPendingTimeoutInfo)
+                            case .guardBusy: pendingDescription = String(localizable: .sendPendingGuardBusyInfo)
+                            case nil: pendingDescription = nil
+                            }
+                            await send(.updatePendingDescription(pendingDescription))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)
                             await send(.sendFailed("sdkSynchronizer.createAndSubmitProposedTransactions-grpcFailure".toZcashError(), isTxIdPresentInTheDB))
@@ -386,7 +390,7 @@ struct SendConfirmation {
                 // The anchor string comes from Rust (zcash_client_sqlite) — no typed sub-code exists yet.
                 // If the SDK ever adds one, replace the string check with it and drop the comment.
                 if case let .rustCreateToAddress(rustError) = error {
-                    state.isAnchorError = rustError.localizedCaseInsensitiveContains("Unable to compute anchor")
+                    state.isAnchorError = rustError.message.localizedCaseInsensitiveContains("Unable to compute anchor")
                 } else {
                     state.isAnchorError = false
                 }
@@ -662,9 +666,13 @@ struct SendConfirmation {
 
                         switch result {
                         case let .grpcFailure(txIds, reason):
-                            await send(.updatePendingDescription(
-                                reason == .timeout ? String(localizable: .sendPendingTimeoutInfo) : nil
-                            ))
+                            let pendingDescription: String?
+                            switch reason {
+                            case .timeout: pendingDescription = String(localizable: .sendPendingTimeoutInfo)
+                            case .guardBusy: pendingDescription = String(localizable: .sendPendingGuardBusyInfo)
+                            case nil: pendingDescription = nil
+                            }
+                            await send(.updatePendingDescription(pendingDescription))
                             await send(.updateFailedData(-999, "grpcFailure", pcztMessage))
                             await send(.updateTxIdToExpand(txIds.last))
                             let isTxIdPresentInTheDB = try await sdkSynchronizer.txIdExists(txIds.last)

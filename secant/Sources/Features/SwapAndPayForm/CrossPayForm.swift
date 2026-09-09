@@ -49,7 +49,7 @@ extension SwapAndPayForm {
                                         title: String(localizable: .generalMax),
                                         style: .standard,
                                         isEnabled: store.isPayMaxButtonEnabled,
-                                        isInFlight: store.isMaxRequestInFlight
+                                        isInFlight: store.isMaxRequestInFlight || store.isSpendabilityBeingDetermined
                                     ) {
                                         store.send(.maxTapped)
                                     }
