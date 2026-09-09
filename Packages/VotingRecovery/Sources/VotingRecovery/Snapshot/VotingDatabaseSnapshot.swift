@@ -1,4 +1,3 @@
-#if VOTING_ENABLED
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -60,7 +59,7 @@ enum VotingDatabaseSnapshot {
         do {
             return try captureThrowing(databasePath: databasePath, now: now, root: nil)
         } catch {
-            LoggerProxy.error("Voting database snapshot failed: \(error)")
+            Log.error("Voting database snapshot failed: \(error)")
             return nil
         }
     }
@@ -74,8 +73,8 @@ enum VotingDatabaseSnapshot {
     ) throws -> Snapshot? {
         let fileManager = FileManager.default
         let source = URL(fileURLWithPath: databasePath)
-        let wal = URL(fileURLWithPath: databasePath + "-wal")
-        let shm = URL(fileURLWithPath: databasePath + "-shm")
+        let wal = URL(fileURLWithPath: "\(databasePath)-wal")
+        let shm = URL(fileURLWithPath: "\(databasePath)-shm")
 
         guard fileManager.fileExists(atPath: source.path) else { return nil }
 
@@ -119,7 +118,7 @@ enum VotingDatabaseSnapshot {
         // Deliberately left eligible for system backups, like the database it
         // copies: these bytes are the only remaining route to a lost vote, so
         // they must survive a device migration.
-        LoggerProxy.info("Preserved voting database into \(directoryName) at \(timestamp(now))")
+        Log.info("Preserved voting database into \(directoryName) at \(timestamp(now))")
         return destination
     }
 
@@ -167,4 +166,3 @@ enum VotingDatabaseSnapshot {
         return formatter.string(from: date)
     }
 }
-#endif

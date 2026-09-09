@@ -54,6 +54,8 @@ desc "Build, sign, and upload one or more variants; optionally submit to App Rev
 lane :release do |options|
   repo_root = run("git rev-parse --show-toplevel", must_succeed: true).strip
   ref           = options[:ref].to_s
+  remote        = options[:remote].to_s
+  remote        = "origin" if remote.empty?
   version       = options.fetch(:version)
   build         = Integer(options.fetch(:build))
   dry_run       = truthy(options[:dry_run])
@@ -71,11 +73,11 @@ lane :release do |options|
 
   sha = nil
   if building
-    UI.message("Fetching latest refs from origin…")
-    # Fail closed: the preflight reconciles against origin, so a failed fetch must abort
-    # rather than silently leave the checks running on stale local refs.
-    run("git -C #{repo_root.shellescape} fetch --quiet --tags origin", must_succeed: true)
-    sha = resolve_sha(repo_root, ref)
+    UI.message("Fetching latest refs from #{remote}…")
+    # Fail closed: the preflight reconciles against the release remote, so a failed
+    # fetch must abort rather than silently leave the checks running on stale local refs.
+    run("git -C #{repo_root.shellescape} fetch --quiet --tags #{remote.shellescape}", must_succeed: true)
+    sha = resolve_sha(repo_root, ref, remote)
     branch_version = Zodl::Version.from_branch(ref)
     project_version = marketing_version_at(repo_root, sha)
     local_packages = local_packages_at(repo_root, sha)
@@ -93,7 +95,8 @@ lane :release do |options|
         project_version: project_version,
         branch_version: branch_version,
         latest_build: latest_build_number(api_key, cfg[:app_identifier], version),
-        ref_on_origin: ref_on_origin?(repo_root, sha),
+        remote: remote,
+        ref_on_remote: ref_on_remote?(repo_root, sha, remote),
         dirty_tree: dirty_tree?(repo_root),
         partner_keys_error: partner_keys_error(repo_root),
         xcode_ok: xcode_ok?(repo_root),
@@ -325,27 +328,39 @@ def set_marketing_version(version)
   File.write(path, content)
 end
 
-# Resolves a branch/tag/commit to a commit SHA. Prefers origin/<ref> so a release
-# built from a branch name uses the freshly-fetched origin tip, not a possibly-stale
-# local branch of the same name; falls back to the bare ref, which is what resolves
-# tags and commit SHAs (origin/<tag> and origin/<sha> don't exist).
-def resolve_sha(repo_root, ref)
-  ["origin/#{ref}", "#{ref}"].each do |candidate|
-    out = run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{candidate.shellescape}^{commit}").strip
-    return out unless out.empty?
+# Resolves a branch/tag/commit to a commit SHA. A branch name must resolve as
+# <remote>/<ref>: the remote was fetched a moment ago, so its tip is fresh, while
+# a same-named local branch may be stale — and silently building the stale tip is
+# how a fix someone else pushed gets left out of a release. The bare form is what
+# resolves tags and commit SHAs (<remote>/<tag> and <remote>/<sha> don't exist).
+def resolve_sha(repo_root, ref, remote)
+  remote_ref = "#{remote}/#{ref}"
+  sha = run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{remote_ref.shellescape}^{commit}").strip
+  return sha unless sha.empty?
+
+  local_branch = !run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{"refs/heads/#{ref}".shellescape}").strip.empty?
+  if local_branch
+    UI.user_error!("Branch '#{ref}' is not on '#{remote}'; a local branch of that name exists, but it may be stale. Push it, or name the remote that has it with --remote.")
   end
-  UI.user_error!("Could not resolve ref '#{ref}' (tried 'origin/#{ref}' and '#{ref}'). Fetch or push it first.")
+
+  sha = run("git -C #{repo_root.shellescape} rev-parse --verify --quiet #{ref.shellescape}^{commit}").strip
+  return sha unless sha.empty?
+
+  UI.user_error!("Could not resolve ref '#{ref}' (tried '#{remote_ref}' and '#{ref}'). Fetch or push it first.")
 end
 
-def ref_on_origin?(repo_root, sha)
-  # branch -r --contains lists only remote-tracking branches, never tags. A
-  # release built from a tag whose commit isn't on a remote branch is still on
-  # origin if the tag is pushed, so also match the sha against origin's tags
-  # (ls-remote prints the tagged commit on the ^{} line for annotated tags).
-  on_branch = !run("git -C #{repo_root.shellescape} branch -r --contains #{sha} 2>/dev/null").strip.empty?
+def ref_on_remote?(repo_root, sha, remote)
+  # branch -r --contains lists only remote-tracking branches, never tags -- and
+  # is scoped to this remote's, since a commit that only some other remote
+  # carries is not released content. A release built from a tag whose commit
+  # isn't on a remote branch is still on the remote if the tag is pushed, so
+  # also match the sha against the remote's tags (ls-remote prints the tagged
+  # commit on the ^{} line for annotated tags).
+  pattern = "#{remote}/*"
+  on_branch = !run("git -C #{repo_root.shellescape} branch -r --contains #{sha} --list #{pattern.shellescape} 2>/dev/null").strip.empty?
   return true if on_branch
 
-  run("git -C #{repo_root.shellescape} ls-remote --tags origin 2>/dev/null").lines.any? do |line|
+  run("git -C #{repo_root.shellescape} ls-remote --tags #{remote.shellescape} 2>/dev/null").lines.any? do |line|
     line.split(/\s+/).first == sha
   end
 end

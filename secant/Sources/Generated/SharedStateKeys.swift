@@ -11,6 +11,11 @@ public extension String {
     static let exchangeRate = "sharedStateKey_exchangeRate"
     static let sensitiveContent = "udHideBalances"
     static let walletStatus = "sharedStateKey_walletStatus"
+    /// MOB-1854: bumped once per `.retryStart` pipeline admitted (never by a finish), so a
+    /// cancelled pipeline's post-`start()` undo (`RootInitialization.swift`) can tell whether a
+    /// newer pipeline has been admitted since it captured its own value — and, if so, leave that
+    /// newer pipeline's fresh start alone rather than tearing it down.
+    static let retryStartAdmissionGeneration = "sharedStateKey_retryStartAdmissionGeneration"
     static let flexaAccountId = "sharedStateKey_flexaAccountId"
     static let addressBookContacts = "sharedStateKey_addressBookContacts"
     static let toast = "sharedStateKey_toast"

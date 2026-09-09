@@ -47,6 +47,10 @@ struct TransactionState: Equatable, Identifiable {
     var zecAmount: Zatoshi
     var isMarkedAsRead = false
     var isInAddressBook = false
+    /// A sent, unmined transaction that a server has already accepted for broadcast (SDK
+    /// `TransactionSubmissionStatus.accepted`). Lets a `.sending` row read "awaiting
+    /// confirmation" instead of "Sending" once the network has it, not just this device.
+    var isAcceptedBySubmitter = false
     var hasTransparentOutputs = false
     var totalSpent: Zatoshi?
     var totalReceived: Zatoshi?
@@ -185,7 +189,9 @@ struct TransactionState: Equatable, Identifiable {
             case .receiving:
                 return String(localizable: .transactionReceiving)
             case .sending:
-                return String(localizable: .transactionSending)
+                return isAcceptedBySubmitter
+                ? String(localizable: .transactionSentAwaitingConfirmation)
+                : String(localizable: .transactionSending)
             case .shielding:
                 return String(localizable: .transactionShieldingFunds)
             case .shielded:

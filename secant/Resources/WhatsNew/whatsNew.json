@@ -1,6 +1,40 @@
 {
     "releases": [
         {
+            "version": "3.12.0",
+            "date": "08-09-2026",
+            "timestamp": 1788860758,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue in Coinholder Polling where reopening a poll could discard a delegation you had already confirmed.",
+                        "We made the messages clearer when a poll can't be opened on your device, and added a reference code you can share with support."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.11.0",
+            "date": "03-09-2026",
+            "timestamp": 1788469946,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added DASH, BCH, and synthetic ZEC assets on Solana and NEAR to the swap list."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved automatic server selection to avoid unnecessary server changes.",
+                        "We improved how the spendable balance is shown."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.3",
             "date": "27-08-2026",
             "timestamp": 1787859192,

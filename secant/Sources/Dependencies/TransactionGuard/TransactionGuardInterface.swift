@@ -16,6 +16,10 @@ extension DependencyValues {
 @DependencyClient
 struct TransactionGuardClient {
     var acquire: @Sendable () async throws -> Void
+    // Deliberately left without a default, exactly like `acquire`: the macro-synthesized default
+    // throws, so an override that forgets to wire it fails the submission loudly instead of
+    // silently running a broadcast outside the guard.
+    var acquireWithTimeout: @Sendable (Duration) async throws -> Void
     // Default to `false` so a partial override that wires `acquire`/`release` but forgets
     // `tryAcquire` makes `switchIfIdle` a safe no-op rather than releasing a guard it never took.
     var tryAcquire: @Sendable () async -> Bool = { false }
@@ -27,6 +31,26 @@ extension TransactionGuardClient {
     /// and waits for an in-flight switch to finish first.
     func withSubmission<T>(_ body: () async throws -> T) async throws -> T {
         try await acquire()
+        if Task.isCancelled {
+            await release()
+            throw CancellationError()
+        }
+        do {
+            let result = try await body()
+            await release()
+            return result
+        } catch {
+            await release()
+            throw error
+        }
+    }
+
+    /// Like `withSubmission(_:)`, but gives up waiting for the guard after `timeout` and throws
+    /// `TransactionGuardBusyError` without running `body`. Used where an unbounded wait would look
+    /// to the user like a frozen screen; the guard is released on every path that actually took it.
+    func withSubmission<T>(timeout: Duration, _ body: () async throws -> T) async throws -> T {
+        // A thrown acquisition error means the guard was never taken, so it must not be released.
+        try await acquireWithTimeout(timeout)
         if Task.isCancelled {
             await release()
             throw CancellationError()
