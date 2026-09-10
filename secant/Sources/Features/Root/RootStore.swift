@@ -180,20 +180,6 @@ struct Root {
         /// status as idle too, since a stalled sync has nothing left for an automatic switch to
         /// interrupt. Reset at `.didEnterBackground`, same as `lastKnownSyncStatus`.
         var isSyncStalledSinceLastProgress = false
-        /// MOB-1853: true once automatic stall recovery has nothing left to try THIS foreground --
-        /// either the terminal-stall rebuild budget is spent, a rebuild was blocked by the `bgTask`/
-        /// server-setup guard, or a dispatched rebuild reported back that it never actually started a
-        /// pass (`.terminalStallRebuildFinished(false)`). Set/cleared by `markSyncStalledTerminally`/
-        /// `clearSyncStalledTerminally` (`RootTransactions.swift`), which also forward the transition
-        /// to the SmartBanner (`.home(.smartBanner(.syncStalledTerminally))`) so it can show an honest
-        /// "Sync has stalled" banner with a Retry action instead of leaving the ordinary "Syncing"
-        /// indicator spinning forever. Cleared the moment the engine visibly makes progress again --
-        /// the same sites that clear `isSyncStalledSinceLastProgress`, above -- or at
-        /// `.didEnterBackground`; `.retryTerminalStallRebuild` also clears it up front when the retry
-        /// can actually run, so the banner closes immediately on tap rather than sitting on a stale
-        /// reading while that attempt runs; a Retry that cannot run (Server Setup owns the
-        /// synchronizer, or a background task is active) leaves it -- and the banner -- untouched.
-        var isSyncStalledTerminally = false
         /// MOB-1853: how many terminal-stall rebuilds (`.syncStalled(gaveUp: true)`) this foreground
         /// has already run -- see `maxTerminalStallRebuildsPerForeground` and `.syncStalled`'s handler
         /// (`RootTransactions.swift`). A rebuild tears the synchronizer down and rebuilds it, which is
@@ -518,13 +504,6 @@ struct Root {
         /// true when a pass actually got underway. Logged either way; no further state change, since
         /// the ordinary synchronizer-state/transaction pipeline reports whatever happens next.
         case terminalStallRebuildFinished(Bool)
-        /// MOB-1853: the stalled-sync banner's Retry action, forwarded from
-        /// `.home(.smartBanner(.retryStalledSyncTapped))` (`RootCoordinator.swift`). Re-enters the
-        /// same rebuild path `.syncStalled`'s give-up branch starts, with a fresh budget, provided
-        /// the same `bgTask`/Server Setup guard lets it; otherwise it changes nothing -- see
-        /// `startTerminalRebuild`'s and `clearSyncStalledTerminally`'s doc comments
-        /// (`RootTransactions.swift`).
-        case retryTerminalStallRebuild
         case fetchTransactionsForTheSelectedAccount
         case fetchedTransactions(AccountUUID, IdentifiedArrayOf<TransactionState>)
         /// MOB-1855: sent from `.fetchTransactionsForTheSelectedAccount`'s `catch` when
@@ -907,7 +886,8 @@ extension Root {
 
     /// Clears device/global-scoped wallet state that must never leak from one wallet into
     /// the next on the same device — voting configuration and history, the Flexa session,
-    /// cached preferences, and locally-cached read-transaction state. Shared by the full
+    /// cached preferences, the sub-$300 refund-warning suppression, and locally-cached
+    /// read-transaction state. Shared by the full
     /// `resetZashi` flow (`.resetZashiSDKSucceeded`) and by `reconcileWalletDatabaseWithSeed`,
     /// so a healed stale database (e.g. from a restored device backup) starts out just as
     /// clean as an explicit reset.
@@ -923,6 +903,12 @@ extension Root {
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)
         userDefaults.remove(Constants.udLeavesScreenOpen)
+        // MOB-1889: the sub-$300 refund warning's per-surface suppression. Device-scoped like
+        // everything else here — the next wallet on this device has not been shown the warning
+        // and must not inherit a previous owner's decision to silence it.
+        userDefaults.remove(.refundWarningSuppressedSwapToZec)
+        userDefaults.remove(.refundWarningSuppressedSwapFromZec)
+        userDefaults.remove(.refundWarningSuppressedCrossPay)
         #if VOTING_ENABLED
         userDefaults.remove(.hasSeenHowToVote)
         userDefaults.remove(.hasSeenHowToVoteKeystone)

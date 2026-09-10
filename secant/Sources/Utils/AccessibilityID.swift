@@ -58,6 +58,12 @@ enum AccessibilityID {
         static let maxButton = "crossPayForm.maxButton"
     }
 
+    enum RefundWarning {
+        static let cancelButton = "refundWarning.cancelButton"
+        static let continueButton = "refundWarning.continueButton"
+        static let dontShowAgainToggle = "refundWarning.dontShowAgainToggle"
+    }
+
     enum SwapForm {
         static let assetSelectButton = "swapForm.assetSelectButton"
         static let changeModeButton = "swapForm.changeModeButton"

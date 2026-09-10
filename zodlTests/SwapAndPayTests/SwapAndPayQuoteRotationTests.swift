@@ -7,6 +7,8 @@
 //  hard-requires `privateUnifiedAddress` (the refund address), so with a stash the
 //  tap promotes it synchronously and quotes immediately, while without one it keeps
 //  the pre-rotation await-then-quote behavior — plus a stash self-heal either way.
+//  These pass `skipRefundWarning: true` so the MOB-1889 sub-$300 interstitial cannot
+//  intercept ahead of the rotation under test; the interstitial has its own suite.
 //
 
 import Testing
@@ -71,7 +73,7 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.getQuoteTapped)
+        await store.send(.getQuoteTapped(skipRefundWarning: true))
 
         // The stash became the refund address synchronously.
         #expect(store.state.selectedWalletAccount?.privateUA == Const.stashUA)
@@ -119,7 +121,7 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.getQuoteTapped)
+        await store.send(.getQuoteTapped(skipRefundWarning: true))
 
         // The refund address arrives first...
         await store.receive(\.updatePrivateUA, timeout: .seconds(5))
@@ -168,7 +170,7 @@ import ComposableArchitecture
         }
         store.exhaustivity = .off
 
-        await store.send(.getQuoteTapped)
+        await store.send(.getQuoteTapped(skipRefundWarning: true))
         await store.receive(\.updatePrivateUA, timeout: .seconds(5))
         await store.receive(\.getQuote, timeout: .seconds(5))
         await store.finish()

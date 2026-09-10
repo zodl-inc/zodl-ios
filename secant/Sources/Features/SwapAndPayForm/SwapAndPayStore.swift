@@ -17,6 +17,20 @@ struct SwapAndPay {
     enum Constants {
         static let zecAsset = "zec.zec"
         static let defaultSlippage = Decimal(2.0)
+        /// NEAR refuses to refund user error below this deposit value, so it is their policy
+        /// figure rather than ours (MOB-1889). Evaluated at CTA tap against the estimated USD
+        /// value; near-boundary cases where the quote lands the other side of $300 are handled
+        /// manually by NEAR support, which is why an estimate is good enough here.
+        static let refundThresholdUsd = Decimal(300)
+    }
+
+    /// Which of the three forms the one reducer is currently serving. The store encodes this in
+    /// two booleans whose defaults overlap (`isSwapExperienceEnabled` starts true), so resolving
+    /// it once here keeps every caller from having to remember the precedence.
+    enum RefundWarningSurface: Equatable {
+        case swapToZec
+        case swapFromZec
+        case crossPay
     }
     
     @ObservableState
@@ -50,6 +64,8 @@ struct SwapAndPay {
         var isQuoteToZecPresented = false
         var isQuoteUnavailablePresented = false
         var isRefundAddressExplainerEnabled = false
+        var isRefundWarningPresented = false
+        var refundWarningDontShowAgain = false
         var isSlippagePresented = false
         var isSwapCanceled = false
         var isSwapExperienceEnabled = true
@@ -71,6 +87,12 @@ struct SwapAndPay {
         var selectedSlippageChip = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
+        @Shared(.appStorage(.refundWarningSuppressedSwapToZec))
+        var isRefundWarningSuppressedSwapToZec = false
+        @Shared(.appStorage(.refundWarningSuppressedSwapFromZec))
+        var isRefundWarningSuppressedSwapFromZec = false
+        @Shared(.appStorage(.refundWarningSuppressedCrossPay))
+        var isRefundWarningSuppressedCrossPay = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         var swapAssetFailedCounter = 0
@@ -110,6 +132,56 @@ struct SwapAndPay {
         /// Only a flow that spends local ZEC has to wait for the spendable value; an incoming swap
         /// deposits another asset and receives ZEC, so masking must not block funding a wallet
         /// that is still syncing. Mirrors the exemption in `isInsufficientFunds`.
+        var refundWarningSurface: RefundWarningSurface {
+            if isSwapToZecExperienceEnabled {
+                return .swapToZec
+            }
+            return isSwapExperienceEnabled ? .swapFromZec : .crossPay
+        }
+
+        var isRefundWarningSuppressed: Bool {
+            switch refundWarningSurface {
+            case .swapToZec: return isRefundWarningSuppressedSwapToZec
+            case .swapFromZec: return isRefundWarningSuppressedSwapFromZec
+            case .crossPay: return isRefundWarningSuppressedCrossPay
+            }
+        }
+
+        /// USD value of the deposit, which is the figure NEAR applies the $300 rule to.
+        ///
+        /// Derived from `amount` and the assets' own `usdPrice` rather than read off `usdAmount`:
+        /// that computed parses the formatted USD field through the live formatter and is
+        /// `_XCTIsTesting`-poisoned to 0, so a threshold built on it would read as under $300 in
+        /// every reducer test and prove nothing. `amount` has the `amountOverrideForTesting`
+        /// seam, so this stays drivable.
+        ///
+        /// The unit `amount` carries differs per surface, mirroring `isInsufficientFunds`:
+        /// ZEC when swapping FROM ZEC, the selected token otherwise, or USD directly when the
+        /// field is in USD mode. For CrossPay the deposit is ZEC but the entered token value is
+        /// the same figure in USD, so the selected asset's price is the right multiplier there
+        /// too.
+        var refundWarningDepositUsd: Decimal? {
+            if isInputInUsd {
+                return amount
+            }
+            switch refundWarningSurface {
+            case .swapFromZec:
+                guard let zecAsset, zecAsset.usdPrice > 0 else { return nil }
+                return amount * zecAsset.usdPrice
+            case .swapToZec, .crossPay:
+                guard let selectedAsset, selectedAsset.usdPrice > 0 else { return nil }
+                return amount * selectedAsset.usdPrice
+            }
+        }
+
+        /// Nil deposit value means no usable price. Unreachable in practice -- `isValidForm`
+        /// needs a selected asset and the CTA is disabled without one -- but if it ever happens
+        /// the safe answer is to warn rather than wave a swap through unwarned.
+        var isBelowRefundThreshold: Bool {
+            guard let deposit = refundWarningDepositUsd else { return true }
+            return deposit < Constants.refundThresholdUsd
+        }
+
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
@@ -270,7 +342,7 @@ struct SwapAndPay {
         case eraseSearchTermTapped
         //case exchangeRateSetupChanged
         case getQuote
-        case getQuoteTapped
+        case getQuoteTapped(skipRefundWarning: Bool)
         case helpSheetRequested(Int)
         case internalBackButtonTapped
         case maxAmountFailed
@@ -331,6 +403,8 @@ struct SwapAndPay {
         case qrCodeTapped
         case refundAddressCloseTapped
         case refundAddressTapped
+        case refundWarningCancelTapped
+        case refundWarningContinueTapped
         case rememberEnlargedQR(CGImage?)
         case rememberQR(CGImage?)
         case sentTheFundsButtonTapped
@@ -816,7 +890,17 @@ struct SwapAndPay {
                 state.searchTerm = ""
                 return .send(.updateAssetsAccordingToSearchTerm)
                 
-            case .getQuoteTapped:
+            case .getQuoteTapped(let skipRefundWarning):
+                // MOB-1889: the sub-$300 warning is an interstitial, so it intercepts ahead of
+                // everything below -- the MOB-1803 UA rotation included, which is a wallet-DB
+                // write not worth spending on a swap the user is about to cancel.
+                // `skipRefundWarning` is how the sheet's Continue re-enters without re-arming
+                // the sheet; nothing else passes true.
+                if !skipRefundWarning, !state.isRefundWarningSuppressed, state.isBelowRefundThreshold {
+                    state.refundWarningDontShowAgain = false
+                    state.isRefundWarningPresented = true
+                    return .none
+                }
                 guard let account = state.selectedWalletAccount else {
                     return .send(.getQuote)
                 }
@@ -1350,6 +1434,30 @@ struct SwapAndPay {
             case .refundAddressCloseTapped:
                 state.isRefundAddressExplainerEnabled = false
                 return .none
+
+            case .refundWarningCancelTapped:
+                // Nothing submitted and nothing persisted: ticking the box and then cancelling
+                // must not silence the warning.
+                state.isRefundWarningPresented = false
+                state.refundWarningDontShowAgain = false
+                return .none
+
+            case .refundWarningContinueTapped:
+                // The preference is written here rather than on the toggle, so that the box only
+                // takes effect for a user who actually went ahead.
+                if state.refundWarningDontShowAgain {
+                    switch state.refundWarningSurface {
+                    case .swapToZec:
+                        state.$isRefundWarningSuppressedSwapToZec.withLock { $0 = true }
+                    case .swapFromZec:
+                        state.$isRefundWarningSuppressedSwapFromZec.withLock { $0 = true }
+                    case .crossPay:
+                        state.$isRefundWarningSuppressedCrossPay.withLock { $0 = true }
+                    }
+                }
+                state.isRefundWarningPresented = false
+                state.refundWarningDontShowAgain = false
+                return .send(.getQuoteTapped(skipRefundWarning: true))
                 
                 // MARK: deposit funds
                 
