@@ -9,8 +9,6 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Added
 
-- [MOB-1853] When the wallet has stopped making sync progress and its automatic recovery has given up, the home screen now shows a "Sync has stalled" banner with a Retry button instead of an endless "Syncing" indicator.
-
 ### Changed
 
 - [MOB-1858] Sending no longer waits behind unrelated network work. Preparing a payment now runs alongside other activity instead of blocking it, and if the wallet is still busy with something else by the time it's ready to broadcast, the transaction is shown as pending and submitted automatically in the background instead of being reported as a failure.
@@ -18,7 +16,6 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
-- [MOB-1853] When sync has stalled for good and the wallet also reports a sync error, the "Sync has stalled" banner with its Retry button now takes precedence over the plain error banner; its help sheet keeps the error details, the option to choose another server when the error is a server incompatibility, and Send Report. A sync error banner no longer stays on screen after sync has stopped.
 - [MOB-1869] Send and outgoing Swap and Pay no longer report insufficient funds, or allow Review, while the wallet is still working out your spendable balance after a restore or a server change; they wait the same way the home screen does. Swapping another asset into ZEC is unaffected.
 - [MOB-1854] Sync now resumes after a migration broadcast even when the resume request arrives while the previous start is still finishing.
 - [MOB-1862] After switching accounts, a balance or pending amount that was still loading for the previous account can no longer be shown as the new account's. The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain — shown as updating during that check, with Send and Swap waiting for it rather than claiming you have insufficient funds. Funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent, and swapping another asset into ZEC no longer waits for the wallet's spendable balance to be confirmed, since that swap doesn't spend it.
