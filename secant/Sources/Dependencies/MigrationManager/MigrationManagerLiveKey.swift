@@ -309,8 +309,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
     // `RandomNumberGenerator`.
     @Dependency(\.migrationRandomness) var migrationRandomness
 
-    @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
-    @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+    // #2113: resolved on demand, never stored. A stored `@Shared` retains its persistent reference
+    // in `init`, and `init` runs inside swift-dependencies' `liveValue` construction, which holds
+    // the dependency-cache lock. A store sitting in `$walletAccounts.withLock` on another thread
+    // at that instant holds the reference lock and reads a dependency inside the closure — the two
+    // lock orders cross and the app freezes behind the "hi" splash at cold launch. Resolving the
+    // reference at read time takes the reference lock without the cache lock, so no cycle exists.
+    var selectedWalletAccount: WalletAccount? {
+        @Shared(.inMemory(.selectedWalletAccount)) var shared: WalletAccount? = nil
+        return shared
+    }
+
+    var walletAccounts: [WalletAccount] {
+        @Shared(.inMemory(.walletAccounts)) var shared: [WalletAccount] = []
+        return shared
+    }
+
     @Dependency(\.userNotifications) var userNotifications
 
     // The three seams `MigrationStepDriver` needs to discharge the engine's `.rebuild` step without

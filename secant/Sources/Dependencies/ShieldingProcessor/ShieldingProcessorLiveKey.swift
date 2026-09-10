@@ -23,9 +23,8 @@ extension ShieldingProcessorClient: DependencyKey {
     }
 }
 
-// TCA's `@Dependency` and `@Shared` property wrappers synthesize `var` storage but are themselves
-// thread-safe (task-local dependency lookup / shared-state machinery). The Combine `subject` is
-// reference-counted Sendable storage.
+// TCA's `@Dependency` property wrappers synthesize `var` storage but are themselves thread-safe
+// (task-local dependency lookup). The Combine `subject` is reference-counted Sendable storage.
 private final class ShieldingProcessorImpl: @unchecked Sendable {
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.mnemonic) var mnemonic
@@ -33,7 +32,13 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
     @Dependency(\.walletStorage) var walletStorage
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
-    @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
+    // #2113: resolved on demand, never stored — a stored `@Shared` retains its persistent
+    // reference inside `liveValue` construction, under swift-dependencies' cache lock; see
+    // `MigrationManagerImpl` for the lock cycle that produces. Same fix for the same reason.
+    var selectedWalletAccount: WalletAccount? {
+        @Shared(.inMemory(.selectedWalletAccount)) var shared: WalletAccount? = nil
+        return shared
+    }
 
     let subject = CurrentValueSubject<ShieldingProcessorClient.State, Never>(.unknown)
 
