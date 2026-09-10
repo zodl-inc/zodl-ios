@@ -150,7 +150,7 @@ extension SwapAndPayForm {
                                     .padding(.bottom, 56)
                             } else {
                                 ZashiButton(String(localizable: .sendReview)) {
-                                    store.send(.getQuoteTapped)
+                                    store.send(.getQuoteTapped(skipRefundWarning: false))
                                 }
                                 .accessibilityIdentifier(AccessibilityID.CrossPayForm.reviewButton)
                                 .padding(.top, keyboardVisible ? 40 : 0)
@@ -184,6 +184,9 @@ extension SwapAndPayForm {
             }
             .zashiSheet(isPresented: $store.isQuoteUnavailablePresented) {
                 quoteUnavailableContent(colorScheme)
+            }
+            .zashiSheet(isPresented: $store.isRefundWarningPresented) {
+                refundWarningSheetContent(colorScheme)
             }
             .zashiSheet(isPresented: $store.isCancelSheetVisible) {
                 cancelSheetContent(colorScheme)

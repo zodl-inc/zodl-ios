@@ -22,7 +22,6 @@ extension SmartBannerView {
             switch store.priorityContent {
             case .priority1: disconnectedContent()
             case .priority2: syncingErrorContent()
-            case .priorityStalled: syncStalledContent()
             case .priority3: restoringContent()
             case .priority4: syncingContent()
             case .priority45: resyncingContent()
@@ -74,32 +73,6 @@ extension SmartBannerView {
             }
             
             Spacer()
-        }
-    }
-
-    @ViewBuilder func syncStalledContent() -> some View {
-        HStack(spacing: 0) {
-            Asset.Assets.Icons.alertTriangle.image
-                .zImage(size: 20, color: titleStyle())
-                .padding(.trailing, 12)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localizable: .smartBannerContentSyncStalledTitle)
-                    .zFont(.medium, size: 14, color: titleStyle())
-
-                Text(localizable: .smartBannerContentSyncStalledInfo)
-                    .zFont(.medium, size: 12, color: infoStyle())
-            }
-
-            Spacer()
-
-            ZashiButton(
-                String(localizable: .smartBannerContentSyncStalledButton),
-                type: .ghost,
-                infinityWidth: false
-            ) {
-                store.send(.retryStalledSyncTapped)
-            }
         }
     }
 

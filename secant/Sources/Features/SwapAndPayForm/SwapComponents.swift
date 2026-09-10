@@ -612,13 +612,18 @@ extension SwapAndPayForm {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 16)
 
+            Text(localizable: .swapToZecRefundAddressMsgThreshold)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 16)
+
             Text(localizable: .swapToZecRefundAddressMsg2)
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 16)
                 .padding(.bottom, 32)
 
-            ZashiButton(String(localizable: .generalOk)) {
+            ZashiButton(String(localizable: .generalDismiss)) {
                 store.send(.refundAddressCloseTapped)
             }
             .padding(.bottom, Design.Spacing.sheetBottomSpace)

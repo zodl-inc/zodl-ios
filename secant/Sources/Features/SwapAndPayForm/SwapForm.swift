@@ -98,7 +98,7 @@ extension SwapAndPayForm {
                                     .padding(.bottom, 56)
                             } else {
                                 ZashiButton(String(localizable: .swapAndPayGetQuote)) {
-                                    store.send(.getQuoteTapped)
+                                    store.send(.getQuoteTapped(skipRefundWarning: false))
                                 }
                                 .accessibilityIdentifier(AccessibilityID.SwapForm.reviewButton)
                                 .padding(.bottom, 56)
@@ -229,6 +229,9 @@ extension SwapAndPayForm {
             }
             .zashiSheet(isPresented: $store.isRefundAddressExplainerEnabled) {
                 refundAddressSheetContent(colorScheme)
+            }
+            .zashiSheet(isPresented: $store.isRefundWarningPresented) {
+                refundWarningSheetContent(colorScheme)
             }
         }
         .onAppear {

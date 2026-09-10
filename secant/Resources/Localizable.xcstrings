@@ -6291,13 +6291,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If the actual slippage and network conditions result in your recipient receiving less than the promised amount, your transaction will be reversed. You will receive a full refund minus network fees."
+            "value" : "If slippage or network conditions result in your recipient receiving less than the promised amount, your payment will be refunded minus network fees."
           }
         },
         "es" : {
           "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si el deslizamiento o las condiciones de la red resultan en que tu destinatario reciba menos de la cantidad prometida, tu pago será reembolsado menos las comisiones de red."
+          }
+        }
+      }
+    },
+    "crosspay.help.descThreshold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
             "state" : "translated",
-            "value" : "Si el deslizamiento real y las condiciones de la red resultan en que tu destinatario reciba menos de la cantidad prometida, tu transacción será revertida. Recibirás un reembolso completo menos las comisiones de red."
+            "value" : "Refunds only apply to payments of $300 or more. Payments under $300 aren’t eligible for a refund. Please double-check all details before continuing."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los reembolsos solo se aplican a pagos de $300 o más. Los pagos de menos de $300 no son elegibles para reembolso. Verifica todos los detalles antes de continuar."
           }
         }
       }
@@ -8030,6 +8047,23 @@
         }
       }
     },
+    "general.continue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuar"
+          }
+        }
+      }
+    },
     "general.copiedAddress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8094,6 +8128,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Eliminar"
+          }
+        }
+      }
+    },
+    "general.dismiss" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descartar"
           }
         }
       }
@@ -8213,6 +8264,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-----"
+          }
+        }
+      }
+    },
+    "general.learnMore" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Learn more"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Más información"
           }
         }
       }
@@ -19096,57 +19164,6 @@
         }
       }
     },
-    "smartBanner.content.syncStalled.button" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retry"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reintentar"
-          }
-        }
-      }
-    },
-    "smartBanner.content.syncStalled.info" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatic recovery gave up. Retry, or choose another server in Settings."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La recuperación automática se detuvo. Reintenta o elige otro servidor en Ajustes."
-          }
-        }
-      }
-    },
-    "smartBanner.content.syncStalled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sync has stalled"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La sincronización se ha detenido"
-          }
-        }
-      }
-    },
     "smartBanner.content.tor.button" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19722,40 +19739,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Error de Sincronización"
-          }
-        }
-      }
-    },
-    "smartBanner.help.syncStalled.info" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The wallet stopped making progress and its automatic recovery has given up. Tap Retry to try again, or pick a different server under Advanced Settings → Server."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La cartera dejó de avanzar y su recuperación automática se detuvo. Toca Reintentar para volver a intentarlo o elige otro servidor en Ajustes avanzados → Servidor."
-          }
-        }
-      }
-    },
-    "smartBanner.help.syncStalled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sync has stalled"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La sincronización se ha detenido"
           }
         }
       }
@@ -20737,13 +20720,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Swap ZEC with any NEAR-supported token. "
+            "value" : "Swap between ZEC and any NEAR-supported coin or token."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Haz swap de ZEC con cualquier token compatible con NEAR."
+            "state" : "needs_review",
+            "value" : "Haz swap entre ZEC y cualquier moneda o token compatible con NEAR."
           }
         }
       }
@@ -20754,13 +20737,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If swapping TO ZEC, you will send funds from a 3rd party wallet and provide an address where change can be refunded."
+            "value" : "If swapping TO ZEC, you will send funds from a third-party wallet and provide an address where funds can be refunded."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Si haces swap HACIA ZEC, enviarás fondos desde una wallet de terceros y deberás proporcionar una dirección donde se pueda reembolsar el cambio."
+            "state" : "needs_review",
+            "value" : "Si haces swap HACIA ZEC, enviarás fondos desde una wallet de terceros y deberás proporcionar una dirección donde se puedan reembolsar los fondos."
           }
         }
       }
@@ -20778,6 +20761,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Si haces swap DESDE ZEC, debes proporcionar una dirección válida para el activo al que haces swap."
+          }
+        }
+      }
+    },
+    "swapAndPay.help.swapDescThreshold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if sent to a wrong address or wrong network."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso si se envían a una dirección o red incorrecta."
           }
         }
       }
@@ -21322,6 +21322,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fondos devueltos"
+          }
+        }
+      }
+    },
+    "swapAndPay.refundWarning.dontShowAgain" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Don’t show this message again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No volver a mostrar este mensaje"
+          }
+        }
+      }
+    },
+    "swapAndPay.refundWarning.payMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for payments under $300. Please double-check all details before continuing."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en pagos de menos de $300. Verifica todos los detalles antes de continuar."
+          }
+        }
+      }
+    },
+    "swapAndPay.refundWarning.swapMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for swaps under $300. Please double-check all details before continuing."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en swaps de menos de $300. Verifica todos los detalles antes de continuar."
+          }
+        }
+      }
+    },
+    "swapAndPay.refundWarning.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Refunds Under $300"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin reembolsos por debajo de $300"
           }
         }
       }
@@ -22183,13 +22251,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "If the swap fails or market conditions change, your transaction may be refunded minus the transaction fees."
+            "value" : "If the swap fails or market conditions change, your transaction may be refunded minus network fees."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Si el swap falla o cambian las condiciones del mercado, tu transacción puede ser reembolsada menos las comisiones de transacción."
+            "state" : "needs_review",
+            "value" : "Si el swap falla o cambian las condiciones del mercado, tu transacción puede ser reembolsada menos las comisiones de red."
           }
         }
       }
@@ -22207,6 +22275,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "El monto reembolsado será devuelto a tu wallet en la moneda de origen en la misma red. Ingresa una dirección válida para evitar la pérdida de fondos."
+          }
+        }
+      }
+    },
+    "swapToZec.refundAddress.msgThreshold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso."
           }
         }
       }
@@ -23657,23 +23742,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enviado"
-          }
-        }
-      }
-    },
-    "transaction.sentAwaitingConfirmation" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sent · awaiting confirmation"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enviado · esperando confirmación"
           }
         }
       }
