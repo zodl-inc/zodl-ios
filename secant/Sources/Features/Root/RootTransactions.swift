@@ -88,55 +88,18 @@ extension Root {
                 // a no-op once the winning candidate is the server already configured. Rebuild at the
                 // best available endpoint instead (the current one included), at most
                 // `maxTerminalStallRebuildsPerForeground` times per foreground; past that, the SDK's
-                // own error state used to be left on screen with nothing more said about it. MOB-1853:
-                // instead the app raises its own honest terminal state (`isSyncStalledTerminally`), so
-                // the SmartBanner can show it and offer a manual Retry rather than an endless
-                // "Syncing" indicator.
+                // own error state is left on screen rather than retrying silently forever.
                 guard state.terminalStallRebuildsThisForeground < Root.State.maxTerminalStallRebuildsPerForeground else {
                     LoggerProxy.event("[AutoServerSelection] Terminal stall: rebuild budget exhausted for this foreground")
-                    return markSyncStalledTerminally(state: &state)
+                    return .none
                 }
-                guard state.bgTask == nil, !state.isServerSetupVisible else {
-                    return markSyncStalledTerminally(state: &state)
-                }
+                guard state.bgTask == nil, !state.isServerSetupVisible else { return .none }
                 return startTerminalRebuild(state: &state)
 
             case .terminalStallRebuildFinished(let started):
                 LoggerProxy.event("[AutoServerSelection] Terminal stall rebuild \(started ? "started a pass" : "did not start a pass")")
                 state.isTerminalStallRebuildInFlight = false
-                // MOB-1853: a rebuild that never actually started a pass leaves the wallet exactly as
-                // stuck as an exhausted budget would, so it raises the same honest terminal state. One
-                // that DID start a pass gets the chance to prove itself through the ordinary sync
-                // pipeline -- if it succeeds, the progress-clear sites (`RootInitialization.swift`)
-                // retire the flag.
-                guard started else {
-                    return markSyncStalledTerminally(state: &state)
-                }
-                return clearSyncStalledTerminally(state: &state)
-
-            case .retryTerminalStallRebuild:
-                // MOB-1853: the user tapped Retry on the stalled-sync banner -- a fresh budget and a
-                // fresh attempt, exactly like the give-up path above, but user-initiated rather than
-                // SDK-initiated. Clearing (and notifying) here is what lets the banner close
-                // immediately rather than sitting on a stale "stalled" reading while this attempt is
-                // still in flight; a fresh failure re-raises it through the same guarded transition
-                // above. `retriedByUser: true` is what tells the SmartBanner this is an optimistic
-                // dismiss rather than a genuine clear, so it must not re-seat the error banner even
-                // if the wallet is still reporting the same persistent error underneath -- otherwise
-                // tapping Retry would flash the Retry-less error banner in until this attempt answers.
-                // MOB-1853: the guard runs before the optimistic dismiss -- `startTerminalRebuild`'s
-                // own doc comment leaves the `bgTask`/server-setup guard to its callers, and a Retry
-                // that cannot run must leave the stalled banner and its Retry button in place;
-                // closing it would leave nothing to answer the tap, neither a rebuild result nor the
-                // error banner, which the optimistic dismiss deliberately keeps out.
-                guard state.bgTask == nil, !state.isServerSetupVisible else {
-                    return .none
-                }
-                state.terminalStallRebuildsThisForeground = 0
-                return .merge(
-                    clearSyncStalledTerminally(state: &state, retriedByUser: true),
-                    startTerminalRebuild(state: &state)
-                )
+                return .none
 
             case .fetchTransactionsForTheSelectedAccount:
                 guard let accountUUID = state.selectedWalletAccount?.id else {
@@ -473,11 +436,9 @@ extension Root {
         }
     }
 
-    /// MOB-1853: dispatches one terminal-stall rebuild pass -- shared by the give-up path
-    /// (`.syncStalled`) and `.retryTerminalStallRebuild`, which re-enters this same path after the
-    /// user taps Retry on the stalled-sync banner. Callers are responsible for whatever budget/
-    /// `bgTask`/server-setup guards apply above them -- this helper only ever starts the rebuild
-    /// itself, exactly as `.syncStalled`'s give-up branch always has.
+    /// MOB-1853: dispatches one terminal-stall rebuild pass for `.syncStalled`'s give-up path. The
+    /// caller is responsible for the budget/`bgTask`/server-setup guards above it -- this helper only
+    /// ever starts the rebuild itself.
     private func startTerminalRebuild(state: inout Root.State) -> Effect<Root.Action> {
         state.terminalStallRebuildsThisForeground += 1
         // MOB-1853: marks the window `.autoServerCandidateReady` must not act in -- see
@@ -500,34 +461,5 @@ extension Root {
             }
             .cancellable(id: state.terminalStallRebuildCancelId, cancelInFlight: true)
         )
-    }
-
-    /// MOB-1853: raises `Root.State.isSyncStalledTerminally` and notifies the SmartBanner delegate
-    /// action, but only on the false -> true transition -- a repeat give-up that is already
-    /// terminally stalled must not re-trigger the banner's priority evaluation for no reason.
-    private func markSyncStalledTerminally(state: inout Root.State) -> Effect<Root.Action> {
-        guard !state.isSyncStalledTerminally else { return .none }
-        state.isSyncStalledTerminally = true
-        return .send(.home(.smartBanner(.syncStalledTerminally(true, retriedByUser: false))))
-    }
-
-    /// MOB-1853: the inverse of `markSyncStalledTerminally` -- clears `Root.State.isSyncStalledTerminally`
-    /// and notifies the SmartBanner delegate action, but only when it was actually set. Called from
-    /// every site that observes the engine visibly recovering: a rebuild that actually started a pass
-    /// (`.terminalStallRebuildFinished(true)`, above), the `.retryTerminalStallRebuild` handler (which
-    /// closes the banner immediately rather than leaving a stale "stalled" reading up while the fresh
-    /// attempt is in flight), the progress-clear sites in `RootInitialization.swift`'s
-    /// `.synchronizerStateChanged`, and `.didEnterBackground` (same file) -- every place that already
-    /// clears `isSyncStalledSinceLastProgress`. Deliberately not `private`: those last two live in a
-    /// different file's extension of this same `Root` type.
-    ///
-    /// `retriedByUser` defaults to `false` (a genuine clear, letting the SmartBanner re-seat the
-    /// error banner if the error is still current) -- only `.retryTerminalStallRebuild` passes
-    /// `true`, since its clear is an optimistic dismiss of the user's own Retry tap, not evidence
-    /// the wallet has actually recovered.
-    func clearSyncStalledTerminally(state: inout Root.State, retriedByUser: Bool = false) -> Effect<Root.Action> {
-        guard state.isSyncStalledTerminally else { return .none }
-        state.isSyncStalledTerminally = false
-        return .send(.home(.smartBanner(.syncStalledTerminally(false, retriedByUser: retriedByUser))))
     }
 }

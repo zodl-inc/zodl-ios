@@ -19164,57 +19164,6 @@
         }
       }
     },
-    "smartBanner.content.syncStalled.button" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retry"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reintentar"
-          }
-        }
-      }
-    },
-    "smartBanner.content.syncStalled.info" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Automatic recovery gave up. Retry, or choose another server in Settings."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La recuperación automática se detuvo. Reintenta o elige otro servidor en Ajustes."
-          }
-        }
-      }
-    },
-    "smartBanner.content.syncStalled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sync has stalled"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La sincronización se ha detenido"
-          }
-        }
-      }
-    },
     "smartBanner.content.tor.button" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19790,40 +19739,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Error de Sincronización"
-          }
-        }
-      }
-    },
-    "smartBanner.help.syncStalled.info" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The wallet stopped making progress and its automatic recovery has given up. Tap Retry to try again, or pick a different server under Advanced Settings → Server."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La cartera dejó de avanzar y su recuperación automática se detuvo. Toca Reintentar para volver a intentarlo o elige otro servidor en Ajustes avanzados → Servidor."
-          }
-        }
-      }
-    },
-    "smartBanner.help.syncStalled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sync has stalled"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La sincronización se ha detenido"
           }
         }
       }

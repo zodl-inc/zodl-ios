@@ -76,13 +76,11 @@ import Testing
     // MARK: - Rank
 
     // Rank is the single ordering authority for displacement. -1 has to beat every other rung,
-    // including the two this ticket knowingly supersedes: the residual (1.75, 2026-08-25) and
-    // the terminal-stall Retry (0.75, MOB-1853).
+    // including the residual (1.75, 2026-08-25) this ticket knowingly supersedes.
     @Test func backupOutranksEveryOtherRung() {
         let backup = SmartBanner.State.PriorityContent.priority6.rank
         for other in [
             SmartBanner.State.PriorityContent.priority1,       // disconnected, 0
-            .priorityStalled,                                  // 0.75, MOB-1853
             .priority2,                                        // sync error, 1
             .priorityMigration,                                // 1.5
             .priorityResidual,                                 // 1.75, MOB-1749
@@ -138,30 +136,6 @@ import Testing
             await store.finish()
 
             #expect(store.state.priorityContent == .priority6, "migration held the seat for days in the field report")
-        }
-    }
-
-    @Test func backupDisplacesASeatedStalledBanner() async {
-        await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            var state = Self.backupOwedState()
-            state.priorityContent = .priorityStalled
-            state.isSyncStalledTerminally = true
-            let store = Self.store(state)
-
-            await store.send(.evaluatePriority1)
-            await store.receive(\.evaluatePriorityWalletBackup)
-            await store.receive(\.triggerPriority)
-            // `.triggerPriority` only records the request; `.openBannerRequest` applies the rank
-            // guard and assigns the seat.
-            await store.receive(\.openBannerRequest)
-            await store.finish()
-
-            #expect(
-                store.state.priorityContent == .priority6,
-                "MOB-1786 knowingly supersedes MOB-1853: the stall's Retry yields to an unbacked seed holding funds"
-            )
         }
     }
 

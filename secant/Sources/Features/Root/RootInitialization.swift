@@ -267,11 +267,6 @@ extension Root {
                 // until a fresh `.synchronizerStateChanged` tick reports in next foreground.
                 state.lastKnownSyncStatus = nil
                 state.isSyncStalledSinceLastProgress = false
-                // MOB-1853: an honest terminal state must not outlive the foreground that raised it
-                // either -- the SmartBanner is told, same as every other clearing site, so a stalled
-                // banner left on screen at background does not silently reappear stuck at the next
-                // foreground.
-                let terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
                 // MOB-1853: the terminal-stall rebuild budget is foreground-scoped, same reasoning
                 // as `isSyncStalledSinceLastProgress` above -- a fresh foreground gets a fresh budget.
                 state.terminalStallRebuildsThisForeground = 0
@@ -296,7 +291,6 @@ extension Root {
                 // poller) over the now-stopped synchronizer; `.retryStart` on foreground rebuilds
                 // every one of them.
                 return .merge(
-                    terminalStallClearedEffect,
                     .cancel(id: state.CancelStateId),
                     .cancel(id: state.CancelTransactionsStateId),
                     .cancel(id: state.CancelEventId),
@@ -363,20 +357,12 @@ extension Root {
                 // one recorded both mean the engine is visibly making progress again, so either
                 // clears a stall the `.syncStalled` hook (`RootTransactions.swift`) may have armed.
                 let newSyncStatus = latestState.data.syncStatus
-                // MOB-1853: mirrors `isSyncStalledSinceLastProgress` below, one step behind -- an
-                // honest terminal state must retire the moment the engine visibly makes progress
-                // again, same as the ordinary stall flag it rides alongside. `clearSyncStalledTerminally`
-                // is a guarded no-op when the flag was already clear, so threading it through every
-                // arm below costs nothing on the common (never-stalled) path.
-                var terminalStallClearedEffect: Effect<Action> = .none
                 switch newSyncStatus {
                 case .upToDate:
                     state.isSyncStalledSinceLastProgress = false
-                    terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
                 case .syncing(let progress, _):
                     if let lastKnownSyncProgress = state.lastKnownSyncProgress, progress > lastKnownSyncProgress {
                         state.isSyncStalledSinceLastProgress = false
-                        terminalStallClearedEffect = clearSyncStalledTerminally(state: &state)
                     }
                     state.lastKnownSyncProgress = progress
                 case .unprepared, .stopped, .error:
@@ -458,7 +444,7 @@ extension Root {
                 // return different things and each one is reachable at a sync-complete edge. The
                 // effect is `.none` unless this tick IS that edge, so merging costs nothing.
                 guard let account = state.selectedWalletAccount else {
-                    return .merge(migrationReconcileEffect, terminalStallClearedEffect)
+                    return migrationReconcileEffect
                 }
                 
                 // update flexa balance
@@ -486,7 +472,6 @@ extension Root {
                 guard state.bgTask != nil else {
                     return .merge(
                         migrationReconcileEffect,
-                        terminalStallClearedEffect,
                         .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                     )
                 }
@@ -522,7 +507,6 @@ extension Root {
                     state.wasSyncUpToDateForMigration = false
                     return .merge(
                         migrationReconcileEffect,
-                        terminalStallClearedEffect,
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId),
                         .cancel(id: state.CancelEventId),
@@ -532,7 +516,6 @@ extension Root {
 
                 return .merge(
                     migrationReconcileEffect,
-                    terminalStallClearedEffect,
                     .send(.initialization(.checkRestoreWalletFlag(snapshot.syncStatus)))
                 )
                 

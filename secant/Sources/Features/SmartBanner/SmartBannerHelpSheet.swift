@@ -14,7 +14,6 @@ extension SmartBannerView {
             switch store.priorityContent {
             case .priority1: disconnectedHelpContent()
             case .priority2: syncingErrorHelpContent()
-            case .priorityStalled: syncStalledHelpContent()
             case .priority3: restoringHelpContent()
             case .priority4: syncingHelpContent()
             case .priority45: resyncingHelpContent()
@@ -102,65 +101,6 @@ extension SmartBannerView {
                 store.send(.reportTapped)
             }
             .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .generalOk).uppercased()) {
-                store.send(.closeSheetTapped)
-            }
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
-        }
-    }
-
-    @ViewBuilder func syncStalledHelpContent() -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(localizable: .smartBannerHelpSyncStalledTitle)
-                .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                .padding(.top, 32)
-                .padding(.bottom, 12)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(localizable: .smartBannerHelpSyncStalledInfo)
-                .zFont(size: 16, style: Design.Text.tertiary)
-                .padding(.bottom, 32)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // MOB-1853: the stalled banner can outrank a persistent sync error and take its seat,
-            // but the error itself is still current -- surface it here so the detail is not lost,
-            // the way `syncingErrorHelpContent()` shows it for its own banner, and keep that sheet's
-            // ways out reachable: a server-validation failure can never resolve itself by retrying,
-            // so the "choose another server" row is the escape hatch, and Send Report stays offered
-            // for any current error. Gated on the error being CURRENT, because
-            // `lastKnownErrorMessage` is a session-long latch.
-            if store.isLatestSyncStatusError && !store.lastKnownErrorMessage.isEmpty {
-                Text(store.lastKnownErrorMessage)
-                    .zFont(size: 16, style: Design.Text.tertiary)
-                    .padding(.bottom, 32)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if store.lastKnownErrorIsIncompatibleServer {
-                    ActionRow(
-                        icon: Asset.Assets.Icons.server.image,
-                        title: String(localizable: .sheetSyncTimeoutServer),
-                        divider: false,
-                        horizontalPadding: Design.Spacing._xl
-                    ) {
-                        store.send(.serverSwitchRequested)
-                    }
-                    .padding(.bottom, Design.Spacing._lg)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                            .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-                    }
-                    .padding(.bottom, Design.Spacing._2xl)
-                }
-
-                ZashiButton(
-                    String(localizable: .sendReport),
-                    type: .ghost
-                ) {
-                    store.send(.reportTapped)
-                }
-                .padding(.bottom, 12)
-            }
 
             ZashiButton(String(localizable: .generalOk).uppercased()) {
                 store.send(.closeSheetTapped)
