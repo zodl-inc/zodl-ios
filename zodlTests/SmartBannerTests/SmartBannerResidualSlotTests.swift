@@ -9,6 +9,10 @@
 //  Tor, currency conversion) rank below it. The suppression trade-off was accepted knowingly —
 //  at the old bottom rank a dust wallet could wait behind currency conversion forever.
 //
+//  PARTLY SUPERSEDED 2026-09-09 by MOB-1786 (approved): wallet backup left the informational
+//  rungs and now ranks -1, above everything. The residual keeps 1.75 and keeps outranking
+//  shielding, Tor and currency conversion; it no longer outranks backup. Nothing else moved.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -81,12 +85,13 @@ import Testing
         }
     }
 
-    /// REVERSED 2026-08-25 (approved): the residual now ranks 1.75 — directly below the migration
-    /// slot — so a residual answer arriving while wallet backup (`priority6`) holds the slot
-    /// re-runs the ladder and takes it. The suppression trade-off was accepted knowingly: the
-    /// residual is actionable and self-retiring, and at rank 11 a dust wallet could wait forever
-    /// behind currency conversion (the field report that triggered the reversal).
-    @Test func residualDisplacesTheInformationalBannersBelowIt() async {
+    /// RE-REVERSED 2026-09-09 by MOB-1786 (approved), for the backup rung only: at rank -1 a
+    /// wallet that has received funds with an unbacked seed outranks the residual, so a residual
+    /// answer arriving while backup holds the slot must NOT take it. The 2026-08-25 reasoning
+    /// still stands against every other informational rung — see
+    /// `residualDisplacesTheInformationalBannersBelowIt` below, which keeps that coverage against
+    /// currency conversion. Three users losing funds outranks a dust wallet waiting.
+    @Test func aResidualCannotDisplaceASeatedWalletBackup() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -114,7 +119,49 @@ import Testing
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
 
-            #expect(store.state.priorityContent == .priorityResidual, "at rank 1.75 the residual outranks the wallet-backup seat")
+            #expect(
+                store.state.priorityContent == .priority6,
+                "MOB-1786: at rank -1 the wallet-backup seat outranks an arriving residual"
+            )
+        }
+    }
+
+    /// The 2026-08-25 ruling, kept alive against a rung that is still below the residual. The
+    /// original version of this test used wallet backup as the seated banner; MOB-1786 moved
+    /// backup above the residual (see `aResidualCannotDisplaceASeatedWalletBackup`), so the
+    /// coverage moved to currency conversion (rung 8) — informational, and still outranked.
+    @Test func residualDisplacesTheInformationalBannersBelowIt() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = SmartBanner.State()
+            state.$featureFlags.withLock { $0 = FeatureFlags(migration: true) }
+            state.$selectedWalletAccount.withLock { $0 = Self.walletAccount() }
+            state.priorityContent = .priority8
+
+            let answer = Self.residual
+
+            let store = TestStore(initialState: state) {
+                SmartBanner()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                var client = MigrationManagerClient.noOp
+                client.bannerVariant = { _ in answer }
+                $0.migrationManager = client
+                $0.sdkSynchronizer = .mocked()
+            }
+            store.exhaustivity = .off
+
+            await store.send(.migrationVariantUpdated(Self.residual))
+            await store.receive(\.evaluatePriority1)
+            await store.receive(\.evaluatePriorityResidual)
+            await store.receive(\.triggerPriority)
+            await store.receive(\.openBannerRequest)
+
+            #expect(
+                store.state.priorityContent == .priorityResidual,
+                "at rank 1.75 the residual still outranks the currency-conversion seat"
+            )
         }
     }
 
@@ -251,11 +298,11 @@ import Testing
         }
     }
 
-    /// REVERSED 2026-08-25 (approved): at rank 1.75 the residual outranks wallet backup, and the
-    /// walk order agrees — the migration rung sits above rung 6, so a residual answer seats before
-    /// the backup rung is ever asked. Same backup-owed fixture as the original test, opposite
-    /// expectation, so the reversal is pinned rather than implied.
-    @Test func aResidualArrivingOnAnEmptySlotOutranksWalletBackup() async {
+    /// RE-REVERSED 2026-09-09 by MOB-1786 (approved): backup is now asked FIRST — the walk runs
+    /// it straight after the account guard, before the migration and residual rungs — and it
+    /// seats at rank -1. Same backup-owed fixture as the two previous versions of this test,
+    /// opposite expectation again, so each reversal stays pinned rather than implied.
+    @Test func walletBackupOutranksAResidualArrivingOnAnEmptySlot() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -285,13 +332,13 @@ import Testing
 
             await store.send(.migrationVariantUpdated(Self.residual))
             await store.receive(\.evaluatePriority1)
-            await store.receive(\.evaluatePriorityResidual)
+            await store.receive(\.evaluatePriorityWalletBackup)
             await store.receive(\.triggerPriority)
             await store.receive(\.openBannerRequest)
 
             #expect(
-                store.state.priorityContent == .priorityResidual,
-                "the migration rung sits above the backup rung — a residual answer seats before backup is asked"
+                store.state.priorityContent == .priority6,
+                "MOB-1786: the backup rung is asked before the residual rung and outranks it"
             )
         }
     }

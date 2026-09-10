@@ -100,6 +100,14 @@ struct SmartBanner {
             /// — there is nothing to retry against until connectivity itself returns.
             var rank: Double {
                 switch self {
+                // MOB-1786 (2026-09-09, approved): a wallet that has received funds and whose seed
+                // is still unbacked outranks EVERYTHING, a lost connection included. Three users
+                // lost funds while this rung sat at 6 and never reached the seat because migration
+                // or an error state held it. This supersedes two rulings documented above: the
+                // residual's 1.75 (2026-08-25) no longer outranks backup, and `priorityStalled`'s
+                // Retry (MOB-1853) yields to it. Neither of those moves relative to the other —
+                // only backup moves. `rawValue` stays 6 so the `next()` helper is untouched.
+                case .priority6: return -1
                 case .priorityMigration: return 1.5
                 case .priorityResidual: return 1.75
                 case .priorityStalled: return 0.75   // below a lost connection (0), above a sync error (1): a
@@ -289,6 +297,7 @@ struct SmartBanner {
         case evaluatePriority45
         case evaluatePriority5
         case evaluatePriority6
+        case evaluatePriorityWalletBackup
         case evaluatePriority7
         case shieldingOfferReevaluationRequested
         case shieldingBalanceFetched(AccountUUID, Zatoshi?)
@@ -866,7 +875,11 @@ struct SmartBanner {
                     MigrationTrace.event("banner ladder HELD — no account yet; waiting for accounts to load")
                     return .none
                 }
-                return .send(.evaluatePriority2)
+                // MOB-1786: the wallet-backup rung is asked FIRST, immediately after the account
+                // guard it also depends on. Rank alone is not enough — the walk short-circuits at
+                // the first match, so from rung 6 the prompt was never even asked while anything
+                // above it held the seat.
+                return .send(.evaluatePriorityWalletBackup)
 
                 // syncing error
             case .evaluatePriority2:
@@ -1091,28 +1104,34 @@ struct SmartBanner {
             case .evaluatePriority5:
                 return .send(.evaluatePriority6)
 
-                // wallet backup
+                // MOB-1786: the backup rung is asked at the head of the walk now, but it is
+                // ALSO still asked here. `RootTransactions` re-enters the ladder at this rung
+                // whenever the transactions array changes -- that is the hook that shows the
+                // prompt when a new wallet's first receive lands, at which point the head has
+                // already walked past an empty history. A pass-through here (the first cut of
+                // this change) rerouted that hook straight onto the shielding rung, so a
+                // transparent first receive seated the shielding offer and backup was never
+                // asked again. Field-caught by Lukas, 2026-09-10.
             case .evaluatePriority6:
-                guard let account = state.selectedWalletAccount, account.vendor == .zcash else {
-                    return .send(.evaluatePriority7)
-                }
-                guard !state.transactions.isEmpty else {
-                    return .send(.evaluatePriority7)
-                }
-                if let storedWallet = try? walletStorage.exportWallet(), !storedWallet.hasUserPassedPhraseBackupTest {
-                    if let walletBackupReminder = walletStorage.exportWalletBackupReminder() {
-                        state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
-                        let now = Date().timeIntervalSince1970
-
-                        if walletBackupReminder.isDue(now: now) {
-                            return .send(.triggerPriority(.priority6))
-                        }
-                    } else {
-                        // phase 1
-                        return .send(.triggerPriority(.priority6))
-                    }
+                if walletBackupClaimsSlot(state: &state) {
+                    return .send(.triggerPriority(.priority6))
                 }
                 return .send(.evaluatePriority7)
+
+                // wallet backup — MOB-1786: asked first, seats at rank -1.
+                //
+                // The gates are unchanged from the old rung 6. A brand-new wallet cannot spend, so
+                // any transaction at all is a receive — which is why `transactions.isEmpty` is the
+                // right "has received funds" test and why spending back down to zero must not
+                // retract the prompt. `hasUserPassedPhraseBackupTest` lives in the keychain and
+                // ends the prompt for good once the user has backed up. The "Remind me later"
+                // snooze is deliberately still honoured: MOB-1786 reorders, it does not override a
+                // choice the user made (reminder cadence is PRO-276's).
+            case .evaluatePriorityWalletBackup:
+                if walletBackupClaimsSlot(state: &state) {
+                    return .send(.triggerPriority(.priority6))
+                }
+                return .send(.evaluatePriority2)
 
                 // shielding
             case .evaluatePriority7:
@@ -1457,6 +1476,31 @@ struct SmartBanner {
     /// subject is created and a first build kicked), which is what makes the status screen's
     /// first-frame paint non-empty. Full consolidation (the variant computed inside the loader,
     /// this store rendering `snapshot.banner`) is Brick 2b.
+    /// The wallet-backup decision (MOB-1786), shared by the two rungs that ask it: the head of
+    /// the walk (`.evaluatePriorityWalletBackup`) and rung 6, which `RootTransactions` re-enters
+    /// when the transactions array changes. Returns `true` when the prompt claims the slot; the
+    /// caller decides where a decline continues the walk. The gates are the original rung-6
+    /// gates, unchanged: a Zcash account, at least one transaction (a new wallet cannot spend, so
+    /// any transaction is a receive), a stored wallet whose phrase is not yet verified, and no
+    /// "Remind me later" snooze still running.
+    private func walletBackupClaimsSlot(state: inout State) -> Bool {
+        guard let account = state.selectedWalletAccount, account.vendor == .zcash else {
+            return false
+        }
+        guard !state.transactions.isEmpty else {
+            return false
+        }
+        guard let storedWallet = try? walletStorage.exportWallet(), !storedWallet.hasUserPassedPhraseBackupTest else {
+            return false
+        }
+        guard let walletBackupReminder = walletStorage.exportWalletBackupReminder() else {
+            // phase 1
+            return true
+        }
+        state.remindMeWalletBackupPhaseCounter = walletBackupReminder.occurence
+        return walletBackupReminder.isDue(now: Date().timeIntervalSince1970)
+    }
+
     private func migrationStateStreamEffect(accountUUID: AccountUUID?, cancelID: UUID) -> Effect<Action> {
         .publisher {
             Publishers.Merge(
