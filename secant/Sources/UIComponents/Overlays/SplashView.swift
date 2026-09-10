@@ -40,16 +40,22 @@ final class SplashManager: ObservableObject {
         self.isHidden = isHidden
         self.screenSize = UIScreen.main.bounds.size
         self.completion = completion
-        
-        if !isHidden {
-            preparePoints()
-            if featureFlags.appLaunchBiometric {
-                authenticate()
-            } else {
-                Task {
-                    self.spinTheWheel()
-                }
-            }
+    }
+
+    // MOB-1909: `SplashModifier` constructs a manager on every body evaluation and `@StateObject`
+    // keeps only the first, so anything `init` did ran once per re-render — an authentication
+    // request and a 60 Hz timer per orphan. The side effects now live here, run once per manager,
+    // from `SplashView.onAppear`; an orphan is one allocation that does nothing.
+    private var hasStarted = false
+
+    @MainActor func start() {
+        guard !hasStarted, !isHidden else { return }
+        hasStarted = true
+        preparePoints()
+        if featureFlags.appLaunchBiometric {
+            authenticate()
+        } else {
+            spinTheWheel()
         }
     }
 
@@ -58,7 +64,7 @@ final class SplashManager: ObservableObject {
 
         authenticationDidntSucceed = false
 
-        Task {
+        task = Task {
             if await !localAuthentication.authenticate() {
                 self.authenticationFailed()
             } else {
@@ -147,7 +153,12 @@ final class SplashManager: ObservableObject {
     }
     
     @MainActor func finished() {
-        self.isOn.toggle()
+        guard isOn else { return }
+        // MOB-1909: the timer's block retains `self`; without this the wheel kept ticking
+        // (and this manager kept living) for the rest of the session.
+        timer?.invalidate()
+        timer = nil
+        isOn = false
         completion()
     }
 }
@@ -206,6 +217,7 @@ struct SplashView: View {
                 lockedIcons()
             }
             .ignoresSafeArea(.keyboard)
+            .onAppear { splashManager.start() }
         }
     }
     
