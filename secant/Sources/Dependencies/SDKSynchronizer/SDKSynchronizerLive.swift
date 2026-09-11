@@ -553,6 +553,18 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await transactionGuard.withSubmission {
                     try await synchronizer.getTreeState(height: height)
                 }
+            },
+            // Unguarded on purpose: opening a session reaches no network — the
+            // route is only recorded, and the Tor runtime is lent for the call —
+            // so there is nothing here for the submission guard to serialise.
+            makeVotingRoundSession: { backend, inputs, binding, route, epoch in
+                try await synchronizer.makeVotingRoundSession(
+                    backend: backend,
+                    inputs: inputs,
+                    binding: binding,
+                    route: route,
+                    epoch: epoch
+                )
             }
         )
     }

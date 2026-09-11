@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import ZcashLightClientKit
 
 // MARK: - Ballot Constants
 
@@ -783,4 +784,71 @@ struct DelegationPirPrecomputeResult: Equatable, Sendable {
 enum VoteCommitmentBuildEvent: Equatable, Sendable {
     case progress(Double)
     case completed(VoteCommitmentBundle)
+}
+
+// MARK: - Round session streams
+
+/// One step of a standalone delegation-proof precompute.
+///
+/// The SDK reports progress through a closure and answers with a status when
+/// the proof is done; the app wants both on one channel, so the client wraps
+/// them into a stream of these.
+enum VotingDelegationProofEvent: Equatable, Sendable {
+    case progress(VotingDelegationProgress)
+    case finished(VotingDelegationProofStatus)
+}
+
+/// One step of a round run: a driver event, or the report the run ended with.
+///
+/// The report is authoritative — events are a best-effort narration the SDK
+/// may drop under load — so a consumer that only reads `.finished` still sees
+/// everything that happened.
+enum VotingRoundRunEvent: Equatable, Sendable {
+    case event(VotingRoundDriveEvent)
+    case finished(VotingRoundRunReport)
+}
+
+/// One step of a share-tracking run, on the same terms as ``VotingRoundRunEvent``.
+enum VotingShareTrackingRunEvent: Equatable, Sendable {
+    case event(VotingShareTrackingEvent)
+    case finished(VotingShareTrackingRunReport)
+}
+
+/// Thrown where the 3.0-era voting pipeline used to call the crypto client.
+///
+/// `zcash_voting` 4.0 drives a round through one session rather than through
+/// the three dozen per-step calls the old flow made, so those call sites have
+/// nothing to call. They throw this until the reducer around them is rewritten
+/// on the session API, which keeps the flow's control flow intact and makes any
+/// surviving path fail loudly instead of quietly doing the wrong thing.
+struct VotingLegacyAPIRemoved: Error, Equatable {}
+
+/// One helper-server share delivery recorded for a round.
+///
+/// Was an SDK type until the crate took share delivery over; the app still
+/// decodes this shape in the round-configuration tests and in the share
+/// fan-out helpers that have not been rewritten yet, so it lives here for as
+/// long as they do.
+struct VotingShareDelegation: Codable, Equatable, Sendable {
+    let roundId: String
+    let bundleIndex: UInt32
+    let proposalId: UInt32
+    let shareIndex: UInt32
+    let sentToURLs: [String]
+    let nullifier: String
+    let confirmed: Bool
+    let submitAt: UInt64
+    let createdAt: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case roundId = "round_id"
+        case bundleIndex = "bundle_index"
+        case proposalId = "proposal_id"
+        case shareIndex = "share_index"
+        case sentToURLs = "sent_to_urls"
+        case nullifier
+        case confirmed
+        case submitAt = "submit_at"
+        case createdAt = "created_at"
+    }
 }

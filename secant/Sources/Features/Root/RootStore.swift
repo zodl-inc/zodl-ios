@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import VotingRecovery
 @preconcurrency import ZcashLightClientKit
 import Foundation
 import BackgroundTasks
@@ -585,7 +584,6 @@ struct Root {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
-    @Dependency(\.delegationRecovery) var delegationRecovery // VotingRecovery
     @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
@@ -949,11 +947,6 @@ extension Root {
             .first {
             let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
             try? FileManager.default.removeItem(at: votingDbURL)
-            // VotingRecovery: the preserved copies of the previous wallet's
-            // voting database and the escrow of its blinding factors are the
-            // same wallet-scoped material, and must not cross the reset
-            // boundary either.
-            VotingRecovery.wipe(inDocuments: documents)
         }
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which

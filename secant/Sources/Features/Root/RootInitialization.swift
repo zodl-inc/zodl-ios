@@ -7,7 +7,6 @@
 
 import Combine
 import ComposableArchitecture
-import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -123,31 +122,7 @@ extension Root {
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
-                // Delegation recovery, on every cold launch, invisible to the
-                // user. An older build could delete a round's blinding factor
-                // and rebuild the round in its place, which makes that poll
-                // permanently unvotable; this copies the original back out of
-                // the preserved files before anything else opens them.
-                //
-                // Deliberately fire-and-forget and merged rather than chained:
-                // it must never delay launch, and it sends no action, so a slow
-                // or failing carve cannot affect what the user sees. What it
-                // did is in the log under "[poll-recovery]".
-                //
-                // A wallet reset cancels it (`.resetZashi`), and the escrow
-                // refuses writes from a run that began before the reset, so
-                // the old wallet's secrets cannot be written back for the new
-                // one whichever of the two lands first.
-                //
-                // It costs almost nothing for the overwhelming majority of
-                // wallets, which have no voting round at all and are turned
-                // away by `holdsRoundData` after one file read.
-                return .merge(
-                    setup,
-                    // VotingRecovery
-                    .run { _ in _ = await delegationRecovery.run() }
-                        .cancellable(id: VotingRecovery.CancelID.launch, cancelInFlight: true)
-                )
+                return setup
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 // See the cold-launch marker above. The tip rides along because it is the one piece
@@ -1654,25 +1629,17 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
-                // VotingRecovery: launch-time recovery may still be reading this
-                // wallet's files. Stop it before anything is wiped; the escrow
-                // also refuses its writes once the reset has run, whether or
-                // not cancellation reached it first.
-                let stopRecovery: Effect<Root.Action> = .cancel(id: VotingRecovery.CancelID.launch)
                 guard let wipePublisher = sdkSynchronizer.wipe() else {
-                    return .merge(stopRecovery, .send(.resetZashiSDKFailed))
+                    return .send(.resetZashiSDKFailed)
                 }
-                return .merge(
-                    stopRecovery,
-                    .publisher {
-                        wipePublisher
-                            .replaceEmpty(with: Void())
-                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                            .replaceError(with: Root.Action.resetZashiSDKFailed)
-                            .receive(on: mainQueue)
-                    }
-                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
-                )
+                return .publisher {
+                    wipePublisher
+                        .replaceEmpty(with: Void())
+                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
+                        .replaceError(with: Root.Action.resetZashiSDKFailed)
+                        .receive(on: mainQueue)
+                }
+                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true
