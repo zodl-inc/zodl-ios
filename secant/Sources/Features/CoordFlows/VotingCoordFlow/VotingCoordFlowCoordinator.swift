@@ -1441,7 +1441,7 @@ extension VotingCoordFlow {
                 mutateSession(&state, roundId: roundId) {
                     $0.shareTrackingStatus = .loading
                 }
-                return .run { [votingCrypto] send in
+                return .run { send in
                     let delegations = try await VotingLegacy.getShareDelegations(roundId)
                     await send(.shareDelegationsLoaded(
                         roundId: roundId,
@@ -2355,7 +2355,7 @@ extension VotingCoordFlow {
         let singleShare = activeSession.isLastMoment
         let voteEndTime = UInt64(activeSession.voteEndTime.timeIntervalSince1970)
 
-        return .run { [votingAPI, votingCrypto] send in
+        return .run { [votingAPI] send in
             let freshDelegations = (try? await VotingLegacy.getShareDelegations(roundId)) ?? []
             let unconfirmed = freshDelegations.filter { !$0.confirmed }
             let now = UInt64(Date().timeIntervalSince1970)
@@ -2906,7 +2906,7 @@ extension VotingCoordFlow {
         let existingSignatures = session?.keystoneBundleSignatures ?? []
         let currentBundleIndex = session?.currentKeystoneBundleIndex ?? 0
         let bundleCount = session?.bundleCount ?? 0
-        return .run { [votingCrypto] send in
+        return .run { send in
             let scannedSighash = try VotingLegacy.extractPcztSighash(signedPczt)
             if let rejectionMessage = Self.keystoneScanRejectionMessage(
                 scannedSighash: scannedSighash,
@@ -2975,7 +2975,7 @@ extension VotingCoordFlow {
             sighash: signature.sighash,
             rk: signature.rk
         )
-        let persistEffect: Effect<Action> = .run { [votingCrypto] _ in
+        let persistEffect: Effect<Action> = .run { _ in
             try await VotingLegacy.storeKeystoneBundleSignature(roundId, sigInfo)
         }
 
@@ -3478,7 +3478,7 @@ extension VotingCoordFlow {
     }
 
     private func loadSubmittedVotesFromDb(roundId: String) -> Effect<Action> {
-        .run { [votingCrypto] send in
+        .run { send in
             let records = try await VotingLegacy.getVotes(roundId)
             let bundleCount = (try? await VotingLegacy.getBundleCount(roundId)) ?? 0
             let votes = submittedVotesByProposal(records, bundleCount: bundleCount)

@@ -2,6 +2,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
+import os
 @preconcurrency import ZcashLightClientKit
 
 // MARK: - Live key
@@ -225,8 +226,22 @@ extension VotingCryptoClient {
         event: @escaping @Sendable (Event) -> Element,
         report: @escaping @Sendable (Report) -> Element
     ) -> AsyncThrowingStream<Element, Error> {
-        AsyncThrowingStream<Element, Error> { continuation in
-            let task = Task {
+        // The handler is installed BEFORE the work starts, which is why the
+        // stream is built by hand rather than with the closure initializer.
+        // `onTermination` assigned to a continuation that has already finished
+        // is invoked at once, and with `.cancelled` — so installing it after
+        // the task would report a run that completed normally as a
+        // cancellation, and the cancellation this hands out is permanent.
+        let (stream, continuation) = AsyncThrowingStream<Element, Error>.makeStream()
+        let termination = VotingStreamTermination(cancelling: cancel)
+
+        continuation.onTermination = { reason in
+            guard case .cancelled = reason else { return }
+            termination.consumerWentAway()
+        }
+
+        termination.attach(
+            Task {
                 do {
                     let answer = try await call { value in
                         continuation.yield(event(value))
@@ -237,12 +252,55 @@ extension VotingCryptoClient {
                     continuation.finish(throwing: error)
                 }
             }
+        )
 
-            continuation.onTermination = { termination in
-                guard case .cancelled = termination else { return }
-                task.cancel()
-                Task { await cancel() }
-            }
+        return stream
+    }
+}
+
+/// Holds a session stream's work so its termination handler can reach it.
+///
+/// The handler has to be installed before the task exists — see
+/// ``VotingCryptoClient/sessionStream(cancelling:call:event:report:)`` — so the
+/// two find each other here instead. A consumer that goes away before the task
+/// has been attached is remembered, and the attach cancels straight away; the
+/// cancellation runs once however the two are ordered.
+private final class VotingStreamTermination: Sendable {
+    private struct State {
+        var task: Task<Void, Never>?
+        var consumerWentAway = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let cancel: @Sendable () async -> Void
+
+    init(cancelling cancel: @escaping @Sendable () async -> Void) {
+        self.cancel = cancel
+    }
+
+    func attach(_ task: Task<Void, Never>) {
+        let tooLate = state.withLock { state in
+            state.task = task
+            return state.consumerWentAway
+        }
+
+        if tooLate {
+            task.cancel()
+        }
+    }
+
+    func consumerWentAway() {
+        let (task, isFirst) = state.withLock { state -> (Task<Void, Never>?, Bool) in
+            let isFirst = !state.consumerWentAway
+            state.consumerWentAway = true
+            return (state.task, isFirst)
+        }
+
+        guard isFirst else { return }
+
+        task?.cancel()
+        Task { [cancel] in
+            await cancel()
         }
     }
 }

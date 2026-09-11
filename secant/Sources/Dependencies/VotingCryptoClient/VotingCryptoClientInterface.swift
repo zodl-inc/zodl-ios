@@ -56,7 +56,7 @@ struct VotingCryptoClient {
     var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void
     var setWalletId: @Sendable (_ walletId: String) async throws -> Void
     /// Close every open round session, then the store itself.
-    var closeDatabase: @Sendable () async -> Void = {}
+    var closeDatabase: @Sendable () async -> Void
 
     // MARK: - Store-scoped reads and maintenance
 
@@ -98,14 +98,14 @@ struct VotingCryptoClient {
         _ route: VotingTransportRoute,
         _ epoch: UInt64
     ) async throws -> Void
-    var closeRoundSession: @Sendable (_ roundId: String) async -> Void = { _ in }
-    var closeAllRoundSessions: @Sendable () async -> Void = {}
+    var closeRoundSession: @Sendable (_ roundId: String) async -> Void
+    var closeAllRoundSessions: @Sendable () async -> Void
     /// Stop the round's bounded passes. Permanent: a cancelled session is
     /// finished, not paused, and the round is reopened rather than resumed.
-    var cancelRoundSession: @Sendable (_ roundId: String) async -> Void = { _ in }
+    var cancelRoundSession: @Sendable (_ roundId: String) async -> Void
     /// Move the round's submission epoch, invalidating passes that captured an
     /// older one.
-    var setOperationEpoch: @Sendable (_ roundId: String, _ epoch: UInt64) async -> Void = { _, _ in }
+    var setOperationEpoch: @Sendable (_ roundId: String, _ epoch: UInt64) async -> Void
 
     // MARK: - Round session work
 
