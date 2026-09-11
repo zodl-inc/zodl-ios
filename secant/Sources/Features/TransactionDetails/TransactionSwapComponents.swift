@@ -130,24 +130,19 @@ extension TransactionDetailsView {
                     .zFont(.medium, size: 14, style: Design.Utility.WarningYellow._700)
 
                 if let incompleteSwapData = store.incompleteSwapData {
-                    if let attrText = try? AttributedString(
+                    ZashiText(
                         markdown: String(localizable: .swapAndPayIncompleteInfo(
                             incompleteSwapData.missingFunds,
                             incompleteSwapData.tokenName,
                             incompleteSwapData.date
                         )),
-                        including: \.zashiApp
-                    ) {
-                        ZashiText(
-                            withAttributedString: attrText,
-                            colorScheme: colorScheme,
-                            textColor: Design.Utility.WarningYellow._900.color(colorScheme),
-                            textSize: 12
-                        )
-                        .zFont(size: 12, style: Design.Utility.WarningYellow._800)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
+                        colorScheme: colorScheme,
+                        textColor: Design.Utility.WarningYellow._900.color(colorScheme),
+                        textSize: 12
+                    )
+                    .zFont(size: 12, style: Design.Utility.WarningYellow._800)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

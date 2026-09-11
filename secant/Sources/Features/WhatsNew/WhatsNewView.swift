@@ -30,25 +30,21 @@ struct WhatsNewView: View {
     }
     
     @ViewBuilder func attributedText(_ sectionIndex: Int, index: Int) -> some View {
-        if let previewText = try? AttributedString(
-            markdown: store.latest.sections[sectionIndex].bulletpoints[index],
-            including: \.zashiApp) {
-            HStack {
-                VStack {
-                    Circle()
-                        .frame(width: 4, height: 4)
-                        .padding(.top, 7)
-                        .padding(.leading, 8)
-                    
-                    Spacer()
-                }
-                
-                ZashiText(withAttributedString: previewText, colorScheme: colorScheme)
-                    .zFont(size: 14, style: Design.Text.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accentColor(Asset.Colors.primary.color)
-                    .lineSpacing(1.5)
+        HStack {
+            VStack {
+                Circle()
+                    .frame(width: 4, height: 4)
+                    .padding(.top, 7)
+                    .padding(.leading, 8)
+
+                Spacer()
             }
+
+            ZashiText(markdown: store.latest.sections[sectionIndex].bulletpoints[index], colorScheme: colorScheme)
+                .zFont(size: 14, style: Design.Text.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accentColor(Asset.Colors.primary.color)
+                .lineSpacing(1.5)
         }
     }
     
