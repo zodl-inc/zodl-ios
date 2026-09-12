@@ -936,6 +936,103 @@ import Testing
         #expect(store.state.roundCache[activeRoundId]?.bundleCount == 1)
     }
 
+    // MARK: - Lifecycle fencing
+
+    /// Switching wallet accounts fences every open session before the flow
+    /// forgets the round: the epoch moves first, then the run is cancelled,
+    /// then the session is closed. An event from the session the switch
+    /// replaced describes a wallet the flow has left, so it writes nothing.
+    @MainActor
+    @Test func accountSwitchCancelsAndClosesSessionsAndIgnoresLateEvents() async throws {
+        let recorder = EventRecorder()
+        let metadata = VotingMetadataBox()
+        let report = try runReport(
+            kind: "no_work_left",
+            completedProposals: 2,
+            totalProposals: 2,
+            completedChoices: [(1, 0), (2, 1)]
+        )
+        let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingMetadata = self.votingMetadataClient(metadata)
+            $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+            $0.votingCrypto.setOperationEpoch = { roundId, epoch in
+                recorder.record("setOperationEpoch:\(roundId):\(epoch)")
+            }
+            $0.votingCrypto.cancelRoundSession = { roundId in recorder.record("cancelRoundSession:\(roundId)") }
+            $0.votingCrypto.closeRoundSession = { roundId in recorder.record("closeRoundSession:\(roundId)") }
+            // The switch re-initializes for the account it lands on. This test is
+            // about the sessions it leaves behind, so that fetch is refused rather
+            // than stubbed into a second round load.
+            $0.votingAPI.fetchServiceConfig = { _ in throw TestError.votingDatabaseReadFailed }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { self.isProposalListTop(store.state) }
+        let openedEpoch = try #require(store.state.roundCache[activeRoundId]?.sessionEpoch)
+
+        store.send(.walletAccountChanged(keystoneWalletAccount()))
+        await waitForStore { recorder.events().contains("closeRoundSession:\(self.activeRoundId)") }
+
+        #expect(
+            recorder.events().filter { Self.isSessionLifecycleEvent($0) } == [
+                "setOperationEpoch:\(activeRoundId):\(openedEpoch + 1)",
+                "cancelRoundSession:\(activeRoundId)",
+                "closeRoundSession:\(activeRoundId)"
+            ]
+        )
+        #expect(store.state.roundCache[activeRoundId] == nil)
+
+        // The run that was driving the round when the account changed still has
+        // its stream open, and what it reports belongs to the previous wallet.
+        store.send(.roundRunEvent(roundId: activeRoundId, epoch: openedEpoch, event: .finished(report)))
+
+        #expect(store.state.roundCache[activeRoundId] == nil, "a late event must not resurrect the round")
+        // Nothing the report could have written is asynchronous, but the decision
+        // it would have handed on is: give it the chance it would have had.
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(store.state.voteRecords.isEmpty)
+        #expect(metadata.records.isEmpty)
+    }
+
+    /// A voter who chose Tor is never announced over a plain connection: an
+    /// open the Tor route cannot serve fails the entry with Tor's own message,
+    /// and nothing reopens the round on `.direct`.
+    @MainActor
+    @Test func torRouteUnavailableDoesNotFallBackToDirect() async {
+        let recorder = EventRecorder()
+        var initialState = sessionFlowState()
+        initialState.$swapAPIAccess.withLock { $0 = .protected }
+        let store = Store(initialState: initialState) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+            $0.votingCrypto.openRoundSession = { _, _, route, _ in
+                recorder.record("openRoundSession:\(route)")
+                guard route == VotingTransportRoute.tor else { return }
+                throw ZcashError.torClientUnavailable
+            }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore {
+            store.state.rootScreen == .error(String(localizable: .migrationFailureTorFirstRunBody))
+        }
+
+        #expect(recorder.events().filter { $0.hasPrefix("openRoundSession") } == ["openRoundSession:tor"])
+        #expect(store.state.path.isEmpty)
+        #expect(store.state.roundCache[activeRoundId]?.roundPlan == nil)
+    }
+
+    private static func isSessionLifecycleEvent(_ event: String) -> Bool {
+        event.hasPrefix("setOperationEpoch")
+            || event.hasPrefix("cancelRoundSession")
+            || event.hasPrefix("closeRoundSession")
+    }
+
     // MARK: - Keystone round fixtures
 
     private static let keystoneConflictMessage = "a stored signature disagrees with the scanned bundle"
@@ -1209,6 +1306,8 @@ import Testing
             $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
             $0.votingCrypto.openDatabase = { _, _ in }
             $0.votingCrypto.setWalletId = { _ in }
+            $0.votingCrypto.configureProving = { _ in }
+            $0.votingCrypto.warmProvingCaches = { }
             $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
         }
 
@@ -1216,6 +1315,51 @@ import Testing
         await waitForStore { store.state.rootScreen == .noRounds }
 
         #expect(recorder.events().isEmpty)
+    }
+
+    // MARK: - Process-wide proving
+
+    /// The proving policy is fixed before anything can start the crate's pool:
+    /// warming the caches is what starts it, and the pool keeps whichever policy
+    /// started it, so a policy asked for afterwards is refused.
+    @MainActor
+    @Test func serviceConfigFixesTheProvingPolicyBeforeWarmingTheCaches() async {
+        let recorder = EventRecorder()
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.configureURLs = { _ in }
+            $0.votingAPI.fetchAllRounds = {
+                recorder.record("fetchAllRounds")
+                return []
+            }
+            $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
+            $0.votingAPI.startHealthProbeSweep = { }
+            $0.votingCrypto.openDatabase = { _, _ in }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingCrypto.configureProving = { policy in
+                let workers = policy.cpuWorkerCount.map(String.init) ?? "crate"
+                recorder.record("configureProving:\(workers):\(policy.maxActiveHeavyJobs)")
+            }
+            $0.votingCrypto.warmProvingCaches = { recorder.record("warmProvingCaches") }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
+        await waitForStore { recorder.events().contains("warmProvingCaches") }
+
+        #expect(
+            recorder.events().filter { $0 != "fetchAllRounds" }
+                == ["configureProving:crate:1", "warmProvingCaches"]
+        )
+
+        // Once per process, both of them: a second config load -- a chain switch,
+        // say -- must not ask the crate for a policy its running pool would refuse.
+        store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
+        await waitForStore { recorder.events().filter { $0 == "fetchAllRounds" }.count == 2 }
+
+        #expect(recorder.events().filter { $0.hasPrefix("configureProving") }.count == 1)
+        #expect(recorder.events().filter { $0 == "warmProvingCaches" }.count == 1)
     }
 }
 

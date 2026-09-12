@@ -49,6 +49,10 @@ extension VotingCoordFlow {
                 state.pollsLoadError = false
                 state.rootScreen = .loading
                 state.pollClosedSheet = nil
+                // The sessions the previous source opened are bound to its
+                // endpoints and to rounds this flow has just forgotten, so they
+                // go the same way as the cache that named them.
+                let fenceSessions = fenceOpenRoundSessions(&state)
                 return .merge(
                     .cancel(id: cancelPipelineId),
                     .cancel(id: cancelDelegationPrecomputeId),
@@ -56,6 +60,8 @@ extension VotingCoordFlow {
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
                     .cancel(id: cancelShareTrackingId),
+                    .cancel(id: cancelRouteObservationId),
+                    fenceSessions,
                     .send(.initialize)
                 )
 
@@ -89,6 +95,11 @@ extension VotingCoordFlow {
                 return .send(.initialize)
 
             case .warmProvingCaches:
+                // Sent from `.serviceConfigLoaded`, once the proving policy has
+                // been fixed. Warming is what starts the crate's pool, and a
+                // pool started on the crate's default policy keeps it: warming
+                // from the view's `onAppear` instead would race the configure
+                // and win often enough to make the policy a coin toss.
                 guard !state.hasRequestedProvingCacheWarmup else {
                     return .none
                 }
@@ -103,6 +114,9 @@ extension VotingCoordFlow {
 
             case let .walletAccountChanged(account):
                 return reduceWalletAccountChanged(&state, account: account)
+
+            case let .swapAPIAccessChanged(access):
+                return reduceSwapAPIAccessChanged(&state, access: access)
 
             case .initialize:
                 // Sweep legacy plaintext keys from a prior internal-build
@@ -147,7 +161,14 @@ extension VotingCoordFlow {
                 let walletId = state.walletId
                 let network = zcashSDKEnvironment.network()
                 let networkId: UInt32 = network.networkType.votingRustNetworkId
-                return .run { [votingAPI, votingCrypto, networkId] send in
+                // Once per process: the crate refuses a second policy, and that
+                // refusal is only correct to ignore because the first ask won.
+                // Recorded before the effect rather than after it succeeds, so two
+                // config loads in flight at once (a chain switch re-initializing
+                // over a load already running) cannot both ask.
+                let shouldConfigureProving = !state.hasConfiguredProving
+                state.hasConfiguredProving = true
+                return .run { [votingAPI, votingCrypto, networkId, shouldConfigureProving] send in
                     // 1. Configure API client URLs from the loaded config.
                     await votingAPI.configureURLs(config)
 
@@ -158,7 +179,27 @@ extension VotingCoordFlow {
                     try await votingCrypto.openDatabase(dbPath, networkId)
                     try await votingCrypto.setWalletId(walletId)
 
-                    // 3. Fetch rounds. Network failures surface as a
+                    // 3. Fix the proving policy, then warm the caches -- in that
+                    //    order, and never the other way round. One heavy job at a
+                    //    time is what keeps a phone from being killed for memory
+                    //    mid-proof; `cpuWorkerCount: nil` leaves the worker count
+                    //    to the crate's own `available_parallelism`.
+                    //
+                    //    A policy the crate refuses is logged and survived inside
+                    //    the client: the voter's flow is not worth failing over a
+                    //    pool that is already running.
+                    if shouldConfigureProving {
+                        do {
+                            try await votingCrypto.configureProving(
+                                VotingProvingPolicy(cpuWorkerCount: nil, maxActiveHeavyJobs: 1)
+                            )
+                        } catch {
+                            LoggerProxy.warn("Voting proving policy could not be applied: \(error)")
+                        }
+                    }
+                    await send(.warmProvingCaches)
+
+                    // 4. Fetch rounds. Network failures surface as a
                     //    recoverable sheet on the polls list rather than the
                     //    blocking error screen.
                     do {
@@ -305,6 +346,8 @@ extension VotingCoordFlow {
                 state.checkingEligibilityRoundId = nil
                 state.walletSyncingSheetRoundId = nil
                 state.skippedQuestionsSheet = nil
+                state.openRoundSessionIds.removeAll()
+                state.sessionRouteAccess = nil
                 return .merge(
                     .cancel(id: cancelPipelineId),
                     .cancel(id: cancelSubmissionId),
@@ -314,6 +357,8 @@ extension VotingCoordFlow {
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
                     .cancel(id: cancelShareTrackingId),
+                    // Nothing is left to invalidate once the sessions are gone.
+                    .cancel(id: cancelRouteObservationId),
                     // A round session holds a database handle and, on the Tor
                     // route, its own isolated client. Leaving the flow is where
                     // those go back.
@@ -1208,6 +1253,10 @@ extension VotingCoordFlow {
 
         state.walletId = nextWalletId
         state.isKeystoneUser = nextIsKeystoneUser
+        // Before the flow forgets which rounds it had open: the fence needs the
+        // list of sessions, and `resetAccountScopedVotingState` clears the cache
+        // that would otherwise be the only record of them.
+        let fenceSessions = fenceOpenRoundSessions(&state)
         resetAccountScopedVotingState(&state)
         votingMetadata.reset()
 
@@ -1219,7 +1268,12 @@ extension VotingCoordFlow {
             .cancel(id: cancelRunRetryId),
             .cancel(id: cancelStatusPollingId),
             .cancel(id: cancelNewRoundPollingId),
-            .cancel(id: cancelShareTrackingId)
+            .cancel(id: cancelShareTrackingId),
+            .cancel(id: cancelRouteObservationId),
+            // Not cancellable, and deliberately: this is the work that stops the
+            // previous wallet's rounds, so cancelling it along with the effects
+            // it is cleaning up after would leave them driving.
+            fenceSessions
         )
 
         guard account != nil else {
@@ -1255,6 +1309,74 @@ extension VotingCoordFlow {
         state.checkingEligibilityRoundId = nil
         state.walletSyncingSheetRoundId = nil
         state.skippedQuestionsSheet = nil
+    }
+
+    /// `.swapAPIAccessChanged` handler. A session's transport is fixed when the
+    /// session is opened, so a wallet that changes its mind about Tor cannot be
+    /// served by the sessions it already has.
+    ///
+    /// Closing them is the whole remedy: the next entry into a round opens a
+    /// session on the route the wallet asks for now.
+    func reduceSwapAPIAccessChanged(
+        _ state: inout State,
+        access: WalletStorage.SwapAPIAccess
+    ) -> Effect<Action> {
+        // The shared value replays what it already holds to a new subscriber, and
+        // the wallet re-announces the route it already had on its own, so only a
+        // route the open sessions were not opened on is a reason to close them.
+        guard let openedOn = state.sessionRouteAccess, openedOn != access else { return .none }
+
+        LoggerProxy.info("Voting: the wallet's transport changed; closing every open round session")
+        // An entry that is still opening was opened on the route being left, and
+        // the spinner it put on the polls list belongs to it.
+        state.pendingPipelineRoundId = nil
+        state.checkingEligibilityRoundId = nil
+        let fenceSessions = fenceOpenRoundSessions(&state)
+        return .merge(
+            .cancel(id: cancelPipelineId),
+            .cancel(id: cancelSubmissionId),
+            .cancel(id: cancelDelegationProofId),
+            .cancel(id: cancelDelegationPrecomputeId),
+            .cancel(id: cancelRunRetryId),
+            .cancel(id: cancelShareTrackingId),
+            fenceSessions
+        )
+    }
+
+    /// Fence and close every session the flow has open, answering with the work
+    /// that does it.
+    ///
+    /// The per-round order is the only one that stops a run that is still driving
+    /// without losing what it has already done: the epoch moves first, so a pass
+    /// that captured the old one can no longer submit anything; the cancel then
+    /// stops the round's bounded passes; and only then does the close wait on what
+    /// is still in flight. Cancelling a session is permanent, which is exactly
+    /// what is wanted here -- a round whose wallet or route has changed is
+    /// reopened rather than resumed.
+    ///
+    /// The flow's own generation moves with it and every cached round is stamped
+    /// with the new one, so an event still on its way from a session that has just
+    /// been closed is recognised as stale instead of written back.
+    private func fenceOpenRoundSessions(_ state: inout State) -> Effect<Action> {
+        state.votingSessionEpoch += 1
+        let epoch = state.votingSessionEpoch
+        state.roundCache = state.roundCache.mapValues { session in
+            var stamped = session
+            stamped.sessionEpoch = epoch
+            return stamped
+        }
+        let openRoundIds = state.openRoundSessionIds
+        state.openRoundSessionIds.removeAll()
+        state.sessionRouteAccess = nil
+        guard !openRoundIds.isEmpty else { return .none }
+
+        return .run { [votingCrypto] _ in
+            for roundId in openRoundIds {
+                await votingCrypto.setOperationEpoch(roundId, epoch)
+                await votingCrypto.cancelRoundSession(roundId)
+                await votingCrypto.closeRoundSession(roundId)
+            }
+        }
     }
 
     private func walletId(for account: WalletAccount?) -> String {
@@ -1451,6 +1573,28 @@ extension VotingCoordFlow {
         state.pendingPipelineRoundId = roundId
         state.ineligibleSheet = nil
         state.walletSyncingSheetRoundId = nil
+        // The round counts as open from here, and a refused open does not take it
+        // off again: the list is what a fence closes, and closing a round the
+        // registry has no session for is three no-ops, where missing one that it
+        // does have is a session left driving a wallet or a route that is gone.
+        // Re-entering a round moves it to the end, which is where the session it
+        // is about to have belongs.
+        state.openRoundSessionIds.removeAll { $0 == roundId }
+        state.openRoundSessionIds.append(roundId)
+        state.sessionRouteAccess = state.swapAPIAccess
+
+        // Watching the shared value rather than re-reading it on each entry: the
+        // route is fixed for a session's whole life, so the change has to reach a
+        // round that is already open, not just the next one to be opened. This is
+        // the same `.publisher` on a `@Shared` the rest of the app uses to follow
+        // shared state (`TransactionList`, `TransactionDetails`). It replays the
+        // current value to this new subscriber, which `.swapAPIAccessChanged`
+        // recognises as the route the sessions were just opened on and ignores.
+        let observeRoute: Effect<Action> = .publisher { [sharedAccess = state.$swapAPIAccess] in
+            sharedAccess.publisher
+                .map { VotingCoordFlow.Action.swapAPIAccessChanged($0) }
+        }
+        .cancellable(id: cancelRouteObservationId, cancelInFlight: true)
 
         let open: Effect<Action> = .run { [sdkSynchronizer, votingCrypto, walletStorage] send in
             // 1. Wallet sync gate.
@@ -1524,13 +1668,47 @@ extension VotingCoordFlow {
             await send(.roundSessionOpened(roundId: roundId, plan: plan))
         } catch: { error, send in
             LoggerProxy.error("Opening the round session failed: \(error)")
-            await send(.roundSessionOpenFailed(roundId: roundId, error: Self.votingError(from: error)))
+            await send(.roundSessionOpenFailed(
+                roundId: roundId,
+                error: Self.sessionOpenError(from: error, route: route)
+            ))
         }
         .cancellable(id: cancelPipelineId, cancelInFlight: true)
 
         // A previous entry's warm-up belongs to the session this open replaces,
         // and it holds the crate's proof lock for as long as it runs.
-        return .merge(.cancel(id: cancelDelegationPrecomputeId), open)
+        return .merge(.cancel(id: cancelDelegationPrecomputeId), observeRoute, open)
+    }
+
+    /// What a refused open tells the voter.
+    ///
+    /// A `.tor` session the SDK cannot give a Tor client is the one refusal that
+    /// must not read as "the voting service is unavailable": the voter asked to be
+    /// announced over Tor, this flow will not announce them any other way, and the
+    /// thing that changes the outcome is the wallet's own Tor setting. There is no
+    /// retry on `.direct` to offer -- a session opened on a route the voter did not
+    /// choose is the failure, not the fix.
+    static func sessionOpenError(from error: Error, route: VotingTransportRoute) -> VotingError {
+        guard route == VotingTransportRoute.tor, Self.isTorUnavailable(error) else {
+            return Self.votingError(from: error)
+        }
+        return VotingError(
+            kind: VotingErrorKind.other,
+            message: String(localizable: .migrationFailureTorFirstRunBody)
+        )
+    }
+
+    /// Whether the SDK refused because it has no Tor client to give -- either it
+    /// holds none at all, or Tor is off in the SDK while the wallet still asks for
+    /// it.
+    static func isTorUnavailable(_ error: Error) -> Bool {
+        guard let zcashError = error as? ZcashError else { return false }
+        switch zcashError {
+        case .torClientUnavailable, .torNotEnabled:
+            return true
+        default:
+            return false
+        }
     }
 
     /// The inputs a round session lives on.

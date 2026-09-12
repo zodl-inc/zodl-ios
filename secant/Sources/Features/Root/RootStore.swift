@@ -912,14 +912,20 @@ extension Root {
     /// so a healed stale database (e.g. from a restored device backup) starts out just as
     /// clean as an explicit reset.
     ///
-    /// Synchronous on purpose: every call site is a plain (non-`.run`) `Reduce` case, and
-    /// none of the underlying operations are actually asynchronous.
+    /// Asynchronous for one thing only, and it is the first thing done: `voting.sqlite3` is a
+    /// live SQLite handle for as long as a round session is open, and the round driver writes
+    /// to it from tasks of its own. Deleting the file under an open session would leave those
+    /// writes going to an unlinked inode while the next open recreates a database the driver
+    /// cannot see. `closeVotingDatabase` closes every session and then the store, and it is
+    /// awaited before anything here removes the file.
     static func clearDeviceScopedWalletState(
         userDefaults: UserDefaultsClient,
         flexaHandler: FlexaHandlerClient,
         userStoredPreferences: UserPreferencesStorageClient,
-        readTransactionsStorage: ReadTransactionsStorageClient
-    ) {
+        readTransactionsStorage: ReadTransactionsStorageClient,
+        closeVotingDatabase: @Sendable () async -> Void = Root.closeVotingDatabase
+    ) async {
+        await closeVotingDatabase()
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)
         userDefaults.remove(Constants.udLeavesScreenOpen)
@@ -962,6 +968,21 @@ extension Root {
         flexaHandler.signOut()
         userStoredPreferences.removeAll()
         try? readTransactionsStorage.resetZashi()
+    }
+
+    /// The default drain for ``clearDeviceScopedWalletState``: every open voting round session,
+    /// then the sidecar store itself.
+    ///
+    /// The dependency is resolved when this runs rather than when the default is written down,
+    /// so it follows the context the clear is called from — including a test's override.
+    @Sendable
+    static func closeVotingDatabase() async {
+        #if VOTING_ENABLED
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        await votingCrypto.closeDatabase()
+        #endif
     }
 
     static func walletInitializationState(

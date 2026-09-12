@@ -135,6 +135,18 @@ extension Root.State: @retroactive Equatable {
             $0.addressBook.allLocalContacts = { _ in (AddressBookContacts.empty, .notAttempted) }
 
             $0.userMetadataProvider.load = { _ in }
+            $0.userMetadataProvider.reset = { }
+
+            // The reset chain's async tail. Loud in `MigrationManagerClient.testValue` on purpose —
+            // it wipes persisted state — so it is named here rather than left to fail the suite.
+            $0.migrationManager.wipeAllMigrationState = { calls.withValue { $0.append("wipeAllMigrationState") } }
+
+            #if VOTING_ENABLED
+            // Both clears close the voting sidecar before `voting.sqlite3` is deleted, so every
+            // store this suite builds has to answer for it.
+            $0.votingMetadata.reset = { }
+            $0.votingCrypto.closeDatabase = { calls.withValue { $0.append("closeVotingDatabase") } }
+            #endif
 
             $0.sdkSynchronizer = .mocked(
                 stateStream: { Empty().eraseToAnyPublisher() },
@@ -453,6 +465,11 @@ extension Root.State: @retroactive Equatable {
             removedKeys.value.contains(.votingConfigOverrideURL),
             "the voting chain override must be cleared before healing a stale database"
         )
+        let closeVotingIndex = try #require(recordedCalls.firstIndex(of: "closeVotingDatabase"))
+        #expect(
+            closeVotingIndex < wipeIndex,
+            "the voting sidecar must be closed before the heal deletes it and wipes the wallet database"
+        )
         #endif
 
         // MOB-1889: all three surfaces, so the next wallet on this device is warned about the
@@ -707,6 +724,80 @@ extension Root.State: @retroactive Equatable {
 
         await drain(store)
     }
+
+    #if VOTING_ENABLED
+    // MARK: - Reset drains the voting sidecar before deleting it
+
+    /// `voting.sqlite3` is a live SQLite handle whenever a round session is open, and
+    /// the round driver writes to it from its own tasks. Deleting the file first would
+    /// leave those writes going to an unlinked inode and the next open recreating a
+    /// database the driver never sees, so the reset closes every session and the store
+    /// itself first — and only then removes the file.
+    @Test func resetClosesVotingBeforeDeletingTheSidecar() async throws {
+        let calls = LockIsolated<[String]>([])
+        let removedKeys = LockIsolated<[String]>([])
+        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
+        let sidecar = documents.appendingPathComponent("voting.sqlite3")
+        try Data([0x01]).write(to: sidecar)
+        defer { try? FileManager.default.removeItem(at: sidecar) }
+
+        let store = TestStore(
+            initialState: Root.State(
+                destinationState: Root.DestinationState(internalDestination: .home),
+                exportLogsState: ExportLogs.State(),
+                onboardingState: RestoreWalletCoordFlow.State(),
+                phraseDisplayState: RecoveryPhraseDisplay.State(),
+                walletConfig: .initial,
+                welcomeState: Welcome.State()
+            )
+        ) {
+            Root()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.databaseFiles = .noOp
+            $0.walletStorage = .noOp
+            $0.readTransactionsStorage = .noOp
+            $0.flexaHandler = .noOp
+            $0.flexaHandler.signOut = { calls.withValue { $0.append("flexaSignOut") } }
+            $0.userStoredPreferences.removeAll = { calls.withValue { $0.append("userPrefsRemoveAll") } }
+            $0.userDefaults.remove = { key in removedKeys.withValue { $0.append(key) } }
+            $0.userMetadataProvider.reset = { }
+            $0.votingMetadata.reset = { }
+            $0.migrationManager.wipeAllMigrationState = { calls.withValue { $0.append("wipeAllMigrationState") } }
+            // Recorded with what the file system says at that moment: "before the removal"
+            // is only meaningful as the sidecar still being there when the close runs.
+            $0.votingCrypto.closeDatabase = {
+                let present = FileManager.default.fileExists(atPath: sidecar.path)
+                calls.withValue {
+                    $0.append(present ? "closeVotingDatabase(sidecarPresent)" : "closeVotingDatabase(sidecarGone)")
+                }
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.resetZashiSDKSucceeded)
+
+        await store.receive(
+            { action in
+                guard case .resetZashiKeychainRequest = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        #expect(
+            calls.value.contains("closeVotingDatabase(sidecarPresent)"),
+            "the voting database must be closed while its file is still there"
+        )
+        #expect(!calls.value.contains("closeVotingDatabase(sidecarGone)"))
+        #expect(
+            !FileManager.default.fileExists(atPath: sidecar.path),
+            "the reset must delete the voting sidecar once it is closed"
+        )
+
+        await drain(store)
+    }
+    #endif
 }
 
 private struct ReprepareStubError: Error { }

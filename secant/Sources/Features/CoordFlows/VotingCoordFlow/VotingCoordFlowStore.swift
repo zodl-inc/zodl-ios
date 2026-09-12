@@ -186,6 +186,35 @@ struct VotingCoordFlow {
         /// since been replaced, and writing it back would undo newer state.
         var votingSessionEpoch: UInt64 = 0
 
+        /// The rounds this flow has opened a session for and not closed, in the
+        /// order they were opened.
+        ///
+        /// The registry knows this too, but it is an actor: the reducer has to
+        /// decide synchronously which rounds a wallet switch or a route change
+        /// must fence, and this is that answer. Deliberately a superset -- a
+        /// round whose open was refused stays on it, because fencing a round the
+        /// registry holds no session for does nothing, while missing one it does
+        /// hold leaves a session driving a wallet or a route that is gone.
+        var openRoundSessionIds: [String] = []
+
+        /// The transport the open sessions were opened on, or nil when none are
+        /// open.
+        ///
+        /// A session's route is fixed for its whole life, so a wallet that
+        /// changes its mind about Tor mid-round leaves every open session on the
+        /// wrong transport. This is what a change is compared against -- the
+        /// shared value's publisher replays the value it already has on
+        /// subscription, and the wallet re-announces the route it already had on
+        /// its own.
+        var sessionRouteAccess: WalletStorage.SwapAPIAccess?
+
+        /// Whether the crate's proving policy has been fixed for this process.
+        ///
+        /// Once per process, and first: warming the caches (or the first proof)
+        /// starts the pool on the crate's own default policy, and a policy asked
+        /// for after that is refused.
+        var hasConfiguredProving = false
+
         @Shared(.inMemory(.selectedWalletAccount))
         var selectedWalletAccount: WalletAccount?
 
@@ -219,6 +248,10 @@ struct VotingCoordFlow {
         case onAppear
         case warmProvingCaches
         case walletAccountChanged(WalletAccount?)
+        /// The wallet's Tor preference changed while the flow was open. A
+        /// session's route is fixed when it is opened, so every open session is
+        /// fenced and closed and the next use of a round opens on the new route.
+        case swapAPIAccessChanged(WalletStorage.SwapAPIAccess)
         case dismissFlow
         /// Done CTA on the success screen — lands the user on the just-
         /// submitted round's read-only ProposalList instead of tearing the
@@ -415,6 +448,11 @@ struct VotingCoordFlow {
 
     /// Cancellation id for DB-backed helper share confirmation polling.
     let cancelShareTrackingId = UUID()
+
+    /// Cancellation id for the subscription to the wallet's Tor preference,
+    /// which lives exactly as long as there is a session whose route it could
+    /// invalidate.
+    let cancelRouteObservationId = UUID()
 
     var body: some Reducer<State, Action> {
         coordinatorReduce()
