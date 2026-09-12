@@ -171,8 +171,8 @@ import OSLog
 
         // walletLogger is process-global. While this test holds it set
         // to "testWalletLogger", any *parallel* suite that calls
-        // LoggerProxy.info (ServerHealthTracker, VotingAPIClient, the
-        // background-task client, etc.) will race-write into the same
+        // LoggerProxy.info (VotingAPIClient, the background-task
+        // client, etc.) will race-write into the same
         // OSLog category. @Suite(.serialized) only serializes within
         // this suite, not across the bundle — observed on CI as
         // logs.count == 7 instead of 1.

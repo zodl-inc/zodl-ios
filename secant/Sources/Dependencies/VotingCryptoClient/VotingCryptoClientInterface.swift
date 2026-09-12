@@ -143,8 +143,6 @@ struct VotingCryptoClient {
     var setupBundles: @Sendable (_ roundId: String) async throws -> VotingBundleLayout
     /// Whether this account can vote in the round, persisting nothing.
     var eligibility: @Sendable (_ roundId: String) async throws -> VotingEligibilityReport
-    /// Persist one bundle's witnesses and padded secrets and warm its PIR rows.
-    var precomputePir: @Sendable (_ roundId: String, _ bundleIndex: UInt32) async throws -> VotingPirPrecomputeReport
     /// Generate one bundle's delegation proof ahead of a run, or report the
     /// persisted one it reused.
     ///
@@ -195,8 +193,6 @@ struct VotingCryptoClient {
     /// wallet seed, and calling this again produces an unrelated hotkey rather
     /// than recovering the previous one.
     var generateHotkey: @Sendable (_ networkId: UInt32) async throws -> VotingHotkey
-    /// Extract Orchard FVK bytes from a UFVK string.
-    var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     /// Extract the Orchard nc_root from a protobuf-encoded TreeState.
     var extractNcRoot: @Sendable (_ treeStateBytes: Data) throws -> Data
 }

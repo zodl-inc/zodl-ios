@@ -2836,7 +2836,6 @@ extension VotingSharedStateSuites {
                 }
                 $0.votingAPI.fetchAllRounds = { [] }
                 $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
-                $0.votingAPI.startHealthProbeSweep = { }
                 $0.votingCrypto.openDatabase = { path, _ in
                     recorder.record("openDatabase")
                     // What the real one does, and the whole problem: the file is back.
@@ -4791,33 +4790,6 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().contains("trackShares") == false)
         }
 
-        // MARK: - MOB-1810 health sweep hooks
-
-        @MainActor
-        @Test func votingInitializeDoesNotStartHealthSweep() async {
-            let recorder = EventRecorder()
-            let store = Store(initialState: VotingCoordFlow.State()) {
-                VotingCoordFlow()
-            } withDependencies: {
-                $0.votingAPI.configureURLs = { _ in }
-                $0.votingAPI.fetchAllRounds = { [] }
-                $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
-                $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
-                $0.databaseFiles = .noOp
-                $0.votingCrypto.openDatabase = { _, _ in }
-                $0.votingCrypto.setWalletId = { _ in }
-                $0.votingCrypto.configureProving = { _ in }
-                $0.votingCrypto.warmProvingCaches = { }
-                $0.votingCrypto.pendingShareRounds = { [] }
-                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
-            }
-
-            store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
-            await waitForStore { store.state.rootScreen == .noRounds }
-
-            #expect(recorder.events().isEmpty)
-        }
-
         // MARK: - Process-wide proving
 
         /// The proving policy is fixed before anything can start the crate's pool:
@@ -4835,7 +4807,6 @@ extension VotingSharedStateSuites {
                     return []
                 }
                 $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
-                $0.votingAPI.startHealthProbeSweep = { }
                 $0.databaseFiles = .noOp
                 $0.votingCrypto.openDatabase = { _, _ in }
                 $0.votingCrypto.setWalletId = { _ in }

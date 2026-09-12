@@ -471,7 +471,6 @@ struct VotingCoordFlow {
         /// The bundles the crate already holds a signature for, read back on
         /// entry so the signing screen resumes where the voter left it.
         case keystoneSignaturesRestored(roundId: String, bundleIndices: [UInt32])
-        case keystoneShowSigningScreen(roundId: String)
         case keystoneSignatureRejected(roundId: String, message: String)
         case skipRemainingKeystoneBundles(roundId: String)
         case skipRemainingKeystoneBundlesConfirmed(roundId: String)

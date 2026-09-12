@@ -555,20 +555,11 @@ extension VotingCoordFlow {
                 case .active:
                     hydratePersistedRoundChoices(&state, roundId: roundId)
 
-                    // MOB-1810: operator health checks start here — in the
-                    // background, at poll entry — instead of blocking the polls
-                    // list load. Their results are advisory ordering input for
-                    // the share-resubmission walk; nothing awaits them.
-                    let startHealthSweep: Effect<Action> = .run { [votingAPI] _ in
-                        await votingAPI.startHealthProbeSweep()
-                    }
-
                     if state.voteRecords[roundId] != nil {
                         // Already submitted — review-mode read-only, no
                         // pipeline needed.
                         state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                         return .merge(
-                            startHealthSweep,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
                             loadSubmittedVotesFromPlan(state, roundId: roundId)
@@ -614,7 +605,6 @@ extension VotingCoordFlow {
                        cached.liveSession == .open(binding: .voting) {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
-                            startHealthSweep,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
                             loadSubmittedVotesFromPlan(state, roundId: roundId)
@@ -628,7 +618,6 @@ extension VotingCoordFlow {
                     // ineligibility opens the sheet via `.ineligibleForRound`.
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
-                        startHealthSweep,
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
                         .send(.startActiveRoundPipeline(roundId: roundId)),
@@ -668,22 +657,8 @@ extension VotingCoordFlow {
                 } else {
                     statusPolling = .none
                 }
-                // MOB-1810: this entry point lands on the same active-round
-                // review screen as `.roundTapped`'s voted branch, so it needs
-                // the same background health sweep at poll entry — advisory
-                // ordering input for the share-resubmission walk; nothing
-                // awaits it.
-                let startHealthSweep: Effect<Action>
-                if state.allRounds.first(where: { $0.id == roundId })?.session.status == .active {
-                    startHealthSweep = .run { [votingAPI] _ in
-                        await votingAPI.startHealthProbeSweep()
-                    }
-                } else {
-                    startHealthSweep = .none
-                }
                 return .merge(
                     statusPolling,
-                    startHealthSweep,
                     loadSubmittedVotesFromPlan(state, roundId: roundId)
                 )
 
@@ -933,12 +908,6 @@ extension VotingCoordFlow {
                 }
                 state.keystoneSignatureRejectionSheet = State.KeystoneSignatureRejectionSheet(message: message)
                 return .none
-
-            case let .keystoneShowSigningScreen(roundId):
-                if !hasKeystoneSigningRound(state: state) {
-                    state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
-                }
-                return .send(.startDelegationProof(roundId: roundId))
 
             case let .skipRemainingKeystoneBundles(roundId):
                 guard let session = state.roundCache[roundId],
@@ -2925,7 +2894,6 @@ extension VotingCoordFlow {
         case .idle:
             break
         case .proving:
-            session.voteSubmissionStep = .preparingProof
             if let fraction = session.progress.proofFraction {
                 session.delegationProofStatus = ProofStatus.generating(progress: fraction)
             } else if session.delegationProofStatus == ProofStatus.notStarted {
@@ -2935,17 +2903,7 @@ extension VotingCoordFlow {
                 // would not be.
                 session.delegationProofStatus = ProofStatus.generating(progress: 0)
             }
-        case .submitting:
-            session.voteSubmissionStep = .preparingProof
-            session.delegationProofStatus = ProofStatus.complete
-        case .confirming:
-            session.voteSubmissionStep = .confirming
-            session.delegationProofStatus = ProofStatus.complete
-        case .deliveringShares:
-            session.voteSubmissionStep = .sendingShares
-            session.delegationProofStatus = ProofStatus.complete
-        case .done:
-            session.voteSubmissionStep = nil
+        case .submitting, .confirming, .deliveringShares, .done:
             session.delegationProofStatus = ProofStatus.complete
         }
         guard session.progress.totalProposals > 0 else { return }
@@ -3148,7 +3106,6 @@ extension VotingCoordFlow {
         let keystoneStored = state.isKeystoneUser
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.batchSubmissionStatus = .authorizing
-            roundSession.voteSubmissionStep = .authorizingVote
             roundSession.batchVoteErrors = [:]
             roundSession.isSubmittingVote = true
             roundSession.lastRunFailureSummary = nil
@@ -3193,11 +3150,7 @@ extension VotingCoordFlow {
         pendingCount: Int,
         keystoneStored: Bool
     ) -> Effect<Action> {
-        .run { [backgroundTask, mnemonic, votingAPI, votingCrypto, walletStorage] send in
-            // MOB-1810: refresh operator health in the background so the
-            // share walk's ordering reflects the present rather than poll
-            // entry. Fire-and-forget; nothing here awaits its results.
-            await votingAPI.startHealthProbeSweep()
+        .run { [backgroundTask, mnemonic, votingCrypto, walletStorage] send in
             let bgTaskId = await backgroundTask.beginTask("Voting round run")
             _ = await backgroundTask.beginContinuedProcessing(
                 "co.zodl.voting.*",
@@ -4028,80 +3981,6 @@ extension VotingCoordFlow {
         return .merge(roundIds.map { cancelShareTracking(for: $0) })
     }
 
-    // MARK: - Share delegation recovery (legacy, retired with the fan-out)
-
-    static let shareCheckGrace: UInt64 = 10
-
-    static func shareRecoveryBaseTime(_ share: VotingShareDelegation) -> UInt64 {
-        share.submitAt > 0 ? share.submitAt : share.createdAt
-    }
-
-    static func isShareReadyForStatusCheck(
-        _ share: VotingShareDelegation,
-        now: UInt64
-    ) -> Bool {
-        now >= shareRecoveryBaseTime(share) + shareCheckGrace
-    }
-
-    static func shouldResubmitShare(
-        _ share: VotingShareDelegation,
-        now: UInt64,
-        voteEndTime: UInt64
-    ) -> Bool {
-        let baseTime = shareRecoveryBaseTime(share)
-        let remainingWindow = voteEndTime > baseTime ? voteEndTime - baseTime : 0
-        let overdueThreshold: UInt64 = max(30, min(3_600, remainingWindow / 4))
-
-        return now >= baseTime + overdueThreshold && voteEndTime > now + 10
-    }
-
-    static func pollShareStatusesForRecovery(
-        readyShares: [VotingShareDelegation],
-        roundId: String,
-        now: UInt64,
-        voteEndTime: UInt64,
-        fetchShareStatus: @escaping @Sendable (
-            _ helperBaseURL: String,
-            _ roundIdHex: String,
-            _ nullifierHex: String
-        ) async throws -> ShareConfirmationResult
-    ) async -> ShareRecoveryPollResult {
-        var confirmedShares: [ShareDelegationKey] = []
-        var resubmissionShares: [VotingShareDelegation] = []
-        var queriedCount = 0
-
-        for share in readyShares {
-            var confirmed = false
-            for helperURL in share.sentToURLs {
-                queriedCount += 1
-                do {
-                    let result = try await fetchShareStatus(helperURL, roundId, share.nullifier)
-                    if result == .confirmed {
-                        confirmedShares.append(ShareDelegationKey(
-                            bundleIndex: share.bundleIndex,
-                            proposalId: share.proposalId,
-                            shareIndex: share.shareIndex
-                        ))
-                        confirmed = true
-                        break
-                    }
-                } catch {
-                    LoggerProxy.warn("Share status check failed: \(error)")
-                }
-            }
-
-            if !confirmed && shouldResubmitShare(share, now: now, voteEndTime: voteEndTime) {
-                resubmissionShares.append(share)
-            }
-        }
-
-        return ShareRecoveryPollResult(
-            confirmedShares: confirmedShares,
-            resubmissionShares: resubmissionShares,
-            queriedCount: queriedCount
-        )
-    }
-
     // MARK: - Per-action state updates
 
     func reduceBatchSubmissionCompleted(
@@ -4119,7 +3998,6 @@ extension VotingCoordFlow {
 
         session.isSubmittingVote = false
         session.submittingProposalId = nil
-        session.voteSubmissionStep = nil
         session.currentVoteBundleIndex = nil
 
         if failCount > 0 || persistedFailureCount > 0 {
@@ -4194,7 +4072,6 @@ extension VotingCoordFlow {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isSubmittingVote = false
             roundSession.submittingProposalId = nil
-            roundSession.voteSubmissionStep = nil
             roundSession.currentVoteBundleIndex = nil
             roundSession.batchSubmissionStatus = .authorizationFailed(error: error)
         }
@@ -4211,7 +4088,6 @@ extension VotingCoordFlow {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isSubmittingVote = false
             roundSession.submittingProposalId = nil
-            roundSession.voteSubmissionStep = nil
             roundSession.currentVoteBundleIndex = nil
             roundSession.batchSubmissionStatus = .submissionFailed(
                 error: error,
@@ -4734,20 +4610,6 @@ struct VotingSessionTransport: Equatable, Sendable {
     }
 }
 
-// MARK: - Share delegation recovery
-
-struct ShareDelegationKey: Equatable, Sendable {
-    let bundleIndex: UInt32
-    let proposalId: UInt32
-    let shareIndex: UInt32
-}
-
-struct ShareRecoveryPollResult: Equatable, Sendable {
-    let confirmedShares: [ShareDelegationKey]
-    let resubmissionShares: [VotingShareDelegation]
-    let queriedCount: Int
-}
-
 // MARK: - Alerts
 
 extension AlertState where Action == Never {
@@ -4777,245 +4639,5 @@ extension AlertState where Action == VotingCoordFlow.Action {
         }
     }
 
-}
-
-// MARK: - Array helper
-
-private extension Array where Element == String {
-    /// `[]` -> `nil`, otherwise self. Reads cleanly inside guard chains.
-    var nonEmpty: [String]? {
-        isEmpty ? nil : self
-    }
-}
-
-// MARK: - The 3.0-era pipeline's calls
-
-/// A lookup that distinguishes "no row" from a read failure.
-enum VotingTxHashLookup: Equatable, Sendable {
-    case notFound
-    case present(String)
-}
-
-/// Positions a mined cast-vote transaction confirmed.
-struct VoteConfirmationInfo: Equatable, Sendable {
-    let txHash: String
-    let vanLeafPosition: UInt32
-    let voteCommitmentTreePosition: UInt64
-}
-
-/// The per-step voting calls `zcash_voting` no longer offers.
-///
-/// 4.0 drives a round through one session: the crate selects notes, proves,
-/// signs, submits, delivers shares and polls for confirmation itself, and the
-/// three dozen calls the pipeline below is written against have no counterpart
-/// on the new surface. Rewriting that pipeline is its own change; until it
-/// lands, every one of those calls arrives here and throws.
-///
-/// Deliberately a throw rather than a stub answer. The pipeline's control flow
-/// is left exactly as it was so the rewrite has the same shape to work
-/// against, and a path that still reaches one of these must fail where it is
-/// rather than carry on with a plausible-looking lie about the round's state.
-private enum VotingLegacy {
-    static func removed<T>() throws -> T {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func removedStream<Element>() -> AsyncThrowingStream<Element, Error> {
-        AsyncThrowingStream { $0.finish(throwing: VotingLegacyAPIRemoved()) }
-    }
-
-    static func getWalletNotes(
-        _ walletDbPath: String,
-        _ snapshotHeight: UInt64,
-        _ networkId: UInt32,
-        _ accountUUID: [UInt8]
-    ) async throws -> [NoteInfo] {
-        try removed()
-    }
-
-    static func getRoundState(_ roundId: String) async throws -> RoundStateInfo {
-        try removed()
-    }
-
-    static func getVotes(_ roundId: String) async throws -> [VoteRecord] {
-        try removed()
-    }
-
-    static func getBundleCount(_ roundId: String) async throws -> UInt32 {
-        try removed()
-    }
-
-    static func initRound(_ params: VotingRoundParams, _ sessionJson: String?) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func setupBundles(_ roundId: String, _ notes: [NoteInfo]) async throws -> BundleSetupResult {
-        try removed()
-    }
-
-    static func storeTreeState(_ roundId: String, _ treeState: Data) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func generateNoteWitnesses(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ walletDbPath: String,
-        _ notes: [NoteInfo],
-        _ networkId: UInt32
-    ) async throws -> [WitnessData] {
-        try removed()
-    }
-
-    // swiftlint:disable:next function_parameter_count
-    static func precomputeDelegationPir(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64,
-        _ networkId: UInt32,
-        _ pirDepth: UInt32,
-        _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32,
-        _ polyLen: UInt32
-    ) async throws -> DelegationPirPrecomputeResult {
-        try removed()
-    }
-
-    // swiftlint:disable:next function_parameter_count
-    static func commitVote(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ hotkeyStoredSecret: [UInt8],
-        _ proposalId: UInt32,
-        _ choice: VoteChoice,
-        _ numOptions: UInt32,
-        _ voteCommitmentTreePosition: UInt64,
-        _ vanAuthPath: [Data],
-        _ vanPosition: UInt32,
-        _ vanAnchorHeight: UInt32,
-        _ singleShare: Bool
-    ) async throws -> (bundle: VoteCommitmentBundle, signature: CastVoteSignature) {
-        try removed()
-    }
-
-    // swiftlint:disable:next function_parameter_count
-    static func signDelegationRequest(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ senderSeed: [UInt8],
-        _ hotkeyStoredSecret: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String
-    ) async throws -> (signature: Data, sighash: Data) {
-        try removed()
-    }
-
-    static func generateVanWitness(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ anchorHeight: UInt32
-    ) async throws -> VanWitness {
-        try removed()
-    }
-
-    static func markVoteSubmitted(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ txHash: String
-    ) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func storeVoteTxHash(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ txHash: String
-    ) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func getVoteTxHash(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> VotingTxHashLookup {
-        try removed()
-    }
-
-    static func confirmVoteSubmission(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ txHash: String,
-        _ eventsJson: String
-    ) async throws -> VoteConfirmationInfo {
-        try removed()
-    }
-
-    static func getCommitmentBundleJson(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> (bundleJson: String, vcTreePosition: UInt64)? {
-        try removed()
-    }
-
-    static func recoverWireJson(
-        _ commitmentBundleJson: String,
-        _ proposalId: UInt32,
-        _ shareIndex: UInt32,
-        _ voteCommitmentTreePosition: UInt64,
-        _ submitAt: UInt64
-    ) async throws -> String {
-        try removed()
-    }
-
-    static func recoverableShareIndices(_ commitmentBundleJson: String) async throws -> [UInt32] {
-        try removed()
-    }
-
-    static func clearRecoveryState(_ roundId: String) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    // swiftlint:disable:next function_parameter_count
-    static func recordShareDelegation(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ shareIndex: UInt32,
-        _ sentToURLs: [String],
-        _ submitAt: UInt64
-    ) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func getShareDelegations(_ roundId: String) async throws -> [VotingShareDelegation] {
-        try removed()
-    }
-
-    static func markShareConfirmed(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ shareIndex: UInt32
-    ) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func addSentServers(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ shareIndex: UInt32,
-        _ newURLs: [String]
-    ) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
 }
 #endif
