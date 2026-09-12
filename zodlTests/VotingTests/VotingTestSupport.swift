@@ -16,6 +16,17 @@ import Testing
 /// dependency closures a store's effects call, which capture the suite.
 protocol VotingTestSuite: Sendable {}
 
+/// The parent of every voting suite that drives a coordinator over the
+/// process-global `@Shared` values — `swapAPIAccess` and
+/// `selectedWalletAccount`.
+///
+/// `.serialized` orders tests *within* a suite; two top-level suites still run
+/// in parallel with each other, so the route-change tests of one could flip the
+/// shared value the account-switch tests of the other had just written and read
+/// back. Nesting them under one serialized parent is what extends that ordering
+/// across both. Any future suite writing those values belongs here too.
+@Suite(.serialized) struct VotingSharedStateSuites {}
+
 extension VotingTestSuite {
     // MARK: - Round identity and wallets
 
