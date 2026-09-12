@@ -1623,11 +1623,91 @@ import Testing
         #expect(sleeps.value.isEmpty)
     }
 
+    /// A second `.pollShareStatus` landing while a pass is live must not stop
+    /// the live one.
+    ///
+    /// Cancelling a tracking consumer runs the stream's termination hook, which
+    /// cancels the round's *session* — permanently, and against whichever
+    /// session the registry holds by then. So the re-send is a no-op, not a
+    /// restart: the round keeps its one pass and its session is never
+    /// cancelled.
+    @MainActor
+    @Test func aSecondPollDoesNotCancelALivePass() async throws {
+        let recorder = EventRecorder()
+        let gate = TestGate()
+        let confirmed = try shareTrackingReport(kind: "all_confirmed")
+        let store = Store(initialState: shareTrackingState()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.cancelRoundSession = { roundId in recorder.record("cancelRoundSession:\(roundId)") }
+            $0.votingCrypto.trackShares = { _, _ in
+                recorder.record("trackShares")
+                return AsyncThrowingStream { continuation in
+                    let task = Task {
+                        // Parked where a real pass waits on its helpers, so the
+                        // second send lands while this one is still live.
+                        await gate.wait()
+                        continuation.yield(VotingShareTrackingRunEvent.finished(confirmed))
+                        continuation.finish()
+                    }
+                    continuation.onTermination = { reason in
+                        if case .cancelled = reason {
+                            recorder.record("cancelRoundSession:consumerWentAway")
+                        }
+                        task.cancel()
+                    }
+                }
+            }
+        }
+
+        store.send(.pollShareStatus(roundId: activeRoundId))
+        await waitForStore { recorder.events().contains("trackShares") }
+        #expect(store.state.roundCache[self.activeRoundId]?.isTrackingShares == true)
+
+        store.send(.pollShareStatus(roundId: activeRoundId))
+        await gate.open()
+        await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+        #expect(recorder.events().filter { $0 == "trackShares" } == ["trackShares"])
+        #expect(!recorder.events().contains { $0.hasPrefix("cancelRoundSession") })
+    }
+
+    /// The re-arm is bounded by the round's own vote end. A backoff that would
+    /// wake up after the vote has closed is not scheduled at all, and the round
+    /// is `.ended` rather than left waiting for a pass that never comes.
+    @MainActor
+    @Test func shareTrackingStopsWhenTheBackoffWouldLandPastVoteEnd() async throws {
+        let recorder = EventRecorder()
+        let sleeps = LockIsolated<[Swift.Duration]>([])
+        let failing = try shareTrackingReport(kind: "failing", messages: ["helper unreachable"])
+        // The first backoff is 15 s; this round closes inside it.
+        let store = Store(initialState: shareTrackingState(voteEndsIn: 5)) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+            $0.votingCrypto.trackShares = { _, _ in
+                recorder.record("trackShares")
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(VotingShareTrackingRunEvent.finished(failing))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.pollShareStatus(roundId: activeRoundId))
+        await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .ended }
+
+        #expect(recorder.events().filter { $0 == "trackShares" } == ["trackShares"])
+        #expect(sleeps.value.isEmpty)
+    }
+
     /// A round with an open session and nothing tracking it yet -- the state a
     /// `.pollShareStatus` trigger finds -- on a vote that ends far enough away
     /// for the whole backoff ladder to fit before it.
-    private func shareTrackingState() -> VotingCoordFlow.State {
-        var state = sessionFlowState(voteEndsIn: 3_600)
+    private func shareTrackingState(voteEndsIn: TimeInterval = 3_600) -> VotingCoordFlow.State {
+        var state = sessionFlowState(voteEndsIn: voteEndsIn)
         state.checkingEligibilityRoundId = nil
         state.openRoundSessionIds = [activeRoundId]
         state.sessionRouteAccess = .direct
@@ -1810,8 +1890,12 @@ private struct RecordingImmediateClock: Clock {
     var minimumResolution: Swift.Duration { .zero }
 
     func sleep(until deadline: Instant, tolerance: Swift.Duration?) async throws {
+        // A real clock's sleep is a cancellation point, and an effect that is
+        // cancelled while waiting out a backoff must not go on to send.
+        try Task.checkCancellation()
         sleeps.withValue { $0.append(epoch.duration(to: deadline)) }
         await Task.yield()
+        try Task.checkCancellation()
     }
 }
 

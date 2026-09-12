@@ -1172,14 +1172,14 @@ extension VotingCoordFlow {
             case let .pollShareStatus(roundId):
                 return reducePollShareStatus(&state, roundId: roundId)
 
-            case let .shareTrackingEvent(roundId, event):
-                return reduceShareTrackingEvent(&state, roundId: roundId, event: event)
+            case let .shareTrackingEvent(roundId, epoch, event):
+                return reduceShareTrackingEvent(&state, roundId: roundId, epoch: epoch, event: event)
 
-            case let .shareTrackingFinished(roundId, report):
-                return reduceShareTrackingFinished(&state, roundId: roundId, report: report)
+            case let .shareTrackingFinished(roundId, epoch, report):
+                return reduceShareTrackingFinished(&state, roundId: roundId, epoch: epoch, report: report)
 
-            case let .shareTrackingFailed(roundId, error):
-                return reduceShareTrackingFailed(&state, roundId: roundId, error: error)
+            case let .shareTrackingFailed(roundId, epoch, error):
+                return reduceShareTrackingFailed(&state, roundId: roundId, epoch: epoch, error: error)
 
             case .dismissIneligibleSheet:
                 state.ineligibleSheet = nil
@@ -2727,34 +2727,49 @@ extension VotingCoordFlow {
     /// contention the SDK would otherwise answer with `sessionBusy`: a round
     /// with no open session has nothing to drive, a pass already in flight is
     /// the one that will report, and a run holds the session for itself.
+    ///
+    /// `cancelInFlight` is deliberately off. `isTrackingShares` is already the
+    /// serializer, and it is reset out from under a live pass on round entry --
+    /// so a second send that got past the guard would, with `cancelInFlight`,
+    /// cancel the live consumer, whose termination hook cancels the round's
+    /// session. That is the one cancel path that could reach a session nobody
+    /// is closing, and after a reopen it would be the *new* session. A genuine
+    /// second pass is answered `alreadyDriving` or `sessionBusy` instead, which
+    /// costs nothing.
     func reducePollShareStatus(_ state: inout State, roundId: String) -> Effect<Action> {
         guard state.openRoundSessionIds.contains(roundId) else { return .none }
         guard let session = state.roundCache[roundId] else { return .none }
         guard !session.isTrackingShares else { return .none }
         guard !isBatchSubmitting(session), !session.isSubmittingVote else { return .none }
 
+        let epoch = session.sessionEpoch
         state.roundCache[roundId]?.isTrackingShares = true
         return .run { [votingCrypto] send in
             for try await element in votingCrypto.trackShares(roundId, VotingShareTrackingPolicy()) {
                 switch element {
                 case let .event(event):
-                    await send(.shareTrackingEvent(roundId: roundId, event: event))
+                    await send(.shareTrackingEvent(roundId: roundId, epoch: epoch, event: event))
                 case let .finished(report):
-                    await send(.shareTrackingFinished(roundId: roundId, report: report))
+                    await send(.shareTrackingFinished(roundId: roundId, epoch: epoch, report: report))
                 }
             }
         } catch: { error, send in
-            await send(.shareTrackingFailed(roundId: roundId, error: Self.votingError(from: error)))
+            await send(.shareTrackingFailed(roundId: roundId, epoch: epoch, error: Self.votingError(from: error)))
         }
-        .cancellable(id: cancelShareTrackingId(roundId), cancelInFlight: true)
+        .cancellable(id: cancelShareTrackingId(roundId))
     }
 
     /// `.shareTrackingEvent` handler. The driver narrating its own passes.
     func reduceShareTrackingEvent(
         _ state: inout State,
         roundId: String,
+        epoch: UInt64,
         event: VotingShareTrackingEvent
     ) -> Effect<Action> {
+        // An observation from a session that has since been replaced describes
+        // a pass that no longer exists, the same way a run's events do.
+        guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
+
         switch event.kind {
         case .passStarted, .passFinished:
             guard let pass = event.pass else { return .none }
@@ -2777,8 +2792,13 @@ extension VotingCoordFlow {
     func reduceShareTrackingFinished(
         _ state: inout State,
         roundId: String,
+        epoch: UInt64,
         report: VotingShareTrackingRunReport
     ) -> Effect<Action> {
+        // A report from a replaced session says nothing about the round as it
+        // is now, and the in-flight flag it would clear belongs to whatever the
+        // reopen started.
+        guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
         state.roundCache[roundId]?.isTrackingShares = false
 
         switch report.quiescence.kind {
@@ -2820,8 +2840,10 @@ extension VotingCoordFlow {
     func reduceShareTrackingFailed(
         _ state: inout State,
         roundId: String,
+        epoch: UInt64,
         error: VotingError
     ) -> Effect<Action> {
+        guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
         LoggerProxy.warn("Share tracking for \(roundId) could not run: \(error.message)")
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isTrackingShares = false
@@ -2851,7 +2873,11 @@ extension VotingCoordFlow {
 
         guard let voteEndTime = activeSession(in: state, roundId: roundId)?.voteEndTime else { return .none }
         guard Date().addingTimeInterval(TimeInterval(delaySeconds)) < voteEndTime else {
+            // Nothing will be scheduled, so `.retrying` would be a wait that
+            // never comes. The vote closes with these shares unconfirmed, which
+            // is what `.ended` says.
             LoggerProxy.info("Share tracking for \(roundId) is not re-armed: the vote ends first")
+            mutateSession(&state, roundId: roundId) { $0.shareTrackingStatus = .ended }
             return .none
         }
 
@@ -2917,6 +2943,11 @@ extension VotingCoordFlow {
             let epoch = state.votingSessionEpoch
             var roundSession = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
             roundSession.sessionEpoch = epoch
+            // A cancelled pass never delivers a terminal action, so a round
+            // reaching the resume path can still be carrying the flag and the
+            // ladder of a pass that ended with a session this is replacing.
+            roundSession.isTrackingShares = false
+            roundSession.shareTrackingAttempt = 0
             state.roundCache[roundId] = roundSession
             state.openRoundSessionIds.append(roundId)
             state.sessionRouteAccess = state.swapAPIAccess

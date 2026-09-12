@@ -319,14 +319,16 @@ struct VotingCoordFlow {
         /// One pass per send; the report it stops with decides whether another
         /// is scheduled.
         case pollShareStatus(roundId: String)
-        /// One observation from a share-tracking pass.
-        case shareTrackingEvent(roundId: String, event: VotingShareTrackingEvent)
+        /// One observation from a share-tracking pass, stamped with the session
+        /// generation it came from so a replaced session's narration can be
+        /// dropped rather than written back.
+        case shareTrackingEvent(roundId: String, epoch: UInt64, event: VotingShareTrackingEvent)
         /// The report a share-tracking pass stopped with -- authoritative,
         /// where the events are a narration the SDK may drop.
-        case shareTrackingFinished(roundId: String, report: VotingShareTrackingRunReport)
+        case shareTrackingFinished(roundId: String, epoch: UInt64, report: VotingShareTrackingRunReport)
         /// A tracking pass that could not run at all: the round's session went
         /// away under it, or a run holds the session.
-        case shareTrackingFailed(roundId: String, error: VotingError)
+        case shareTrackingFailed(roundId: String, epoch: UInt64, error: VotingError)
         case retryFetchTallyResults(roundId: String)
         case viewMyVotesTapped(roundId: String)
         case proposalTapped(roundId: String, proposalId: UInt32, mode: ProposalDetail.Mode = .voting)
@@ -485,7 +487,10 @@ struct VotingCoordFlow {
     /// Per round rather than per flow: two rounds can be owed helper work at
     /// once, and cancelling a tracking pass finishes the session it runs on --
     /// so one id for all of them would take a second round's session down with
-    /// the first.
+    /// the first. For the same reason nothing cancels in flight on this id:
+    /// every deliberate cancel of it is a round whose session is going anyway,
+    /// and a `cancelInFlight` would be the one path that reaches a session
+    /// nobody is closing.
     func cancelShareTrackingId(_ roundId: String) -> VotingShareTrackingCancelID {
         VotingShareTrackingCancelID.pass(roundId)
     }
