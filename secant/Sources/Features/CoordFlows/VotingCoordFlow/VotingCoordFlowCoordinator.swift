@@ -2476,9 +2476,34 @@ extension VotingCoordFlow {
     /// Most of these already are one; the rest come from the app's own
     /// dependencies — the keychain, the synchronizer — and keep their text
     /// rather than being flattened into something the mapper cannot read.
+    ///
+    /// The SDK wrapper's own refusals are the exception, because they carry the
+    /// one answer this flow branches on. Run/track contention is
+    /// `VotingRustBackendError.sessionBusy` — a different type from the crate's
+    /// `VotingError` — and flattening it into `.other` would leave it
+    /// `retryable == false`, so the very contention `reduceRoundRunFailed`'s
+    /// bounded ladder exists for would never take it. A closed session is the
+    /// opposite: that session is finished for good, so repeating the call
+    /// answers the same way however long the flow waits.
     static func votingError(from error: Error) -> VotingError {
         if let votingError = error as? VotingError {
             return votingError
+        }
+        if let backendError = error as? VotingRustBackendError {
+            switch backendError {
+            case .sessionBusy:
+                return VotingError(
+                    kind: VotingErrorKind.busy,
+                    retryable: true,
+                    message: backendError.localizedDescription
+                )
+            case .sessionClosed, .databaseNotOpen, .databaseAlreadyOpen:
+                return VotingError(
+                    kind: VotingErrorKind.internal,
+                    retryable: false,
+                    message: backendError.localizedDescription
+                )
+            }
         }
         return VotingError(kind: VotingErrorKind.other, message: error.localizedDescription)
     }
@@ -2763,6 +2788,26 @@ extension VotingCoordFlow {
         return min(shareTrackingBaseBackoffSeconds << exponent, shareTrackingMaxBackoffSeconds)
     }
 
+    /// How many passes one foreground tracking run gets before it hands the
+    /// round back.
+    static let shareTrackingForegroundPasses: UInt32 = 8
+
+    /// The policy every pass this flow starts runs under.
+    ///
+    /// A pass budget, deliberately, where the SDK's default has none. A run and
+    /// a tracking pass are exclusive on one session, and a pass in flight is
+    /// never cancelled to make room for a run — cancelling one ends the session
+    /// under it, permanently. So an unbudgeted pass, which stops only on
+    /// confirmation, the vote ending, a cancel, or 240 consecutive failures at
+    /// 15 s each, would hold the round for about an hour and refuse every run
+    /// the voter asked for in that window with `sessionBusy`.
+    ///
+    /// With a budget the driver quiesces `passBudgetExhausted` instead, which
+    /// is a re-arm on this flow's own 15 s→300 s ladder: the round is picked up
+    /// again a moment later, on a session nothing else is holding, and the
+    /// ladder stops on its own at the vote's end.
+    static let shareTrackingPolicy = VotingShareTrackingPolicy(maxPasses: shareTrackingForegroundPasses)
+
     /// `.pollShareStatus` handler. Runs one pass of the session's share-tracking
     /// driver over the round's unconfirmed helper shares.
     ///
@@ -2780,6 +2825,11 @@ extension VotingCoordFlow {
     /// is closing, and after a reopen it would be the *new* session. A genuine
     /// second pass is answered `alreadyDriving` or `sessionBusy` instead, which
     /// costs nothing.
+    ///
+    /// The pass runs on ``shareTrackingPolicy`` rather than the SDK's default,
+    /// and the budget in it is the point: a pass is never cancelled to let a
+    /// run through, so the only thing that stands one down in time for the next
+    /// Confirm is the driver running out of passes and this flow re-arming it.
     func reducePollShareStatus(_ state: inout State, roundId: String) -> Effect<Action> {
         guard state.openRoundSessionIds.contains(roundId) else { return .none }
         // An entry into the round is about to replace its session, and it clears
@@ -2795,7 +2845,7 @@ extension VotingCoordFlow {
         let epoch = session.sessionEpoch
         state.roundCache[roundId]?.isTrackingShares = true
         return .run { [votingCrypto] send in
-            for try await element in votingCrypto.trackShares(roundId, VotingShareTrackingPolicy()) {
+            for try await element in votingCrypto.trackShares(roundId, Self.shareTrackingPolicy) {
                 switch element {
                 case let .event(event):
                     await send(.shareTrackingEvent(roundId: roundId, epoch: epoch, event: event))

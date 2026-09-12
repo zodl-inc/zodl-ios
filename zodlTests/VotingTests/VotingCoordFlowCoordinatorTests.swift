@@ -1165,6 +1165,42 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[self.activeRoundId]?.shareTrackingAttempt == 0)
         }
 
+        /// Foreground passes run on a budget, and spending it is what hands the
+        /// round back. A live pass is never cancelled to make room for a run —
+        /// cancelling one ends the session under it, permanently — so an unbudgeted
+        /// pass would hold the round for about an hour and the SDK would refuse the
+        /// voter's next Confirm as `sessionBusy`. The budget turns that into a
+        /// `passBudgetExhausted` quiescence and this flow's own 15 s ladder.
+        @MainActor
+        @Test func foregroundTrackingPassesRunOnABudgetAndReArmWhenItIsSpent() async throws {
+            let recorder = EventRecorder()
+            let sleeps = LockIsolated<[Swift.Duration]>([])
+            let budgets = LockIsolated<[UInt32?]>([])
+            let exhausted = try shareTrackingReport(kind: "pass_budget_exhausted")
+            let confirmed = try shareTrackingReport(kind: "all_confirmed")
+            let store = Store(initialState: shareTrackingState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+                $0.votingCrypto.trackShares = { _, policy in
+                    let call = recorder.recordAndCount("trackShares")
+                    budgets.withValue { $0.append(policy.maxPasses) }
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(call == 1 ? exhausted : confirmed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.pollShareStatus(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            #expect(budgets.value.count == 2)
+            #expect(budgets.value.allSatisfy { $0 == VotingCoordFlow.shareTrackingForegroundPasses })
+            #expect(sleeps.value == [Swift.Duration.seconds(15)])
+        }
+
         /// A round whose share delivery was interrupted resumes without the voter
         /// opening it: the sidecar names the rounds that still owe helper work, and
         /// the ones this wallet's authenticated config still carries get a session

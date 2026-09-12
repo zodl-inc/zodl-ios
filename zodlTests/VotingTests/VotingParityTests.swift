@@ -455,6 +455,99 @@ extension VotingSharedStateSuites {
             #expect(refusedStore.state.roundCache[activeRoundId]?.runRetryCount == 0)
         }
 
+        /// The contention this ladder exists for does not arrive as a crate error
+        /// at all. Run/track exclusivity is enforced by the SDK wrapper, which
+        /// throws its own `VotingRustBackendError.sessionBusy` — a different type,
+        /// with no `retryable` of its own — so a flow that only understood
+        /// `VotingError` would flatten the one refusal the ladder was built for
+        /// into a hard failure. The real type is driven again and lands.
+        @MainActor
+        @Test func aBusySessionFromTheSdkTakesTheSameBoundedLadder() async throws {
+            let recorder = EventRecorder()
+            let sleeps = LockIsolated<[Swift.Duration]>([])
+            let report = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        guard call > 1 else {
+                            // What a share-tracking pass holding this round's
+                            // session actually throws.
+                            continuation.finish(throwing: VotingRustBackendError.sessionBusy)
+                            return
+                        }
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 2)
+            #expect(sleeps.value == [Swift.Duration.seconds(VotingCoordFlow.runFailureRetrySeconds)])
+        }
+
+        /// The other half of the same mapping. A closed session is finished rather
+        /// than paused, so repeating the call answers the same way however long the
+        /// flow waits: nothing is scheduled and the voter is told.
+        @MainActor
+        @Test func aClosedSessionFromTheSdkIsNotRetried() async throws {
+            let recorder = EventRecorder()
+            let sleeps = LockIsolated<[Swift.Duration]>([])
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(throwing: VotingRustBackendError.sessionClosed)
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true
+            }
+
+            #expect(recorder.events().filter { $0 == "runRound" } == ["runRound"])
+            #expect(sleeps.value.isEmpty)
+            #expect(store.state.roundCache[activeRoundId]?.runRetryCount == 0)
+        }
+
         // MARK: - P6 A run that completes after an account switch writes nothing
 
         /// The fence is on the writes, not only on the screen: a run whose report
