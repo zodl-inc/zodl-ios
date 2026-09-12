@@ -215,6 +215,16 @@ struct VotingCoordFlow {
         /// for after that is refused.
         var hasConfiguredProving = false
 
+        /// Whether the rounds that still owe helper-share work have been read
+        /// back for this initialize.
+        ///
+        /// The rounds list lands again on every refresh and on every turn of
+        /// the new-round poll, and reopening a round's session on each of those
+        /// would replace the session a tracking pass is already running on. So
+        /// the sweep happens once per initialize and the later triggers --
+        /// entering the flow, finishing a run -- carry it from there.
+        var hasResumedPendingShareRounds = false
+
         @Shared(.inMemory(.selectedWalletAccount))
         var selectedWalletAccount: WalletAccount?
 
@@ -301,10 +311,22 @@ struct VotingCoordFlow {
         case dismissPollClosedAlert
         case viewPollClosedResults
         case startNewRoundPolling
-        case loadShareDelegations(roundId: String)
-        case shareDelegationsLoaded(roundId: String, delegations: [VotingShareDelegation])
-        case shareDelegationsRefreshed(roundId: String, delegations: [VotingShareDelegation])
+        /// The rounds the sidecar says still owe helper-share work, read once
+        /// per initialize so a delivery interrupted by a kill or a crash
+        /// resumes without the voter opening the round again.
+        case pendingShareRoundsLoaded([VotingPendingShareRound])
+        /// Drive the round's unconfirmed helper shares towards confirmation.
+        /// One pass per send; the report it stops with decides whether another
+        /// is scheduled.
         case pollShareStatus(roundId: String)
+        /// One observation from a share-tracking pass.
+        case shareTrackingEvent(roundId: String, event: VotingShareTrackingEvent)
+        /// The report a share-tracking pass stopped with -- authoritative,
+        /// where the events are a narration the SDK may drop.
+        case shareTrackingFinished(roundId: String, report: VotingShareTrackingRunReport)
+        /// A tracking pass that could not run at all: the round's session went
+        /// away under it, or a run holds the session.
+        case shareTrackingFailed(roundId: String, error: VotingError)
         case retryFetchTallyResults(roundId: String)
         case viewMyVotesTapped(roundId: String)
         case proposalTapped(roundId: String, proposalId: UInt32, mode: ProposalDetail.Mode = .voting)
@@ -458,8 +480,29 @@ struct VotingCoordFlow {
     /// Cancellation id for the post-finalization rounds-list polling loop.
     let cancelNewRoundPollingId = UUID()
 
-    /// Cancellation id for DB-backed helper share confirmation polling.
-    let cancelShareTrackingId = UUID()
+    /// Cancellation id for one round's share-tracking pass.
+    ///
+    /// Per round rather than per flow: two rounds can be owed helper work at
+    /// once, and cancelling a tracking pass finishes the session it runs on --
+    /// so one id for all of them would take a second round's session down with
+    /// the first.
+    func cancelShareTrackingId(_ roundId: String) -> VotingShareTrackingCancelID {
+        VotingShareTrackingCancelID.pass(roundId)
+    }
+
+    /// Cancellation id for the backoff between two of a round's tracking
+    /// passes. Its own id, so stopping a scheduled pass never reaches the
+    /// session a pass in flight is driving.
+    func cancelShareTrackingReArmId(_ roundId: String) -> VotingShareTrackingCancelID {
+        VotingShareTrackingCancelID.reArm(roundId)
+    }
+
+    /// Cancellation id for the open that resumes one round's share tracking.
+    /// Per round, so a sweep that resumes two of them does not have the second
+    /// open cancel the first.
+    func cancelShareTrackingResumeId(_ roundId: String) -> VotingShareTrackingCancelID {
+        VotingShareTrackingCancelID.resume(roundId)
+    }
 
     /// Cancellation id for the subscription to the wallet's Tor preference,
     /// which lives exactly as long as there is a session whose route it could
@@ -480,6 +523,17 @@ struct VotingCoordFlow {
             }
             .ifLet(\.$skipBundlesAlert, action: \.skipBundlesAlert)
     }
+}
+
+/// What a share-tracking effect is cancelled by, for one round.
+enum VotingShareTrackingCancelID: Hashable {
+    /// One pass over the round's unconfirmed shares.
+    case pass(String)
+    /// The wait before the next pass.
+    case reArm(String)
+    /// The session open that puts a round with interrupted delivery back in a
+    /// position to be tracked.
+    case resume(String)
 }
 
 /// Data backing the Polls List "Insufficient Balance" sheet. Captured at

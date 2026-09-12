@@ -40,6 +40,10 @@ extension VotingCoordFlow {
                 if !state.path.isEmpty {
                     state.path.removeLast()
                 }
+                // Read before the cache that names the tracked rounds is
+                // emptied: a pass nothing cancels keeps a session of the
+                // previous source alive.
+                let stopShareTracking = cancelAllShareTracking(state)
                 state.allRounds = []
                 state.roundCache.removeAll()
                 state.voteRecords.removeAll()
@@ -59,7 +63,7 @@ extension VotingCoordFlow {
                     .cancel(id: cancelRunRetryId),
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
-                    .cancel(id: cancelShareTrackingId),
+                    stopShareTracking,
                     .cancel(id: cancelRouteObservationId),
                     fenceSessions,
                     .send(.initialize)
@@ -71,6 +75,14 @@ extension VotingCoordFlow {
                 // MARK: - Lifecycle
 
             case .onAppear:
+                // Entering the flow is one of the moments share delivery is
+                // picked back up: a helper that was unreachable when the voter
+                // left has had time to come back, and this is where the round
+                // asks again. (The other one the spec names -- the app coming
+                // back to the foreground -- has no action to hang off in this
+                // flow, so there is nothing here to hook it to yet.)
+                let resumeShareTracking = shareTrackingForOpenRounds(state)
+
                 // Re-entry from a nested screen pop = no-op. The user just
                 // navigated back to the polls list root; we already have
                 // rounds + service config loaded, so don't flip rootScreen
@@ -80,7 +92,7 @@ extension VotingCoordFlow {
                 // again on the root content, which would briefly show the
                 // loading screen before the polls list re-renders.
                 if state.serviceConfig != nil {
-                    return .none
+                    return resumeShareTracking
                 }
 
                 // First-time entry: show the intro before initializing the
@@ -89,10 +101,10 @@ extension VotingCoordFlow {
                 // the flag set.
                 guard state.hasSeenHowToVoteForCurrentWallet else {
                     state.rootScreen = .howToVote
-                    return .none
+                    return resumeShareTracking
                 }
                 state.rootScreen = .loading
-                return .send(.initialize)
+                return .merge(resumeShareTracking, .send(.initialize))
 
             case .warmProvingCaches:
                 // Sent from `.serviceConfigLoaded`, once the proving policy has
@@ -125,6 +137,14 @@ extension VotingCoordFlow {
                 // Nothing asked the crate for a policy, so the next config load
                 // must be allowed to.
                 state.hasConfiguredProving = false
+                // The config was recorded before the effect ran, and the effect
+                // then stopped short of opening the database -- refused by a
+                // teardown, or failed before the ask. A config held with the
+                // sidecar closed is the one state `.onAppear` reads as "already
+                // initialized", so it goes too and the next appearance starts
+                // the load over.
+                state.serviceConfig = nil
+                state.hasResumedPendingShareRounds = false
                 return .none
 
             case let .roundEntryAbandoned(roundId):
@@ -140,6 +160,11 @@ extension VotingCoordFlow {
                 // Sweep legacy plaintext keys from a prior internal-build
                 // persistence shape. Idempotent and cheap; safe to keep.
                 Voting.sweepLegacyUserDefaultsVotingKeys()
+
+                // A fresh initialize is a fresh sidecar and a fresh rounds
+                // list, so the rounds that still owe helper work are read again
+                // once the two have landed.
+                state.hasResumedPendingShareRounds = false
 
                 // Defensively reset the process-wide encrypted metadata cache
                 // before loading the current account, so a nil-account window
@@ -204,14 +229,18 @@ extension VotingCoordFlow {
                 // over a load already running) cannot both ask.
                 let shouldConfigureProving = !state.hasConfiguredProving
                 state.hasConfiguredProving = true
+                // Resolved here rather than from `FileManager` inside the
+                // effect: the sidecar lives beside the wallet's own databases,
+                // and going through the same dependency is what lets a test
+                // give one suite a sidecar of its own instead of racing the
+                // rest of the suite for the real `Documents` copy.
+                let dbPath = databaseFiles.documentsDirectory()
+                    .appendingPathComponent(Self.votingSidecarFileName).path
                 return .run { [votingAPI, votingCrypto, networkId, shouldConfigureProving, teardownGeneration] send in
                     // 1. Configure API client URLs from the loaded config.
                     await votingAPI.configureURLs(config)
 
                     // 2. Open the voting DB and scope it to this wallet.
-                    let dbPath = FileManager.default
-                        .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent("voting.sqlite3").path
                     // Asked again here rather than only at the top, because the
                     // config fetch above suspends for as long as the network takes
                     // and a reset can begin in that time. Last possible moment
@@ -333,11 +362,28 @@ extension VotingCoordFlow {
                         await send(.zodlEndorsementsFailed)
                     }
                 }
+                // The first rounds list of this initialize is the earliest point
+                // a pending round can be matched against a round the
+                // authenticator vouched for, and the sidecar it is read from
+                // was opened by the same effect that fetched the list.
+                let resumePendingShares: Effect<Action>
+                if state.hasResumedPendingShareRounds {
+                    resumePendingShares = .none
+                } else {
+                    state.hasResumedPendingShareRounds = true
+                    resumePendingShares = .run { [votingCrypto] send in
+                        await send(.pendingShareRoundsLoaded(try await votingCrypto.pendingShareRounds()))
+                    } catch: { error, _ in
+                        LoggerProxy.warn("Reading the rounds that still owe helper shares failed: \(error)")
+                    }
+                }
+
                 guard let finalizedRoundFromPath else {
-                    return endorsements
+                    return .merge(endorsements, resumePendingShares)
                 }
                 return .merge(
                     endorsements,
+                    resumePendingShares,
                     .send(.fetchTallyResults(roundId: finalizedRoundFromPath)),
                     .send(.startNewRoundPolling)
                 )
@@ -387,6 +433,7 @@ extension VotingCoordFlow {
                 // MARK: - User actions
 
             case .dismissFlow:
+                let stopShareTracking = cancelAllShareTracking(state)
                 state.roundCache.removeAll()
                 state.path.removeAll()
                 state.pendingPipelineRoundId = nil
@@ -398,6 +445,7 @@ extension VotingCoordFlow {
                 state.skippedQuestionsSheet = nil
                 state.openRoundSessionIds.removeAll()
                 state.sessionRouteAccess = nil
+                state.hasResumedPendingShareRounds = false
                 return .merge(
                     .cancel(id: cancelPipelineId),
                     .cancel(id: cancelSubmissionId),
@@ -406,7 +454,7 @@ extension VotingCoordFlow {
                     .cancel(id: cancelRunRetryId),
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
-                    .cancel(id: cancelShareTrackingId),
+                    stopShareTracking,
                     // Nothing is left to invalidate once the sessions are gone.
                     .cancel(id: cancelRouteObservationId),
                     .cancel(id: cancelTeardownObservationId),
@@ -451,7 +499,6 @@ extension VotingCoordFlow {
                 guard let item = state.allRounds.first(where: { $0.id == roundId }) else {
                     return .none
                 }
-                let cancelShareTracking = cancelShareTrackingIfSwitchingRound(state, to: roundId)
                 switch item.session.status {
                 case .active:
                     hydratePersistedRoundChoices(&state, roundId: roundId)
@@ -470,7 +517,6 @@ extension VotingCoordFlow {
                         state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                         return .merge(
                             startHealthSweep,
-                            cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
                             loadSubmittedVotesFromPlan(state, roundId: roundId)
@@ -485,7 +531,6 @@ extension VotingCoordFlow {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
                             startHealthSweep,
-                            cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
                             loadSubmittedVotesFromPlan(state, roundId: roundId)
@@ -500,7 +545,6 @@ extension VotingCoordFlow {
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
                         startHealthSweep,
-                        cancelShareTracking,
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
                         .send(.startActiveRoundPipeline(roundId: roundId)),
@@ -508,7 +552,7 @@ extension VotingCoordFlow {
                     )
                 case .tallying:
                     state.path.append(.tallying(Tallying.State(roundId: roundId)))
-                    return cancelShareTracking
+                    return .none
                 case .finalized:
                     // Hydrate the user's persisted per-proposal choices so
                     // ResultsView can render the "Voted: <option>" footer
@@ -519,7 +563,6 @@ extension VotingCoordFlow {
                     hydratePersistedRoundChoices(&state, roundId: roundId)
                     state.path.append(.results(Results.State(roundId: roundId)))
                     return .merge(
-                        cancelShareTracking,
                         .cancel(id: cancelStatusPollingId),
                         .send(.fetchTallyResults(roundId: roundId)),
                         .send(.startNewRoundPolling),
@@ -533,7 +576,6 @@ extension VotingCoordFlow {
                 // Explicit user intent to view submitted votes in read-only
                 // form. Always routes to reviewVotes regardless of round
                 // status (active or finalized — both have a vote record).
-                let cancelShareTracking = cancelShareTrackingIfSwitchingRound(state, to: roundId)
                 hydratePersistedRoundChoices(&state, roundId: roundId)
                 state.path.append(.reviewVotes(ReviewVotes.State(roundId: roundId)))
                 let statusPolling: Effect<Action>
@@ -556,7 +598,6 @@ extension VotingCoordFlow {
                     startHealthSweep = .none
                 }
                 return .merge(
-                    cancelShareTracking,
                     statusPolling,
                     startHealthSweep,
                     loadSubmittedVotesFromPlan(state, roundId: roundId)
@@ -956,12 +997,10 @@ extension VotingCoordFlow {
                 let filteredDrafts = session.draftVotes
                     .filter { mergedVotes[$0.key] == nil }
                 session.draftVotes = filteredDrafts
-                let shouldStartShareTracking = !mergedVotes.isEmpty
-                    && session.shareTrackingStatus == .idle
-                    && !session.isSubmittingVote
-                if shouldStartShareTracking {
-                    session.shareTrackingStatus = .loading
-                }
+                // Cast votes no longer imply helper work: the session's plan is
+                // what says whether any share is still unconfirmed, and the
+                // triggers that act on it are entering the flow, initializing,
+                // and a run that ended asking for tracking.
                 do {
                     try Voting.persistRoundChoices(
                         drafts: filteredDrafts,
@@ -974,9 +1013,6 @@ extension VotingCoordFlow {
                     LoggerProxy.error("Failed to persist submitted voting choices: \(error)")
                     state.submissionAlert = .votingMetadataPersistenceFailed(error)
                     state.roundCache[roundId] = session
-                }
-                if shouldStartShareTracking {
-                    return .send(.loadShareDelegations(roundId: roundId))
                 }
                 return .none
 
@@ -1059,10 +1095,13 @@ extension VotingCoordFlow {
                     } else if isCurrentRound {
                         replacePathWithStatusScreen(&state, roundId: roundId, status: status)
                     }
+                    // The vote is over, so there is nothing left for a helper
+                    // to confirm: the round's tracking stops here rather than
+                    // waiting to be told `voteEndReached`.
                     return isCurrentRound
                         ? .merge(
                             .cancel(id: cancelStatusPollingId),
-                            .cancel(id: cancelShareTrackingId)
+                            cancelShareTracking(for: roundId)
                         )
                         : .none
 
@@ -1076,7 +1115,7 @@ extension VotingCoordFlow {
                     return isCurrentRound
                         ? .merge(
                             .cancel(id: cancelStatusPollingId),
-                            .cancel(id: cancelShareTrackingId),
+                            cancelShareTracking(for: roundId),
                             .send(.fetchTallyResults(roundId: roundId)),
                             .send(.startNewRoundPolling)
                         )
@@ -1127,37 +1166,20 @@ extension VotingCoordFlow {
                 }
                 .cancellable(id: cancelNewRoundPollingId, cancelInFlight: true)
 
-            case let .loadShareDelegations(roundId):
-                mutateSession(&state, roundId: roundId) {
-                    $0.shareTrackingStatus = .loading
-                }
-                return .run { send in
-                    let delegations = try await VotingLegacy.getShareDelegations(roundId)
-                    await send(.shareDelegationsLoaded(
-                        roundId: roundId,
-                        delegations: delegations
-                    ))
-                } catch: { error, _ in
-                    LoggerProxy.warn("Failed to load share delegations: \(error)")
-                }
-
-            case let .shareDelegationsLoaded(roundId, delegations):
-                updateShareTrackingState(&state, roundId: roundId, delegations: delegations)
-                guard state.roundCache[roundId]?.shareTrackingStatus == .tracking else {
-                    return .none
-                }
-                return .run { send in
-                    try await Task.sleep(for: .seconds(1))
-                    await send(.pollShareStatus(roundId: roundId))
-                }
-                .cancellable(id: cancelShareTrackingId, cancelInFlight: true)
-
-            case let .shareDelegationsRefreshed(roundId, delegations):
-                updateShareTrackingState(&state, roundId: roundId, delegations: delegations)
-                return .none
+            case let .pendingShareRoundsLoaded(rounds):
+                return reducePendingShareRoundsLoaded(&state, rounds: rounds)
 
             case let .pollShareStatus(roundId):
                 return reducePollShareStatus(&state, roundId: roundId)
+
+            case let .shareTrackingEvent(roundId, event):
+                return reduceShareTrackingEvent(&state, roundId: roundId, event: event)
+
+            case let .shareTrackingFinished(roundId, report):
+                return reduceShareTrackingFinished(&state, roundId: roundId, report: report)
+
+            case let .shareTrackingFailed(roundId, error):
+                return reduceShareTrackingFailed(&state, roundId: roundId, error: error)
 
             case .dismissIneligibleSheet:
                 state.ineligibleSheet = nil
@@ -1306,7 +1328,9 @@ extension VotingCoordFlow {
         state.isKeystoneUser = nextIsKeystoneUser
         // Before the flow forgets which rounds it had open: the fence needs the
         // list of sessions, and `resetAccountScopedVotingState` clears the cache
-        // that would otherwise be the only record of them.
+        // that would otherwise be the only record of them. The tracking passes
+        // are read off the same list, for the same reason.
+        let stopShareTracking = cancelAllShareTracking(state)
         let fenceSessions = fenceOpenRoundSessions(&state)
         resetAccountScopedVotingState(&state)
         votingMetadata.reset()
@@ -1319,7 +1343,7 @@ extension VotingCoordFlow {
             .cancel(id: cancelRunRetryId),
             .cancel(id: cancelStatusPollingId),
             .cancel(id: cancelNewRoundPollingId),
-            .cancel(id: cancelShareTrackingId),
+            stopShareTracking,
             .cancel(id: cancelRouteObservationId),
             // Not cancellable, and deliberately: this is the work that stops the
             // previous wallet's rounds, so cancelling it along with the effects
@@ -1382,6 +1406,7 @@ extension VotingCoordFlow {
         // the spinner it put on the polls list belongs to it.
         state.pendingPipelineRoundId = nil
         state.checkingEligibilityRoundId = nil
+        let stopShareTracking = cancelAllShareTracking(state)
         let fenceSessions = fenceOpenRoundSessions(&state)
         return .merge(
             .cancel(id: cancelPipelineId),
@@ -1389,7 +1414,7 @@ extension VotingCoordFlow {
             .cancel(id: cancelDelegationProofId),
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelRunRetryId),
-            .cancel(id: cancelShareTrackingId),
+            stopShareTracking,
             fenceSessions
         )
     }
@@ -1410,6 +1435,7 @@ extension VotingCoordFlow {
         LoggerProxy.info("Voting: a wallet teardown began; closing every open round session")
         state.pendingPipelineRoundId = nil
         state.checkingEligibilityRoundId = nil
+        let stopShareTracking = cancelAllShareTracking(state)
         let fenceSessions = fenceOpenRoundSessions(&state)
         return .merge(
             .cancel(id: cancelPipelineId),
@@ -1419,7 +1445,7 @@ extension VotingCoordFlow {
             .cancel(id: cancelRunRetryId),
             .cancel(id: cancelStatusPollingId),
             .cancel(id: cancelNewRoundPollingId),
-            .cancel(id: cancelShareTrackingId),
+            stopShareTracking,
             fenceSessions
         )
     }
@@ -1512,15 +1538,6 @@ extension VotingCoordFlow {
         }
     }
 
-    private func cancelShareTrackingIfSwitchingRound(
-        _ state: State,
-        to roundId: String
-    ) -> Effect<Action> {
-        topPathRoundId(state).map { $0 != roundId } == true
-            ? .cancel(id: cancelShareTrackingId)
-            : .none
-    }
-
     private func activeVotingFlowRoundId(_ state: State) -> String? {
         guard let top = state.path.last else { return nil }
         switch top {
@@ -1591,6 +1608,9 @@ extension VotingCoordFlow {
     /// The crate takes at most this many chain endpoints and vote-tree nodes.
     static let maxSessionChainEndpoints = 8
 
+    /// The voting sidecar database, beside the wallet's own databases.
+    static let votingSidecarFileName = "voting.sqlite3"
+
     /// `.startActiveRoundPipeline` handler. Opens the round's session and asks
     /// it what the round owes.
     ///
@@ -1651,6 +1671,11 @@ extension VotingCoordFlow {
         roundSession.sessionEpoch = epoch
         roundSession.didAttemptBundleSetup = false
         roundSession.runRetryCount = 0
+        // A fresh session is a fresh start for its shares too: the pass the
+        // previous session was running ends with it, and its backoff ladder
+        // belongs to a session that no longer exists.
+        roundSession.isTrackingShares = false
+        roundSession.shareTrackingAttempt = 0
         roundSession.lastRunFailureSummary = nil
         roundSession.progress = VotingRoundProgressSnapshot()
         roundSession.precomputeStatus.removeAll()
@@ -1772,8 +1797,17 @@ extension VotingCoordFlow {
         .cancellable(id: cancelPipelineId, cancelInFlight: true)
 
         // A previous entry's warm-up belongs to the session this open replaces,
-        // and it holds the crate's proof lock for as long as it runs.
-        return .merge(.cancel(id: cancelDelegationPrecomputeId), observeRoute, open)
+        // and it holds the crate's proof lock for as long as it runs. The
+        // round's scheduled tracking pass goes the same way -- it would wake up
+        // against a session that has been replaced -- but the pass that may be
+        // in flight is left to end on its own, because cancelling one finishes
+        // the session under it and this open closes that session anyway.
+        return .merge(
+            .cancel(id: cancelDelegationPrecomputeId),
+            .cancel(id: cancelShareTrackingReArmId(roundId)),
+            observeRoute,
+            open
+        )
     }
 
     /// What a refused open tells the voter.
@@ -2546,6 +2580,11 @@ extension VotingCoordFlow {
             // drive.
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelRunRetryId),
+            // A run and a tracking pass are exclusive on one session, so the
+            // pass this round has scheduled is stood down rather than left to
+            // wake up into the run. The timer holds nothing of the session, so
+            // stopping it costs the round nothing.
+            .cancel(id: cancelShareTrackingReArmId(roundId)),
             roundRunEffect(
                 roundId: roundId,
                 epoch: epoch,
@@ -2665,133 +2704,314 @@ extension VotingCoordFlow {
 
     // MARK: - Share tracking
 
+    /// The first backoff between two tracking passes, in seconds, and the
+    /// ceiling it doubles towards.
+    static let shareTrackingBaseBackoffSeconds = 15
+    static let shareTrackingMaxBackoffSeconds = 300
+
+    /// How long to wait before the `attempt`-th re-arm: the base delay doubled
+    /// once per attempt so far, and never more than the ceiling.
+    ///
+    /// Bounded on both ends. The shift is clamped because a round that keeps
+    /// failing for a day would otherwise overflow it, and the answer past the
+    /// ceiling is the ceiling anyway.
+    static func shareTrackingBackoffSeconds(attempt: Int) -> Int {
+        let exponent = min(max(attempt, 0), 16)
+        return min(shareTrackingBaseBackoffSeconds << exponent, shareTrackingMaxBackoffSeconds)
+    }
+
+    /// `.pollShareStatus` handler. Runs one pass of the session's share-tracking
+    /// driver over the round's unconfirmed helper shares.
+    ///
+    /// Three things stop a pass before it starts, and each of them is a
+    /// contention the SDK would otherwise answer with `sessionBusy`: a round
+    /// with no open session has nothing to drive, a pass already in flight is
+    /// the one that will report, and a run holds the session for itself.
     func reducePollShareStatus(_ state: inout State, roundId: String) -> Effect<Action> {
-        guard let session = state.roundCache[roundId],
-              session.shareTrackingStatus == .tracking,
-              let activeSession = activeSession(in: state, roundId: roundId)
-        else {
+        guard state.openRoundSessionIds.contains(roundId) else { return .none }
+        guard let session = state.roundCache[roundId] else { return .none }
+        guard !session.isTrackingShares else { return .none }
+        guard !isBatchSubmitting(session), !session.isSubmittingVote else { return .none }
+
+        state.roundCache[roundId]?.isTrackingShares = true
+        return .run { [votingCrypto] send in
+            for try await element in votingCrypto.trackShares(roundId, VotingShareTrackingPolicy()) {
+                switch element {
+                case let .event(event):
+                    await send(.shareTrackingEvent(roundId: roundId, event: event))
+                case let .finished(report):
+                    await send(.shareTrackingFinished(roundId: roundId, report: report))
+                }
+            }
+        } catch: { error, send in
+            await send(.shareTrackingFailed(roundId: roundId, error: Self.votingError(from: error)))
+        }
+        .cancellable(id: cancelShareTrackingId(roundId), cancelInFlight: true)
+    }
+
+    /// `.shareTrackingEvent` handler. The driver narrating its own passes.
+    func reduceShareTrackingEvent(
+        _ state: inout State,
+        roundId: String,
+        event: VotingShareTrackingEvent
+    ) -> Effect<Action> {
+        switch event.kind {
+        case .passStarted, .passFinished:
+            guard let pass = event.pass else { return .none }
+            mutateSession(&state, roundId: roundId) { $0.shareTrackingStatus = .tracking(pass: pass) }
+        case .passFailed:
+            LoggerProxy.warn("Share tracking pass for \(roundId) failed: \(event.message ?? "")")
+        case .awaitingNextPass, .unknown:
+            break
+        }
+        return .none
+    }
+
+    /// `.shareTrackingFinished` handler. The report a pass stopped with, which
+    /// is the authoritative account of it.
+    ///
+    /// A pass that stopped short is re-armed rather than abandoned, on a
+    /// doubling backoff that never schedules a wake-up past the vote's end --
+    /// after which no helper can confirm anything and the wait would be for
+    /// nothing.
+    func reduceShareTrackingFinished(
+        _ state: inout State,
+        roundId: String,
+        report: VotingShareTrackingRunReport
+    ) -> Effect<Action> {
+        state.roundCache[roundId]?.isTrackingShares = false
+
+        switch report.quiescence.kind {
+        case .allConfirmed, .nothingToTrack:
+            mutateSession(&state, roundId: roundId) { roundSession in
+                roundSession.shareTrackingStatus = .confirmed
+                roundSession.shareTrackingAttempt = 0
+            }
+            return .none
+
+        case .voteEndReached:
+            mutateSession(&state, roundId: roundId) { $0.shareTrackingStatus = .ended }
+            return .none
+
+        case .cancelled, .alreadyDriving:
+            // Nothing this round did: the pass was stopped, or another one
+            // holds the round and is the one that will report. Saying anything
+            // about the shares from here would be inventing it.
+            return .none
+
+        case .unknown:
+            // A quiescence this build cannot name. Neither confirmed nor a
+            // failure to back off from, so it is logged and left alone rather
+            // than guessed at in either direction.
+            LoggerProxy.warn("Share tracking for \(roundId) stopped with a quiescence this build does not know")
+            return .none
+
+        case .failing, .passBudgetExhausted:
+            return reArmShareTracking(&state, roundId: roundId, failures: report.failures)
+        }
+    }
+
+    /// `.shareTrackingFailed` handler. The tracking call itself refused.
+    ///
+    /// Not re-armed: a throw here is the session going away under the pass or a
+    /// run holding it, not a helper the driver could not reach -- the driver
+    /// reports those through its own quiescence. The next trigger picks the
+    /// round back up, on whatever session it has by then.
+    func reduceShareTrackingFailed(
+        _ state: inout State,
+        roundId: String,
+        error: VotingError
+    ) -> Effect<Action> {
+        LoggerProxy.warn("Share tracking for \(roundId) could not run: \(error.message)")
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.isTrackingShares = false
+            if roundSession.shareTrackingStatus != .confirmed, roundSession.shareTrackingStatus != .ended {
+                roundSession.shareTrackingStatus = .retrying
+            }
+        }
+        return .none
+    }
+
+    /// Schedules the round's next tracking pass, unless the vote ends first.
+    private func reArmShareTracking(
+        _ state: inout State,
+        roundId: String,
+        failures: [String]
+    ) -> Effect<Action> {
+        guard let session = state.roundCache[roundId] else { return .none }
+        let attempt = session.shareTrackingAttempt
+        let delaySeconds = Self.shareTrackingBackoffSeconds(attempt: attempt)
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.shareTrackingStatus = .retrying
+            roundSession.shareTrackingAttempt = attempt + 1
+        }
+        if let first = failures.first {
+            LoggerProxy.warn("Share tracking for \(roundId) stopped short: \(first)")
+        }
+
+        guard let voteEndTime = activeSession(in: state, roundId: roundId)?.voteEndTime else { return .none }
+        guard Date().addingTimeInterval(TimeInterval(delaySeconds)) < voteEndTime else {
+            LoggerProxy.info("Share tracking for \(roundId) is not re-armed: the vote ends first")
             return .none
         }
 
-        let votes = session.votes
-        let proposals = activeSession.proposals
-        let singleShare = activeSession.isLastMoment
-        let voteEndTime = UInt64(activeSession.voteEndTime.timeIntervalSince1970)
-
-        return .run { [votingAPI] send in
-            let freshDelegations = (try? await VotingLegacy.getShareDelegations(roundId)) ?? []
-            let unconfirmed = freshDelegations.filter { !$0.confirmed }
-            let now = UInt64(Date().timeIntervalSince1970)
-
-            let readyShares = unconfirmed.filter {
-                Self.isShareReadyForStatusCheck($0, now: now)
-            }
-            let pollResult = await Self.pollShareStatusesForRecovery(
-                readyShares: readyShares,
-                roundId: roundId,
-                now: now,
-                voteEndTime: voteEndTime,
-                fetchShareStatus: votingAPI.fetchShareStatus
-            )
-
-            for key in pollResult.confirmedShares {
-                do {
-                    try await VotingLegacy.markShareConfirmed(
-                        roundId,
-                        key.bundleIndex,
-                        key.proposalId,
-                        key.shareIndex
-                    )
-                } catch {
-                    LoggerProxy.warn("Failed to mark share confirmed: \(error)")
-                }
-            }
-
-            let grouped = Dictionary(grouping: pollResult.resubmissionShares) {
-                "\($0.bundleIndex):\($0.proposalId)"
-            }
-            for (_, shares) in grouped {
-                guard let first = shares.first else { continue }
-                let bundleIndex = first.bundleIndex
-                let proposalId = first.proposalId
-                guard let stored = try? await VotingLegacy.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
-                    continue
-                }
-
-                do {
-                    for share in shares {
-                        let wireJson = try await VotingLegacy.recoverWireJson(
-                            stored.bundleJson, proposalId, share.shareIndex, stored.vcTreePosition, 0
-                        )
-                        let payload = SharePayload(wireJson: wireJson, shareIndex: share.shareIndex)
-                        let acceptedServers = try await votingAPI.resubmitShare(
-                            payload,
-                            share.sentToURLs
-                        )
-                        let newServers = acceptedServers.filter {
-                            !share.sentToURLs.contains($0)
-                        }
-                        if !newServers.isEmpty {
-                            try await VotingLegacy.addSentServers(
-                                roundId,
-                                bundleIndex,
-                                proposalId,
-                                share.shareIndex,
-                                newServers
-                            )
-                        }
-                    }
-                } catch {
-                    LoggerProxy.warn("Share resubmission failed: \(error)")
-                }
-            }
-
-            let updatedDelegations = (try? await VotingLegacy.getShareDelegations(roundId))
-                ?? freshDelegations
-            await send(.shareDelegationsRefreshed(
-                roundId: roundId,
-                delegations: updatedDelegations
-            ))
-
-            let refreshedNow = UInt64(Date().timeIntervalSince1970)
-            let stillUnconfirmed = updatedDelegations.filter { !$0.confirmed }
-            guard !stillUnconfirmed.isEmpty else { return }
-
-            let futureCheckTimes = stillUnconfirmed.compactMap { share -> UInt64? in
-                let readyAt = Self.shareRecoveryBaseTime(share) + Self.shareCheckGrace
-                return readyAt > refreshedNow ? readyAt : nil
-            }
-            let sleepSeconds: UInt64
-            if let soonest = futureCheckTimes.min() {
-                sleepSeconds = min(soonest - refreshedNow, 30)
-            } else {
-                sleepSeconds = 15
-            }
-            try await Task.sleep(for: .seconds(max(sleepSeconds, 3)))
+        return .run { [continuousClock] send in
+            try await continuousClock.sleep(for: .seconds(delaySeconds))
             await send(.pollShareStatus(roundId: roundId))
-        } catch: { error, _ in
-            LoggerProxy.warn("Share tracking poll failed: \(error)")
         }
-        .cancellable(id: cancelShareTrackingId, cancelInFlight: true)
+        .cancellable(id: cancelShareTrackingReArmId(roundId), cancelInFlight: true)
     }
 
-    private func updateShareTrackingState(
+    /// `.pendingShareRoundsLoaded` handler. The sidecar's own list of rounds
+    /// that still owe helper work, turned into sessions and tracking passes.
+    ///
+    /// Three filters, and each one drops a round this flow has no business
+    /// opening: another wallet's, one the authenticated config no longer
+    /// carries, and one whose vote has already ended. A round the flow already
+    /// holds a session for is not reopened -- that would replace the session a
+    /// pass may be running on -- it is simply asked to track.
+    func reducePendingShareRoundsLoaded(
         _ state: inout State,
-        roundId: String,
-        delegations: [VotingShareDelegation]
-    ) {
-        mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.shareDelegations = delegations
-            let allConfirmed = !delegations.isEmpty && delegations.allSatisfy(\.confirmed)
-            if delegations.isEmpty {
-                roundSession.shareTrackingStatus = .idle
-            } else if allConfirmed {
-                roundSession.shareTrackingStatus = .fullyConfirmed
-            } else {
-                roundSession.shareTrackingStatus = .tracking
+        rounds: [VotingPendingShareRound]
+    ) -> Effect<Action> {
+        guard !rounds.isEmpty else { return .none }
+        guard let serviceConfig = state.serviceConfig,
+              let account = state.selectedWalletAccount
+        else { return .none }
+        guard let transport = VotingSessionTransport(serviceConfig: serviceConfig) else { return .none }
+        // A wallet being reset or healed has no round to resume, and the
+        // sessions this would open hold the sidecar the reset is about to
+        // delete.
+        guard let teardownGeneration = votingCrypto.teardownGenerationIfIdle() else {
+            LoggerProxy.info("Voting: a wallet teardown is under way; no pending share round is resumed")
+            return .none
+        }
+
+        let walletId = state.walletId
+        let now = Date()
+        let network = zcashSDKEnvironment.network()
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
+        let accountId = account.id
+        let route = state.swapAPIAccess == .protected
+            ? VotingTransportRoute.tor
+            : VotingTransportRoute.direct
+        var effects: [Effect<Action>] = []
+        var didOpen = false
+
+        for pending in rounds where pending.walletId == walletId {
+            let roundId = pending.roundId
+            guard serviceConfig.rounds[roundId] != nil,
+                  let item = state.allRounds.first(where: { $0.id == roundId }),
+                  item.session.voteEndTime > now
+            else { continue }
+            guard !state.openRoundSessionIds.contains(roundId) else {
+                effects.append(.send(.pollShareStatus(roundId: roundId)))
+                continue
+            }
+
+            let votingSession = item.session
+            let roster = votingSession.proposals.map { proposal in
+                VotingProposalRosterEntry(proposalId: proposal.id, numOptions: UInt32(proposal.options.count))
+            }
+            state.votingSessionEpoch += 1
+            let epoch = state.votingSessionEpoch
+            var roundSession = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
+            roundSession.sessionEpoch = epoch
+            state.roundCache[roundId] = roundSession
+            state.openRoundSessionIds.append(roundId)
+            state.sessionRouteAccess = state.swapAPIAccess
+            didOpen = true
+
+            effects.append(.run { [sdkSynchronizer, votingCrypto, teardownGeneration] send in
+                // No hotkey: confirming a share reads the round's own rows and
+                // signs nothing, so the binding the voting path needs is not
+                // one this open has to build.
+                let inputs = Self.sessionInputs(
+                    votingSession: votingSession,
+                    transport: transport,
+                    accountUUID: accountId.votingUUIDString,
+                    walletDbPath: walletDbPath,
+                    anchorTreeState: try await sdkSynchronizer.getTreeState(votingSession.snapshotHeight)
+                )
+                // Asked again after the tree-state read has suspended, the same
+                // way the round-entry open asks: a session opened now would hold
+                // the sidecar a reset is deleting.
+                guard votingCrypto.teardownAllowsOpen(teardownGeneration) else {
+                    LoggerProxy.info("Voting: a wallet teardown began while \(roundId) was resuming; no session is opened")
+                    await send(.roundEntryAbandoned(roundId: roundId))
+                    return
+                }
+                try await votingCrypto.openRoundSession(
+                    inputs,
+                    VotingSessionBinding(roster: roster),
+                    route,
+                    epoch
+                )
+                await send(.pollShareStatus(roundId: roundId))
+            } catch: { error, _ in
+                LoggerProxy.warn("Resuming share tracking for \(roundId) failed to open a session: \(error)")
+            }
+            .cancellable(id: cancelShareTrackingResumeId(roundId), cancelInFlight: true))
+        }
+
+        guard !effects.isEmpty else { return .none }
+        guard didOpen else { return .merge(effects) }
+        // The sessions this just opened are bound to the route the wallet asks
+        // for now, and a wallet that changes its mind has to reach them -- the
+        // same subscription a round entry starts.
+        let observeRoute: Effect<Action> = .publisher { [sharedAccess = state.$swapAPIAccess] in
+            sharedAccess.publisher
+                .map { VotingCoordFlow.Action.swapAPIAccessChanged($0) }
+        }
+        .cancellable(id: cancelRouteObservationId, cancelInFlight: true)
+        return .merge(effects + [observeRoute])
+    }
+
+    /// Every open round whose plan still says a share is unconfirmed, asked to
+    /// track. What entering the flow acts on.
+    ///
+    /// A round a pass has already settled is left alone: the plan is only as
+    /// new as the last thing that refreshed it, and the driver's own answer is
+    /// newer than that.
+    private func shareTrackingForOpenRounds(_ state: State) -> Effect<Action> {
+        let roundIds = state.openRoundSessionIds.filter { roundId in
+            guard let session = state.roundCache[roundId] else { return false }
+            guard session.roundPlan?.hasUnconfirmedShares == true else { return false }
+            switch session.shareTrackingStatus {
+            case .confirmed, .ended:
+                return false
+            case .idle, .tracking, .retrying:
+                return true
             }
         }
+        guard !roundIds.isEmpty else { return .none }
+        return .merge(roundIds.map { Effect.send(.pollShareStatus(roundId: $0)) })
     }
+
+    /// Stops one round's tracking: the pass in flight and the one it has
+    /// scheduled.
+    ///
+    /// Cancelling a pass finishes the session it runs on, permanently, so this
+    /// belongs only where the session is going anyway.
+    private func cancelShareTracking(for roundId: String) -> Effect<Action> {
+        .merge(
+            .cancel(id: cancelShareTrackingId(roundId)),
+            .cancel(id: cancelShareTrackingReArmId(roundId)),
+            .cancel(id: cancelShareTrackingResumeId(roundId))
+        )
+    }
+
+    /// Stops tracking for every round this flow could still be driving one for.
+    ///
+    /// Read before the caller empties the cache or the open-session list: those
+    /// two are the only record of which rounds have a pass to stop.
+    private func cancelAllShareTracking(_ state: State) -> Effect<Action> {
+        let roundIds = Set(state.roundCache.keys).union(state.openRoundSessionIds)
+        guard !roundIds.isEmpty else { return .none }
+        return .merge(roundIds.map { cancelShareTracking(for: $0) })
+    }
+
+    // MARK: - Share delegation recovery (legacy, retired with the fan-out)
 
     static let shareCheckGrace: UInt64 = 10
 
@@ -2947,12 +3167,9 @@ extension VotingCoordFlow {
         if let record = session.voteRecord {
             state.voteRecords[roundId] = record
         }
-        if session.shareTrackingStatus == .idle {
-            mutateSession(&state, roundId: roundId) {
-                $0.shareTrackingStatus = .loading
-            }
-            return .send(.loadShareDelegations(roundId: roundId))
-        }
+        // Helper-share tracking is not started from here: a completed ballot
+        // does not by itself mean a share is outstanding. The run's own
+        // `.startShareTracking` decision is what says so, and it asks directly.
         return .none
     }
 

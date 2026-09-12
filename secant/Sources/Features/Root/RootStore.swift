@@ -935,6 +935,12 @@ extension Root {
         @Dependency(\.votingCrypto)
         var votingCrypto
 
+        // Resolved through the same dependency the voting flow opens the
+        // sidecar from, so a test can point one suite at a copy of its own
+        // instead of racing the rest of them for the real `Documents` file.
+        @Dependency(\.databaseFiles)
+        var databaseFiles
+
         votingCrypto.beginWalletTeardown()
         defer { votingCrypto.endWalletTeardown() }
         #endif
@@ -961,12 +967,9 @@ extension Root {
         // history, vote records, and stored TX hashes from the
         // previous wallet don't leak across the reset boundary. The
         // file is recreated empty on the next voting flow entry.
-        if let documents = FileManager.default
-            .urls(for: .documentDirectory, in: .userDomainMask)
-            .first {
-            let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
-            try? FileManager.default.removeItem(at: votingDbURL)
-        }
+        let votingDbURL = databaseFiles.documentsDirectory()
+            .appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
+        try? FileManager.default.removeItem(at: votingDbURL)
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which
         // resetAccount() below removes. This sweep catches any stale

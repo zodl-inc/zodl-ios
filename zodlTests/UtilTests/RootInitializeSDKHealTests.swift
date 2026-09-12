@@ -736,10 +736,15 @@ extension Root.State: @retroactive Equatable {
     @Test func resetClosesVotingBeforeDeletingTheSidecar() async throws {
         let calls = LockIsolated<[String]>([])
         let removedKeys = LockIsolated<[String]>([])
-        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
-        let sidecar = documents.appendingPathComponent("voting.sqlite3")
+        // A `Documents` of this test's own: the sidecar has one name, the suites run
+        // in parallel, and two tests each creating and deleting the real file would
+        // be deleting each other's.
+        let documents = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voting-sidecar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: documents) }
+        let sidecar = documents.appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
         try Data([0x01]).write(to: sidecar)
-        defer { try? FileManager.default.removeItem(at: sidecar) }
 
         let store = TestStore(
             initialState: Root.State(
@@ -755,6 +760,7 @@ extension Root.State: @retroactive Equatable {
         } withDependencies: {
             $0.mainQueue = .immediate
             $0.databaseFiles = .noOp
+            $0.databaseFiles.documentsDirectory = { documents }
             $0.walletStorage = .noOp
             $0.readTransactionsStorage = .noOp
             $0.flexaHandler = .noOp

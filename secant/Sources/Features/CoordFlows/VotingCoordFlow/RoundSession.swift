@@ -150,11 +150,21 @@ struct RoundSession: Equatable {
     /// screen uses this to render "Voted MMM d - Voting Power X.XXX ZEC".
     var voteRecord: Voting.VoteRecord?
 
-    /// DB-backed helper-server share confirmation tracking. The UI
-    /// workstream owns presentation; the coordinator keeps this state
-    /// current so My Votes/review surfaces can read it.
+    /// Where the round's helper shares stand, as the session's share-tracking
+    /// driver last reported them. The UI workstream owns presentation; the
+    /// coordinator keeps this current so My Votes/review surfaces can read it.
     var shareTrackingStatus: ShareTrackingStatus = .idle
-    var shareDelegations: [VotingShareDelegation] = []
+
+    /// Whether a tracking pass is running on this round's session right now.
+    ///
+    /// A run and a tracking pass are exclusive per session, and two passes over
+    /// one round would contend for its rows, so nothing starts a second one.
+    var isTrackingShares: Bool = false
+
+    /// How many tracking passes have stopped short of confirming this round's
+    /// shares. Drives the re-arm backoff, and is reset the moment a pass
+    /// confirms them.
+    var shareTrackingAttempt: Int = 0
 
     // MARK: - Round session state (the session-driven round)
 
@@ -301,11 +311,23 @@ enum KeystoneSigningStatus: Equatable {
     case failed(String)
 }
 
+/// Where a round's helper shares stand.
+///
+/// Written only from what the session's share-tracking driver says: a pass
+/// narrates itself through ``tracking(pass:)``, and the report it stops with
+/// decides the rest. A pass that could not take the round -- another one
+/// already holds it -- says nothing, and this stays where it was.
 enum ShareTrackingStatus: Equatable {
     case idle
-    case loading
-    case tracking
-    case fullyConfirmed
+    /// A pass is under way; `pass` counts from 1.
+    case tracking(pass: UInt32)
+    /// A pass stopped short of confirming, and another is scheduled.
+    case retrying
+    /// Every share the round owed is confirmed.
+    case confirmed
+    /// The vote ended with shares still unconfirmed. Terminal: no later pass
+    /// can confirm them.
+    case ended
 }
 
 extension RoundSession {

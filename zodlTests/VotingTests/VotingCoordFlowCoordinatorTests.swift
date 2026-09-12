@@ -278,13 +278,17 @@ import Testing
         return session
     }
 
-    private func votingSession(status: SessionStatus = .active, proposalCount: Int = 1) -> VotingSession {
+    private func votingSession(
+        status: SessionStatus = .active,
+        proposalCount: Int = 1,
+        voteEndsIn: TimeInterval = 60
+    ) -> VotingSession {
         VotingSession(
             voteRoundId: Data(repeating: 0xAA, count: 32),
             snapshotHeight: 123,
             snapshotBlockhash: Data(repeating: 0x01, count: 32),
             proposalsHash: Data(repeating: 0x02, count: 32),
-            voteEndTime: .now.addingTimeInterval(60),
+            voteEndTime: .now.addingTimeInterval(voteEndsIn),
             ceremonyStart: .now.addingTimeInterval(-60),
             eaPK: Data(repeating: 0x03, count: 32),
             vkZkp1: Data(repeating: 0x04, count: 32),
@@ -312,7 +316,8 @@ import Testing
     }
 
     private static func makeServiceConfig(
-        voteServers: [VotingServiceConfig.ServiceEndpoint] = []
+        voteServers: [VotingServiceConfig.ServiceEndpoint] = [],
+        rounds: [String: VotingServiceConfig.RoundEntry] = [:]
     ) -> VotingServiceConfig {
         VotingServiceConfig(
             configVersion: 1,
@@ -324,8 +329,16 @@ import Testing
                 tally: "v0",
                 voteServer: "v1"
             ),
-            rounds: [:],
+            rounds: rounds,
             pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1, polyLen: 4096)
+        )
+    }
+
+    private static func roundEntry() -> VotingServiceConfig.RoundEntry {
+        VotingServiceConfig.RoundEntry(
+            authVersion: 2,
+            eaPk: Data(repeating: 0x03, count: 32),
+            signatures: []
         )
     }
 
@@ -1091,16 +1104,17 @@ import Testing
     @Test func aWalletTeardownStopsAConfigLoadFromReopeningTheSidecar() async throws {
         let recorder = EventRecorder()
         let gate = TestGate()
-        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
-        let sidecar = documents.appendingPathComponent("voting.sqlite3")
+        let documents = try Self.temporaryDocumentsDirectory()
+        defer { try? FileManager.default.removeItem(at: documents) }
+        let sidecar = documents.appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
         try Data([0x01]).write(to: sidecar)
-        defer { try? FileManager.default.removeItem(at: sidecar) }
 
         let teardownGate = VotingTeardown()
         let store = Store(initialState: VotingCoordFlow.State()) {
             VotingCoordFlow()
         } withDependencies: {
             self.teardownDependencies(&$0, gate: teardownGate)
+            $0.databaseFiles.documentsDirectory = { documents }
             $0.votingAPI.configureURLs = { _ in
                 // The first load parks where a real one waits on the network, so the
                 // reset lands while it is in flight.
@@ -1119,6 +1133,7 @@ import Testing
             $0.votingCrypto.setWalletId = { _ in }
             $0.votingCrypto.configureProving = { _ in }
             $0.votingCrypto.warmProvingCaches = { }
+            $0.votingCrypto.pendingShareRounds = { [] }
             $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
         }
 
@@ -1134,6 +1149,7 @@ import Testing
             // The same gate the store's effects ask, which is what the app has: the live
             // client holds one, and everything that opens or tears down goes through it.
             self.teardownDependencies(&$0, gate: teardownGate)
+            $0.databaseFiles.documentsDirectory = { documents }
         } operation: {
             await Root.clearDeviceScopedWalletState(
                 userDefaults: .noOp,
@@ -1205,6 +1221,18 @@ import Testing
         dependencies.votingCrypto.teardownGenerationIfIdle = { gate.generationIfIdle }
         dependencies.votingCrypto.teardownAllowsOpen = { gate.allowsOpen(capturedGeneration: $0) }
         dependencies.votingCrypto.teardownBegan = { gate.began }
+    }
+
+    /// A directory of this test's own to stand in for `Documents`.
+    ///
+    /// The sidecar has one name and the suites run in parallel, so two tests that
+    /// each create and delete the real `Documents/voting.sqlite3` would be deleting
+    /// each other's.
+    static func temporaryDocumentsDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voting-sidecar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
     private static func isSessionLifecycleEvent(_ event: String) -> Bool {
@@ -1302,13 +1330,16 @@ import Testing
     /// entry is expected to clear.
     private func sessionFlowState(
         drafts: [UInt32: VoteChoice] = [:],
-        isKeystone: Bool = false
+        isKeystone: Bool = false,
+        voteEndsIn: TimeInterval = 60
     ) -> VotingCoordFlow.State {
         var session = RoundSession(roundId: activeRoundId)
         session.draftVotes = drafts
         var state = VotingCoordFlow.State()
         state.roundCache[activeRoundId] = session
-        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession(proposalCount: 2))]
+        state.allRounds = [
+            RoundListItem(roundNumber: 1, session: votingSession(proposalCount: 2, voteEndsIn: voteEndsIn))
+        ]
         state.serviceConfig = Self.makeServiceConfig(
             voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")]
         )
@@ -1472,6 +1503,172 @@ import Testing
         return try JSONDecoder().decode(VotingRoundRunReport.self, from: JSONSerialization.data(withJSONObject: payload))
     }
 
+    // MARK: - Share tracking
+
+    /// The wallet id the pending-share rows are scoped to. Shares belong to the
+    /// wallet that delivered them, and the sidecar answers for every wallet it
+    /// holds, so a round of somebody else's is not this flow's to resume.
+    private static let pendingWalletId = "0303030303030303030303030303030303030303030303030303030303030303"
+
+    /// A helper that is still failing is re-armed on a bounded backoff rather
+    /// than abandoned: 15 s after the first pass that stopped short, 30 s after
+    /// the second, and the pass that confirms every share ends the ladder and
+    /// resets it.
+    @MainActor
+    @Test func shareTrackingReArmsWithBackoffUntilConfirmed() async throws {
+        let recorder = EventRecorder()
+        let sleeps = LockIsolated<[Swift.Duration]>([])
+        let failing = try shareTrackingReport(kind: "failing", messages: ["helper unreachable"])
+        let confirmed = try shareTrackingReport(kind: "all_confirmed")
+        let passStarted = try shareTrackingEvent(kind: "pass_started", pass: 1)
+        let store = Store(initialState: shareTrackingState()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+            $0.votingCrypto.trackShares = { _, _ in
+                let call = recorder.recordAndCount("trackShares")
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(VotingShareTrackingRunEvent.event(passStarted))
+                    continuation.yield(VotingShareTrackingRunEvent.finished(call < 3 ? failing : confirmed))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.pollShareStatus(roundId: activeRoundId))
+        await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+        #expect(recorder.events().filter { $0 == "trackShares" }.count == 3)
+        #expect(sleeps.value == [Swift.Duration.seconds(15), Swift.Duration.seconds(30)])
+        #expect(store.state.roundCache[self.activeRoundId]?.shareTrackingAttempt == 0)
+    }
+
+    /// A round whose share delivery was interrupted resumes without the voter
+    /// opening it: the sidecar names the rounds that still owe helper work, and
+    /// the ones this wallet's authenticated config still carries get a session
+    /// and a tracking pass as the flow initializes.
+    @MainActor
+    @Test func initializeResumesPendingShareRounds() async throws {
+        let recorder = EventRecorder()
+        let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+        let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+        var initialState = VotingCoordFlow.State()
+        initialState.walletId = Self.pendingWalletId
+        initialState.$selectedWalletAccount.withLock { $0 = self.zashiWalletAccount() }
+        initialState.$swapAPIAccess.withLock { $0 = .direct }
+
+        let store = Store(initialState: initialState) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingAPI.fetchServiceConfig = { _ in
+                Self.makeServiceConfig(
+                    voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+                    rounds: [self.activeRoundId: Self.roundEntry()]
+                )
+            }
+            $0.votingAPI.configureURLs = { _ in }
+            $0.votingAPI.fetchAllRounds = { [self.votingSession(proposalCount: 2, voteEndsIn: 3_600)] }
+            $0.votingAPI.fetchZodlEndorsedRoundIds = { [self.activeRoundId] }
+            $0.votingCrypto.openDatabase = { _, _ in }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingCrypto.configureProving = { _ in }
+            $0.votingCrypto.warmProvingCaches = { }
+            $0.votingCrypto.pendingShareRounds = { [pending] }
+            $0.votingCrypto.trackShares = { roundId, _ in
+                recorder.record("trackShares:\(roundId)")
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.initialize)
+        await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+        #expect(recorder.events().filter { $0 == "openRoundSession" }.count == 1)
+        #expect(recorder.events().contains("trackShares:\(activeRoundId)"))
+        #expect(store.state.openRoundSessionIds == [activeRoundId])
+    }
+
+    /// Another pass already holds the round. Nothing to do and nothing to
+    /// re-arm: the pass that holds it is the one that will report.
+    @MainActor
+    @Test func alreadyDrivingIsNoOp() async throws {
+        let recorder = EventRecorder()
+        let sleeps = LockIsolated<[Swift.Duration]>([])
+        let alreadyDriving = try shareTrackingReport(kind: "already_driving")
+        let store = Store(initialState: shareTrackingState()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.continuousClock = RecordingImmediateClock(sleeps: sleeps)
+            $0.votingCrypto.trackShares = { _, _ in
+                recorder.record("trackShares")
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(VotingShareTrackingRunEvent.finished(alreadyDriving))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.pollShareStatus(roundId: activeRoundId))
+        await waitForStore { store.state.roundCache[self.activeRoundId]?.isTrackingShares == false }
+
+        #expect(recorder.events().filter { $0 == "trackShares" } == ["trackShares"])
+        #expect(store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .idle)
+        #expect(store.state.roundCache[self.activeRoundId]?.shareTrackingAttempt == 0)
+        #expect(sleeps.value.isEmpty)
+    }
+
+    /// A round with an open session and nothing tracking it yet -- the state a
+    /// `.pollShareStatus` trigger finds -- on a vote that ends far enough away
+    /// for the whole backoff ladder to fit before it.
+    private func shareTrackingState() -> VotingCoordFlow.State {
+        var state = sessionFlowState(voteEndsIn: 3_600)
+        state.checkingEligibilityRoundId = nil
+        state.openRoundSessionIds = [activeRoundId]
+        state.sessionRouteAccess = .direct
+        return state
+    }
+
+    private func shareTrackingReport(
+        kind: String,
+        passes: UInt32 = 1,
+        messages: [String] = []
+    ) throws -> VotingShareTrackingRunReport {
+        var quiescence: [String: Any] = ["kind": kind]
+        if !messages.isEmpty {
+            quiescence["messages"] = messages
+        }
+        let payload: [String: Any] = ["quiescence": quiescence, "passes": Int(passes)]
+        return try JSONDecoder().decode(
+            VotingShareTrackingRunReport.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        )
+    }
+
+    private func shareTrackingEvent(kind: String, pass: UInt32?) throws -> VotingShareTrackingEvent {
+        var payload: [String: Any] = ["kind": kind]
+        if let pass {
+            payload["pass"] = Int(pass)
+        }
+        return try JSONDecoder().decode(
+            VotingShareTrackingEvent.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        )
+    }
+
+    private func pendingShareRound(walletId: String, roundId: String) throws -> VotingPendingShareRound {
+        let payload: [String: Any] = ["wallet_id": walletId, "round_id": roundId]
+        return try JSONDecoder().decode(
+            VotingPendingShareRound.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        )
+    }
+
     // MARK: - MOB-1810 health sweep hooks
 
     @MainActor
@@ -1484,10 +1681,12 @@ import Testing
             $0.votingAPI.fetchAllRounds = { [] }
             $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
             $0.votingAPI.startHealthProbeSweep = { recorder.record("sweep") }
+            $0.databaseFiles = .noOp
             $0.votingCrypto.openDatabase = { _, _ in }
             $0.votingCrypto.setWalletId = { _ in }
             $0.votingCrypto.configureProving = { _ in }
             $0.votingCrypto.warmProvingCaches = { }
+            $0.votingCrypto.pendingShareRounds = { [] }
             $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
         }
 
@@ -1515,8 +1714,10 @@ import Testing
             }
             $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
             $0.votingAPI.startHealthProbeSweep = { }
+            $0.databaseFiles = .noOp
             $0.votingCrypto.openDatabase = { _, _ in }
             $0.votingCrypto.setWalletId = { _ in }
+            $0.votingCrypto.pendingShareRounds = { [] }
             $0.votingCrypto.configureProving = { policy in
                 let workers = policy.cpuWorkerCount.map(String.init) ?? "crate"
                 recorder.record("configureProving:\(workers):\(policy.maxActiveHeavyJobs)")
@@ -1584,6 +1785,33 @@ private actor TestGate {
         for continuation in resumable {
             continuation.resume()
         }
+    }
+}
+
+/// Records what a reducer asked to sleep for and returns at once.
+///
+/// A `TestClock` would answer the same question, but only if the test manages
+/// to advance it *after* the effect has registered its sleep — a race a plain
+/// `Store` gives no hook to win. Recording the duration instead asserts the
+/// backoff ladder exactly, with no real time passing and nothing to order.
+///
+/// `now` is a fixed instant so `sleep(for:)`'s deadline arithmetic is exact:
+/// the duration recorded here is the one that was asked for, to the attosecond.
+private struct RecordingImmediateClock: Clock {
+    typealias Instant = ContinuousClock.Instant
+    // Spelled out because `ZcashLightClientKit` exports a `Duration` of its own,
+    // and an unqualified one in this file resolves to that instead.
+    typealias Duration = Swift.Duration
+
+    let sleeps: LockIsolated<[Swift.Duration]>
+    let epoch = ContinuousClock().now
+
+    var now: Instant { epoch }
+    var minimumResolution: Swift.Duration { .zero }
+
+    func sleep(until deadline: Instant, tolerance: Swift.Duration?) async throws {
+        sleeps.withValue { $0.append(epoch.duration(to: deadline)) }
+        await Task.yield()
     }
 }
 
