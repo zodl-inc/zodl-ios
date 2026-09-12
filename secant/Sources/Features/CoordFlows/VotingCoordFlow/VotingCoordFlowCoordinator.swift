@@ -2806,6 +2806,9 @@ extension VotingCoordFlow {
         }
         let bundleIndex = request.bundleIndex
 
+        // Deliberately no cancel id and no epoch: cancelling this mid-write
+        // would lose a signature the device has already produced, and the voter
+        // would have to sign the same bundle again to get it back.
         return .run { [votingCrypto] send in
             let signed = VotingKeystoneSignedBundle(bundleIndex: bundleIndex, signedPczt: signedPczt)
             let result = try await votingCrypto.storeKeystoneSignatures(roundId, [signed])
@@ -2959,6 +2962,9 @@ extension VotingCoordFlow {
         return .merge(
             // A request for a bundle about to be deleted has nothing to sign.
             .cancel(id: cancelDelegationProofId),
+            // Deliberately no cancel id and no epoch: this deletion is what the
+            // voter confirmed, and a round left with the tail still in it would
+            // ask them to sign bundles they have just given up.
             .run { [votingCrypto] send in
                 try await votingCrypto.deleteSkippedBundles(roundId, keepCount)
                 await send(.keystoneAllBundlesSigned(roundId: roundId))

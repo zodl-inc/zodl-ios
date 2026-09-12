@@ -198,6 +198,33 @@ import Testing
         #expect(updated.currentKeystoneBundleIndex == 2)
     }
 
+    /// The same read landing after a run has already named the bundles it wants
+    /// signed: it is a snapshot taken when the session opened, so it adds what
+    /// the crate held and leaves the run's list alone. Replacing that list —
+    /// with a plan that names no signing work, as a plan refreshed mid-loop
+    /// does — stranded the loop on the bundle it was showing.
+    @Test func restoredKeystoneSignaturesNeverReplaceARunsWorkList() throws {
+        var session = roundSession()
+        session.bundleCount = 2
+        session.roundPlan = try plan()
+        session.keystoneBundlesToSign = [1]
+        session.currentKeystoneBundleIndex = 1
+        session.keystoneSigningStatus = .awaitingSignature
+        var state = VotingCoordFlow.State()
+        state.isKeystoneUser = true
+        state.roundCache[roundId] = session
+
+        _ = VotingCoordFlow().coordinatorReduce().reduce(
+            into: &state,
+            action: .keystoneSignaturesRestored(roundId: roundId, bundleIndices: [0])
+        )
+
+        let updated = tryUnwrap(state.roundCache[roundId])
+        #expect(updated.keystoneBundlesToSign == [1])
+        #expect(updated.keystoneSignedBundles == Set([0]))
+        #expect(updated.currentKeystoneBundleIndex == 1)
+    }
+
     @Test func delegationRejectedResetsKeystoneLoopButPreservesVotes() {
         var session = roundSession(
             drafts: [2: .option(1)],
@@ -843,6 +870,7 @@ import Testing
         #expect(store.state.keystoneSignatureRejectionSheet?.message == Self.keystoneConflictMessage)
         // Nothing was stored, so the bundle on screen is still the one the
         // device owes: the loop neither advances nor re-runs the round.
+        #expect(store.state.roundCache[activeRoundId]?.keystoneSignedBundles.isEmpty == true)
         #expect(store.state.roundCache[activeRoundId]?.pendingKeystoneRequest?.bundleIndex == 0)
         #expect(recorder.events().filter { $0.hasPrefix("keystoneSigningRequests") } == ["keystoneSigningRequests:0"])
         #expect(recorder.events().filter { $0.hasPrefix("runRound") }.count == 1)
