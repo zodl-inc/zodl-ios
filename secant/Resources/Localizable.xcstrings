@@ -5176,23 +5176,6 @@
         }
       }
     },
-    "coinVote.store.error.invalidDelegationSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keystone delegation signature tuple (rk, sighash, sig) is inconsistent with the payload being submitted."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keystone delegation signature tuple (rk, sighash, sig) is inconsistent with the payload being submitted."
-          }
-        }
-      }
-    },
     "coinVote.store.error.missingActiveSession" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5223,23 +5206,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "missing hotkey address for delegation PCZT"
-          }
-        }
-      }
-    },
-    "coinVote.store.error.missingKeystoneBundleSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Missing Keystone signature for one or more delegation bundles."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Missing Keystone signature for one or more delegation bundles."
           }
         }
       }
@@ -5363,23 +5329,6 @@
         }
       }
     },
-    "coinVote.store.submissionPreparingProof" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Building vote proof..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Building vote proof..."
-          }
-        }
-      }
-    },
     "coinVote.store.submissionPreparingProofProgress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5397,23 +5346,6 @@
         }
       }
     },
-    "coinVote.store.submissionSendingShares" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending to vote servers..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending to vote servers..."
-          }
-        }
-      }
-    },
     "coinVote.store.submissionSendingSharesProgress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5427,23 +5359,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sending to vote servers (%@/%@)..."
-          }
-        }
-      }
-    },
-    "coinVote.store.submissionWaitingForConfirmation" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for confirmation..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for confirmation..."
           }
         }
       }
@@ -5478,108 +5393,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your transaction hasn't been confirmed yet. The network may be congested — please wait a moment and try again."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.alreadyBroadcast" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.commitmentUndecodable" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.notBroadcast" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.secretsLost" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.secretsRecovered" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.undetermined" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
           }
         }
       }
@@ -5665,23 +5478,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.noReachableVoteServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
           }
         }
       }
