@@ -185,6 +185,39 @@ struct RoundSession: Equatable {
     /// `loadSubmittedVotesFromDb`, mirroring 8F's `getVotes` ×
     /// `getShareDelegations` pairing at proposal granularity.
     var undeliveredShareProposalIds: Set<UInt32> = []
+
+    // MARK: - Round session state (the session-driven round)
+
+    /// The last plan the round's session answered with: the driver's own view
+    /// of what the round still owes. Read this rather than re-deriving work
+    /// from drafts and vote rows — the planner computes its flags from an
+    /// exhaustive match, so a step kind the app cannot name still counts as
+    /// work here.
+    var roundPlan: VotingRoundPlan?
+
+    /// What the current (or last) run has done so far, folded from the
+    /// session's event stream.
+    var progress = VotingRoundProgressSnapshot()
+
+    /// Which session generation this cached state belongs to. The registry
+    /// moves it on every time the round's session is reopened, so a run report
+    /// or event arriving from a session that has since been replaced can be
+    /// recognised as stale and dropped instead of writing back over newer
+    /// state.
+    var sessionEpoch: UInt64 = 0
+
+    /// Per-bundle result of the standalone delegation-proof precompute:
+    /// whether that bundle's proof was generated or reused from the shared
+    /// cache. Absent means no precompute has answered for the bundle yet.
+    var precomputeStatus: [UInt32: VotingDelegationProofStatus] = [:]
+
+    /// The redacted PCZT currently on screen as a Keystone QR, if any. One
+    /// bundle at a time: the device signs per bundle, never a batch.
+    var pendingKeystoneRequest: VotingKeystoneSigningRequest?
+
+    /// Bundles the session says still await the voter's signature, ascending —
+    /// the order the Keystone loop walks them in.
+    var keystoneBundlesToSign: [UInt32] = []
 }
 
 // MARK: - Submission state machine types
