@@ -1001,6 +1001,32 @@ extension Root {
         #endif
     }
 
+    /// Give the voting sessions back before the wallet database is wiped.
+    ///
+    /// A round session opens `data.db` itself, through `VotingSessionInputs.walletDbPath`, and
+    /// keeps it for the session's whole life — so a wipe that runs while one is open leaves the
+    /// round driver reading and writing an unlinked inode for the length of it. The heal path
+    /// already drains first (through ``clearDeviceScopedWalletState``); the reset path calls this
+    /// to get the same ordering, and still deletes the sidecar later where it always did.
+    ///
+    /// The teardown window is what stops a voting effect suspended in a config fetch from opening
+    /// a session behind this close; the generation it moves goes on refusing an open that started
+    /// before it once the window closes again. The window is reopened by the sidecar deletion
+    /// further down the reset chain, which needs one of its own.
+    @Sendable
+    static func drainVotingBeforeWipe(
+        closeVotingDatabase: @Sendable () async -> Void = Root.closeVotingDatabase
+    ) async {
+        #if VOTING_ENABLED
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        votingCrypto.beginWalletTeardown()
+        defer { votingCrypto.endWalletTeardown() }
+        #endif
+        await closeVotingDatabase()
+    }
+
     static func walletInitializationState(
         databaseFiles: DatabaseFilesClient,
         walletStorage: WalletStorageClient,

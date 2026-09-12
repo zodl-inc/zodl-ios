@@ -1632,15 +1632,26 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
-                guard let wipePublisher = sdkSynchronizer.wipe() else {
-                    return .send(.resetZashiSDKFailed)
-                }
-                return .publisher {
-                    wipePublisher
-                        .replaceEmpty(with: Void())
-                        .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                        .replaceError(with: Root.Action.resetZashiSDKFailed)
-                        .receive(on: mainQueue)
+                // The voting round sessions open the wallet database themselves and hold it for
+                // their whole life, so they are given back BEFORE the wipe — the ordering the
+                // heal path already has. Without it the round driver spends the wipe reading and
+                // writing a database file that has been unlinked underneath it. The sidecar's own
+                // deletion stays where it is, in `clearDeviceScopedWalletState` on
+                // `.resetZashiSDKSucceeded`, behind a teardown window of its own.
+                return .run { [sdkSynchronizer] send in
+                    await Root.drainVotingBeforeWipe()
+                    guard let wipePublisher = sdkSynchronizer.wipe() else {
+                        await send(.resetZashiSDKFailed)
+                        return
+                    }
+                    do {
+                        // An empty completion is a finished wipe, which is what
+                        // `replaceEmpty` said when this was a publisher effect.
+                        for try await _ in wipePublisher.values { }
+                        await send(.resetZashiSDKSucceeded)
+                    } catch {
+                        await send(.resetZashiSDKFailed)
+                    }
                 }
                 .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
 

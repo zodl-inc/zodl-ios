@@ -733,6 +733,86 @@ extension Root.State: @retroactive Equatable {
     /// leave those writes going to an unlinked inode and the next open recreating a
     /// database the driver never sees, so the reset closes every session and the store
     /// itself first — and only then removes the file.
+    /// The reset wipes the wallet database, and a voting round session opens that same
+    /// database itself and holds it for the session's whole life — so the sessions are given
+    /// back BEFORE the wipe, which is the ordering the heal path already has. Without it the
+    /// round driver spends the wipe reading and writing an unlinked inode.
+    ///
+    /// `resetClosesVotingBeforeDeletingTheSidecar` asserts the close precedes the *sidecar's*
+    /// removal, which happens later on the same chain; this is the assertion for the wipe.
+    @Test func resetDrainsVotingBeforeWipingTheWalletDatabase() async throws {
+        let calls = LockIsolated<[String]>([])
+        let documents = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voting-sidecar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: documents) }
+        let sidecar = documents.appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
+        try Data([0x01]).write(to: sidecar)
+
+        let store = TestStore(
+            initialState: Root.State(
+                destinationState: Root.DestinationState(internalDestination: .home),
+                exportLogsState: ExportLogs.State(),
+                onboardingState: RestoreWalletCoordFlow.State(),
+                phraseDisplayState: RecoveryPhraseDisplay.State(),
+                walletConfig: .initial,
+                welcomeState: Welcome.State()
+            )
+        ) {
+            Root()
+        } withDependencies: {
+            $0.mainQueue = .immediate
+            $0.databaseFiles = .noOp
+            $0.databaseFiles.documentsDirectory = { documents }
+            $0.walletStorage = .noOp
+            $0.readTransactionsStorage = .noOp
+            $0.flexaHandler = .noOp
+            $0.flexaHandler.signOut = { }
+            $0.userStoredPreferences.removeAll = { }
+            $0.userDefaults.remove = { _ in }
+            $0.userMetadataProvider.reset = { }
+            $0.votingMetadata.reset = { }
+            $0.migrationManager.wipeAllMigrationState = { }
+            $0.sdkSynchronizer = .mocked(
+                wipe: {
+                    calls.withValue { $0.append("wipe") }
+                    return Just(()).setFailureType(to: Error.self).eraseToAnyPublisher()
+                }
+            )
+            $0.votingCrypto.beginWalletTeardown = { calls.withValue { $0.append("beginWalletTeardown") } }
+            $0.votingCrypto.endWalletTeardown = { calls.withValue { $0.append("endWalletTeardown") } }
+            $0.votingCrypto.closeDatabase = { calls.withValue { $0.append("closeVotingDatabase") } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.initialization(.resetZashi))
+
+        await store.receive(
+            { action in
+                guard case .resetZashiKeychainRequest = action else { return false }
+                return true
+            },
+            timeout: .seconds(5)
+        )
+
+        let recorded = calls.value
+        let closeIndex = try #require(recorded.firstIndex(of: "closeVotingDatabase"))
+        let wipeIndex = try #require(recorded.firstIndex(of: "wipe"))
+        let teardownIndex = try #require(recorded.firstIndex(of: "beginWalletTeardown"))
+        #expect(
+            closeIndex < wipeIndex,
+            "the voting sessions must be given back before the wallet database is wiped"
+        )
+        #expect(
+            teardownIndex < closeIndex,
+            "the teardown window opens first, so nothing reopens a session behind the close"
+        )
+        // The deletion still happens where it always did, on the clears that follow the wipe.
+        #expect(!FileManager.default.fileExists(atPath: sidecar.path))
+
+        await drain(store)
+    }
+
     @Test func resetClosesVotingBeforeDeletingTheSidecar() async throws {
         let calls = LockIsolated<[String]>([])
         let removedKeys = LockIsolated<[String]>([])
