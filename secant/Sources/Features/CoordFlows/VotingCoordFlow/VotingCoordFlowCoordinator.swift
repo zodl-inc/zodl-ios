@@ -52,6 +52,7 @@ extension VotingCoordFlow {
                 return .merge(
                     .cancel(id: cancelPipelineId),
                     .cancel(id: cancelDelegationPrecomputeId),
+                    .cancel(id: cancelRunRetryId),
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
                     .cancel(id: cancelShareTrackingId),
@@ -395,10 +396,11 @@ extension VotingCoordFlow {
                         )
                     }
                     // No cache: keep the user on the polls list with an
-                    // in-button spinner on this row while the pipeline
-                    // resolves eligibility. The push to `.proposalList`
-                    // happens in `.votingWeightLoaded`; ineligibility opens
-                    // the sheet via `.ineligibleForRound`.
+                    // in-button spinner on this row while the session opens
+                    // and answers with the round's plan. The push to
+                    // `.proposalList` happens in `.earlyEligibilityConfirmed`,
+                    // which the session sends as soon as the round has bundles;
+                    // ineligibility opens the sheet via `.ineligibleForRound`.
                     state.checkingEligibilityRoundId = roundId
                     return .merge(
                         startHealthSweep,
@@ -556,6 +558,13 @@ extension VotingCoordFlow {
 
             case let .roundSessionOpened(roundId, plan):
                 return reduceRoundSessionOpened(&state, roundId: roundId, plan: plan)
+
+            case let .ballotIntentsRecorded(roundId, plan):
+                // The plan the session is left in once the ballot is recorded.
+                // Kept so the gates that ask what the round still owes read the
+                // answer for the ballot the run is about to cast.
+                mutateSession(&state, roundId: roundId) { $0.roundPlan = plan }
+                return .none
 
             case let .roundSessionOpenFailed(roundId, error):
                 LoggerProxy.error("Opening the round session for \(roundId) failed: \(error.message)")
@@ -917,14 +926,11 @@ extension VotingCoordFlow {
                 state.rootScreen = .error(message)
                 return .none
 
-            case let .submittedVotesLoaded(roundId, votes, undeliveredShareProposalIds):
+            case let .submittedVotesLoaded(roundId, votes):
                 guard !votes.isEmpty else { return .none }
                 let account = state.selectedWalletAccount?.account
                 var session = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
                 session.votes.merge(votes) { current, _ in current }
-                // Finding #8 (CHP.md): fresh authoritative read every hydration —
-                // replace, don't merge, matching `shareDelegations` below.
-                session.undeliveredShareProposalIds = undeliveredShareProposalIds
                 let mergedVotes = session.votes
                 let filteredDrafts = session.draftVotes
                     .filter { mergedVotes[$0.key] == nil }
@@ -1285,6 +1291,7 @@ extension VotingCoordFlow {
             .cancel(id: cancelSubmissionId),
             .cancel(id: cancelDelegationProofId),
             .cancel(id: cancelDelegationPrecomputeId),
+            .cancel(id: cancelRunRetryId),
             .cancel(id: cancelStatusPollingId),
             .cancel(id: cancelNewRoundPollingId),
             .cancel(id: cancelShareTrackingId)
@@ -1520,7 +1527,7 @@ extension VotingCoordFlow {
         state.ineligibleSheet = nil
         state.walletSyncingSheetRoundId = nil
 
-        return .run { [sdkSynchronizer, votingCrypto, walletStorage] send in
+        let open: Effect<Action> = .run { [sdkSynchronizer, votingCrypto, walletStorage] send in
             // 1. Wallet sync gate.
             //
             // Spend-before-Sync scans head-first and birthday-first in
@@ -1595,6 +1602,10 @@ extension VotingCoordFlow {
             await send(.roundSessionOpenFailed(roundId: roundId, error: Self.votingError(from: error)))
         }
         .cancellable(id: cancelPipelineId, cancelInFlight: true)
+
+        // A previous entry's warm-up belongs to the session this open replaces,
+        // and it holds the crate's proof lock for as long as it runs.
+        return .merge(.cancel(id: cancelDelegationPrecomputeId), open)
     }
 
     /// The inputs a round session lives on.
@@ -1844,18 +1855,31 @@ extension VotingCoordFlow {
         switch decision {
         case .completed:
             state.roundCache[roundId]?.runRetryCount = 0
-            return finishedRunEffect(roundId: roundId, session: session, alsoTrackShares: false)
+            drainDecidedDrafts(&state, roundId: roundId)
+            return finishedRunEffect(
+                roundId: roundId,
+                session: state.roundCache[roundId] ?? session,
+                alsoTrackShares: false
+            )
 
         case .startShareTracking:
             // Only helper-share confirmation is left, and it is not blocking:
             // the ballot is cast, so the flow closes and the tracking timer
             // finishes the delivery.
             state.roundCache[roundId]?.runRetryCount = 0
-            return finishedRunEffect(roundId: roundId, session: session, alsoTrackShares: true)
+            drainDecidedDrafts(&state, roundId: roundId)
+            return finishedRunEffect(
+                roundId: roundId,
+                session: state.roundCache[roundId] ?? session,
+                alsoTrackShares: true
+            )
 
         case .runBundleSetupThenRerun:
-            // The seed is never kept past one run, so the re-run is a fresh
-            // Confirm. The ticket is what lets it skip a second auth prompt.
+            // The re-run is the automatic continuation of the Confirm the voter
+            // has already authenticated, so the ticket deliberately skips a
+            // second biometric prompt. Nothing of the first run is carried into
+            // it: the seed was never retained, and the new run effect reads it
+            // from wallet storage again for its own single call.
             state.pendingBatchSubmission = true
             mutateSession(&state, roundId: roundId) { $0.batchSubmissionStatus = .idle }
             return .run { [votingCrypto] send in
@@ -1934,6 +1958,51 @@ extension VotingCoordFlow {
     /// A run can isolate one bundle and finish the rest, so a clean quiescence
     /// is not a clean run: a partial result is shown as one, with the counts,
     /// rather than as a completed ballot.
+    /// Moves every draft this run decided into the round's cast votes.
+    ///
+    /// The intents the host wrote are the authoritative list of what the run
+    /// was asked to decide; the plan's completed display is only what a
+    /// finished round shows, and a proposal the voter skipped carries no choice
+    /// and appears in neither. Draining from the intents is what keeps a
+    /// skipped proposal from surviving as a draft and turning a completed run
+    /// into a submission failure.
+    ///
+    /// A skipped proposal is recorded with the choice the voter drafted — the
+    /// synthetic Abstain included, exactly as the per-proposal loop recorded it
+    /// before — because that is what the review screens read.
+    private func drainDecidedDrafts(_ state: inout State, roundId: String) {
+        guard var session = state.roundCache[roundId] else { return }
+        let decided = Set(session.castBallotIntents.map(\.proposalId))
+        guard !decided.isEmpty else { return }
+
+        var votes = session.votes
+        var drafts = session.draftVotes
+        for proposalId in decided {
+            guard let draft = drafts.removeValue(forKey: proposalId) else { continue }
+            if votes[proposalId] == nil {
+                votes[proposalId] = draft
+            }
+        }
+        guard votes != session.votes || drafts != session.draftVotes else { return }
+
+        session.votes = votes
+        session.draftVotes = drafts
+        do {
+            try Voting.persistRoundChoices(
+                drafts: drafts,
+                submittedVotes: votes,
+                roundId: roundId,
+                account: state.selectedWalletAccount?.account
+            )
+        } catch {
+            // The chain has the vote either way, so the in-memory round keeps
+            // it; only the on-disk copy is behind, and the voter is told.
+            LoggerProxy.error("Failed to persist decided voting choices: \(error)")
+            state.submissionAlert = .votingMetadataPersistenceFailed(error)
+        }
+        state.roundCache[roundId] = session
+    }
+
     private func finishedRunEffect(
         roundId: String,
         session: RoundSession,
@@ -1971,7 +2040,11 @@ extension VotingCoordFlow {
             ?? String(localizable: .coinVoteSubmissionGenericBatchFailure)
         let skipped = report.skippedBundles.count
         guard skipped > 0 else { return detail }
-        return "\(detail) (\(skipped)/\(max(Int(report.tally.totalProposals), skipped)))"
+        // Counted, not rationed: a skipped bundle costs the round that bundle's
+        // voting power across every proposal, so quoting it against the ballot's
+        // proposal count would read as a ballot that was partly cast.
+        let bundles = skipped == 1 ? "1 bundle" : "\(skipped) bundles"
+        return "\(detail) (\(bundles) skipped)"
     }
 
     /// The choices a round's plan says are cast, as the flow's own vote map. A
@@ -2096,9 +2169,14 @@ extension VotingCoordFlow {
         )
         let needsAuthentication = !state.isKeystoneUser && !state.pendingBatchSubmission
         let totalCount = max(intents.count, session.draftVotes.count)
+        // What this run was asked to decide. Kept because the plan's completed
+        // display carries only proposals with a choice, so a deliberate skip
+        // appears nowhere in it and its draft would outlive the round.
+        mutateSession(&state, roundId: roundId) { $0.castBallotIntents = intents }
 
         return .run { [votingCrypto, localAuthentication] send in
             let plan = try await votingCrypto.setBallotIntents(roundId, intents)
+            await send(.ballotIntentsRecorded(roundId: roundId, plan: plan))
             guard plan.allDecided else {
                 // Every rostered proposal was just given a decision, so the
                 // planner disagreeing means the roster is not the one the
@@ -3531,7 +3609,7 @@ extension VotingCoordFlow {
         return false
     }
 
-    // MARK: - Delegation pipeline (Zashi inline)
+    // MARK: - Dynamic config
 
     /// 3.0 bump (MOB-1678): `pir_layout.poly_len` is load-bearing — `zcash_voting` 3.0
     /// validates it locally (`poly_len ∈ {2048, 4096}`) and the PIR connect handshake
@@ -3628,23 +3706,6 @@ private extension Array where Element == String {
     /// `[]` -> `nil`, otherwise self. Reads cleanly inside guard chains.
     var nonEmpty: [String]? {
         isEmpty ? nil : self
-    }
-}
-
-// MARK: - Delegation registration probe
-
-// MARK: - Round resume decision
-
-// MARK: - Delegation TX confirmation status
-
-extension VotingCoordFlow {
-    /// The message shown when the round pipeline fails.
-    static func pipelineFailureMessage(
-        error: Error,
-        roundId: String,
-        crypto: VotingCryptoClient
-    ) async -> String {
-        VotingErrorMapper.userFriendlyMessage(from: error)
     }
 }
 

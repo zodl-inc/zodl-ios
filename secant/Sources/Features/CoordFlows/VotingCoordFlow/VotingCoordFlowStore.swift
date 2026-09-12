@@ -272,11 +272,7 @@ struct VotingCoordFlow {
         /// screens show.
         case votingWeightLoaded(roundId: String, weight: UInt64, bundleCount: UInt32)
         case pipelineFailed(roundId: String, message: String)
-        case submittedVotesLoaded(
-            roundId: String,
-            votes: [UInt32: VoteChoice],
-            undeliveredShareProposalIds: Set<UInt32> = []
-        )
+        case submittedVotesLoaded(roundId: String, votes: [UInt32: VoteChoice])
         case draftVoteSet(roundId: String, proposalId: UInt32, choice: VoteChoice)
         case submitTapped(roundId: String)
         case fetchTallyResults(roundId: String)
@@ -327,6 +323,9 @@ struct VotingCoordFlow {
         /// A session is open for the round and has answered with its plan --
         /// the driver's own view of what the round still owes.
         case roundSessionOpened(roundId: String, plan: VotingRoundPlan)
+        /// The ballot is recorded with the session, which answered with the
+        /// plan it leaves the round in.
+        case ballotIntentsRecorded(roundId: String, plan: VotingRoundPlan)
         case roundSessionOpenFailed(roundId: String, error: VotingError)
         /// The round's bundle rows are persisted; the layout says how many and
         /// for how much voting power.

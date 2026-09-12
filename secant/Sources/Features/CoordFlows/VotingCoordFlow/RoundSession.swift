@@ -172,20 +172,6 @@ struct RoundSession: Equatable {
     var shareTrackingStatus: ShareTrackingStatus = .idle
     var shareDelegations: [VotingShareDelegation] = []
 
-    /// Proposals with a fully-submitted vote record (all bundles `submitted`)
-    /// that is still missing a recorded share delegation for at least one
-    /// bundle. Finding #8 (CHP.md): a tally-share delegation failure landing
-    /// after `markVoteSubmitted` moves the proposal out of `draftVotes` (see
-    /// `.submittedVotesLoaded`) before its shares are delivered, so on-chain
-    /// votes with undelivered shares become invisible to every gate keyed off
-    /// `draftVotes.isEmpty` — the Confirm CTA, `submitTapped`,
-    /// `submitAllDraftsTapped` — even though Task 8F's in-loop recovery
-    /// (`tryRecoverInflightVote`) would still deliver the missing shares if
-    /// the loop were ever re-entered for it. Computed alongside `votes` in
-    /// `loadSubmittedVotesFromDb`, mirroring 8F's `getVotes` ×
-    /// `getShareDelegations` pairing at proposal granularity.
-    var undeliveredShareProposalIds: Set<UInt32> = []
-
     // MARK: - Round session state (the session-driven round)
 
     /// The last plan the round's session answered with: the driver's own view
@@ -218,6 +204,14 @@ struct RoundSession: Equatable {
     /// Bundles the session says still await the voter's signature, ascending —
     /// the order the Keystone loop walks them in.
     var keystoneBundlesToSign: [UInt32] = []
+
+    /// The ballot the host recorded with the session for the run now in flight.
+    ///
+    /// The authoritative record of what this run was asked to decide: the
+    /// plan's completed display carries only proposals with a choice, so a
+    /// deliberate skip appears nowhere in it, and a draft the voter skipped
+    /// would otherwise survive a finished round and keep it looking unvoted.
+    var castBallotIntents: [VotingBallotIntent] = []
 
     /// Whether this entry into the round has already asked the session to
     /// persist its bundle plan. One attempt per entry: a plan that still says
@@ -339,14 +333,13 @@ enum ShareTrackingStatus: Equatable {
 }
 
 extension RoundSession {
-    /// True when the submission CTA has something to do: either a drafted
-    /// choice awaiting first submission, or a proposal already on-chain
-    /// whose shares never reached the helper servers (Finding #8, see
-    /// `undeliveredShareProposalIds`). Replaces a bare `!draftVotes.isEmpty`
-    /// check everywhere that used to gate the submission flow, so a round
-    /// stuck in the latter state is still recognized as retryable.
+    /// True when the submission CTA has a drafted choice to cast.
+    ///
+    /// Work the round owes beyond the drafts — a delivery a run stopped
+    /// part-way through — is the session plan's answer rather than this one's;
+    /// the coordinator's `canStartSubmission` reads both.
     var hasPendingSubmissionWork: Bool {
-        !draftVotes.isEmpty || !undeliveredShareProposalIds.isEmpty
+        !draftVotes.isEmpty
     }
 
     var resolvedKeystoneBundleIndices: Set<UInt32> {

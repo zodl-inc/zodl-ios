@@ -1298,6 +1298,94 @@ import Testing
         #expect(store.state.roundCache[self.activeRoundId]?.runRetryCount == 3)
     }
 
+    /// A proposal the voter deliberately skipped is decided, not pending: it
+    /// carries no choice in the plan's completed display, so draining the
+    /// ballot from the display alone would leave its draft behind and rewrite a
+    /// finished round into a submission failure.
+    @MainActor
+    @Test func skippedDraftsAreDrainedOnCompletion() async throws {
+        let recorder = EventRecorder()
+        // Proposal 1 is drafted as the synthetic Abstain, so the run records it
+        // as skipped and the display comes back naming only proposal 2.
+        let report = try runReport(
+            kind: "no_work_left",
+            completedProposals: 1,
+            totalProposals: 2,
+            completedChoices: [(2, 1)]
+        )
+        let store = Store(initialState: sessionFlowState(drafts: [1: .option(2), 2: .option(1)])) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in
+                let call = recorder.recordAndCount("sessionPlan")
+                return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+            }
+            $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+            $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
+            $0.votingCrypto.runRound = { _, _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(VotingRoundRunEvent.finished(report))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { self.isProposalListTop(store.state) }
+
+        store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
+
+        let session = tryUnwrap(store.state.roundCache[activeRoundId])
+        #expect(session.draftVotes.isEmpty)
+        // The skipped proposal keeps the choice the voter drafted — the
+        // synthetic Abstain — because that is what the review screens read.
+        #expect(session.votes == [1: .option(2), 2: .option(1)])
+        #expect(session.voteRecord?.proposalCount == 2)
+    }
+
+    /// A run that ends with only helper-share delivery left has cast the whole
+    /// ballot, and its report may carry no plan at all — so the drafts have to
+    /// come from the intents the host wrote rather than from a display.
+    @MainActor
+    @Test func aRunLeavingOnlyShareWorkStillDrainsTheBallot() async throws {
+        let recorder = EventRecorder()
+        let report = try runReport(kind: "background_share_work_only", completedProposals: 2, totalProposals: 2)
+        let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in
+                let call = recorder.recordAndCount("sessionPlan")
+                return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+            }
+            $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+            $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
+            $0.votingCrypto.runRound = { _, _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(VotingRoundRunEvent.finished(report))
+                    continuation.finish()
+                }
+            }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { self.isProposalListTop(store.state) }
+
+        store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+        await waitForStore {
+            store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
+
+        let session = tryUnwrap(store.state.roundCache[activeRoundId])
+        #expect(session.roundPlan != nil)
+        #expect(session.draftVotes.isEmpty)
+        #expect(session.votes == [1: .option(0), 2: .option(1)])
+    }
+
     // MARK: - Round session fixtures
 
     private static let walletSeed = [UInt8](repeating: 0x07, count: 32)
