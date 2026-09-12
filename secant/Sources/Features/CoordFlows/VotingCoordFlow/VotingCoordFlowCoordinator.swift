@@ -2138,6 +2138,15 @@ extension VotingCoordFlow {
     ///
     /// Bounded, because a backoff the voter cannot see is indistinguishable from
     /// the app doing nothing.
+    ///
+    /// The retry is the automatic continuation of a Confirm the voter has
+    /// already authenticated, so it carries `pendingBatchSubmission` the way
+    /// `.runBundleSetupThenRerun` does: without it the run goes back through
+    /// `.submitAllDraftsTapped`, which would raise a biometric sheet seconds
+    /// after a contention the voter never saw and did nothing to cause. An
+    /// unexplained Face ID prompt in a wallet reads as an attack. Nothing of
+    /// the first run is carried into the retry either way — the seed was never
+    /// retained, and the run effect reads it again for its own single call.
     private func scheduleRunRetry(
         _ state: inout State,
         roundId: String,
@@ -2148,6 +2157,7 @@ extension VotingCoordFlow {
             return exhausted()
         }
         state.roundCache[roundId]?.runRetryCount += 1
+        state.pendingBatchSubmission = true
         return .run { [continuousClock] send in
             try await continuousClock.sleep(for: .seconds(seconds))
             await send(.retryBatchSubmission(roundId: roundId))

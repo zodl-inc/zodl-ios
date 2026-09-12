@@ -558,6 +558,49 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[self.activeRoundId]?.runRetryCount == 3)
         }
 
+        /// The automatic re-run is the continuation of a Confirm the voter has
+        /// already authenticated, so it must not raise a second biometric sheet. An
+        /// unexplained Face ID prompt seconds after a contention the voter never
+        /// saw reads as an attack rather than as the app trying again.
+        @MainActor
+        @Test func anAutomaticRerunDoesNotAskForLocalAuthenticationAgain() async throws {
+            let recorder = EventRecorder()
+            let report = try runReport(kind: "pass_budget_exhausted", completedProposals: 0, totalProposals: 2)
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            // Four runs — the voter's tap and its three automatic retries — and
+            // exactly one prompt, the one the voter answered.
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 4)
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+        }
+
         /// A proposal the voter deliberately skipped is decided, not pending: it
         /// carries no choice in the plan's completed display, so draining the
         /// ballot from the display alone would leave its draft behind and rewrite a
