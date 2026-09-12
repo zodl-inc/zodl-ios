@@ -1026,7 +1026,7 @@ extension VotingCoordFlow {
                 }
                 return .none
 
-            case let .ineligibleForRound(roundId, heldZatoshi):
+            case let .ineligibleForRound(roundId, reason):
                 // No eligible notes at the snapshot height (no notes at all,
                 // or every bundle dropped below ballotDivisor). With the
                 // deferred-navigation flow we typically never pushed the
@@ -1042,7 +1042,7 @@ extension VotingCoordFlow {
                     .first { $0.id == roundId }?
                     .session.snapshotHeight ?? 0
                 state.ineligibleSheet = IneligibleSheetData(
-                    heldZatoshi: heldZatoshi,
+                    reason: reason,
                     snapshotHeight: snapshotHeight,
                     minimumZatoshi: ballotDivisor
                 )
@@ -1692,6 +1692,7 @@ extension VotingCoordFlow {
         roundSession.shareTrackingAttempt = 0
         roundSession.lastRunFailureSummary = nil
         roundSession.progress = VotingRoundProgressSnapshot()
+        roundSession.delegationProofStatus = ProofStatus.notStarted
         roundSession.precomputeStatus.removeAll()
         roundSession.delegationPrecomputeStatus = .notStarted
         roundSession.isDelegationPrecomputeInFlight = false
@@ -2008,10 +2009,18 @@ extension VotingCoordFlow {
     /// `.bundleSetupFailed` handler. A wallet the crate will not bundle for is
     /// not an error screen: it is the polls list with the sheet that explains
     /// why this round is closed to it.
+    ///
+    /// The two ineligible kinds are kept apart rather than merged: the crate
+    /// hands back no balance with either, and the sheet used to quote a zero as
+    /// the wallet's holding for both -- which for `insufficientEligibility`,
+    /// where the wallet does hold notes, is a false statement about the voter's
+    /// own money. Each kind now says only what is known about it.
     func reduceBundleSetupFailed(_ state: inout State, roundId: String, error: VotingError) -> Effect<Action> {
         switch error.kind {
-        case .noSpendableNotes, .insufficientEligibility:
-            return .send(.ineligibleForRound(roundId: roundId, heldZatoshi: 0))
+        case .noSpendableNotes:
+            return .send(.ineligibleForRound(roundId: roundId, reason: IneligibleReason.noSpendableNotes))
+        case .insufficientEligibility:
+            return .send(.ineligibleForRound(roundId: roundId, reason: IneligibleReason.belowMinimum))
         default:
             LoggerProxy.error("Bundle setup for \(roundId) failed: \(error.message)")
             return .send(.pipelineFailed(
@@ -2392,8 +2401,17 @@ extension VotingCoordFlow {
         // Counted, not rationed: a skipped bundle costs the round that bundle's
         // voting power across every proposal, so quoting it against the ballot's
         // proposal count would read as a ballot that was partly cast.
-        let bundles = skipped == 1 ? "1 bundle" : "\(skipped) bundles"
-        return "\(detail) (\(bundles) skipped)"
+        //
+        // Two keys rather than one with a count, matching the singular/plural
+        // pair the continued-processing copy already uses -- the count reaches
+        // the voter through the catalogue either way, never as an English
+        // fragment built here.
+        guard skipped > 1 else {
+            return String(localizable: .coinVoteSubmissionPartialFailureBundlesSkippedSingle(detail))
+        }
+        return String(
+            localizable: .coinVoteSubmissionPartialFailureBundlesSkippedMultiple(detail, String(skipped))
+        )
     }
 
     /// The choices a round's plan says are cast, as the flow's own vote map. A
@@ -2457,6 +2475,12 @@ extension VotingCoordFlow {
     /// Keeps the confirmation screen's own progress shape in step with the
     /// run's, so a voter watching it sees the round move rather than a spinner
     /// that never changes.
+    ///
+    /// `delegationProofStatus` is one of those shapes rather than state of its
+    /// own: the Confirm screen reserves the bar's first 30 % for the delegation
+    /// proof, which is the longest thing a software wallet waits on, and the
+    /// only live account of it is the run's progress. Derived here rather than
+    /// written by the proof itself, so the two cannot disagree.
     private static func applySubmissionProgress(_ session: inout RoundSession) {
         session.currentVoteBundleIndex = session.progress.activeBundleIndex
         switch session.progress.stage {
@@ -2464,14 +2488,27 @@ extension VotingCoordFlow {
             break
         case .proving:
             session.voteSubmissionStep = .preparingProof
+            if let fraction = session.progress.proofFraction {
+                session.delegationProofStatus = ProofStatus.generating(progress: fraction)
+            } else if session.delegationProofStatus == ProofStatus.notStarted {
+                // A proving step the crate reports no fraction for — the vote
+                // commitment's own proof, which follows the delegation. Showing
+                // it as started is honest; dropping the bar back to nothing
+                // would not be.
+                session.delegationProofStatus = ProofStatus.generating(progress: 0)
+            }
         case .submitting:
             session.voteSubmissionStep = .preparingProof
+            session.delegationProofStatus = ProofStatus.complete
         case .confirming:
             session.voteSubmissionStep = .confirming
+            session.delegationProofStatus = ProofStatus.complete
         case .deliveringShares:
             session.voteSubmissionStep = .sendingShares
+            session.delegationProofStatus = ProofStatus.complete
         case .done:
             session.voteSubmissionStep = nil
+            session.delegationProofStatus = ProofStatus.complete
         }
         guard session.progress.totalProposals > 0 else { return }
         session.batchSubmissionStatus = .submitting(
@@ -2647,7 +2684,11 @@ extension VotingCoordFlow {
             roundSession.batchVoteErrors = [:]
             roundSession.isSubmittingVote = true
             roundSession.lastRunFailureSummary = nil
+            // The bar's delegation share is folded out of the progress
+            // snapshot, so it starts over with it rather than carrying the
+            // previous run's answer into a run that has not proved anything yet.
             roundSession.progress = VotingRoundProgressSnapshot()
+            roundSession.delegationProofStatus = ProofStatus.notStarted
         }
 
         return .merge(

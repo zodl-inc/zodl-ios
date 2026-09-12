@@ -402,6 +402,12 @@ extension VotingTestSuite {
         return try JSONDecoder().decode(VotingRoundRunReport.self, from: JSONSerialization.data(withJSONObject: payload))
     }
 
+    /// One driver event in the crate's wire shape, for the folds a run's
+    /// narration drives.
+    func driveEvent(_ json: String) throws -> VotingRoundDriveEvent {
+        try JSONDecoder().decode(VotingRoundDriveEvent.self, from: Data(json.utf8))
+    }
+
     func keystoneSigningRequest(
         bundleIndex: UInt32,
         bundleCount: UInt32,

@@ -80,8 +80,12 @@ struct RoundSession: Equatable {
     // MARK: - Submission pipeline state (Stage 5)
 
     /// On-chain authorization (ZKP #1) readiness, as the Confirm Submission
-    /// screen's progress bar reads it. The run narrates its own delegation work
-    /// through ``progress`` now, so nothing writes this any more.
+    /// screen's progress bar reads it.
+    ///
+    /// A projection of ``progress`` rather than a second account of the same
+    /// thing: the run narrates its delegation work through the progress
+    /// snapshot, and `applySubmissionProgress` folds that into the shape the
+    /// bar wants. Reset with the snapshot, for the same reason.
     var delegationProofStatus: ProofStatus = .notStarted
 
     /// Zashi-only optimization: precompute PIR proof material in the

@@ -342,6 +342,32 @@ extension VotingSharedStateSuites {
             #expect(store.state.path.isEmpty)
             #expect(store.state.checkingEligibilityRoundId == nil)
             #expect(store.state.ineligibleSheet?.snapshotHeight == 123)
+            #expect(store.state.ineligibleSheet?.reason == .noSpendableNotes)
+        }
+
+        /// A wallet that held notes but not enough of them is a different statement
+        /// about the voter's own money, and the crate hands back no figure for
+        /// either -- so the sheet says why this wallet is out rather than quoting a
+        /// balance of zero it never had.
+        @MainActor
+        @Test func aWalletBelowTheDivisorIsNotToldItHeldNothing() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(needsBundleSetup: true, openProposals: [1, 2]) }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    throw VotingError(kind: .insufficientEligibility, message: "every bundle is below the divisor")
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { store.state.ineligibleSheet != nil }
+
+            #expect(store.state.ineligibleSheet?.reason == .belowMinimum)
+            #expect(store.state.ineligibleSheet?.minimumZatoshi == ballotDivisor)
         }
 
         /// The precompute runs once for the bundle that owes delegation work, and
@@ -599,6 +625,49 @@ extension VotingSharedStateSuites {
             // exactly one prompt, the one the voter answered.
             #expect(recorder.events().filter { $0 == "runRound" }.count == 4)
             #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+        }
+
+        /// The Confirm screen reserves the bar's first 30 % for the delegation
+        /// proof, the longest thing a software wallet waits on. Nothing writes that
+        /// reservation on its own, so it is folded out of the run's own progress —
+        /// a bar frozen at zero while the crate proves is what this covers.
+        @Test func theConfirmBarFollowsTheRunsProvingProgress() throws {
+            var session = RoundSession(roundId: activeRoundId)
+            session.sessionEpoch = 1
+            var state = VotingCoordFlow.State()
+            state.roundCache[activeRoundId] = session
+
+            _ = VotingCoordFlow().reduceRoundRunEvent(
+                &state,
+                roundId: activeRoundId,
+                epoch: 1,
+                event: VotingRoundRunEvent.event(try driveEvent("""
+                {
+                    "kind": "step_progress",
+                    "progress": {
+                        "kind": "delegation",
+                        "bundle_index": 0,
+                        "delegation_progress": "proof_progress",
+                        "proof_progress": 0.25
+                    }
+                }
+                """))
+            )
+
+            #expect(tryUnwrap(state.roundCache[activeRoundId]).delegationProofStatus == .generating(progress: 0.25))
+
+            _ = VotingCoordFlow().reduceRoundRunEvent(
+                &state,
+                roundId: activeRoundId,
+                epoch: 1,
+                event: VotingRoundRunEvent.event(
+                    try driveEvent(#"{"kind": "step_progress", "progress": {"kind": "chain_outcome"}}"#)
+                )
+            )
+
+            // Past proving is a finished proof: the reservation stays filled rather
+            // than dropping back when the run moves on.
+            #expect(tryUnwrap(state.roundCache[activeRoundId]).delegationProofStatus == .complete)
         }
 
         /// A proposal the voter deliberately skipped is decided, not pending: it

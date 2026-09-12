@@ -292,7 +292,7 @@ struct VotingCoordFlow {
         case configUnsupported(String)
         case initializeFailed(String)
         case roundTapped(String)
-        case ineligibleForRound(roundId: String, heldZatoshi: UInt64)
+        case ineligibleForRound(roundId: String, reason: IneligibleReason)
         case earlyEligibilityConfirmed(roundId: String)
         case dismissIneligibleSheet
         case dismissWalletSyncingSheet
@@ -541,14 +541,26 @@ enum VotingShareTrackingCancelID: Hashable {
     case resume(String)
 }
 
+/// Why a wallet cannot take part in a round.
+///
+/// The two are different statements about the voter's own money and are told
+/// apart deliberately: the crate answers "no spendable notes" and "notes, but
+/// under the divisor" as different kinds, and neither answer carries a figure
+/// the sheet could quote. Saying "you held 0.000 ZEC" for the second would be a
+/// wrong claim about a balance the wallet does have.
+enum IneligibleReason: Equatable {
+    /// No notes at all were spendable at the round's snapshot.
+    case noSpendableNotes
+    /// Notes existed, but every bundle fell below `ballotDivisor`.
+    case belowMinimum
+}
+
 /// Data backing the Polls List "Insufficient Balance" sheet. Captured at
 /// the moment the pipeline determines the wallet can't participate so the
 /// sheet copy doesn't drift if state evolves while the sheet is up.
 struct IneligibleSheetData: Equatable {
-    /// Shielded balance the wallet held at the round's snapshot, in zatoshi.
-    /// Zero when the wallet had no notes; non-zero when notes existed but
-    /// every bundle dropped below `ballotDivisor`.
-    let heldZatoshi: UInt64
+    /// Which of the two ineligibility statements the sheet makes.
+    let reason: IneligibleReason
 
     /// Snapshot block height for the round, used by the sheet body to
     /// explain when the eligibility cutoff was taken.

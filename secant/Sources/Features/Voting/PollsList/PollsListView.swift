@@ -144,10 +144,14 @@ struct PollsListView: View {
         )
     }
 
-    /// Renders the body copy with the held balance, snapshot height, and
-    /// minimum required balance for the active sheet. Falls back to an
-    /// empty string when the sheet isn't presented so the modifier doesn't
-    /// crash during the dismiss animation.
+    /// Renders the body copy for the active sheet from the snapshot height and
+    /// the minimum required balance. Falls back to an empty string when the
+    /// sheet isn't presented so the modifier doesn't crash during the dismiss
+    /// animation.
+    ///
+    /// Neither variant quotes what the wallet held, because neither refusal
+    /// carries it: the crate says "no spendable notes" or "below the divisor"
+    /// and nothing more. The wording is what separates them.
     private var ineligibleSheetMessage: String {
         guard let data = store.ineligibleSheet else { return "" }
         let formatHeight: (UInt64) -> String = { height in
@@ -165,13 +169,19 @@ struct PollsListView: View {
             let value = Zatoshi(Int64(zatoshi)).decimalValue.roundedZec
             return formatter.string(from: value) ?? "0.000"
         }
-        return String(
-            localizable: .coinVotePollsListInsufficientBalanceMessage(
-                formatZec(data.heldZatoshi),
-                formatHeight(data.snapshotHeight),
-                formatZec(data.minimumZatoshi)
+        switch data.reason {
+        case .noSpendableNotes:
+            return String(
+                localizable: .coinVoteIneligibleNoNotesMessage(formatHeight(data.snapshotHeight))
             )
-        )
+        case .belowMinimum:
+            return String(
+                localizable: .coinVoteIneligibleBelowMinimumMessage(
+                    formatHeight(data.snapshotHeight),
+                    formatZec(data.minimumZatoshi)
+                )
+            )
+        }
     }
 
     @ViewBuilder
