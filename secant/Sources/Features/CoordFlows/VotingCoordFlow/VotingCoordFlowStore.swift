@@ -133,10 +133,10 @@ struct VotingCoordFlow {
 
         // MARK: - Submission flow-wide state (Stage 5)
 
-        /// Signals that batch submission should auto-resume after the
-        /// Keystone delegation signing loop finishes. Set when the user
-        /// taps Submit on a Keystone account before delegation is ready;
-        /// cleared on success, retry, or flow dismiss.
+        /// Signals that a run should start again without a second
+        /// authentication prompt -- the continuation of a Confirm the voter has
+        /// already authenticated, after the bundle rows it turned out to need
+        /// were persisted. Cleared on success, retry, or flow dismiss.
         var pendingBatchSubmission: Bool = false
 
         /// Round id whose submission alert is currently surfaced. Drives
@@ -303,13 +303,10 @@ struct VotingCoordFlow {
         /// choice, not an error, so nothing else is surfaced.
         case batchAuthenticationDeclined(roundId: String)
 
-        /// Delegation (ZKP #1) pipeline kick-off. Zashi-inline for non-
-        /// Keystone users; for Keystone users this starts the per-bundle
-        /// PCZT generation that drives the QR signing screen.
+        /// Keystone only: ask the crate for the next bundle's redacted PCZT,
+        /// which the QR signing screen shows the device. A software wallet's
+        /// delegation happens inside the run, with no step for the host.
         case startDelegationProof(roundId: String)
-        case delegationProofProgress(roundId: String, progress: Double)
-        case delegationProofCompleted(roundId: String)
-        case delegationProofFailed(roundId: String, error: String)
 
         /// Zashi-only PIR precompute optimization. Runs in the background
         /// while the user is choosing votes so the actual ZKP doesn't
@@ -354,20 +351,18 @@ struct VotingCoordFlow {
 
         // MARK: - Stage 5: Keystone delegation signing loop
 
-        case keystoneSigningPrepared(roundId: String, govPczt: VotingPcztResult, unsignedPczt: Pczt)
+        /// One bundle's redacted PCZT, as the crate built it for the device.
+        case keystoneSigningPrepared(roundId: String, request: VotingKeystoneSigningRequest)
         case keystoneSigningFailed(roundId: String, error: String)
         case openKeystoneSignatureScan
         case keystoneScan(PresentationAction<Scan.Action>)
-        case spendAuthSignatureExtracted(roundId: String, sig: Data, sighash: Data)
-        case keystoneBundleSignatureStored(
-            roundId: String,
-            signature: KeystoneBundleSignature,
-            bundleIndex: UInt32,
-            bundleCount: UInt32
-        )
+        /// The crate accepted the signed PCZT scanned back for this bundle and
+        /// stored its signature.
+        case keystoneBundleSignatureStored(roundId: String, bundleIndex: UInt32)
         case keystoneAllBundlesSigned(roundId: String)
-        case delegationBundlesRecovered(roundId: String, bundleIndices: Set<UInt32>)
-        case keystoneSignaturesRestored(roundId: String, signatures: [KeystoneBundleSignatureInfo])
+        /// The bundles the crate already holds a signature for, read back on
+        /// entry so the signing screen resumes where the voter left it.
+        case keystoneSignaturesRestored(roundId: String, bundleIndices: [UInt32])
         case keystoneShowSigningScreen(roundId: String)
         case keystoneSignatureRejected(roundId: String, message: String)
         case skipRemainingKeystoneBundles(roundId: String)

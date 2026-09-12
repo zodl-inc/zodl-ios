@@ -526,15 +526,6 @@ extension VotingCoordFlow {
             case let .startDelegationProof(roundId):
                 return reduceStartDelegationProof(&state, roundId: roundId)
 
-            case let .delegationProofProgress(roundId, progress):
-                return reduceDelegationProofProgress(&state, roundId: roundId, progress: progress)
-
-            case let .delegationProofCompleted(roundId):
-                return reduceDelegationProofCompleted(&state, roundId: roundId)
-
-            case let .delegationProofFailed(roundId, error):
-                return reduceDelegationProofFailed(&state, roundId: roundId, error: error)
-
             case let .maybeStartDelegationPrecompute(roundId):
                 return reduceMaybeStartDelegationPrecompute(&state, roundId: roundId)
 
@@ -637,17 +628,11 @@ extension VotingCoordFlow {
 
             // MARK: - Stage 5C: Keystone signing loop
 
-            case let .keystoneSigningPrepared(roundId, govPczt, unsignedPczt):
-                return reduceKeystoneSigningPrepared(
-                    &state,
-                    roundId: roundId,
-                    govPczt: govPczt,
-                    unsignedPczt: unsignedPczt
-                )
+            case let .keystoneSigningPrepared(roundId, request):
+                return reduceKeystoneSigningPrepared(&state, roundId: roundId, request: request)
 
             case let .keystoneSigningFailed(roundId, error):
                 mutateSession(&state, roundId: roundId) {
-                    $0.isDelegationProofInFlight = false
                     $0.keystoneSigningStatus = .failed(VotingErrorMapper.userFriendlyMessage(from: error))
                 }
                 return .none
@@ -671,80 +656,18 @@ extension VotingCoordFlow {
             case .keystoneScan:
                 return .none
 
-            case let .spendAuthSignatureExtracted(roundId, sig, sighash):
-                return reduceSpendAuthSignatureExtracted(
-                    &state,
-                    roundId: roundId,
-                    sig: sig,
-                    sighash: sighash
-                )
-
-            case let .keystoneBundleSignatureStored(roundId, signature, bundleIndex, bundleCount):
-                return reduceKeystoneBundleSignatureStored(
-                    &state,
-                    roundId: roundId,
-                    signature: signature,
-                    bundleIndex: bundleIndex,
-                    bundleCount: bundleCount
-                )
+            case let .keystoneBundleSignatureStored(roundId, bundleIndex):
+                return reduceKeystoneBundleSignatureStored(&state, roundId: roundId, bundleIndex: bundleIndex)
 
             case let .keystoneAllBundlesSigned(roundId):
                 return reduceKeystoneAllBundlesSigned(&state, roundId: roundId)
 
-            case let .delegationBundlesRecovered(roundId, bundleIndices):
-                mutateSession(&state, roundId: roundId) { roundSession in
-                    roundSession.completedKeystoneDelegationBundleIndices = bundleIndices
-                        .filter { roundSession.bundleCount == 0 || $0 < roundSession.bundleCount }
-                    roundSession.currentKeystoneBundleIndex =
-                        roundSession.firstIncompleteKeystoneBundleIndex ?? 0
-                }
-                return .none
-
-            case let .keystoneSignaturesRestored(roundId, signatures):
-                guard let session = state.roundCache[roundId],
-                      let validSignatures = Self.validKeystoneSignatures(
-                        signatures,
-                        bundleCount: session.bundleCount
-                      ),
-                      !validSignatures.isEmpty
-                else {
-                    return .none
-                }
-                mutateSession(&state, roundId: roundId) { roundSession in
-                    roundSession.keystoneBundleSignatures = validSignatures.map {
-                        KeystoneBundleSignature(
-                            bundleIndex: $0.bundleIndex,
-                            sig: $0.sig,
-                            sighash: $0.sighash,
-                            rk: $0.rk
-                        )
-                    }
-                    roundSession.currentKeystoneBundleIndex =
-                        roundSession.firstIncompleteKeystoneBundleIndex ?? 0
-                    roundSession.pendingVotingPczt = nil
-                    roundSession.pendingUnsignedDelegationPczt = nil
-                    roundSession.keystoneSigningStatus = Self.allKeystoneBundlesResolved(roundSession)
-                        ? .finalizingAuthorization
-                        : .idle
-                }
-                if state.roundCache[roundId].map(Self.allKeystoneBundlesResolved) == true {
-                    mutateSession(&state, roundId: roundId) { roundSession in
-                        roundSession.delegationProofStatus = .generating(progress: 0)
-                        roundSession.isDelegationProofInFlight = true
-                        roundSession.batchSubmissionStatus = .authorizing
-                        roundSession.voteSubmissionStep = .authorizingVote
-                    }
-                    if case .delegationSigning = state.path.last {
-                        _ = state.path.popLast()
-                    }
-                    return .send(.keystoneAllBundlesSigned(roundId: roundId))
-                }
-                if !hasKeystoneSigningRound(state: state, roundId: roundId) {
-                    state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
-                }
-                return .send(.startDelegationProof(roundId: roundId))
+            case let .keystoneSignaturesRestored(roundId, bundleIndices):
+                return reduceKeystoneSignaturesRestored(&state, roundId: roundId, bundleIndices: bundleIndices)
 
             case let .keystoneSignatureRejected(roundId, message):
+                // The bundle stays the one on screen: nothing was stored, so the
+                // device still owes this round a signature for it.
                 mutateSession(&state, roundId: roundId) { roundSession in
                     roundSession.keystoneSigningStatus = .awaitingSignature
                 }
@@ -785,7 +708,9 @@ extension VotingCoordFlow {
             case let .delegationRejected(roundId):
                 // User backed out of the signing screen mid-loop. Reset
                 // Keystone-side state so a fresh attempt starts clean. Drafts
-                // and submitted votes are preserved.
+                // and submitted votes are preserved, and so are the signatures
+                // the crate has already stored: they are what a resumed loop
+                // starts from.
                 mutateSession(&state, roundId: roundId) { roundSession in
                     resetKeystoneSigningLoop(&roundSession)
                     if case .authorizing = roundSession.batchSubmissionStatus {
@@ -1699,8 +1624,28 @@ extension VotingCoordFlow {
         return .merge(
             .send(.earlyEligibilityConfirmed(roundId: roundId)),
             submittedVotesEffect(plan: plan, roundId: roundId),
+            restoreKeystoneSignaturesEffect(isKeystoneUser: state.isKeystoneUser, roundId: roundId),
             .send(.maybeStartDelegationPrecompute(roundId: roundId))
         )
+    }
+
+    /// What the crate already holds for a Keystone round, read as its session
+    /// opens so a signing loop resumes where the voter left it instead of
+    /// starting over. A software wallet stores no signatures, so nothing to do.
+    private func restoreKeystoneSignaturesEffect(isKeystoneUser: Bool, roundId: String) -> Effect<Action> {
+        guard isKeystoneUser else { return .none }
+        return .run { [votingCrypto] send in
+            let stored = try await votingCrypto.keystoneSignatures(roundId)
+            await send(.keystoneSignaturesRestored(
+                roundId: roundId,
+                bundleIndices: stored.map(\.bundleIndex)
+            ))
+        } catch: { error, _ in
+            // Only the screen's progress is at stake: a run names whatever is
+            // still unsigned whatever this read answered.
+            LoggerProxy.warn("Reading the stored Keystone signatures for \(roundId) failed: \(error)")
+        }
+        .cancellable(id: cancelPipelineId)
     }
 
     /// `.bundlesSetUp` handler. The layout is the round's voting power; the
@@ -1842,7 +1787,7 @@ extension VotingCoordFlow {
 
     /// `.roundRunDecision` handler. One branch per thing a stopped run can
     /// leave the host owing.
-    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    // swiftlint:disable:next cyclomatic_complexity
     func reduceRoundRunDecision(
         _ state: inout State,
         roundId: String,
@@ -1891,15 +1836,7 @@ extension VotingCoordFlow {
             }
 
         case .collectSignatures(let bundles):
-            mutateSession(&state, roundId: roundId) { $0.keystoneBundlesToSign = bundles }
-            // The Keystone loop is Task A4's; a software wallet asked for a
-            // signature has already given the only one it has.
-            guard !state.isKeystoneUser else { return .none }
-            LoggerProxy.error("Round \(roundId) asked a software wallet for signatures on bundles \(bundles)")
-            return .send(.batchAuthorizationFailed(
-                roundId: roundId,
-                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
-            ))
+            return reduceCollectSignatures(&state, roundId: roundId, bundles: bundles)
 
         case let .waitForBallot(openProposals, unrosteredIntents):
             LoggerProxy.error(
@@ -1951,6 +1888,45 @@ extension VotingCoordFlow {
             // stopped on is still the right one.
             return .none
         }
+    }
+
+    /// `.collectSignatures` decision. The bundles the run named are the signing
+    /// loop's work list, and the Keystone screen walks them one at a time.
+    ///
+    /// Two ways this is not a signing loop at all: a software wallet asked for a
+    /// signature has already given the only one it has, and a device asked again
+    /// for bundles whose signatures are already stored signed something other
+    /// than what the round wanted. Both are failures to show, not another pass.
+    private func reduceCollectSignatures(
+        _ state: inout State,
+        roundId: String,
+        bundles: [UInt32]
+    ) -> Effect<Action> {
+        guard state.isKeystoneUser else {
+            LoggerProxy.error("Round \(roundId) asked a software wallet for signatures on bundles \(bundles)")
+            return .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
+            ))
+        }
+        let signed = state.roundCache[roundId]?.keystoneSignedBundles ?? []
+        guard bundles.contains(where: { !signed.contains($0) }) else {
+            LoggerProxy.error(
+                "Round \(roundId) asked again for signatures on bundles \(bundles) this device has already stored"
+            )
+            return .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
+            ))
+        }
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.keystoneBundlesToSign = bundles
+            roundSession.keystoneSigningStatus = .idle
+        }
+        if !hasKeystoneSigningRound(state: state, roundId: roundId) {
+            state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
+        }
+        return .send(.startDelegationProof(roundId: roundId))
     }
 
     /// What a run that reached the end of its work leaves on screen.
@@ -2098,8 +2074,10 @@ extension VotingCoordFlow {
             if roundSession.eligibleBundleCount == 0 {
                 roundSession.eligibleBundleCount = bundleCount
             }
-            roundSession.completedKeystoneDelegationBundleIndices =
-                roundSession.completedKeystoneDelegationBundleIndices.filter { $0 < bundleCount }
+            // A round that lost its unsigned tail keeps only the signatures and
+            // weights of the bundles it still has.
+            roundSession.keystoneSignedBundles = roundSession.keystoneSignedBundles.filter { $0 < bundleCount }
+            roundSession.keystoneBundleWeights = roundSession.keystoneBundleWeights.filter { $0.key < bundleCount }
         }
     }
 
@@ -2236,8 +2214,8 @@ extension VotingCoordFlow {
             }
     }
 
-    /// `.authenticationSucceeded` handler. Branches on Keystone vs. software,
-    /// and for a software wallet starts the round run the seed signs.
+    /// `.authenticationSucceeded` handler. Starts the run the voter's Confirm
+    /// asked for.
     func reduceAuthenticationSucceeded(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
         // Idempotent entry: a fresh `.requested` tap (or a retryable status)
@@ -2252,23 +2230,19 @@ extension VotingCoordFlow {
         else { return .none }
         state.pendingBatchSubmission = false
         guard activeSession(in: state, roundId: roundId) != nil else { return .none }
+        return startRoundRun(&state, roundId: roundId)
+    }
 
-        // Keystone: route into the per-bundle QR signing screen first. The run
-        // resumes via `pendingBatchSubmission` once every bundle is signed.
-        if state.isKeystoneUser && !isDelegationReady(session) {
-            state.pendingBatchSubmission = true
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.batchSubmissionStatus = .authorizing
-                roundSession.voteSubmissionStep = .authorizingVote
-            }
-            if !hasKeystoneSigningRound(state: state, roundId: roundId) {
-                state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
-            }
-            return .send(.startDelegationProof(roundId: roundId))
-        }
-
+    /// Puts the round into "a run is driving it" and starts one.
+    ///
+    /// Both wallets come through here, including a Keystone round resuming after
+    /// its signing loop: the round the voter authorised is driven the same way
+    /// either way, and only the signer differs.
+    private func startRoundRun(_ state: inout State, roundId: String) -> Effect<Action> {
+        guard let session = state.roundCache[roundId] else { return .none }
         let epoch = session.sessionEpoch
         let pendingCount = max(session.draftVotes.count, 1)
+        let keystoneStored = state.isKeystoneUser
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.batchSubmissionStatus = .authorizing
             roundSession.voteSubmissionStep = .authorizingVote
@@ -2286,43 +2260,66 @@ extension VotingCoordFlow {
             // drive.
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelRunRetryId),
-            .run { [backgroundTask, mnemonic, votingAPI, votingCrypto, walletStorage] send in
-                // MOB-1810: refresh operator health in the background so the
-                // share walk's ordering reflects the present rather than poll
-                // entry. Fire-and-forget; nothing here awaits its results.
-                await votingAPI.startHealthProbeSweep()
-                let bgTaskId = await backgroundTask.beginTask("Voting round run")
-                _ = await backgroundTask.beginContinuedProcessing(
-                    "co.zodl.voting.*",
-                    String(localizable: .coinVoteSubmissionContinuedProcessingTitle),
-                    pendingCount == 1
-                        ? String(localizable: .coinVoteSubmissionContinuedProcessingMessageSingle(String(pendingCount)))
-                        : String(localizable: .coinVoteSubmissionContinuedProcessingMessageMultiple(String(pendingCount)))
-                )
-                defer {
-                    Task {
-                        await backgroundTask.endContinuedProcessing()
-                        await backgroundTask.endTask(bgTaskId)
-                    }
-                }
+            roundRunEffect(
+                roundId: roundId,
+                epoch: epoch,
+                pendingCount: pendingCount,
+                keystoneStored: keystoneStored
+            )
+        )
+    }
 
+    /// One run of the round, on the only signer this wallet can offer.
+    ///
+    /// A Keystone round carries no key material at all: its signatures are
+    /// already in the crate's rows and the run reads them from there. A software
+    /// wallet's seed is read inside the effect for the one call the SDK carries
+    /// it into.
+    private func roundRunEffect(
+        roundId: String,
+        epoch: UInt64,
+        pendingCount: Int,
+        keystoneStored: Bool
+    ) -> Effect<Action> {
+        .run { [backgroundTask, mnemonic, votingAPI, votingCrypto, walletStorage] send in
+            // MOB-1810: refresh operator health in the background so the
+            // share walk's ordering reflects the present rather than poll
+            // entry. Fire-and-forget; nothing here awaits its results.
+            await votingAPI.startHealthProbeSweep()
+            let bgTaskId = await backgroundTask.beginTask("Voting round run")
+            _ = await backgroundTask.beginContinuedProcessing(
+                "co.zodl.voting.*",
+                String(localizable: .coinVoteSubmissionContinuedProcessingTitle),
+                pendingCount == 1
+                    ? String(localizable: .coinVoteSubmissionContinuedProcessingMessageSingle(String(pendingCount)))
+                    : String(localizable: .coinVoteSubmissionContinuedProcessingMessageMultiple(String(pendingCount)))
+            )
+            defer {
+                Task {
+                    await backgroundTask.endContinuedProcessing()
+                    await backgroundTask.endTask(bgTaskId)
+                }
+            }
+
+            let signer: VotingDelegationSigner
+            if keystoneStored {
+                signer = VotingDelegationSigner.keystoneStored
+            } else {
                 // The seed exists for exactly one run: the SDK carries it into
                 // the Rust signer and zeroizes it there, and nothing on this
                 // side keeps it past the call.
                 let seed = try mnemonic.toSeed(walletStorage.exportWallet().seedPhrase.value())
-                for try await event in votingCrypto.runRound(
-                    roundId,
-                    VotingDelegationSigner.software(seed: seed),
-                    VotingRoundDrivePolicy.default
-                ) {
-                    await send(.roundRunEvent(roundId: roundId, epoch: epoch, event: event))
-                }
-            } catch: { error, send in
-                LoggerProxy.error("Round run for \(roundId) failed to start: \(error)")
-                await send(.roundRunFailed(roundId: roundId, epoch: epoch, error: Self.votingError(from: error)))
+                signer = VotingDelegationSigner.software(seed: seed)
             }
-            .cancellable(id: cancelSubmissionId, cancelInFlight: true)
-        )
+
+            for try await event in votingCrypto.runRound(roundId, signer, VotingRoundDrivePolicy.default) {
+                await send(.roundRunEvent(roundId: roundId, epoch: epoch, event: event))
+            }
+        } catch: { error, send in
+            LoggerProxy.error("Round run for \(roundId) failed to start: \(error)")
+            await send(.roundRunFailed(roundId: roundId, epoch: epoch, error: Self.votingError(from: error)))
+        }
+        .cancellable(id: cancelSubmissionId, cancelInFlight: true)
     }
 
     // MARK: - Delegation precompute
@@ -2719,423 +2716,223 @@ extension VotingCoordFlow {
         return .send(.submitAllDraftsTapped(roundId: roundId))
     }
 
-    // MARK: - Delegation proof effect plumbing
+    // MARK: - Keystone signing loop
 
-    // swiftlint:disable:next function_body_length
+    /// `.startDelegationProof` handler. Asks the crate for the next bundle's
+    /// redacted PCZT, which the signing screen shows the device as a QR.
+    ///
+    /// Keystone only: a software wallet's delegation happens inside the run,
+    /// with no step for the host to take.
     func reduceStartDelegationProof(_ state: inout State, roundId: String) -> Effect<Action> {
-        // The Zashi inline path runs delegation from inside the batch
-        // submission `.run` block. This case is reachable directly only for
-        // the Keystone flow, which builds one voting PCZT per bundle and
-        // hands it off to the QR signing screen.
         guard state.isKeystoneUser else { return .none }
         guard let session = state.roundCache[roundId] else { return .none }
-        guard !session.isDelegationProofInFlight, session.delegationProofStatus != .complete else {
-            return .none
-        }
-        guard let nextBundleIndex = session.firstIncompleteKeystoneBundleIndex else {
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.keystoneSigningStatus = .finalizingAuthorization
-                roundSession.delegationProofStatus = .generating(progress: 0)
-                roundSession.isDelegationProofInFlight = true
-                roundSession.batchSubmissionStatus = .authorizing
-                roundSession.voteSubmissionStep = .authorizingVote
-            }
+        guard let bundleIndex = session.nextKeystoneBundleToSign else {
+            // Every bundle the run asked for is stored, so there is nothing left
+            // to put in front of the device: run the round on those signatures.
             return .send(.keystoneAllBundlesSigned(roundId: roundId))
         }
-        guard case .idle = session.keystoneSigningStatus else {
-            return .none
-        }
-        guard let activeSession = state.allRounds.first(where: { $0.id == roundId })?.session else {
-            return .none
-        }
+        // One request at a time, and only between bundles: a second dispatch
+        // while a request is being built — or while its QR is on screen — would
+        // replace the code the voter is part-way through scanning.
+        guard case .idle = session.keystoneSigningStatus else { return .none }
 
-        let keystoneMetadata: (seedFingerprint: Data, accountIndex: UInt32)?
-        if let account = state.selectedWalletAccount {
-            guard
-                let zip32AccountIndex = account.zip32AccountIndex,
-                let seedFingerprint = account.seedFingerprint,
-                seedFingerprint.count == 32
-            else {
-                return .send(.delegationProofFailed(
-                    roundId: roundId,
-                    error: VotingFlowError.missingSigningAccount.localizedDescription
-                ))
-            }
-            keystoneMetadata = (Data(seedFingerprint), UInt32(zip32AccountIndex.index))
-        } else {
-            keystoneMetadata = nil
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.currentKeystoneBundleIndex = bundleIndex
+            roundSession.keystoneSigningStatus = .preparingRequest
         }
 
-        let cachedNotes = session.walletNotes
-        let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex: UInt32 = keystoneMetadata?.accountIndex ?? 0
-        let keystoneSeedFingerprint = keystoneMetadata?.seedFingerprint
-        let roundName = activeSession.title
-        let keystoneBundleIndex = nextBundleIndex
-        let bundleCount = session.bundleCount
-        let noteChunks = cachedNotes.smartBundles().bundles
-
-        guard bundleCount > 0,
-              Int(keystoneBundleIndex) < Int(bundleCount),
-              Int(keystoneBundleIndex) < noteChunks.count
-        else {
-            return .send(.delegationProofFailed(
-                roundId: roundId,
-                error: "Keystone signing state is inconsistent."
-            ))
-        }
-
-        guard
-            let accountId = state.selectedWalletAccount?.id
-        else {
-            LoggerProxy.error("selectedAccount unexpectedly nil during Keystone delegation; aborting")
-            return .none
-        }
-
-        mutateSession(&state, roundId: roundId) {
-            $0.currentKeystoneBundleIndex = keystoneBundleIndex
-            $0.isDelegationProofInFlight = true
-            $0.keystoneSigningStatus = .preparingRequest
-        }
-
-        return .run { [backgroundTask, sdkSynchronizer, votingCrypto, mnemonic, walletStorage] send in
-            let bgTaskId = await backgroundTask.beginTask("Keystone PCZT prep")
+        return .run { [backgroundTask, votingCrypto] send in
+            let bgTaskId = await backgroundTask.beginTask("Keystone signing request")
             do {
-                let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
-                let bundleNotes = noteChunks[Int(keystoneBundleIndex)]
-                let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
-                    bundleNotes[0].ufvkStr, networkId
-                )
-                LoggerProxy.info("Keystone: preparing PCZT for bundle \(keystoneBundleIndex + 1)/\(bundleCount)")
-                let govPczt = try await VotingLegacy.buildVotingPczt(
-                    roundId,
-                    keystoneBundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    keystoneSeedFingerprint
-                )
-                let redactedPczt = try await sdkSynchronizer.redactPCZTForSigner(govPczt.pcztBytes)
+                LoggerProxy.info("Keystone: requesting the signing payload for bundle \(bundleIndex)")
+                let requests = try await votingCrypto.keystoneSigningRequests(roundId, [bundleIndex])
+                guard let request = requests.first(where: { $0.bundleIndex == bundleIndex }) else {
+                    throw VotingError(
+                        kind: VotingErrorKind.invalidInput,
+                        message: VotingFlowError.missingPendingUnsignedPczt.localizedDescription
+                    )
+                }
                 await backgroundTask.endTask(bgTaskId)
-                await send(.keystoneSigningPrepared(roundId: roundId, govPczt: govPczt, unsignedPczt: redactedPczt))
+                await send(.keystoneSigningPrepared(roundId: roundId, request: request))
             } catch {
                 await backgroundTask.endTask(bgTaskId)
                 throw error
             }
         } catch: { error, send in
+            LoggerProxy.error("Keystone signing request for \(roundId) failed: \(error)")
             await send(.keystoneSigningFailed(roundId: roundId, error: error.localizedDescription))
         }
         .cancellable(id: cancelDelegationProofId, cancelInFlight: true)
     }
 
-    // MARK: - Keystone signing handlers
-
+    /// `.keystoneSigningPrepared` handler. The redacted PCZT the crate built is
+    /// what the screen shows and what the device signs; the round's totals come
+    /// from the same request rather than from a bundling repeated on this side.
     func reduceKeystoneSigningPrepared(
         _ state: inout State,
         roundId: String,
-        govPczt: VotingPcztResult,
-        unsignedPczt: Pczt
+        request: VotingKeystoneSigningRequest
     ) -> Effect<Action> {
+        // A request that finished building after the loop moved on — a skip the
+        // voter confirmed while it was in flight — is not put on screen.
+        guard state.roundCache[roundId]?.keystoneSigningStatus == .preparingRequest else { return .none }
         mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.pendingVotingPczt = govPczt
-            roundSession.pendingUnsignedDelegationPczt = unsignedPczt
-            roundSession.isDelegationProofInFlight = false
+            roundSession.pendingKeystoneRequest = request
+            roundSession.currentKeystoneBundleIndex = request.bundleIndex
+            roundSession.keystoneBundleWeights[request.bundleIndex] = request.delegatedWeightZatoshi
+            if request.bundleCount > 0 {
+                roundSession.bundleCount = request.bundleCount
+            }
+            if roundSession.eligibleVotingWeight == 0 {
+                roundSession.eligibleVotingWeight = request.eligibleWeightZatoshi
+            }
             roundSession.keystoneSigningStatus = .awaitingSignature
         }
         return .none
     }
 
+    /// The signed PCZT scanned back from the device, handed to the crate as it
+    /// came: the crate lifts the signature off it, checks it against the bundle
+    /// it belongs to and stores it. Nothing here reads the signature material.
     func reduceKeystoneScanFound(_ state: inout State, signedPczt: Pczt) -> Effect<Action> {
-        // The scan sheet is presented from the delegation signing screen,
-        // which only exists for the currently in-flight Keystone round.
-        // Resolve the round id from the topmost delegationSigning path entry.
+        // The scan sheet is presented from the delegation signing screen, which
+        // exists for one round at a time: the round in the loop.
         state.keystoneScan = nil
-        guard let (roundId, govPczt) = currentKeystoneSigningTarget(state: state) else {
-            return .none
-        }
+        guard case let .delegationSigning(signingState) = state.path.last else { return .none }
+        let roundId = signingState.roundId
+        guard let request = state.roundCache[roundId]?.pendingKeystoneRequest else { return .none }
         mutateSession(&state, roundId: roundId) {
             $0.keystoneSigningStatus = .parsingSignature
         }
-        let actionIndex = govPczt.actionIndex
-        let session = state.roundCache[roundId]
-        let existingSignatures = session?.keystoneBundleSignatures ?? []
-        let currentBundleIndex = session?.currentKeystoneBundleIndex ?? 0
-        let bundleCount = session?.bundleCount ?? 0
-        return .run { send in
-            let scannedSighash = try VotingLegacy.extractPcztSighash(signedPczt)
-            if let rejectionMessage = Self.keystoneScanRejectionMessage(
-                scannedSighash: scannedSighash,
-                expectedSighash: govPczt.pcztSighash,
-                existingSignatures: existingSignatures,
-                currentBundleIndex: currentBundleIndex,
-                bundleCount: bundleCount
-            ) {
+        let bundleIndex = request.bundleIndex
+
+        return .run { [votingCrypto] send in
+            let signed = VotingKeystoneSignedBundle(bundleIndex: bundleIndex, signedPczt: signedPczt)
+            let result = try await votingCrypto.storeKeystoneSignatures(roundId, [signed])
+            LoggerProxy.info(
+                "Keystone: bundle \(bundleIndex) stored (inserted \(result.inserted), kept \(result.alreadyPresent))"
+            )
+            await send(.keystoneBundleSignatureStored(roundId: roundId, bundleIndex: bundleIndex))
+        } catch: { error, send in
+            let failure = Self.votingError(from: error)
+            switch failure.kind {
+            case .keystoneSignatureConflict, .invalidInput:
+                // The device signed something other than the bundle on screen,
+                // or signed it differently than the round already has it. The
+                // scan is refused with the crate's own reason for refusing it.
+                LoggerProxy.error("Keystone signature for bundle \(bundleIndex) refused: \(failure.message)")
                 await send(.keystoneSignatureRejected(
                     roundId: roundId,
-                    message: rejectionMessage
+                    message: VotingErrorMapper.userFriendlyMessage(from: failure)
                 ))
-                return
+            default:
+                await send(.keystoneSigningFailed(roundId: roundId, error: failure.message))
             }
-
-            let spendAuthSig = try VotingLegacy.extractSpendAuthSignatureFromSignedPczt(
-                signedPczt,
-                actionIndex
-            )
-            await send(.spendAuthSignatureExtracted(roundId: roundId, sig: spendAuthSig, sighash: scannedSighash))
-        } catch: { error, send in
-            await send(.keystoneSigningFailed(roundId: roundId, error: error.localizedDescription))
         }
     }
 
-    func reduceSpendAuthSignatureExtracted(
-        _ state: inout State,
-        roundId: String,
-        sig: Data,
-        sighash: Data
-    ) -> Effect<Action> {
-        guard let rk = state.roundCache[roundId]?.pendingVotingPczt?.rk else {
-            return .send(.delegationProofFailed(
-                roundId: roundId,
-                error: VotingFlowError.missingPendingUnsignedPczt.localizedDescription
-            ))
-        }
-        let currentIndex = state.roundCache[roundId]?.currentKeystoneBundleIndex ?? 0
-        let bundleCount = state.roundCache[roundId]?.bundleCount ?? 0
-        return .send(.keystoneBundleSignatureStored(
-            roundId: roundId,
-            signature: KeystoneBundleSignature(bundleIndex: currentIndex, sig: sig, sighash: sighash, rk: rk),
-            bundleIndex: currentIndex,
-            bundleCount: bundleCount
-        ))
-    }
-
+    /// `.keystoneBundleSignatureStored` handler. One bundle down: the loop moves
+    /// to the next one the run asked for, or hands the round back to a run once
+    /// there is none.
     func reduceKeystoneBundleSignatureStored(
         _ state: inout State,
         roundId: String,
-        signature: KeystoneBundleSignature,
-        bundleIndex: UInt32,
-        bundleCount: UInt32
+        bundleIndex: UInt32
     ) -> Effect<Action> {
+        guard state.roundCache[roundId] != nil else { return .none }
         mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.keystoneBundleSignatures.removeAll { $0.bundleIndex == bundleIndex }
-            roundSession.keystoneBundleSignatures.append(signature)
-            roundSession.keystoneBundleSignatures.sort { $0.bundleIndex < $1.bundleIndex }
-            roundSession.pendingVotingPczt = nil
-            roundSession.pendingUnsignedDelegationPczt = nil
+            roundSession.keystoneSignedBundles.insert(bundleIndex)
+            roundSession.pendingKeystoneRequest = nil
+            roundSession.keystoneSigningStatus = .idle
         }
+        // A signature stored after the voter left the signing screen is kept —
+        // the crate holds it either way — but it does not restart the loop.
+        guard hasKeystoneSigningRound(state: state, roundId: roundId) else { return .none }
 
-        let sigInfo = KeystoneBundleSignatureInfo(
-            bundleIndex: bundleIndex,
-            sig: signature.sig,
-            sighash: signature.sighash,
-            rk: signature.rk
-        )
-        let persistEffect: Effect<Action> = .run { _ in
-            try await VotingLegacy.storeKeystoneBundleSignature(roundId, sigInfo)
+        if state.roundCache[roundId]?.nextKeystoneBundleToSign != nil {
+            return .send(.startDelegationProof(roundId: roundId))
         }
-
-        if let nextBundleIndex = state.roundCache[roundId]?.firstIncompleteKeystoneBundleIndex {
-            // Advance to the next bundle and auto-start its PCZT build.
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.currentKeystoneBundleIndex = nextBundleIndex
-                roundSession.isDelegationProofInFlight = false
-                roundSession.keystoneSigningStatus = .idle
-            }
-            return .merge(persistEffect, .send(.startDelegationProof(roundId: roundId)))
-        } else {
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.keystoneSigningStatus = .finalizingAuthorization
-                roundSession.delegationProofStatus = .generating(progress: 0)
-                roundSession.isDelegationProofInFlight = true
-                roundSession.batchSubmissionStatus = .authorizing
-                roundSession.voteSubmissionStep = .authorizingVote
-            }
-            // Pop the delegation signing screen so the user lands back on
-            // Confirm Submission while the proof + delegation TX runs.
-            if case .delegationSigning = state.path.last {
-                _ = state.path.popLast()
-            }
-            return .merge(persistEffect, .send(.keystoneAllBundlesSigned(roundId: roundId)))
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.keystoneSigningStatus = .finalizingAuthorization
         }
+        // Back to Confirm Submission while the run these signatures unblock
+        // drives the round.
+        if case .delegationSigning = state.path.last {
+            _ = state.path.popLast()
+        }
+        return .send(.keystoneAllBundlesSigned(roundId: roundId))
     }
 
-    // swiftlint:disable:next function_body_length
+    /// `.keystoneAllBundlesSigned` handler. Every bundle the run asked for is
+    /// stored, so the round is driven again — this time reading those rows.
     func reduceKeystoneAllBundlesSigned(_ state: inout State, roundId: String) -> Effect<Action> {
-        guard let session = state.roundCache[roundId] else { return .none }
-        guard let activeSession = state.allRounds.first(where: { $0.id == roundId })?.session else {
-            return .send(.delegationProofFailed(
+        guard state.roundCache[roundId] != nil else { return .none }
+        guard activeSession(in: state, roundId: roundId) != nil else {
+            return .send(.batchAuthorizationFailed(
                 roundId: roundId,
                 error: VotingFlowError.missingActiveSession.localizedDescription
             ))
         }
-
-        let expectedSnapshotHeight = activeSession.snapshotHeight
-        let cachedNotes = session.walletNotes
-        let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex: UInt32 = state.selectedWalletAccount
-            .flatMap(\.zip32AccountIndex)
-            .map { UInt32($0.index) } ?? 0
-        guard
-            let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url),
-            !pirEndpoints.isEmpty,
-            let pirLayout = state.serviceConfig?.pirLayout,
-            let accountId = state.selectedWalletAccount?.id
-        else {
-            LoggerProxy.error("serviceConfig/selectedAccount unexpectedly nil during Keystone delegation proof")
-            return .none
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.keystoneSigningStatus = .finalizingAuthorization
+            roundSession.pendingKeystoneRequest = nil
+            // The next run names the bundles it still wants signed; keeping this
+            // one's list would have the loop re-ask for bundles already stored.
+            roundSession.keystoneBundlesToSign = []
         }
-        // Fail closed before any FFI call when the dynamic config predates
-        // `pir_layout.poly_len` (see `missingPolyLenConfigError`).
-        guard let polyLen = pirLayout.polyLen else {
-            LoggerProxy.error("Keystone delegation proof refused: dynamic config lacks pir_layout.poly_len")
-            return .send(.delegationProofFailed(
-                roundId: roundId,
-                error: VotingErrorMapper.userFriendlyMessage(from: Self.missingPolyLenConfigError.localizedDescription)
-            ))
-        }
-        let bundleCount = session.bundleCount
-        let roundName = activeSession.title
-        let storedSignatures = session.keystoneBundleSignatures.sorted { $0.bundleIndex < $1.bundleIndex }
-        let initiallyCompletedBundles = session.completedKeystoneDelegationBundleIndices
-        let noteChunks = cachedNotes.smartBundles().bundles
-        guard bundleCount > 0,
-              Int(bundleCount) <= noteChunks.count
-        else {
-            return .send(.delegationProofFailed(
-                roundId: roundId,
-                error: "Keystone signature state is inconsistent."
-            ))
-        }
-
-        return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage, pirLayout] send in
-            let bgTaskId = await backgroundTask.beginTask("Keystone delegation proof")
-            do {
-                let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
-                let senderSeed = try mnemonic.toSeed(senderPhrase)
-                let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
-                let normalizedInitialCompletedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
-                var completedBundles = normalizedInitialCompletedBundles
-                for idx: UInt32 in 0..<bundleCount {
-                    if let vanPosition = try await Self.recoverKeystoneDelegationVanPosition(
-                        roundId: roundId,
-                        bundleIndex: idx,
-                        votingCrypto: votingCrypto,
-                        votingAPI: votingAPI
-                    ) {
-                        LoggerProxy.debug("Recovered Keystone delegation bundle \(idx) VAN position: \(vanPosition)")
-                        completedBundles.insert(idx)
-                    }
-                }
-                if completedBundles != normalizedInitialCompletedBundles {
-                    await send(.delegationBundlesRecovered(
-                        roundId: roundId,
-                        bundleIndices: completedBundles
-                    ))
-                }
-
-                let resolvedBundleIndices = completedBundles
-                    .union(storedSignatures.map(\.bundleIndex))
-                    .filter { $0 < bundleCount }
-                let missingBundleIndices = (0..<bundleCount).filter { !resolvedBundleIndices.contains($0) }
-                guard missingBundleIndices.isEmpty else {
-                    throw VotingFlowError.missingKeystoneBundleSignature
-                }
-                let totalWorkCount = max(resolvedBundleIndices.count, 1)
-
-                for sig in storedSignatures {
-                    let bundleIdx = sig.bundleIndex
-                    guard bundleIdx < bundleCount else {
-                        throw VotingFlowError.invalidDelegationSignature
-                    }
-                    if completedBundles.contains(bundleIdx) {
-                        let overallProgress = Double(completedBundles.count) / Double(totalWorkCount)
-                        await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
-                        continue
-                    }
-                    let bundleNotes = noteChunks[Int(bundleIdx)]
-                    let completedBeforeBundle = completedBundles.count
-                    LoggerProxy.info("Keystone batch: proving bundle \(bundleIdx + 1)/\(bundleCount)")
-
-                    for try await event in VotingLegacy.buildAndProveDelegation(
-                        roundId,
-                        bundleIdx,
-                        bundleNotes,
-                        senderSeed,
-                        hotkeySeed,
-                        networkId,
-                        accountIndex,
-                        roundName,
-                        pirEndpoints,
-                        expectedSnapshotHeight,
-                        pirLayout.pirDepth,
-                        pirLayout.tier0Layers,
-                        pirLayout.tier1Layers,
-                        polyLen
-                    ) {
-                        switch event {
-                        case .progress(let progress):
-                            let overallProgress = (Double(completedBeforeBundle) + progress) / Double(totalWorkCount)
-                            await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
-                        case .completed(let proof):
-                            LoggerProxy.info("ZKP #1 bundle \(bundleIdx) COMPLETE — proof size: \(proof.count) bytes")
-                        }
-                    }
-
-                    let registration = try await VotingLegacy.getDelegationSubmission(
-                        roundId, bundleIdx, sig.sig, sig.sighash
-                    )
-                    if registration.rk != sig.rk ||
-                        registration.spendAuthSig != sig.sig ||
-                        registration.sighash != sig.sighash {
-                        throw VotingFlowError.invalidDelegationSignature
-                    }
-                    let delegTxResult = try await votingAPI.submitDelegation(registration)
-                    guard try await Self.isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
-                        throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
-                    }
-                    try await VotingLegacy.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
-                    let vanPosition = try await Self.requireKeystoneDelegationVanPosition(
-                        txHash: delegTxResult.txHash,
-                        votingAPI: votingAPI
-                    )
-                    try await VotingLegacy.storeVanPosition(roundId, bundleIdx, vanPosition)
-                    completedBundles.insert(bundleIdx)
-                    await send(.delegationBundlesRecovered(
-                        roundId: roundId,
-                        bundleIndices: completedBundles
-                    ))
-                }
-                await send(.delegationProofCompleted(roundId: roundId))
-            } catch {
-                await backgroundTask.endTask(bgTaskId)
-                throw error
-            }
-            await backgroundTask.endTask(bgTaskId)
-        } catch: { error, send in
-            await send(.delegationProofFailed(
-                roundId: roundId,
-                error: VotingErrorMapper.userFriendlyMessage(from: error.localizedDescription)
-            ))
-        }
-        .cancellable(id: cancelDelegationProofId, cancelInFlight: true)
+        return .merge(
+            .cancel(id: cancelDelegationProofId),
+            startRoundRun(&state, roundId: roundId)
+        )
     }
 
+    /// `.keystoneSignaturesRestored` handler. What the crate already holds for
+    /// this round, so a re-entered loop resumes where the voter left it instead
+    /// of asking the device for bundles it has already signed.
+    func reduceKeystoneSignaturesRestored(
+        _ state: inout State,
+        roundId: String,
+        bundleIndices: [UInt32]
+    ) -> Effect<Action> {
+        mutateSession(&state, roundId: roundId) { roundSession in
+            // Added to, never replaced: this is what the crate held when the
+            // session opened, and a bundle signed since then — the read is an
+            // effect, and the loop does not wait for it — is not in it.
+            roundSession.keystoneSignedBundles.formUnion(bundleIndices)
+            // A read that lands after a run has named the bundles it wants
+            // signed leaves that list alone: the run's list is the newer answer,
+            // and the loop may already be walking it.
+            guard roundSession.keystoneBundlesToSign.isEmpty else { return }
+            // Otherwise the plan's own list of what still needs signing, less
+            // what is stored — what the signing screen counts until a run names
+            // the same bundles itself.
+            let signed = roundSession.keystoneSignedBundles
+            let needingSigning = roundSession.roundPlan?.delegationBundlesNeedingSigning ?? []
+            roundSession.keystoneBundlesToSign = needingSigning.filter { !signed.contains($0) }
+            roundSession.currentKeystoneBundleIndex = roundSession.nextKeystoneBundleToSign ?? 0
+        }
+        return .none
+    }
+
+    /// "Use signed bundles only": the round keeps the bundles the device has
+    /// signed and gives up the rest.
+    ///
+    /// A prefix, never a subset — the crate keeps the first `keepCount` bundles
+    /// and deletes the others, so a gap in the signed set cannot be skipped over
+    /// and `resolvedKeystonePrefixCount` is the only count this can act on.
     func reduceSkipRemainingKeystoneBundles(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
-        let signedCount = session.resolvedKeystonePrefixCount
-        guard signedCount > 0 else { return .none }
-
-        let bundles = session.walletNotes.smartBundles().bundles
-        let signedWeight = (0..<Int(signedCount)).reduce(UInt64(0)) { total, index in
-            guard index < bundles.count else { return total }
-            let raw = bundles[index].reduce(UInt64(0)) { $0 + $1.value }
-            return total + quantizeWeight(raw)
+        let keepCount = session.resolvedKeystonePrefixCount
+        guard keepCount > 0 else { return .none }
+        // The kept bundles' own weights, when this entry into the round built a
+        // signing request for each of them. When it did not — a loop resumed
+        // after the app was closed — the round's total stands rather than a
+        // figure made up from the bundles it can see.
+        let keptWeight = session.keystoneWeight(ofFirst: keepCount)
+        if keptWeight == nil {
+            LoggerProxy.warn(
+                "Round \(roundId) keeps \(keepCount) bundle(s) this entry never priced; its voting power is left as it was"
+            )
         }
 
         mutateSession(&state, roundId: roundId) { roundSession in
@@ -3145,270 +2942,34 @@ extension VotingCoordFlow {
             if roundSession.eligibleVotingWeight == 0 {
                 roundSession.eligibleVotingWeight = session.votingWeight
             }
-            roundSession.bundleCount = signedCount
-            roundSession.votingWeight = signedWeight
-            roundSession.keystoneBundleSignatures.removeAll { $0.bundleIndex >= signedCount }
-            roundSession.completedKeystoneDelegationBundleIndices =
-                roundSession.completedKeystoneDelegationBundleIndices.filter { $0 < signedCount }
-            roundSession.pendingVotingPczt = nil
-            roundSession.pendingUnsignedDelegationPczt = nil
+            roundSession.bundleCount = keepCount
+            if let keptWeight {
+                roundSession.votingWeight = keptWeight
+            }
+            roundSession.keystoneSignedBundles = roundSession.keystoneSignedBundles.filter { $0 < keepCount }
+            roundSession.keystoneBundleWeights = roundSession.keystoneBundleWeights.filter { $0.key < keepCount }
+            roundSession.keystoneBundlesToSign = []
+            roundSession.pendingKeystoneRequest = nil
             roundSession.keystoneSigningStatus = .finalizingAuthorization
-            roundSession.delegationProofStatus = .generating(progress: 0)
-            roundSession.isDelegationProofInFlight = true
-            roundSession.batchSubmissionStatus = .authorizing
-            roundSession.voteSubmissionStep = .authorizingVote
         }
         if case .delegationSigning = state.path.last {
             _ = state.path.popLast()
         }
 
-        return .run { [votingCrypto] send in
-            try await votingCrypto.deleteSkippedBundles(roundId, signedCount)
-            await send(.keystoneAllBundlesSigned(roundId: roundId))
-        } catch: { error, send in
-            await send(.delegationProofFailed(
-                roundId: roundId,
-                error: VotingErrorMapper.userFriendlyMessage(from: error.localizedDescription)
-            ))
-        }
-    }
-
-    // MARK: - Keystone helpers
-
-    private func currentKeystoneSigningTarget(state: State) -> (roundId: String, govPczt: VotingPcztResult)? {
-        // The signing screen is always pushed for one round at a time. We
-        // look up the topmost delegationSigning path entry and read the
-        // round's cached pending PCZT.
-        guard case let .delegationSigning(signingState) = state.path.last else {
-            return nil
-        }
-        guard let govPczt = state.roundCache[signingState.roundId]?.pendingVotingPczt else {
-            return nil
-        }
-        return (signingState.roundId, govPczt)
-    }
-
-    private static func validKeystoneSignatures(
-        _ signatures: [KeystoneBundleSignatureInfo],
-        bundleCount: UInt32
-    ) -> [KeystoneBundleSignatureInfo]? {
-        guard bundleCount > 0 else { return [] }
-        let sorted = signatures.sorted { $0.bundleIndex < $1.bundleIndex }
-        guard sorted.count <= Int(bundleCount) else { return nil }
-        var seen = Set<UInt32>()
-        for signature in sorted {
-            guard signature.bundleIndex < bundleCount, seen.insert(signature.bundleIndex).inserted else {
-                return nil
+        return .merge(
+            // A request for a bundle about to be deleted has nothing to sign.
+            .cancel(id: cancelDelegationProofId),
+            .run { [votingCrypto] send in
+                try await votingCrypto.deleteSkippedBundles(roundId, keepCount)
+                await send(.keystoneAllBundlesSigned(roundId: roundId))
+            } catch: { error, send in
+                LoggerProxy.error("Deleting the skipped bundles of \(roundId) failed: \(error)")
+                await send(.batchAuthorizationFailed(
+                    roundId: roundId,
+                    error: VotingErrorMapper.userFriendlyMessage(from: error)
+                ))
             }
-            guard signature.sig.count == 64, signature.sighash.count == 32, signature.rk.count == 32 else {
-                return nil
-            }
-        }
-        return sorted
-    }
-
-    /// Keeps a stored Keystone signature only when `storedSighash` still reports the exact
-    /// ZIP-244 sighash the signature was produced against. A signature covers one specific
-    /// sighash; if the bundle's delegation setup was rebuilt (or never completed) since the
-    /// signature was captured, trusting it routes straight into `build_and_prove_delegation`
-    /// with missing alpha/pczt_sighash data. A thrown lookup (delegation setup incomplete) and
-    /// a mismatch are both dropped — never kept by default — because dropping is always the
-    /// fail-safe outcome: the bundle simply re-enters the signing queue via
-    /// `firstIncompleteKeystoneBundleIndex`. Survivors keep their relative order.
-    static func validatedStoredSignatures(
-        _ signatures: [KeystoneBundleSignatureInfo],
-        storedSighash: (UInt32) async throws -> Data
-    ) async -> [KeystoneBundleSignatureInfo] {
-        var validated: [KeystoneBundleSignatureInfo] = []
-        for signature in signatures {
-            guard let sighash = try? await storedSighash(signature.bundleIndex), sighash == signature.sighash else {
-                continue
-            }
-            validated.append(signature)
-        }
-        return validated
-    }
-
-    /// Validates stored Keystone signatures via ``validatedStoredSignatures`` and
-    /// deletes the persisted rows of the ones that fail, returning the survivors.
-    /// A failed signature's row must go: `resetSessionState` leaves signed bundles
-    /// untouched, so the stale row would otherwise shield its bundle's dead setup
-    /// from cleanup and wedge the bundle permanently. A failing delete throws — the
-    /// caller's pipeline aborts retryably rather than resuming on a half-reconciled
-    /// signature set.
-    static func reconcileStoredSignatures(
-        _ signatures: [KeystoneBundleSignatureInfo],
-        storedSighash: (UInt32) async throws -> Data,
-        clearSignature: (UInt32) async throws -> Void
-    ) async throws -> [KeystoneBundleSignatureInfo] {
-        let usable = await validatedStoredSignatures(signatures, storedSighash: storedSighash)
-        for rejected in signatures
-        where !usable.contains(where: { $0.bundleIndex == rejected.bundleIndex }) {
-            LoggerProxy.warn(
-                "Clearing stored Keystone signature for bundle \(rejected.bundleIndex): it no longer matches the bundle's delegation data"
-            )
-            try await clearSignature(rejected.bundleIndex)
-        }
-        return usable
-    }
-
-    private static func allKeystoneBundlesResolved(_ session: RoundSession) -> Bool {
-        session.bundleCount > 0 && session.firstIncompleteKeystoneBundleIndex == nil
-    }
-
-    static func keystoneScanRejectionMessage(
-        scannedSighash: Data,
-        expectedSighash: Data,
-        existingSignatures: [KeystoneBundleSignature],
-        currentBundleIndex: UInt32,
-        bundleCount: UInt32
-    ) -> String? {
-        let totalBundleCount = String(max(Int(bundleCount), 1))
-        if let duplicate = existingSignatures.first(where: { $0.sighash == scannedSighash }) {
-            return String(
-                localizable: .coinVoteDelegationSigningDuplicateSignature(
-                    String(duplicate.bundleIndex + 1),
-                    totalBundleCount
-                )
-            )
-        }
-
-        guard scannedSighash == expectedSighash else {
-            return String(
-                localizable: .coinVoteDelegationSigningWrongSignature(
-                    String(Int(currentBundleIndex) + 1),
-                    totalBundleCount
-                )
-            )
-        }
-
-        return nil
-    }
-
-    /// Some deployed `/tx` handlers opportunistically Base64-decode CometBFT
-    /// event text. A non-ASCII value is recovered only when it re-encodes to
-    /// the canonical decimal the server emits; all other values fail closed.
-    static func delegationVanPosition(from confirmation: TxConfirmation) -> UInt32? {
-        guard confirmation.code == 0,
-            let leafValue = confirmation.event(ofType: "delegate_vote")?.attribute(forKey: "leaf_index")
-        else {
-            return nil
-        }
-        let normalizedLeafValue = leafValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let position = UInt32(normalizedLeafValue) {
-            return position
-        }
-        guard normalizedLeafValue.unicodeScalars.contains(where: { $0.value > 0x7f }) else {
-            return nil
-        }
-        // Check that the reencoding produces the same value, to verify the precondition
-        // asserted in the method documentation, to ensure valuex from other
-        // sources of corruption don't get interpreted as the encoding issue this
-        // method is intended to protect against.
-        let reencodedLeafValue = Data(normalizedLeafValue.utf8).base64EncodedString()
-        guard let position = UInt32(reencodedLeafValue), String(position) == reencodedLeafValue else {
-            return nil
-        }
-        return position
-    }
-
-    /// Crash-recovery lookup for a Keystone delegation TX hash.
-    static func recoverKeystoneDelegationVanPosition(
-        roundId: String,
-        bundleIndex: UInt32,
-        votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient
-    ) async throws -> UInt32? {
-        guard case let .present(txHash) = try? await VotingLegacy.getDelegationTxHash(roundId, bundleIndex) else {
-            return nil
-        }
-        if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash),
-            let vanPosition = delegationVanPosition(from: confirmation) {
-            try await VotingLegacy.storeVanPosition(roundId, bundleIndex, vanPosition)
-            return vanPosition
-        }
-        return nil
-    }
-
-    static func requireKeystoneDelegationVanPosition(
-        txHash: String,
-        votingAPI: VotingAPIClient
-    ) async throws -> UInt32 {
-        let deadline = Date().addingTimeInterval(90)
-        repeat {
-            if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash) {
-                guard confirmation.code == 0 else {
-                    throw VotingFlowError.delegationTxFailed(code: confirmation.code, log: confirmation.log)
-                }
-                guard let vanPosition = delegationVanPosition(from: confirmation) else {
-                    throw VotingFlowError.delegationTxFailed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
-                }
-                return vanPosition
-            }
-            guard Date() < deadline else {
-                throw VotingFlowError.delegationTxFailed(code: 0, log: "")
-            }
-            try await Task.sleep(for: .seconds(2))
-        } while true
-    }
-
-    func reduceDelegationProofProgress(
-        _ state: inout State,
-        roundId: String,
-        progress: Double
-    ) -> Effect<Action> {
-        mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.delegationProofStatus = .generating(progress: progress)
-        }
-        return .none
-    }
-
-    func reduceDelegationProofCompleted(_ state: inout State, roundId: String) -> Effect<Action> {
-        let isKeystoneUser = state.isKeystoneUser
-        mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.delegationProofStatus = .complete
-            roundSession.isDelegationProofInFlight = false
-            if isKeystoneUser {
-                resetKeystoneSigningLoop(&roundSession, clearRecoveredBundles: true)
-            }
-        }
-        // If the user tapped Submit while delegation was still in flight,
-        // resume the batch now that authorization is done. The ticket is
-        // consumed by `.authenticationSucceeded`'s entry guard, not here.
-        if state.pendingBatchSubmission {
-            return .send(.authenticationSucceeded(roundId: roundId))
-        }
-        return .none
-    }
-
-    func reduceDelegationProofFailed(
-        _ state: inout State,
-        roundId: String,
-        error: String
-    ) -> Effect<Action> {
-        let isKeystoneUser = state.isKeystoneUser
-        let keystoneSigningFailureStatus: KeystoneSigningStatus = isCurrentKeystoneSigningRound(
-            state: state,
-            roundId: roundId
-        ) ? .failed(error) : .idle
-        mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.delegationProofStatus = .failed(error)
-            roundSession.isDelegationProofInFlight = false
-            if isKeystoneUser {
-                resetKeystoneSigningLoop(&roundSession, status: keystoneSigningFailureStatus)
-            }
-            if case .authorizing = roundSession.batchSubmissionStatus {
-                roundSession.isSubmittingVote = false
-                roundSession.submittingProposalId = nil
-                roundSession.voteSubmissionStep = nil
-                roundSession.currentVoteBundleIndex = nil
-                roundSession.batchSubmissionStatus = .authorizationFailed(error: error)
-            }
-        }
-        if isKeystoneUser {
-            state.pendingBatchSubmission = false
-        }
-        return .none
+        )
     }
 
     // MARK: - Helpers (state-shape adapters)
@@ -3463,33 +3024,13 @@ extension VotingCoordFlow {
         }
     }
 
-    private func isDelegationReady(_ session: RoundSession) -> Bool {
-        session.delegationProofStatus == .complete
-    }
-
-    private func resetKeystoneSigningLoop(
-        _ session: inout RoundSession,
-        status: KeystoneSigningStatus = .idle,
-        clearRecoveredBundles: Bool = false
-    ) {
-        session.keystoneBundleSignatures = []
-        if clearRecoveredBundles {
-            session.completedKeystoneDelegationBundleIndices = []
-        } else {
-            session.completedKeystoneDelegationBundleIndices = session.completedKeystoneDelegationBundleIndices
-                .filter { $0 < session.bundleCount }
-        }
-        session.currentKeystoneBundleIndex = session.firstIncompleteKeystoneBundleIndex ?? 0
-        session.pendingVotingPczt = nil
-        session.pendingUnsignedDelegationPczt = nil
-        session.keystoneSigningStatus = status
-    }
-
-    private func isCurrentKeystoneSigningRound(state: State, roundId: String) -> Bool {
-        guard case let .delegationSigning(signingState) = state.path.last else {
-            return false
-        }
-        return signingState.roundId == roundId
+    /// Stands the signing loop down without touching what the crate has stored:
+    /// those signatures are exactly what a resumed loop starts from.
+    private func resetKeystoneSigningLoop(_ session: inout RoundSession) {
+        session.keystoneBundlesToSign = []
+        session.pendingKeystoneRequest = nil
+        session.currentKeystoneBundleIndex = session.resolvedKeystonePrefixCount
+        session.keystoneSigningStatus = .idle
     }
 
     private func hasKeystoneSigningRound(state: State, roundId: String? = nil) -> Bool {
@@ -3543,26 +3084,25 @@ extension VotingCoordFlow {
     }
 
     private func signedBundlesZECString(_ session: RoundSession) -> String {
-        let bundles = session.walletNotes.smartBundles().bundles
-        let signedWeight = (0..<Int(session.resolvedKeystonePrefixCount)).reduce(UInt64(0)) { total, index in
-            guard index < bundles.count else { return total }
-            let raw = bundles[index].reduce(UInt64(0)) { $0 + $1.value }
-            return total + quantizeWeight(raw)
-        }
-        return String(format: "%.3f", Double(signedWeight) / 100_000_000.0)
+        String(format: "%.3f", Double(Self.keystoneWeightSplit(session).signed) / 100_000_000.0)
     }
 
     private func skippedBundlesZECString(_ session: RoundSession) -> String {
-        let bundles = session.walletNotes.smartBundles().bundles
-        let countedBundleCount = min(Int(session.bundleCount), bundles.count)
-        let signedPrefixCount = Int(session.resolvedKeystonePrefixCount)
+        String(format: "%.3f", Double(Self.keystoneWeightSplit(session).pending) / 100_000_000.0)
+    }
 
-        let skippedWeight = (0..<countedBundleCount).reduce(UInt64(0)) { total, index in
-            guard index >= signedPrefixCount else { return total }
-            let raw = bundles[index].reduce(UInt64(0)) { $0 + $1.value }
-            return total + quantizeWeight(raw)
-        }
-        return String(format: "%.3f", Double(skippedWeight) / 100_000_000.0)
+    /// How a round's voting power divides between the bundles the device has
+    /// signed and the ones it has not.
+    ///
+    /// The crate quantizes the bundles and names each one's weight on its
+    /// signing request, so those are the figures; a bundle this entry into the
+    /// round never requested has no figure, and its weight stays on the pending
+    /// side rather than being counted as locked in. Erring that way keeps the
+    /// skip alert from telling a voter they are giving up less than they are.
+    static func keystoneWeightSplit(_ session: RoundSession) -> (signed: UInt64, pending: UInt64) {
+        let total = session.eligibleVotingWeight > 0 ? session.eligibleVotingWeight : session.votingWeight
+        let signed = session.keystoneWeight(ofFirst: session.resolvedKeystonePrefixCount) ?? 0
+        return (signed, total > signed ? total - signed : 0)
     }
 
     /// Mutate the round's cached session in place. No-op if the round
@@ -3575,38 +3115,6 @@ extension VotingCoordFlow {
         guard var session = state.roundCache[roundId] else { return }
         body(&session)
         state.roundCache[roundId] = session
-    }
-
-    // MARK: - Crash recovery for in-flight votes
-
-    /// Accept a successful broadcast directly. A spent-nullifier rejection is
-    /// accepted only when its exact transaction hash resolves on-chain with code 0.
-    static func isAcceptedVotingTransaction(
-        _ result: TxResult,
-        votingAPI: VotingAPIClient,
-        maxRecoveryAttempts: Int = 3,
-        retryDelay: Duration = .seconds(1)
-    ) async throws -> Bool {
-        let txHash = result.txHash.trimmingCharacters(in: .whitespacesAndNewlines)
-        if result.code == 0 {
-            return !txHash.isEmpty
-        }
-        guard maxRecoveryAttempts > 0,
-              !txHash.isEmpty,
-              VotingErrorMapper.isNullifierAlreadySpent(result.log)
-        else {
-            return false
-        }
-
-        for attempt in 0..<maxRecoveryAttempts {
-            if let confirmation = try await votingAPI.fetchTxConfirmation(txHash) {
-                return confirmation.code == 0
-            }
-            if attempt + 1 < maxRecoveryAttempts {
-                try await Task.sleep(for: retryDelay)
-            }
-        }
-        return false
     }
 
     // MARK: - Dynamic config
@@ -3789,33 +3297,6 @@ private enum VotingLegacy {
     }
 
     // swiftlint:disable:next function_parameter_count
-    static func buildVotingPczt(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ notes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ orchardFvkOverride: Data?,
-        _ keystoneSeedFingerprintOverride: Data?
-    ) async throws -> VotingPcztResult {
-        try removed()
-    }
-
-    static func extractPcztSighash(_ pcztBytes: Data) throws -> Data {
-        try removed()
-    }
-
-    static func extractSpendAuthSignatureFromSignedPczt(
-        _ signedPczt: Data,
-        _ actionIndex: UInt32
-    ) throws -> Data {
-        try removed()
-    }
-
-    // swiftlint:disable:next function_parameter_count
     static func precomputeDelegationPir(
         _ roundId: String,
         _ bundleIndex: UInt32,
@@ -3829,26 +3310,6 @@ private enum VotingLegacy {
         _ polyLen: UInt32
     ) async throws -> DelegationPirPrecomputeResult {
         try removed()
-    }
-
-    // swiftlint:disable:next function_parameter_count
-    static func buildAndProveDelegation(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeyStoredSecret: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64,
-        _ pirDepth: UInt32,
-        _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32,
-        _ polyLen: UInt32
-    ) -> AsyncThrowingStream<ProofEvent, Error> {
-        removedStream()
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -3881,19 +3342,6 @@ private enum VotingLegacy {
         try removed()
     }
 
-    static func getDelegationSubmission(
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ signature: Data,
-        _ sighash: Data
-    ) async throws -> DelegationRegistration {
-        try removed()
-    }
-
-    static func storeVanPosition(_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
     static func generateVanWitness(
         _ roundId: String,
         _ bundleIndex: UInt32,
@@ -3909,14 +3357,6 @@ private enum VotingLegacy {
         _ txHash: String
     ) async throws {
         throw VotingLegacyAPIRemoved()
-    }
-
-    static func storeDelegationTxHash(_ roundId: String, _ bundleIndex: UInt32, _ txHash: String) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func getDelegationTxHash(_ roundId: String, _ bundleIndex: UInt32) async throws -> VotingTxHashLookup {
-        try removed()
     }
 
     static func storeVoteTxHash(
@@ -3968,23 +3408,7 @@ private enum VotingLegacy {
         try removed()
     }
 
-    static func storeKeystoneBundleSignature(_ roundId: String, _ info: KeystoneBundleSignatureInfo) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func loadKeystoneBundleSignatures(_ roundId: String) async throws -> [KeystoneBundleSignatureInfo] {
-        try removed()
-    }
-
     static func clearRecoveryState(_ roundId: String) async throws {
-        throw VotingLegacyAPIRemoved()
-    }
-
-    static func getStoredDelegationSighash(_ roundId: String, _ bundleIndex: UInt32) async throws -> Data {
-        try removed()
-    }
-
-    static func clearKeystoneSignature(_ roundId: String, _ bundleIndex: UInt32) async throws {
         throw VotingLegacyAPIRemoved()
     }
 

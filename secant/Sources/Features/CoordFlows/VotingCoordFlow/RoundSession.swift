@@ -36,14 +36,6 @@ struct RoundSession: Equatable {
     /// original value for persisted transparency metadata.
     var eligibleVotingWeight: UInt64 = 0
 
-    /// Eligible notes at the round's snapshot height. Cached because the
-    /// SDK query is non-trivial and the snapshot is immutable.
-    var walletNotes: [NoteInfo] = []
-
-    /// Inclusion proofs for each note, generated during witness verification.
-    /// Used as authPath input during vote commitment build (Stage 5B).
-    var cachedWitnesses: [WitnessData] = []
-
     /// Number of note bundles (groups of up to 5 notes). Set by the
     /// bundling step in the active-round pipeline. Drives both the
     /// delegation proof loop and the per-bundle vote submission loop.
@@ -87,15 +79,10 @@ struct RoundSession: Equatable {
 
     // MARK: - Submission pipeline state (Stage 5)
 
-    /// On-chain authorization (ZKP #1) readiness. The vote-submission loop
-    /// is gated on `.complete`. Failing here yields `.failed` and surfaces
-    /// an authorization-error sheet on the Confirm Submission screen.
+    /// On-chain authorization (ZKP #1) readiness, as the Confirm Submission
+    /// screen's progress bar reads it. The run narrates its own delegation work
+    /// through ``progress`` now, so nothing writes this any more.
     var delegationProofStatus: ProofStatus = .notStarted
-
-    /// True while the delegation proof `.run` effect is in-flight. Guards
-    /// against re-entrant `.startDelegationProof` dispatches from round
-    /// polling re-triggers.
-    var isDelegationProofInFlight: Bool = false
 
     /// Zashi-only optimization: precompute PIR proof material in the
     /// background while the user is still choosing votes, so when they hit
@@ -140,26 +127,23 @@ struct RoundSession: Equatable {
     /// State of the Keystone QR signing loop. Idle for Zashi users.
     var keystoneSigningStatus: KeystoneSigningStatus = .idle
 
-    /// Index of the bundle being signed in the Keystone QR loop (0-based).
-    /// Incremented after each successful scan; compared to `bundleCount` to
-    /// know when signing is done.
+    /// Index of the bundle whose QR is on the signing screen (0-based), from
+    /// the crate's own signing request rather than a count kept on this side.
     var currentKeystoneBundleIndex: UInt32 = 0
 
-    /// Per-bundle Keystone signatures accumulated during the multi-bundle
-    /// signing loop. Persisted to the votingCrypto recovery store on each
-    /// scan so a crash mid-loop doesn't lose signed bundles.
-    var keystoneBundleSignatures: [KeystoneBundleSignature] = []
+    /// Bundles the crate holds a signature for: restored from its stored rows
+    /// on entry, added to as each scan is stored. Indices only -- the signature
+    /// material is lifted off the signed PCZT inside the crate and never comes
+    /// back here.
+    var keystoneSignedBundles: Set<UInt32> = []
 
-    /// Delegation bundles recovered as already submitted on-chain.
-    var completedKeystoneDelegationBundleIndices: Set<UInt32> = []
-
-    /// Voting PCZT result (metadata + pczt_bytes) for the bundle currently
-    /// being shown as a QR on the Keystone signing screen.
-    var pendingVotingPczt: VotingPcztResult?
-
-    /// Unsigned delegation PCZT request rendered as the QR payload. Cleared
-    /// once the signed PCZT comes back from the scan.
-    var pendingUnsignedDelegationPczt: Pczt?
+    /// What each bundle delegates, as the signing request for it reported.
+    ///
+    /// The crate quantizes bundles, so this is the only honest answer to what a
+    /// signed prefix is worth; a bundle signed in an earlier entry into the
+    /// round has no entry here, and ``keystoneWeight(ofFirst:)`` says so rather
+    /// than counting it as nothing.
+    var keystoneBundleWeights: [UInt32: UInt64] = [:]
 
     /// On a successful batch run we persist a one-line record (date, weight,
     /// proposal count) into the encrypted voting metadata file. The Results
@@ -317,14 +301,6 @@ enum KeystoneSigningStatus: Equatable {
     case failed(String)
 }
 
-/// Captured signature material for one Keystone-signed bundle.
-struct KeystoneBundleSignature: Equatable {
-    let bundleIndex: UInt32
-    let sig: Data
-    let sighash: Data
-    let rk: Data // swiftlint:disable:this identifier_name
-}
-
 enum ShareTrackingStatus: Equatable {
     case idle
     case loading
@@ -342,16 +318,17 @@ extension RoundSession {
         !draftVotes.isEmpty
     }
 
+    /// Signed bundles that still belong to this round, ignoring any index past
+    /// its bundle count -- which a round whose tail was skipped has.
     var resolvedKeystoneBundleIndices: Set<UInt32> {
-        var indices = completedKeystoneDelegationBundleIndices
-        indices.formUnion(keystoneBundleSignatures.map(\.bundleIndex))
-        return indices.filter { $0 < bundleCount }
+        keystoneSignedBundles.filter { $0 < bundleCount }
     }
 
-    var resolvedKeystoneBundleCount: Int {
-        resolvedKeystoneBundleIndices.count
-    }
-
+    /// How many bundles are signed counting from the first.
+    ///
+    /// The prefix rather than the total, because it is the only count "use
+    /// signed bundles only" can act on: the crate keeps the first `keepCount`
+    /// bundles and deletes the rest, so a gap cannot be skipped over.
     var resolvedKeystonePrefixCount: UInt32 {
         let resolvedIndices = resolvedKeystoneBundleIndices
         var count: UInt32 = 0
@@ -361,21 +338,22 @@ extension RoundSession {
         return count
     }
 
-    var firstIncompleteKeystoneBundleIndex: UInt32? {
-        Self.firstIncompleteKeystoneBundleIndex(
-            bundleCount: bundleCount,
-            resolvedIndices: resolvedKeystoneBundleIndices
-        )
+    /// The next bundle the device still owes: the first one this run asked for
+    /// that the crate does not already hold a signature for.
+    var nextKeystoneBundleToSign: UInt32? {
+        keystoneBundlesToSign.first { !keystoneSignedBundles.contains($0) }
     }
 
-    static func firstIncompleteKeystoneBundleIndex(
-        bundleCount: UInt32,
-        resolvedIndices: Set<UInt32>
-    ) -> UInt32? {
-        for bundleIndex in 0..<bundleCount where !resolvedIndices.contains(bundleIndex) {
-            return bundleIndex
+    /// What the first `count` bundles delegate, when every one of them has a
+    /// weight the crate named; nil when one does not, because inventing it
+    /// would put a number the round never had on the voter's receipt.
+    func keystoneWeight(ofFirst count: UInt32) -> UInt64? {
+        var total: UInt64 = 0
+        for bundleIndex in 0..<count {
+            guard let weight = keystoneBundleWeights[bundleIndex] else { return nil }
+            total += weight
         }
-        return nil
+        return total
     }
 }
 #endif
