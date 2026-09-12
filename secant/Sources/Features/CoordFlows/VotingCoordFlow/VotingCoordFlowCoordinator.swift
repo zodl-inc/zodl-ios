@@ -297,6 +297,7 @@ extension VotingCoordFlow {
             case .dismissFlow:
                 state.roundCache.removeAll()
                 state.path.removeAll()
+                state.pendingPipelineRoundId = nil
                 state.pendingBatchSubmission = false
                 state.pollClosedSheet = nil
                 state.ineligibleSheet = nil
@@ -308,9 +309,14 @@ extension VotingCoordFlow {
                     .cancel(id: cancelSubmissionId),
                     .cancel(id: cancelDelegationProofId),
                     .cancel(id: cancelDelegationPrecomputeId),
+                    .cancel(id: cancelRunRetryId),
                     .cancel(id: cancelStatusPollingId),
                     .cancel(id: cancelNewRoundPollingId),
-                    .cancel(id: cancelShareTrackingId)
+                    .cancel(id: cancelShareTrackingId),
+                    // A round session holds a database handle and, on the Tor
+                    // route, its own isolated client. Leaving the flow is where
+                    // those go back.
+                    .run { [votingCrypto] _ in await votingCrypto.closeAllRoundSessions() }
                 )
 
             case .submissionDoneTapped:
@@ -370,7 +376,7 @@ extension VotingCoordFlow {
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
-                            loadSubmittedVotesFromDb(roundId: roundId)
+                            loadSubmittedVotesFromPlan(state, roundId: roundId)
                         )
                     }
                     // Cache hit (hotkey + bundles ready): eligibility is
@@ -385,7 +391,7 @@ extension VotingCoordFlow {
                             cancelShareTracking,
                             .cancel(id: cancelNewRoundPollingId),
                             .send(.startRoundStatusPolling(roundId: roundId)),
-                            loadSubmittedVotesFromDb(roundId: roundId)
+                            loadSubmittedVotesFromPlan(state, roundId: roundId)
                         )
                     }
                     // No cache: keep the user on the polls list with an
@@ -400,7 +406,7 @@ extension VotingCoordFlow {
                         .cancel(id: cancelNewRoundPollingId),
                         .send(.startRoundStatusPolling(roundId: roundId)),
                         .send(.startActiveRoundPipeline(roundId: roundId)),
-                        loadSubmittedVotesFromDb(roundId: roundId)
+                        loadSubmittedVotesFromPlan(state, roundId: roundId)
                     )
                 case .tallying:
                     state.path.append(.tallying(Tallying.State(roundId: roundId)))
@@ -419,7 +425,7 @@ extension VotingCoordFlow {
                         .cancel(id: cancelStatusPollingId),
                         .send(.fetchTallyResults(roundId: roundId)),
                         .send(.startNewRoundPolling),
-                        loadSubmittedVotesFromDb(roundId: roundId)
+                        loadSubmittedVotesFromPlan(state, roundId: roundId)
                     )
                 case .unspecified:
                     return .none
@@ -455,7 +461,7 @@ extension VotingCoordFlow {
                     cancelShareTracking,
                     statusPolling,
                     startHealthSweep,
-                    loadSubmittedVotesFromDb(roundId: roundId)
+                    loadSubmittedVotesFromPlan(state, roundId: roundId)
                 )
 
             case let .proposalTapped(roundId, proposalId, mode):
@@ -531,15 +537,12 @@ extension VotingCoordFlow {
                 return reduceMaybeStartDelegationPrecompute(&state, roundId: roundId)
 
             case let .delegationPrecomputeCompleted(roundId):
+                // Every bundle the plan named has answered, or has failed and
+                // been recorded. Either way the warm-up is over; Confirm never
+                // waits on it, so there is nothing to resume here.
                 mutateSession(&state, roundId: roundId) { roundSession in
                     roundSession.delegationPrecomputeStatus = .ready
                     roundSession.isDelegationPrecomputeInFlight = false
-                }
-                if state.pendingBatchSubmission && !state.isKeystoneUser {
-                    // Resume the pending submission. The ticket is consumed by
-                    // `.authenticationSucceeded` itself; resetting the status
-                    // here would flash `.idle` for one action-cycle.
-                    return .send(.authenticationSucceeded(roundId: roundId))
                 }
                 return .none
 
@@ -549,33 +552,49 @@ extension VotingCoordFlow {
                     roundSession.delegationPrecomputeStatus = .failed(message)
                     roundSession.isDelegationPrecomputeInFlight = false
                 }
-                if state.pendingBatchSubmission && !state.isKeystoneUser {
-                    // Same resume/no-reset rule as `.delegationPrecomputeCompleted`;
-                    // the batch effect re-runs delegation inline from cold.
-                    return .send(.authenticationSucceeded(roundId: roundId))
+                return .none
+
+            case let .roundSessionOpened(roundId, plan):
+                return reduceRoundSessionOpened(&state, roundId: roundId, plan: plan)
+
+            case let .roundSessionOpenFailed(roundId, error):
+                LoggerProxy.error("Opening the round session for \(roundId) failed: \(error.message)")
+                return .send(.pipelineFailed(
+                    roundId: roundId,
+                    message: VotingErrorMapper.userFriendlyMessage(from: error)
+                ))
+
+            case let .bundlesSetUp(roundId, layout):
+                return reduceBundlesSetUp(&state, roundId: roundId, layout: layout)
+
+            case let .bundleSetupFailed(roundId, error):
+                return reduceBundleSetupFailed(&state, roundId: roundId, error: error)
+
+            case let .precomputeProofEvent(roundId, bundleIndex, event):
+                return reducePrecomputeProofEvent(
+                    &state,
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    event: event
+                )
+
+            case let .precomputeProofFailed(roundId, bundleIndex, error):
+                // A warm-up that failed costs that bundle a cold start and
+                // nothing else: the run proves it again itself.
+                LoggerProxy.warn("Delegation precompute for bundle \(bundleIndex) failed: \(error.message)")
+                mutateSession(&state, roundId: roundId) { roundSession in
+                    roundSession.progress.lastMessage = VotingErrorMapper.userFriendlyMessage(from: error)
                 }
                 return .none
 
-            case let .batchSubmissionProgress(roundId, currentIndex, totalCount, proposalId):
-                return reduceBatchSubmissionProgress(
-                    &state,
-                    roundId: roundId,
-                    currentIndex: currentIndex,
-                    totalCount: totalCount,
-                    proposalId: proposalId
-                )
+            case let .roundRunEvent(roundId, epoch, event):
+                return reduceRoundRunEvent(&state, roundId: roundId, epoch: epoch, event: event)
 
-            case let .voteSubmissionBundleStarted(roundId, bundleIndex):
-                return reduceVoteSubmissionBundleStarted(&state, roundId: roundId, bundleIndex: bundleIndex)
+            case let .roundRunFailed(roundId, epoch, error):
+                return reduceRoundRunFailed(&state, roundId: roundId, epoch: epoch, error: error)
 
-            case let .voteSubmissionStepUpdated(roundId, step):
-                return reduceVoteSubmissionStepUpdated(&state, roundId: roundId, step: step)
-
-            case let .batchVoteSubmitted(roundId, proposalId, choice):
-                return reduceBatchVoteSubmitted(&state, roundId: roundId, proposalId: proposalId, choice: choice)
-
-            case let .batchVoteFailed(roundId, proposalId, error):
-                return reduceBatchVoteFailed(&state, roundId: roundId, proposalId: proposalId, error: error)
+            case let .roundRunDecision(roundId, decision):
+                return reduceRoundRunDecision(&state, roundId: roundId, decision: decision)
 
             case let .batchSubmissionCompleted(roundId, successCount, failCount):
                 return reduceBatchSubmissionCompleted(
@@ -833,329 +852,7 @@ extension VotingCoordFlow {
                 // MARK: - Per-round pipeline
 
             case .startActiveRoundPipeline(let roundId):
-                guard let item = state.allRounds.first(where: { $0.id == roundId }),
-                      item.session.status == .active else {
-                    return .none
-                }
-                let session = item.session
-                let snapshotHeight = session.snapshotHeight
-                let network = zcashSDKEnvironment.network()
-                let walletDbPath = databaseFiles.dataDbURLFor(network).path
-                let networkId: UInt32 = network.networkType.votingRustNetworkId
-                let accountId = state.selectedWalletAccount?.id
-                let accountUUID: [UInt8] = accountId?.id ?? []
-                let isKeystoneUser = state.isKeystoneUser
-
-                // Seed the cache entry so subsequent re-entries see an
-                // in-progress session and don't trigger duplicate pipelines.
-                if state.roundCache[roundId] == nil {
-                    state.roundCache[roundId] = RoundSession(roundId: roundId)
-                }
-                state.pendingPipelineRoundId = roundId
-                state.ineligibleSheet = nil
-                state.walletSyncingSheetRoundId = nil
-
-                return .run { [votingCrypto, votingAPI, mnemonic, walletStorage, sdkSynchronizer] send in
-                    // 1. Wallet sync gate.
-                    //
-                    // Spend-before-Sync scans both head-first and birthday-
-                    // first in parallel — a `latestScannedHeight` past the
-                    // snapshot from the head doesn't imply the snapshot
-                    // itself has been scanned. We need the contiguous-from-
-                    // birthday `fullyScannedHeight` instead. The SDK
-                    // synchronizer may report 0 briefly on cold start before
-                    // it hydrates state — retry a few times.
-                    var walletScannedHeight = UInt64(sdkSynchronizer.latestState().fullyScannedHeight)
-                    if walletScannedHeight == 0 {
-                        for _ in 0..<5 {
-                            try await Task.sleep(for: .seconds(1))
-                            walletScannedHeight = UInt64(sdkSynchronizer.latestState().fullyScannedHeight)
-                            if walletScannedHeight > 0 { break }
-                        }
-                    }
-                    if walletScannedHeight < snapshotHeight {
-                        await send(
-                            .walletNotSynced(
-                                roundId: roundId,
-                                scannedHeight: walletScannedHeight,
-                                snapshotHeight: snapshotHeight
-                            )
-                        )
-                        return
-                    }
-
-                    // 2. Notes + local voting DB setup. The Rust backend
-                    // needs a round row, bundle rows, tree state, and
-                    // witnesses before Keystone PCZT prep or inline
-                    // delegation can build authorization inputs.
-                    let notes = try await VotingLegacy.getWalletNotes(
-                        walletDbPath,
-                        snapshotHeight,
-                        networkId,
-                        accountUUID
-                    )
-                    if notes.isEmpty {
-                        await send(.ineligibleForRound(roundId: roundId, heldZatoshi: 0))
-                        return
-                    }
-
-                    let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
-                    let (existingState, existingBundleCount) = try await Self.loadExistingRoundSetup(
-                        roundId: roundId,
-                        votingCrypto: votingCrypto
-                    )
-                    var resolvedBundleCount: UInt32 = 0
-                    var didPrepareFreshRound = false
-                    if existingState?.proofGenerated == true {
-                        let bundleCount = existingBundleCount
-                        resolvedBundleCount = bundleCount
-                        let eligibleWeight = Self.votingWeight(for: notes, bundleCount: bundleCount)
-                        guard bundleCount > 0, eligibleWeight > 0 else {
-                            await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-                            return
-                        }
-                        await send(.earlyEligibilityConfirmed(roundId: roundId))
-                        await send(.votingWeightLoaded(
-                            roundId: roundId,
-                            weight: eligibleWeight,
-                            notes: notes,
-                            witnesses: [],
-                            bundleCount: bundleCount,
-                            delegationReady: true
-                        ))
-                    } else if Self.shouldResumePersistedRound(existingBundleCount: existingBundleCount) {
-                        resolvedBundleCount = existingBundleCount
-                        // A delegation TX hash cached locally means this device already
-                        // broadcast a registration for the round, whatever the chain is
-                        // able to tell us about it right now.
-                        var anyLocalDelegationTxHash = false
-                        for bundleIndex: UInt32 in 0..<existingBundleCount {
-                            if case .present? = try? await VotingLegacy.getDelegationTxHash(roundId, bundleIndex) {
-                                anyLocalDelegationTxHash = true
-                                break
-                            }
-                        }
-                        var probes: [UInt32: DelegationRegistrationProbe] = [:]
-                        for bundleIndex: UInt32 in 0..<existingBundleCount {
-                            probes[bundleIndex] = await Self.probeDelegationRegistration(
-                                roundId: roundId,
-                                bundleIndex: bundleIndex,
-                                votingCrypto: votingCrypto,
-                                votingAPI: votingAPI,
-                                confirmationTimeout: 0,
-                                retryDelay: .zero
-                            )
-                        }
-                        // A failed read is not evidence of "no signatures": swallowing it would
-                        // report zero, route a Keystone round to `.freshRound`, and destroy rows
-                        // that may back an on-chain registration. Let it throw into `catch:`
-                        // instead — `.pipelineFailed` is non-destructive and the user can retry.
-                        var savedSignatures: [KeystoneBundleSignatureInfo] = []
-                        if isKeystoneUser {
-                            savedSignatures = try await VotingLegacy.loadKeystoneBundleSignatures(roundId)
-                            // A signature that no longer matches the bundle's stored sighash
-                            // (or whose setup is incomplete) is provably unusable, and its
-                            // persisted row shields the bundle from `resetSessionState`'s
-                            // guarded cleanup — wedging it permanently. Clear such rows now,
-                            // before the resume paths run that reset, so the reset can free
-                            // those bundles for a rebuild. The decision below still counts
-                            // the loaded signatures: even a stale one proves an interrupted
-                            // signing session on this device, and the resume path's
-                            // reset-and-rebuild is the audited recovery for that state —
-                            // `prepareFreshRound`'s re-setup over surviving bundle rows is not.
-                            _ = try await Self.reconcileStoredSignatures(
-                                savedSignatures,
-                                storedSighash: { try await VotingLegacy.getStoredDelegationSighash(roundId, $0) },
-                                clearSignature: { try await VotingLegacy.clearKeystoneSignature(roundId, $0) }
-                            )
-                        }
-
-                        switch Self.roundResumeDecision(
-                            probes: probes,
-                            savedSignatureCount: savedSignatures.count,
-                            anyLocalDelegationTxHash: anyLocalDelegationTxHash
-                        ) {
-                        case let .reuseRecovered(recoveredIndices):
-                            LoggerProxy.debug(
-                                "Recovered delegation bundle VAN positions for bundles \(recoveredIndices.sorted())"
-                            )
-                            let delegationReady = recoveredIndices.count >= Int(existingBundleCount)
-                            if delegationReady {
-                                try await VotingLegacy.clearRecoveryState(roundId)
-                            } else {
-                                // Partially registered: clear the per-session leftovers of
-                                // the bundles that never made it, without touching the
-                                // delegation material the registered ones depend on.
-                                try await votingCrypto.resetSessionState(roundId)
-                            }
-                            if isKeystoneUser, !recoveredIndices.isEmpty {
-                                await send(.delegationBundlesRecovered(
-                                    roundId: roundId,
-                                    bundleIndices: recoveredIndices
-                                ))
-                            }
-                            let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
-                            guard eligibleWeight > 0 else {
-                                await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-                                return
-                            }
-                            await send(.earlyEligibilityConfirmed(roundId: roundId))
-                            let witnesses: [WitnessData]
-                            if delegationReady {
-                                witnesses = []
-                            } else {
-                                witnesses = try await Self.completeDeterministicRoundSetup(
-                                    roundId: roundId,
-                                    snapshotHeight: snapshotHeight,
-                                    walletDbPath: walletDbPath,
-                                    networkId: networkId,
-                                    notes: notes,
-                                    bundleCount: existingBundleCount,
-                                    votingCrypto: votingCrypto,
-                                    sdkSynchronizer: sdkSynchronizer
-                                )
-                            }
-                            await send(.votingWeightLoaded(
-                                roundId: roundId,
-                                weight: eligibleWeight,
-                                notes: notes,
-                                witnesses: witnesses,
-                                bundleCount: existingBundleCount,
-                                delegationReady: delegationReady
-                            ))
-
-                        case .resumeInPlace:
-                            // Nothing conclusive says this round is dead, and there is local
-                            // material worth keeping. Resume on the existing rows: alpha, rk
-                            // and the stored PCZT sighash stay exactly as the interrupted run
-                            // left them, and only the per-session leftovers go.
-                            try await votingCrypto.resetSessionState(roundId)
-                            let eligibleWeight = Self.votingWeight(for: notes, bundleCount: existingBundleCount)
-                            guard eligibleWeight > 0 else {
-                                await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-                                return
-                            }
-                            await send(.earlyEligibilityConfirmed(roundId: roundId))
-                            // `resetSessionState` dropped the round's cached vote tree and the
-                            // unsigned setup, so the witnesses have to be rebuilt before the
-                            // interrupted signing run can continue.
-                            let witnesses = try await Self.completeDeterministicRoundSetup(
-                                roundId: roundId,
-                                snapshotHeight: snapshotHeight,
-                                walletDbPath: walletDbPath,
-                                networkId: networkId,
-                                notes: notes,
-                                bundleCount: existingBundleCount,
-                                votingCrypto: votingCrypto,
-                                sdkSynchronizer: sdkSynchronizer
-                            )
-                            await send(.votingWeightLoaded(
-                                roundId: roundId,
-                                weight: eligibleWeight,
-                                notes: notes,
-                                witnesses: witnesses,
-                                bundleCount: existingBundleCount,
-                                delegationReady: false
-                            ))
-
-                        case .freshRound:
-                            guard try await Self.prepareFreshRound(
-                                roundId: roundId,
-                                existingState: existingState,
-                                session: session,
-                                snapshotHeight: snapshotHeight,
-                                walletDbPath: walletDbPath,
-                                networkId: networkId,
-                                notes: notes,
-                                votingCrypto: votingCrypto,
-                                sdkSynchronizer: sdkSynchronizer,
-                                send: send
-                            ) else { return }
-                            didPrepareFreshRound = true
-                            resolvedBundleCount = try await VotingLegacy.getBundleCount(roundId)
-                        }
-                    } else {
-                        guard try await Self.prepareFreshRound(
-                            roundId: roundId,
-                            existingState: existingState,
-                            session: session,
-                            snapshotHeight: snapshotHeight,
-                            walletDbPath: walletDbPath,
-                            networkId: networkId,
-                            notes: notes,
-                            votingCrypto: votingCrypto,
-                            sdkSynchronizer: sdkSynchronizer,
-                            send: send
-                        ) else { return }
-                        didPrepareFreshRound = true
-                        resolvedBundleCount = try await VotingLegacy.getBundleCount(roundId)
-                    }
-
-                    // 3. Hotkey: load or generate the per-account hotkey
-                    // mnemonic, then derive this round's hotkey address.
-                    guard let accountId else {
-                        LoggerProxy.error("No selected account; skipping voting hotkey generation")
-                        return
-                    }
-                    let storedSecret: Data
-                    if let stored = try? walletStorage.exportVotingHotkey(accountId) {
-                        storedSecret = stored.storedSecret.value()
-                    } else {
-                        let hotkey = try await votingCrypto.generateHotkey(networkId)
-                        storedSecret = hotkey.storedSecret
-                        try walletStorage.importVotingHotkey(storedSecret, accountId)
-                    }
-                    await send(.hotkeyLoaded(roundId: roundId, address: ""))
-
-                    // Every path that reaches here with `didPrepareFreshRound == false` left
-                    // the round's signature rows intact, so the DB is the only source: we
-                    // never re-store signatures the pipeline itself just wiped. The
-                    // proof-generated shortcut has nothing left to restore.
-                    if isKeystoneUser && !didPrepareFreshRound && existingState?.proofGenerated != true {
-                        let storedSignatures = (try? await VotingLegacy.loadKeystoneBundleSignatures(roundId)) ?? []
-                        // A stored signature is only usable if the bundle row still holds the
-                        // delegation data (alpha/pczt_sighash) it was created against — the
-                        // signature covers that exact sighash. Trusting a stale one routes
-                        // straight into `build_and_prove_delegation`, which dies on the missing
-                        // data. Validate against the stored sighash before the shape check below
-                        // ever sees these signatures, so a mismatch or an incomplete setup drops
-                        // the signature instead of being trusted.
-                        var verifiedSignatures: [KeystoneBundleSignatureInfo] = []
-                        if !storedSignatures.isEmpty {
-                            verifiedSignatures = await Self.validatedStoredSignatures(storedSignatures) { bundleIndex in
-                                try await VotingLegacy.getStoredDelegationSighash(roundId, bundleIndex)
-                            }
-                            if verifiedSignatures.count < storedSignatures.count {
-                                let droppedCount = storedSignatures.count - verifiedSignatures.count
-                                LoggerProxy.warn(
-                                    "Dropped \(droppedCount) stored Keystone signature(s) that no longer match their bundle's delegation data"
-                                )
-                            }
-                        }
-                        if let validSignatures = Self.validKeystoneSignatures(
-                            verifiedSignatures,
-                            bundleCount: resolvedBundleCount
-                        ), !validSignatures.isEmpty {
-                            await send(.keystoneSignaturesRestored(
-                                roundId: roundId,
-                                signatures: validSignatures
-                            ))
-                        } else if !storedSignatures.isEmpty {
-                            LoggerProxy.warn("Ignoring inconsistent Keystone signing recovery state")
-                        }
-                    }
-                } catch: { error, send in
-                    LoggerProxy.error("Active round pipeline failed: \(error)")
-                    await send(.pipelineFailed(
-                        roundId: roundId,
-                        message: await Self.pipelineFailureMessage(
-                            error: error,
-                            roundId: roundId,
-                            crypto: votingCrypto
-                        )
-                    ))
-                }
-                .cancellable(id: cancelPipelineId, cancelInFlight: true)
+                return reduceStartActiveRoundPipeline(&state, roundId: roundId)
 
             case let .walletNotSynced(roundId, scannedHeight, _):
                 // Pop any pushed screens (none expected with deferred-nav,
@@ -1187,36 +884,8 @@ extension VotingCoordFlow {
                 }
                 return .none
 
-            case let .votingWeightLoaded(roundId, weight, notes, witnesses, bundleCount, delegationReady):
-                let eligibleTotals = Self.eligibleTotals(for: notes)
-                var roundSession = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
-                roundSession.votingWeight = weight
-                roundSession.eligibleVotingWeight = eligibleTotals.weight > 0 ? eligibleTotals.weight : weight
-                roundSession.walletNotes = notes
-                roundSession.cachedWitnesses = witnesses
-                roundSession.bundleCount = bundleCount
-                roundSession.eligibleBundleCount = eligibleTotals.bundleCount > 0
-                    ? eligibleTotals.bundleCount
-                    : bundleCount
-                roundSession.completedKeystoneDelegationBundleIndices =
-                    roundSession.completedKeystoneDelegationBundleIndices.filter { $0 < bundleCount }
-                if delegationReady {
-                    roundSession.delegationProofStatus = .complete
-                    roundSession.completedKeystoneDelegationBundleIndices = []
-                } else {
-                    roundSession.delegationProofStatus = .notStarted
-                    roundSession.isDelegationProofInFlight = false
-                    roundSession.delegationPrecomputeStatus = .notStarted
-                    roundSession.isDelegationPrecomputeInFlight = false
-                    if state.isKeystoneUser {
-                        roundSession.currentKeystoneBundleIndex =
-                            roundSession.firstIncompleteKeystoneBundleIndex ?? 0
-                    }
-                }
-                state.roundCache[roundId] = roundSession
-                if state.roundCache[roundId]?.hotkeyAddress != nil {
-                    return .send(.maybeStartDelegationPrecompute(roundId: roundId))
-                }
+            case let .votingWeightLoaded(roundId, weight, bundleCount):
+                applyBundleTotals(&state, roundId: roundId, weight: weight, bundleCount: bundleCount)
                 return .none
 
             case let .earlyEligibilityConfirmed(roundId):
@@ -1232,13 +901,6 @@ extension VotingCoordFlow {
                     state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                 }
                 return .none
-
-            case let .hotkeyLoaded(roundId, address):
-                state.roundCache[roundId, default: RoundSession(roundId: roundId)].hotkeyAddress = address
-                if state.pendingPipelineRoundId == roundId {
-                    state.pendingPipelineRoundId = nil
-                }
-                return .send(.maybeStartDelegationPrecompute(roundId: roundId))
 
             case let .pipelineFailed(roundId, message):
                 // Pop the proposal list back to the polls list and surface
@@ -1299,6 +961,7 @@ extension VotingCoordFlow {
                 // landed here from the wallet-sync resume path which does
                 // push proactively.
                 state.checkingEligibilityRoundId = nil
+                state.pendingPipelineRoundId = nil
                 if case .proposalList = state.path.last {
                     _ = state.path.popLast()
                 }
@@ -1783,67 +1446,737 @@ extension VotingCoordFlow {
         )
     }
 
+    // MARK: - Round session
+
+    /// How many times a round's run is re-scheduled after stopping with work
+    /// still to do. A backoff the voter cannot see is indistinguishable from
+    /// the app doing nothing, so it is bounded and then reported.
+    static let maxRunRetries = 3
+
+    /// The crate takes at most this many chain endpoints and vote-tree nodes.
+    static let maxSessionChainEndpoints = 8
+
+    /// `.startActiveRoundPipeline` handler. Opens the round's session and asks
+    /// it what the round owes.
+    ///
+    /// Always a fresh open, never a reuse: the route and the session epoch are
+    /// fixed when a session is opened, and the registry closes the round's
+    /// previous session first, so re-entering a round is how the two are
+    /// allowed to change.
+    func reduceStartActiveRoundPipeline(_ state: inout State, roundId: String) -> Effect<Action> {
+        guard let item = state.allRounds.first(where: { $0.id == roundId }),
+              item.session.status == .active
+        else { return .none }
+        // One open at a time per round. Two concurrent opens carry two epochs,
+        // which is the one thing the registry's single-flight cannot join, so a
+        // second tap while the first is still opening is ignored rather than
+        // raced.
+        guard state.pendingPipelineRoundId != roundId else { return .none }
+        guard let serviceConfig = state.serviceConfig,
+              let account = state.selectedWalletAccount
+        else {
+            LoggerProxy.error("Voting config or selected account missing; cannot open a round session")
+            return .none
+        }
+        // Fail closed before the FFI on a config the session cannot be opened
+        // on: no endpoints to reach, or a PIR geometry this build predates.
+        guard let transport = VotingSessionTransport(serviceConfig: serviceConfig) else {
+            LoggerProxy.error("Round session refused: the config names no endpoints or no pir_layout.poly_len")
+            return .send(.pipelineFailed(
+                roundId: roundId,
+                message: String(localizable: .coinVoteStoreUserErrorPirEndpointsMissing)
+            ))
+        }
+
+        let votingSession = item.session
+        let snapshotHeight = votingSession.snapshotHeight
+        let network = zcashSDKEnvironment.network()
+        let networkId: UInt32 = network.networkType.votingRustNetworkId
+        let walletDbPath = databaseFiles.dataDbURLFor(network).path
+        let accountId = account.id
+        let roster = votingSession.proposals.map { proposal in
+            VotingProposalRosterEntry(proposalId: proposal.id, numOptions: UInt32(proposal.options.count))
+        }
+        // Tor for the session's chain and helper traffic whenever the wallet
+        // asked for it, and it fails closed: a voter who chose Tor is never
+        // silently announced over a plain connection.
+        let route = state.swapAPIAccess == .protected
+            ? VotingTransportRoute.tor
+            : VotingTransportRoute.direct
+
+        state.votingSessionEpoch += 1
+        let epoch = state.votingSessionEpoch
+        var roundSession = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
+        roundSession.sessionEpoch = epoch
+        roundSession.didAttemptBundleSetup = false
+        roundSession.runRetryCount = 0
+        roundSession.lastRunFailureSummary = nil
+        roundSession.progress = VotingRoundProgressSnapshot()
+        roundSession.precomputeStatus.removeAll()
+        roundSession.delegationPrecomputeStatus = .notStarted
+        roundSession.isDelegationPrecomputeInFlight = false
+        state.roundCache[roundId] = roundSession
+        state.pendingPipelineRoundId = roundId
+        state.ineligibleSheet = nil
+        state.walletSyncingSheetRoundId = nil
+
+        return .run { [sdkSynchronizer, votingCrypto, walletStorage] send in
+            // 1. Wallet sync gate.
+            //
+            // Spend-before-Sync scans head-first and birthday-first in
+            // parallel, so a `latestScannedHeight` past the snapshot does not
+            // mean the snapshot itself was scanned. Only the contiguous
+            // `fullyScannedHeight` says that. The synchronizer may report 0
+            // briefly on cold start before it hydrates state — retry a few
+            // times.
+            var walletScannedHeight = UInt64(sdkSynchronizer.latestState().fullyScannedHeight)
+            if walletScannedHeight == 0 {
+                for _ in 0..<5 {
+                    try await Task.sleep(for: .seconds(1))
+                    walletScannedHeight = UInt64(sdkSynchronizer.latestState().fullyScannedHeight)
+                    if walletScannedHeight > 0 {
+                        break
+                    }
+                }
+            }
+            if walletScannedHeight < snapshotHeight {
+                await send(.walletNotSynced(
+                    roundId: roundId,
+                    scannedHeight: walletScannedHeight,
+                    snapshotHeight: snapshotHeight
+                ))
+                return
+            }
+
+            // 2. The voting hotkey. App-owned random material, not a seed
+            // derivation: it is generated once per account and persisted,
+            // because it cannot be recovered from the wallet seed.
+            let hotkeySecret: Data
+            if let stored = try? walletStorage.exportVotingHotkey(accountId) {
+                hotkeySecret = stored.storedSecret.value()
+            } else {
+                let hotkey = try await votingCrypto.generateHotkey(networkId)
+                hotkeySecret = Data(hotkey.storedSecret)
+                try walletStorage.importVotingHotkey(hotkeySecret, accountId)
+            }
+
+            // 3. Open the session on the round's own parameters and the anchor
+            // the wallet's notes are proved against.
+            let inputs = Self.sessionInputs(
+                votingSession: votingSession,
+                transport: transport,
+                accountUUID: accountId.votingUUIDString,
+                walletDbPath: walletDbPath,
+                anchorTreeState: try await sdkSynchronizer.getTreeState(snapshotHeight)
+            )
+            try await votingCrypto.openRoundSession(
+                inputs,
+                VotingSessionBinding(roster: roster, hotkeySecret: hotkeySecret),
+                route,
+                epoch
+            )
+
+            let plan = try await votingCrypto.sessionPlan(roundId)
+            if !plan.needsBundleSetup {
+                // The bundles already exist, so no layout will answer with
+                // their weight. Ask for it directly rather than showing the
+                // voter a round worth nothing.
+                if let report = try? await votingCrypto.eligibility(roundId) {
+                    await send(.votingWeightLoaded(
+                        roundId: roundId,
+                        weight: report.eligibleWeight,
+                        bundleCount: UInt32(plan.delegationStatuses.count)
+                    ))
+                }
+            }
+            await send(.roundSessionOpened(roundId: roundId, plan: plan))
+        } catch: { error, send in
+            LoggerProxy.error("Opening the round session failed: \(error)")
+            await send(.roundSessionOpenFailed(roundId: roundId, error: Self.votingError(from: error)))
+        }
+        .cancellable(id: cancelPipelineId, cancelInFlight: true)
+    }
+
+    /// The inputs a round session lives on.
+    ///
+    /// Chain and vote-tree traffic go to the first few configured servers
+    /// because the crate polls each of them; helper traffic goes to all of
+    /// them, since a share may be delivered anywhere.
+    static func sessionInputs(
+        votingSession: VotingSession,
+        transport: VotingSessionTransport,
+        accountUUID: String,
+        walletDbPath: String,
+        anchorTreeState: Data
+    ) -> VotingSessionInputs {
+        let chainEndpoints = Array(transport.voteServerURLs.prefix(Self.maxSessionChainEndpoints))
+        return VotingSessionInputs(
+            accountUUID: accountUUID,
+            walletDbPath: walletDbPath,
+            roundParams: VotingRoundParameters(
+                voteRoundId: votingSession.voteRoundId.hexString,
+                snapshotHeight: votingSession.snapshotHeight,
+                eaPk: votingSession.eaPK,
+                ncRoot: votingSession.ncRoot,
+                nullifierImtRoot: votingSession.nullifierIMTRoot
+            ),
+            roundName: votingSession.title,
+            anchorTreeState: anchorTreeState,
+            chainEndpoints: chainEndpoints,
+            voteTreeNodeUrls: chainEndpoints,
+            helperUrls: transport.voteServerURLs,
+            pirEndpoints: transport.pirEndpointURLs,
+            pirLayout: transport.pirLayout,
+            ceremonyStartSeconds: Self.authenticatedSeconds(votingSession.ceremonyStart),
+            voteEndTimeSeconds: Self.authenticatedSeconds(votingSession.voteEndTime)
+        )
+    }
+
+    /// Round timing the session can rely on, or nothing.
+    ///
+    /// A round the authenticator could not vouch for carries the epoch-0
+    /// default here, and passing that on as a real time would tell the crate
+    /// the vote ended in 1970.
+    static func authenticatedSeconds(_ date: Date) -> UInt64? {
+        let seconds = date.timeIntervalSince1970
+        guard seconds > 0 else { return nil }
+        return UInt64(seconds)
+    }
+
+    /// `.roundSessionOpened` handler. Stores the plan and either persists the
+    /// round's bundle rows or moves on to the ballot.
+    func reduceRoundSessionOpened(_ state: inout State, roundId: String, plan: VotingRoundPlan) -> Effect<Action> {
+        if state.pendingPipelineRoundId == roundId {
+            state.pendingPipelineRoundId = nil
+        }
+        var session = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
+        session.roundPlan = plan
+        // The session binds the hotkey as it opens, so reaching here is the
+        // proof this round has one. The address itself is not read back from
+        // the keychain, so it stays empty — as it did before the session.
+        if session.hotkeyAddress == nil {
+            session.hotkeyAddress = ""
+        }
+        if !plan.delegationStatuses.isEmpty {
+            session.bundleCount = UInt32(plan.delegationStatuses.count)
+            if session.eligibleBundleCount == 0 {
+                session.eligibleBundleCount = session.bundleCount
+            }
+        }
+        state.roundCache[roundId] = session
+
+        if plan.needsBundleSetup {
+            guard !session.didAttemptBundleSetup else {
+                // A plan that still wants bundle rows after one setup answered
+                // is a disagreement with the sidecar, not a step to repeat.
+                LoggerProxy.error("Round \(roundId) still needs bundle setup after one was persisted")
+                return .send(.pipelineFailed(
+                    roundId: roundId,
+                    message: String(localizable: .coinVoteSubmissionGenericBatchFailure)
+                ))
+            }
+            state.roundCache[roundId]?.didAttemptBundleSetup = true
+            return .run { [votingCrypto] send in
+                let layout = try await votingCrypto.setupBundles(roundId)
+                await send(.bundlesSetUp(roundId: roundId, layout: layout))
+            } catch: { error, send in
+                await send(.bundleSetupFailed(roundId: roundId, error: Self.votingError(from: error)))
+            }
+            .cancellable(id: cancelPipelineId)
+        }
+
+        return .merge(
+            .send(.earlyEligibilityConfirmed(roundId: roundId)),
+            submittedVotesEffect(plan: plan, roundId: roundId),
+            .send(.maybeStartDelegationPrecompute(roundId: roundId))
+        )
+    }
+
+    /// `.bundlesSetUp` handler. The layout is the round's voting power; the
+    /// refreshed plan is what it owes now that the rows exist.
+    func reduceBundlesSetUp(_ state: inout State, roundId: String, layout: VotingBundleLayout) -> Effect<Action> {
+        applyBundleTotals(&state, roundId: roundId, weight: layout.eligibleWeight, bundleCount: layout.bundleCount)
+        if layout.privacyTrimDroppedBundles > 0 {
+            let bundles = layout.privacyTrimDroppedBundles
+            let notes = layout.privacyTrimDroppedNotes
+            LoggerProxy.info("Round \(roundId): privacy trim dropped \(bundles) bundles, \(notes) notes")
+        }
+        return .merge(
+            // Eligibility is proven the moment bundles exist, so hand
+            // navigation off now rather than holding the polls list.
+            .send(.earlyEligibilityConfirmed(roundId: roundId)),
+            .run { [votingCrypto] send in
+                let plan = try await votingCrypto.sessionPlan(roundId)
+                await send(.roundSessionOpened(roundId: roundId, plan: plan))
+            } catch: { error, send in
+                await send(.roundSessionOpenFailed(roundId: roundId, error: Self.votingError(from: error)))
+            }
+            .cancellable(id: cancelPipelineId)
+        )
+    }
+
+    /// `.bundleSetupFailed` handler. A wallet the crate will not bundle for is
+    /// not an error screen: it is the polls list with the sheet that explains
+    /// why this round is closed to it.
+    func reduceBundleSetupFailed(_ state: inout State, roundId: String, error: VotingError) -> Effect<Action> {
+        switch error.kind {
+        case .noSpendableNotes, .insufficientEligibility:
+            return .send(.ineligibleForRound(roundId: roundId, heldZatoshi: 0))
+        default:
+            LoggerProxy.error("Bundle setup for \(roundId) failed: \(error.message)")
+            return .send(.pipelineFailed(
+                roundId: roundId,
+                message: VotingErrorMapper.userFriendlyMessage(from: error)
+            ))
+        }
+    }
+
+    /// `.precomputeProofEvent` handler. Progress is narration; the status is
+    /// the answer, and it is what keeps a second precompute off this bundle.
+    func reducePrecomputeProofEvent(
+        _ state: inout State,
+        roundId: String,
+        bundleIndex: UInt32,
+        event: VotingDelegationProofEvent
+    ) -> Effect<Action> {
+        mutateSession(&state, roundId: roundId) { roundSession in
+            switch event {
+            case .progress(let progress):
+                roundSession.progress.apply(progress)
+            case .finished(let status):
+                roundSession.precomputeStatus[bundleIndex] = status
+            }
+        }
+        return .none
+    }
+
+    /// `.roundRunEvent` handler. Folds one element of a run's stream into the
+    /// round, and hands the report to the host decision when the run stops.
+    func reduceRoundRunEvent(
+        _ state: inout State,
+        roundId: String,
+        epoch: UInt64,
+        event: VotingRoundRunEvent
+    ) -> Effect<Action> {
+        // An element from a session that has since been replaced describes a
+        // round state that no longer exists; writing it back would undo newer
+        // state rather than add to it.
+        guard let session = state.roundCache[roundId], session.sessionEpoch == epoch else { return .none }
+
+        switch event {
+        case .event(let driveEvent):
+            mutateSession(&state, roundId: roundId) { roundSession in
+                roundSession.progress.apply(driveEvent)
+                if let plan = driveEvent.plan {
+                    roundSession.roundPlan = plan
+                }
+                // A run overlaps bundles, so an event that names no proposal
+                // leaves the last named one on screen rather than blanking it.
+                if let proposalId = driveEvent.progress?.proposalId ?? driveEvent.step?.proposalId {
+                    roundSession.submittingProposalId = proposalId
+                }
+                Self.applySubmissionProgress(&roundSession)
+            }
+            return .none
+
+        case .finished(let report):
+            var updated = session
+            updated.isSubmittingVote = false
+            // The report is authoritative where the stream is a best-effort
+            // narration the SDK may drop, so the run's own tally replaces
+            // whatever the stream managed to deliver.
+            updated.progress.completedProposals = report.tally.completedProposals
+            updated.progress.totalProposals = report.tally.totalProposals
+            updated.progress.stage = .done
+            updated.progress.proofFraction = nil
+            if let plan = report.plan {
+                updated.roundPlan = plan
+                if !plan.delegationStatuses.isEmpty {
+                    updated.bundleCount = UInt32(plan.delegationStatuses.count)
+                }
+            }
+            updated.lastRunFailureSummary = Self.partialFailureSummary(report)
+            state.roundCache[roundId] = updated
+
+            let decision = VotingRoundHostDecision.decide(report)
+            let votes = report.plan.map(Self.submittedVotes(from:)) ?? [:]
+            guard !votes.isEmpty else {
+                return .send(.roundRunDecision(roundId: roundId, decision: decision))
+            }
+            // Sequenced, not merged: the decision counts what the round has
+            // cast, so the cast votes have to land first.
+            return .concatenate(
+                .send(.submittedVotesLoaded(roundId: roundId, votes: votes)),
+                .send(.roundRunDecision(roundId: roundId, decision: decision))
+            )
+        }
+    }
+
+    /// `.roundRunFailed` handler. The driver itself does not fail — a throw is
+    /// the call around it: a session that is closed or already driving, or a
+    /// signer this host could not build.
+    func reduceRoundRunFailed(
+        _ state: inout State,
+        roundId: String,
+        epoch: UInt64,
+        error: VotingError
+    ) -> Effect<Action> {
+        guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
+        LoggerProxy.error("Round run for \(roundId) failed: \(error.message)")
+        return .send(.batchAuthorizationFailed(
+            roundId: roundId,
+            error: VotingErrorMapper.userFriendlyMessage(from: error)
+        ))
+    }
+
+    /// `.roundRunDecision` handler. One branch per thing a stopped run can
+    /// leave the host owing.
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    func reduceRoundRunDecision(
+        _ state: inout State,
+        roundId: String,
+        decision: VotingRoundHostDecision
+    ) -> Effect<Action> {
+        guard let session = state.roundCache[roundId] else { return .none }
+        let completedCount = Int(session.progress.completedProposals)
+        let totalCount = Int(max(session.progress.totalProposals, session.progress.completedProposals))
+
+        switch decision {
+        case .completed:
+            state.roundCache[roundId]?.runRetryCount = 0
+            return finishedRunEffect(roundId: roundId, session: session, alsoTrackShares: false)
+
+        case .startShareTracking:
+            // Only helper-share confirmation is left, and it is not blocking:
+            // the ballot is cast, so the flow closes and the tracking timer
+            // finishes the delivery.
+            state.roundCache[roundId]?.runRetryCount = 0
+            return finishedRunEffect(roundId: roundId, session: session, alsoTrackShares: true)
+
+        case .runBundleSetupThenRerun:
+            // The seed is never kept past one run, so the re-run is a fresh
+            // Confirm. The ticket is what lets it skip a second auth prompt.
+            state.pendingBatchSubmission = true
+            mutateSession(&state, roundId: roundId) { $0.batchSubmissionStatus = .idle }
+            return .run { [votingCrypto] send in
+                let layout = try await votingCrypto.setupBundles(roundId)
+                await send(.bundlesSetUp(roundId: roundId, layout: layout))
+                await send(.submitAllDraftsTapped(roundId: roundId))
+            } catch: { error, send in
+                await send(.bundleSetupFailed(roundId: roundId, error: Self.votingError(from: error)))
+            }
+
+        case .collectSignatures(let bundles):
+            mutateSession(&state, roundId: roundId) { $0.keystoneBundlesToSign = bundles }
+            // The Keystone loop is Task A4's; a software wallet asked for a
+            // signature has already given the only one it has.
+            guard !state.isKeystoneUser else { return .none }
+            LoggerProxy.error("Round \(roundId) asked a software wallet for signatures on bundles \(bundles)")
+            return .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: String(localizable: .coinVoteSubmissionGenericBatchFailure)
+            ))
+
+        case let .waitForBallot(openProposals, unrosteredIntents):
+            LoggerProxy.error(
+                "Round \(roundId) still wants a ballot: open \(openProposals), unrostered \(unrosteredIntents)"
+            )
+            return .send(.batchSubmissionFailed(
+                roundId: roundId,
+                error: String(localizable: .coinVoteSubmissionGenericBatchFailure),
+                submittedCount: completedCount,
+                totalCount: totalCount
+            ))
+
+        case .chainTerminal(let message):
+            return .send(.batchSubmissionFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: message),
+                submittedCount: completedCount,
+                totalCount: totalCount
+            ))
+
+        case .retryLater(let seconds):
+            guard session.runRetryCount < Self.maxRunRetries else {
+                LoggerProxy.error("Round \(roundId) still had work after \(Self.maxRunRetries) re-runs")
+                return .send(.batchSubmissionFailed(
+                    roundId: roundId,
+                    error: String(localizable: .coinVoteSubmissionGenericBatchFailure),
+                    submittedCount: completedCount,
+                    totalCount: totalCount
+                ))
+            }
+            state.roundCache[roundId]?.runRetryCount += 1
+            return .run { [continuousClock] send in
+                try await continuousClock.sleep(for: .seconds(seconds))
+                await send(.retryBatchSubmission(roundId: roundId))
+            }
+            .cancellable(id: cancelRunRetryId, cancelInFlight: true)
+
+        case let .failed(message, retryable):
+            LoggerProxy.error("Round \(roundId) run failed (retryable: \(retryable)): \(message)")
+            return .send(.batchSubmissionFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: message),
+                submittedCount: completedCount,
+                totalCount: totalCount
+            ))
+
+        case .cancelled:
+            // A cancelled run is one the flow itself stopped; the screen it
+            // stopped on is still the right one.
+            return .none
+        }
+    }
+
+    /// What a run that reached the end of its work leaves on screen.
+    ///
+    /// A run can isolate one bundle and finish the rest, so a clean quiescence
+    /// is not a clean run: a partial result is shown as one, with the counts,
+    /// rather than as a completed ballot.
+    private func finishedRunEffect(
+        roundId: String,
+        session: RoundSession,
+        alsoTrackShares: Bool
+    ) -> Effect<Action> {
+        let completedCount = Int(session.progress.completedProposals)
+        let totalCount = Int(max(session.progress.totalProposals, session.progress.completedProposals))
+        let result: Effect<Action>
+        if let summary = session.lastRunFailureSummary {
+            result = .send(.batchSubmissionFailed(
+                roundId: roundId,
+                error: summary,
+                submittedCount: completedCount,
+                totalCount: totalCount
+            ))
+        } else {
+            result = .send(.batchSubmissionCompleted(
+                roundId: roundId,
+                successCount: completedCount,
+                failCount: 0
+            ))
+        }
+        guard alsoTrackShares else { return result }
+        return .merge(result, .send(.pollShareStatus(roundId: roundId)))
+    }
+
+    /// What a finished run could not do, when it finished anyway.
+    ///
+    /// A failure list does not imply a failure quiescence: the driver isolates
+    /// a failing bundle and drives the rest, so telling the voter everything
+    /// landed would hide voting power that never voted.
+    static func partialFailureSummary(_ report: VotingRoundRunReport) -> String? {
+        guard !report.failures.isEmpty || !report.skippedBundles.isEmpty else { return nil }
+        let detail = report.failures.first.map { VotingErrorMapper.userFriendlyMessage(from: $0.failure.message) }
+            ?? String(localizable: .coinVoteSubmissionGenericBatchFailure)
+        let skipped = report.skippedBundles.count
+        guard skipped > 0 else { return detail }
+        return "\(detail) (\(skipped)/\(max(Int(report.tally.totalProposals), skipped)))"
+    }
+
+    /// The choices a round's plan says are cast, as the flow's own vote map. A
+    /// proposal the voter deliberately skipped carries no choice and stays out.
+    static func submittedVotes(from plan: VotingRoundPlan) -> [UInt32: VoteChoice] {
+        guard let display = plan.completedVoteDisplay else { return [:] }
+        var votes: [UInt32: VoteChoice] = [:]
+        for entry in display.choices {
+            guard let choice = entry.choice else { continue }
+            votes[entry.proposalId] = VoteChoice.option(choice)
+        }
+        return votes
+    }
+
+    private func submittedVotesEffect(plan: VotingRoundPlan, roundId: String) -> Effect<Action> {
+        let votes = Self.submittedVotes(from: plan)
+        guard !votes.isEmpty else { return .none }
+        return .send(.submittedVotesLoaded(roundId: roundId, votes: votes))
+    }
+
+    /// Hydrates a round's cast votes from the sidecar's own plan.
+    ///
+    /// Deliberately the store-scoped plan rather than a session's: opening a
+    /// session binds a hotkey and fixes a route, and reading what was already
+    /// voted is worth neither.
+    private func loadSubmittedVotesFromPlan(_ state: State, roundId: String) -> Effect<Action> {
+        let proposalIds = activeSession(in: state, roundId: roundId)?.proposals.map(\.id) ?? []
+        return .run { [votingCrypto] send in
+            let plan = try await votingCrypto.roundPlan(roundId, proposalIds)
+            let votes = Self.submittedVotes(from: plan)
+            guard !votes.isEmpty else { return }
+            await send(.submittedVotesLoaded(roundId: roundId, votes: votes))
+        } catch: { error, _ in
+            LoggerProxy.warn("Failed to load submitted voting choices: \(error)")
+        }
+    }
+
+    /// The round's bundle totals, from whichever call answered with them.
+    private func applyBundleTotals(
+        _ state: inout State,
+        roundId: String,
+        weight: UInt64,
+        bundleCount: UInt32
+    ) {
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.votingWeight = weight
+            roundSession.bundleCount = bundleCount
+            if roundSession.eligibleVotingWeight == 0 {
+                roundSession.eligibleVotingWeight = weight
+            }
+            if roundSession.eligibleBundleCount == 0 {
+                roundSession.eligibleBundleCount = bundleCount
+            }
+            roundSession.completedKeystoneDelegationBundleIndices =
+                roundSession.completedKeystoneDelegationBundleIndices.filter { $0 < bundleCount }
+        }
+    }
+
+    /// Keeps the confirmation screen's own progress shape in step with the
+    /// run's, so a voter watching it sees the round move rather than a spinner
+    /// that never changes.
+    private static func applySubmissionProgress(_ session: inout RoundSession) {
+        session.currentVoteBundleIndex = session.progress.activeBundleIndex
+        switch session.progress.stage {
+        case .idle:
+            break
+        case .proving:
+            session.voteSubmissionStep = .preparingProof
+        case .submitting:
+            session.voteSubmissionStep = .preparingProof
+        case .confirming:
+            session.voteSubmissionStep = .confirming
+        case .deliveringShares:
+            session.voteSubmissionStep = .sendingShares
+        case .done:
+            session.voteSubmissionStep = nil
+        }
+        guard session.progress.totalProposals > 0 else { return }
+        session.batchSubmissionStatus = .submitting(
+            currentIndex: Int(session.progress.completedProposals),
+            totalCount: Int(session.progress.totalProposals),
+            currentProposalId: session.submittingProposalId ?? 0
+        )
+    }
+
+    /// The voting failure an arbitrary error describes.
+    ///
+    /// Most of these already are one; the rest come from the app's own
+    /// dependencies — the keychain, the synchronizer — and keep their text
+    /// rather than being flattened into something the mapper cannot read.
+    static func votingError(from error: Error) -> VotingError {
+        if let votingError = error as? VotingError {
+            return votingError
+        }
+        return VotingError(kind: VotingErrorKind.other, message: error.localizedDescription)
+    }
+
     // MARK: - Entry point
 
-    /// `.submitAllDraftsTapped` handler. Gates the request, prompts for
-    /// local auth (Zashi), and dispatches `.authenticationSucceeded`.
-    /// Keystone users skip the local auth gate (the device itself is the
-    /// auth surface).
+    /// `.submitAllDraftsTapped` handler. Records the ballot with the round's
+    /// session, then asks for the voter's local authentication.
+    ///
+    /// The intents are written before the auth prompt on purpose: a ballot the
+    /// crate refuses is a refusal the voter should see instead of a Face ID
+    /// sheet followed by a failure.
     func reduceSubmitAllDraftsTapped(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
         guard canStartSubmission(session) else { return .none }
-        guard activeSession(in: state, roundId: roundId) != nil else { return .none }
-        // Partial ballots are explicitly allowed: the user has already
-        // acknowledged any skipped questions via the ProposalDetail
-        // skipped-questions sheet. We submit only what they drafted —
-        // skipped proposals have no entry in `session.draftVotes` and are
-        // therefore never iterated by the submission loop, never marked as
-        // abstain, never auto-filled.
+        guard let activeSession = activeSession(in: state, roundId: roundId) else { return .none }
 
-        // Flip the CTA into its disabled/spinner state before the local-auth
-        // round-trip so the tap registers instantly; `.requested` also makes
-        // re-taps no-ops (`canStartSubmission`), so only one auth effect can
-        // ever be in flight.
+        // Flip the CTA into its disabled/spinner state before the round-trip so
+        // the tap registers instantly; `.requested` also makes re-taps no-ops
+        // (`canStartSubmission`), so only one of these can ever be in flight.
         mutateSession(&state, roundId: roundId) {
             $0.batchSubmissionStatus = .requested
         }
 
-        if !state.isKeystoneUser && !state.pendingBatchSubmission {
-            return .run { [localAuthentication] send in
+        let intents = Self.ballotIntents(
+            proposals: activeSession.proposals,
+            drafts: session.draftVotes,
+            alreadyCast: Set(session.votes.keys)
+        )
+        let needsAuthentication = !state.isKeystoneUser && !state.pendingBatchSubmission
+        let totalCount = max(intents.count, session.draftVotes.count)
+
+        return .run { [votingCrypto, localAuthentication] send in
+            let plan = try await votingCrypto.setBallotIntents(roundId, intents)
+            guard plan.allDecided else {
+                // Every rostered proposal was just given a decision, so the
+                // planner disagreeing means the roster is not the one the
+                // session was bound to. Nothing here can cast a ballot for it.
+                LoggerProxy.error("Round \(roundId) refused to cast: the ballot is incomplete after recording intents")
+                await send(.batchSubmissionFailed(
+                    roundId: roundId,
+                    error: String(localizable: .coinVoteSubmissionGenericBatchFailure),
+                    submittedCount: 0,
+                    totalCount: totalCount
+                ))
+                return
+            }
+            if needsAuthentication {
                 guard await localAuthentication.authenticate() else {
                     await send(.batchAuthenticationDeclined(roundId: roundId))
                     return
                 }
-                await send(.authenticationSucceeded(roundId: roundId))
             }
+            await send(.authenticationSucceeded(roundId: roundId))
+        } catch: { error, send in
+            LoggerProxy.error("Recording the ballot for \(roundId) failed: \(error)")
+            await send(.batchSubmissionFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: error),
+                submittedCount: 0,
+                totalCount: totalCount
+            ))
         }
-        return .send(.authenticationSucceeded(roundId: roundId))
     }
 
-    /// `.authenticationSucceeded` handler. Branches on Keystone vs. Zashi,
-    /// honors a Zashi precompute-in-flight wait, and otherwise kicks off
-    /// the batch submission `.run` effect.
-    // swiftlint:disable:next function_body_length cyclomatic_complexity
+    /// One ballot intent per rostered proposal the round has not already cast.
+    ///
+    /// A proposal the voter left blank, and the synthetic Abstain the ballot UI
+    /// offers where a proposal has no abstain option of its own, are both
+    /// recorded as skipped rather than left out: the planner needs a terminal
+    /// decision for every rostered proposal before it will plan a cast, so an
+    /// omission would stall the round instead of submitting a partial ballot.
+    static func ballotIntents(
+        proposals: [VotingProposal],
+        drafts: [UInt32: VoteChoice],
+        alreadyCast: Set<UInt32>
+    ) -> [VotingBallotIntent] {
+        proposals
+            .filter { !alreadyCast.contains($0.id) }
+            .map { proposal in
+                guard
+                    let choice = drafts[proposal.id],
+                    !Voting.isSyntheticAbstain(choice: choice, proposal: proposal)
+                else {
+                    return VotingBallotIntent(proposalId: proposal.id, decision: VotingBallotDecision.skipped)
+                }
+                return VotingBallotIntent(
+                    proposalId: proposal.id,
+                    decision: VotingBallotDecision.choice(choice.index)
+                )
+            }
+    }
+
+    /// `.authenticationSucceeded` handler. Branches on Keystone vs. software,
+    /// and for a software wallet starts the round run the seed signs.
     func reduceAuthenticationSucceeded(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
         // Idempotent entry: a fresh `.requested` tap (or a retryable status)
-        // may start the pipeline, and an in-flight status may only be
-        // re-entered by a resume holding the `pendingBatchSubmission` ticket.
-        // A stray duplicate — a stale auth effect, a double dispatch — falls
-        // through to `.none` instead of restarting (and thereby cancelling)
-        // the in-flight batch effect.
+        // may start the run, and an in-flight status may only be re-entered by
+        // a resume holding the `pendingBatchSubmission` ticket. A stray
+        // duplicate — a stale auth effect, a double dispatch — falls through to
+        // `.none` instead of restarting (and thereby cancelling) the run.
         let isResume = state.pendingBatchSubmission
         guard session.batchSubmissionStatus == .requested
             || canStartSubmission(session)
             || (isResume && isBatchSubmitting(session))
         else { return .none }
         state.pendingBatchSubmission = false
-        guard let activeSession = activeSession(in: state, roundId: roundId) else { return .none }
-        // Partial ballots are intentional — see `reduceSubmitAllDraftsTapped`.
+        guard activeSession(in: state, roundId: roundId) != nil else { return .none }
 
-        // Keystone: route into the per-bundle QR signing screen first.
-        // The actual submission resumes via `pendingBatchSubmission` after
-        // all bundles are signed.
+        // Keystone: route into the per-bundle QR signing screen first. The run
+        // resumes via `pendingBatchSubmission` once every bundle is signed.
         if state.isKeystoneUser && !isDelegationReady(session) {
             state.pendingBatchSubmission = true
             mutateSession(&state, roundId: roundId) { roundSession in
@@ -1856,483 +2189,112 @@ extension VotingCoordFlow {
             return .send(.startDelegationProof(roundId: roundId))
         }
 
-        // Zashi only: if a precompute is in flight, mark submission as
-        // pending and let `.delegationPrecomputeCompleted` resume.
-        if !state.isKeystoneUser
-            && !isDelegationReady(session)
-            && session.isDelegationPrecomputeInFlight {
-            state.pendingBatchSubmission = true
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.batchSubmissionStatus = .authorizing
-                roundSession.voteSubmissionStep = .authorizingVote
-                roundSession.delegationProofStatus = .generating(progress: 0)
-            }
-            return .none
-        }
-
-        // Finding #8 (CHP.md): a proposal whose vote landed on-chain but whose
-        // shares never reached the helper servers has already been moved out
-        // of `draftVotes` by `.submittedVotesLoaded`, so the draft list alone
-        // would never revisit it. Fold `undeliveredShareProposalIds` in as
-        // synthetic "drafts" — the on-chain choice is already known from
-        // `session.votes` — so the batch loop below gets a chance to run
-        // Task 8F's `tryRecoverInflightVote` lane for it again. The two id
-        // sets shouldn't overlap (`.submittedVotesLoaded` always filters
-        // `draftVotes` against the merged `votes`), but `subtracting` keeps
-        // this correct even if that invariant ever slips.
-        let recoveryDrafts = session.undeliveredShareProposalIds
-            .subtracting(session.draftVotes.keys)
-            .sorted()
-            .compactMap { proposalId -> (key: UInt32, value: VoteChoice)? in
-                session.votes[proposalId].map { (key: proposalId, value: $0) }
-            }
-        let drafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
-        guard !drafts.isEmpty else { return .none }
-        let totalCount = drafts.count
-        let delegationDone = isDelegationReady(session)
-        let delegationPrepared = session.delegationPrecomputeStatus == .ready
-
+        let epoch = session.sessionEpoch
+        let pendingCount = max(session.draftVotes.count, 1)
         mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.batchSubmissionStatus = delegationDone
-                ? .submitting(currentIndex: 0, totalCount: totalCount, currentProposalId: drafts[0].key)
-                : .authorizing
-            roundSession.voteSubmissionStep = delegationDone ? nil : .authorizingVote
-            if !delegationDone {
-                roundSession.delegationProofStatus = .generating(progress: 0)
-            }
+            roundSession.batchSubmissionStatus = .authorizing
+            roundSession.voteSubmissionStep = .authorizingVote
             roundSession.batchVoteErrors = [:]
+            roundSession.isSubmittingVote = true
+            roundSession.lastRunFailureSummary = nil
+            roundSession.progress = VotingRoundProgressSnapshot()
         }
 
-        let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
-        let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount)
-        guard
-            let chainNodeUrl = state.serviceConfig?.voteServers.first?.url,
-            let voteServerURLs = state.serviceConfig?.voteServers.map(\.url).nonEmpty,
-            let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url).nonEmpty,
-            let pirLayout = state.serviceConfig?.pirLayout,
-            let accountId = state.selectedWalletAccount?.id
-        else {
-            LoggerProxy.error("serviceConfig/activeSession/selectedAccount unexpectedly nil during vote submission; aborting")
-            return .none
-        }
-        let expectedSnapshotHeight = activeSession.snapshotHeight
-        let bundleCount = session.bundleCount
-        let singleShare = activeSession.isLastMoment
-        let proposals = activeSession.proposals
-        let cachedNotes = session.walletNotes
-        let roundName = activeSession.title
-
-        let submitAtDeadline: Double?
-        if singleShare {
-            submitAtDeadline = nil
-        } else if let buffer = activeSession.lastMomentBuffer {
-            submitAtDeadline = activeSession.voteEndTime.timeIntervalSince1970 - buffer
-        } else {
-            submitAtDeadline = nil
-        }
-
-        return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
-            // MOB-1810: refresh operator health in the background so the
-            // share-resubmission walk's ordering reflects the present rather
-            // than poll entry. Fire-and-forget — it overlaps the delegation
-            // proof; nothing in this effect awaits probe results.
-            await votingAPI.startHealthProbeSweep()
-
-            let bgTaskId = await backgroundTask.beginTask("Batch vote submission")
-            _ = await backgroundTask.beginContinuedProcessing(
-                "co.zodl.voting.*",
-                String(localizable: .coinVoteSubmissionContinuedProcessingTitle),
-                totalCount == 1
-                    ? String(localizable: .coinVoteSubmissionContinuedProcessingMessageSingle(String(totalCount)))
-                    : String(localizable: .coinVoteSubmissionContinuedProcessingMessageMultiple(String(totalCount)))
-            )
-            defer {
-                Task {
-                    await backgroundTask.endContinuedProcessing()
-                    await backgroundTask.endTask(bgTaskId)
+        return .merge(
+            // The precompute holds the crate's proof lock, and the run waits
+            // for a proof already running and then reuses it — so stopping the
+            // warm-up costs nothing. Cancel the effect, never the session:
+            // cancelling a session is permanent, and this round is about to
+            // drive.
+            .cancel(id: cancelDelegationPrecomputeId),
+            .cancel(id: cancelRunRetryId),
+            .run { [backgroundTask, mnemonic, votingAPI, votingCrypto, walletStorage] send in
+                // MOB-1810: refresh operator health in the background so the
+                // share walk's ordering reflects the present rather than poll
+                // entry. Fire-and-forget; nothing here awaits its results.
+                await votingAPI.startHealthProbeSweep()
+                let bgTaskId = await backgroundTask.beginTask("Voting round run")
+                _ = await backgroundTask.beginContinuedProcessing(
+                    "co.zodl.voting.*",
+                    String(localizable: .coinVoteSubmissionContinuedProcessingTitle),
+                    pendingCount == 1
+                        ? String(localizable: .coinVoteSubmissionContinuedProcessingMessageSingle(String(pendingCount)))
+                        : String(localizable: .coinVoteSubmissionContinuedProcessingMessageMultiple(String(pendingCount)))
+                )
+                defer {
+                    Task {
+                        await backgroundTask.endContinuedProcessing()
+                        await backgroundTask.endTask(bgTaskId)
+                    }
                 }
+
+                // The seed exists for exactly one run: the SDK carries it into
+                // the Rust signer and zeroizes it there, and nothing on this
+                // side keeps it past the call.
+                let seed = try mnemonic.toSeed(walletStorage.exportWallet().seedPhrase.value())
+                for try await event in votingCrypto.runRound(
+                    roundId,
+                    VotingDelegationSigner.software(seed: seed),
+                    VotingRoundDrivePolicy.default
+                ) {
+                    await send(.roundRunEvent(roundId: roundId, epoch: epoch, event: event))
+                }
+            } catch: { error, send in
+                LoggerProxy.error("Round run for \(roundId) failed to start: \(error)")
+                await send(.roundRunFailed(roundId: roundId, epoch: epoch, error: Self.votingError(from: error)))
             }
-
-            let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
-
-            // --- Delegation (ZKP #1) — run inline if not already done ---
-            if !delegationDone {
-                do {
-                    // Fail closed before any FFI call when the dynamic config predates
-                    // `pir_layout.poly_len` (see `missingPolyLenConfigError`). Votes on an
-                    // already-delegated round never reach this branch and stay unaffected.
-                    guard let polyLen = pirLayout.polyLen else {
-                        throw Self.missingPolyLenConfigError
-                    }
-                    let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
-                    let senderSeed = try mnemonic.toSeed(senderPhrase)
-                    try await Self.runDelegationPipeline(
-                        roundId: roundId,
-                        cachedNotes: cachedNotes,
-                        senderSeed: senderSeed,
-                        hotkeySeed: hotkeySeed,
-                        networkId: networkId,
-                        accountIndex: accountIndex,
-                        roundName: roundName,
-                        pirEndpoints: pirEndpoints,
-                        expectedSnapshotHeight: expectedSnapshotHeight,
-                        pirDepth: pirLayout.pirDepth,
-                        tier0Layers: pirLayout.tier0Layers,
-                        tier1Layers: pirLayout.tier1Layers,
-                        polyLen: polyLen,
-                        delegationPrepared: delegationPrepared,
-                        seedFingerprint: seedFingerprint,
-                        votingCrypto: votingCrypto,
-                        votingAPI: votingAPI,
-                        send: send
-                    )
-                } catch {
-                    LoggerProxy.error("Delegation pipeline failed (raw): \(error.localizedDescription)")
-                    await send(.batchAuthorizationFailed(
-                        roundId: roundId,
-                        error: VotingErrorMapper.userFriendlyMessage(from: error.localizedDescription)
-                    ))
-                    return
-                }
-            }
-
-            // Transition from .authorizing to .submitting now that delegation is done.
-            await send(.batchSubmissionProgress(
-                roundId: roundId,
-                currentIndex: 0,
-                totalCount: totalCount,
-                proposalId: drafts[0].key
-            ))
-
-            var successCount = 0
-            var failCount = 0
-            var shareServerURLs = voteServerURLs
-
-            draftLoop: for (draftIndex, draft) in drafts.enumerated() {
-                let proposalId = draft.key
-                let choice = draft.value
-                let proposal = proposals.first { $0.id == proposalId }
-                let numOptions = UInt32(proposal?.options.count ?? 3)
-
-                await send(.batchSubmissionProgress(
-                    roundId: roundId,
-                    currentIndex: draftIndex,
-                    totalCount: totalCount,
-                    proposalId: proposalId
-                ))
-
-                // Synthetic abstain: no on-chain submission, just mark done.
-                if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
-                    successCount += 1
-                    await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
-                    continue
-                }
-
-                do {
-                    let existingVotes = try await VotingLegacy.getVotes(roundId)
-                    let submittedBundles = Set(
-                        existingVotes
-                            .filter { $0.proposalId == proposalId && $0.submitted }
-                            .map(\.bundleIndex)
-                    )
-                    // A tally-share delegation failure can land *after* `markVoteSubmitted` runs
-                    // (see Task 8E), leaving `submitted == true` with zero recorded share
-                    // delegations — no other lane ever retries an orphaned share. A bundle only
-                    // counts as done once it is both submitted AND has a recorded delegation for
-                    // this proposal; anything less must fall through to `tryRecoverInflightVote`
-                    // below, which re-confirms the cached tx and re-runs share delegation end to end.
-                    let bundlesWithRecordedShares = Set(
-                        try await VotingLegacy.getShareDelegations(roundId)
-                            .filter { $0.proposalId == proposalId }
-                            .map(\.bundleIndex)
-                    )
-
-                    for bundleIndex: UInt32 in 0..<bundleCount {
-                        let alreadySubmitted = submittedBundles.contains(bundleIndex)
-                        let hasRecordedShare = bundlesWithRecordedShares.contains(bundleIndex)
-                        if alreadySubmitted && hasRecordedShare {
-                            LoggerProxy.debug("Batch: bundle \(bundleIndex + 1)/\(bundleCount) already submitted for proposal \(proposalId)")
-                            continue
-                        }
-
-                        await send(.voteSubmissionBundleStarted(roundId: roundId, bundleIndex: bundleIndex))
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .preparingProof))
-
-                        // Crash recovery: if this bundle's TX already landed on-chain,
-                        // skip to share delegation rather than re-proving.
-                        if try await Self.tryRecoverInflightVote(
-                            roundId: roundId,
-                            bundleIndex: bundleIndex,
-                            proposalId: proposalId,
-                            choice: choice,
-                            submitAtDeadline: submitAtDeadline,
-                            shareServerURLs: &shareServerURLs,
-                            votingCrypto: votingCrypto,
-                            votingAPI: votingAPI,
-                            send: send,
-                            roundIdAction: { roundId }
-                        ) {
-                            continue
-                        }
-
-                        let anchorHeight = try await Self.syncVoteTree(
-                            roundId: roundId,
-                            chainNodeUrl: chainNodeUrl,
-                            hotkeyStoredSecret: Data(hotkeySeed),
-                            networkId: networkId,
-                            votingCrypto: votingCrypto
-                        )
-                        let vanWitness = try await VotingLegacy.generateVanWitness(roundId, bundleIndex, anchorHeight)
-
-                        let (builtBundle, castVoteSig) = try await VotingLegacy.commitVote(
-                            roundId, bundleIndex, hotkeySeed, proposalId, choice,
-                            numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
-                        )
-
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
-                        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
-                        guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
-                            throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
-                        }
-                        try await VotingLegacy.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
-
-                        let voteDeadline = Date().addingTimeInterval(90)
-                        var voteConfirmation: TxConfirmation?
-                        repeat {
-                            voteConfirmation = try? await votingAPI.fetchTxConfirmation(txResult.txHash)
-                            if voteConfirmation != nil { break }
-                            try await Task.sleep(for: .seconds(2))
-                        } while Date() < voteDeadline
-
-                        guard let voteConfirmation, voteConfirmation.code == 0 else {
-                            throw VotingFlowError.voteCommitmentTxFailed(
-                                code: voteConfirmation?.code ?? 0,
-                                log: voteConfirmation?.log ?? ""
-                            )
-                        }
-
-                        try await VotingLegacy.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
-
-                        let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
-                            [
-                                "type": event.type,
-                                "attributes": event.attributes.map { attribute in
-                                    ["key": attribute.key, "value": attribute.value]
-                                }
-                            ]
-                        }
-                        let eventsData = try JSONSerialization.data(withJSONObject: eventsPayload)
-                        let eventsJson = String(decoding: eventsData, as: UTF8.self)
-
-                        let confirmation = try await VotingLegacy.confirmVoteSubmission(
-                            roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
-                        )
-
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
-                        guard let stored = try await VotingLegacy.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
-                            throw VotingFlowError.missingVoteCommitmentBundle
-                        }
-                        let nowSec = Date().timeIntervalSince1970
-                        var payloads: [SharePayload] = []
-                        var submitAtByShareIndex: [UInt32: UInt64] = [:]
-                        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-160`) slices its
-                        // own encrypted-share list to the first element when the bundle is single-share.
-                        // Mirror that here, position-based (not a computed `0..<N` range), so we only
-                        // ever ask `recoverWireJson` for a share the crate can actually serve.
-                        let sharesToDelegate = singleShare ? Array(builtBundle.encShares.prefix(1)) : builtBundle.encShares
-                        for share in sharesToDelegate {
-                            let submitAt: UInt64
-                            if let deadline = submitAtDeadline, deadline > nowSec {
-                                submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
-                            } else {
-                                submitAt = 0
-                            }
-                            submitAtByShareIndex[share.shareIndex] = submitAt
-                            let wireJson = try await VotingLegacy.recoverWireJson(
-                                stored.bundleJson, proposalId, share.shareIndex,
-                                confirmation.voteCommitmentTreePosition, submitAt
-                            )
-                            payloads.append(SharePayload(wireJson: wireJson, shareIndex: share.shareIndex))
-                        }
-                        let batchDelegationResult = try await Voting.delegateSharesWithFallback(
-                            payloads,
-                            proposalId: proposalId,
-                            votingAPI: votingAPI,
-                            serverURLs: shareServerURLs
-                        )
-                        shareServerURLs = batchDelegationResult.remainingServerURLs
-                        // A share the servers already accepted must not be allowed to vanish from
-                        // local bookkeeping: record every delegation the loop can reach first (a
-                        // write fault on one share must not cost later shares their record), then
-                        // throw once if any write failed, so this bundle counts as failed instead
-                        // of done. A silent success here would let `reduceBatchSubmissionCompleted`
-                        // write a completion record over shares invisible to `getShareDelegations`
-                        // (8O adversarial finding, CHP.md 2026-08-13) — the server still holds the
-                        // share, so the vote itself stays safe; only local resubmission bookkeeping
-                        // for that specific share is at risk.
-                        var shareRecordFailures: [Error] = []
-                        for info in batchDelegationResult.delegatedShares {
-                            do {
-                                try await VotingLegacy.recordShareDelegation(
-                                    roundId, bundleIndex, info.proposalId, info.shareIndex,
-                                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
-                                )
-                            } catch {
-                                LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
-                                shareRecordFailures.append(error)
-                            }
-                        }
-                        if let firstFailure = shareRecordFailures.first {
-                            throw firstFailure
-                        }
-                    }
-
-                    successCount += 1
-                    await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
-                } catch {
-                    failCount += 1
-                    LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
-                    let shouldStopBatch = error as? ShareDelegationError == .noReachableVoteServers
-                    if shouldStopBatch {
-                        shareServerURLs = []
-                    }
-                    await send(.batchVoteFailed(
-                        roundId: roundId,
-                        proposalId: proposalId,
-                        error: VotingErrorMapper.userFriendlyMessage(from: error)
-                    ))
-                    if shouldStopBatch {
-                        break draftLoop
-                    }
-                }
-            }
-
-            await send(.batchSubmissionCompleted(
-                roundId: roundId,
-                successCount: successCount,
-                failCount: failCount
-            ))
-        } catch: { error, send in
-            LoggerProxy.error("Batch submission failed at top level: \(error)")
-            await send(.batchSubmissionFailed(
-                roundId: roundId,
-                error: VotingErrorMapper.userFriendlyMessage(from: error.localizedDescription),
-                submittedCount: 0,
-                totalCount: totalCount
-            ))
-        }
-        .cancellable(id: cancelSubmissionId, cancelInFlight: true)
+            .cancellable(id: cancelSubmissionId, cancelInFlight: true)
+        )
     }
 
     // MARK: - Delegation precompute
 
+    /// `.maybeStartDelegationPrecompute` handler. Warms each bundle's
+    /// delegation proof while the voter is still reading the ballot, so Confirm
+    /// does not start from cold.
     func reduceMaybeStartDelegationPrecompute(_ state: inout State, roundId: String) -> Effect<Action> {
+        // Keystone signs on the device, one bundle at a time; there is no proof
+        // to warm ahead of that.
         guard !state.isKeystoneUser else { return .none }
-        guard let session = state.roundCache[roundId] else { return .none }
-        guard !isDelegationReady(session) else { return .none }
-        guard !session.isDelegationProofInFlight,
-              !session.isDelegationPrecomputeInFlight
-        else { return .none }
+        guard let session = state.roundCache[roundId], let plan = session.roundPlan else { return .none }
         guard session.delegationPrecomputeStatus == .notStarted else { return .none }
-        guard session.hotkeyAddress != nil else { return .none }
-        guard session.bundleCount > 0, !session.walletNotes.isEmpty else { return .none }
-        guard let activeSession = activeSession(in: state, roundId: roundId),
-              activeSession.status == .active
-        else { return .none }
-        guard
-            let pirEndpoints = state.serviceConfig?.pirEndpoints.map(\.url).nonEmpty,
-            let pirLayout = state.serviceConfig?.pirLayout,
-            let seedFingerprint = votingSeedFingerprint(for: state.selectedWalletAccount),
-            let accountId = state.selectedWalletAccount?.id
-        else {
-            return .none
-        }
-        // Fail closed before any FFI call when the dynamic config predates
-        // `pir_layout.poly_len` (see `missingPolyLenConfigError`).
-        guard let polyLen = pirLayout.polyLen else {
-            LoggerProxy.error("Delegation precompute refused: dynamic config lacks pir_layout.poly_len")
-            return .send(.delegationPrecomputeFailed(
-                roundId: roundId,
-                error: Self.missingPolyLenConfigError.localizedDescription
-            ))
-        }
+        guard !session.isDelegationPrecomputeInFlight, !isBatchSubmitting(session) else { return .none }
+        guard activeSession(in: state, roundId: roundId)?.status == .active else { return .none }
+        // The planner's own list rather than a walk over every bundle: it
+        // computes the list from an exhaustive match, so a bundle whose
+        // delegation is already done is not proved again for nothing.
+        let bundles = plan.delegationBundlesNeedingWork.filter { session.precomputeStatus[$0] == nil }
+        guard !bundles.isEmpty else { return .none }
 
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.delegationPrecomputeStatus = .inProgress
             roundSession.isDelegationPrecomputeInFlight = true
         }
 
-        let expectedSnapshotHeight = activeSession.snapshotHeight
-        let cachedNotes = session.walletNotes
-        let bundleCount = session.bundleCount
-        let network = zcashSDKEnvironment.network()
-        let networkId: UInt32 = network.networkType.votingRustNetworkId
-        let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
-        let roundName = activeSession.title
-
-        return .run { [votingCrypto, mnemonic, walletStorage, pirLayout] send in
-            let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
-            let noteChunks = cachedNotes.smartBundles().bundles
-            guard Int(bundleCount) <= noteChunks.count else {
-                throw VotingFlowError.inconsistentBundleSetup(
-                    bundleCount: bundleCount,
-                    noteChunkCount: noteChunks.count
-                )
-            }
-
-            var totalCached: UInt32 = 0
-            var totalFetched: UInt32 = 0
-            for bundleIndex: UInt32 in 0..<bundleCount {
+        return .run { [votingCrypto] send in
+            // Sequentially: two Orchard proofs at once is the memory-pressure
+            // kill a phone does not recover from.
+            for bundleIndex in bundles {
                 try Task.checkCancellation()
-                if case .present? = try? await VotingLegacy.getDelegationTxHash(roundId, bundleIndex) {
-                    continue
+                do {
+                    for try await event in votingCrypto.precomputeDelegationProof(roundId, bundleIndex) {
+                        await send(.precomputeProofEvent(
+                            roundId: roundId,
+                            bundleIndex: bundleIndex,
+                            event: event
+                        ))
+                    }
+                } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    await send(.precomputeProofFailed(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        error: Self.votingError(from: error)
+                    ))
                 }
-
-                let bundleNotes = noteChunks[Int(bundleIndex)]
-                guard let firstNote = bundleNotes.first else { continue }
-                let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
-                    firstNote.ufvkStr,
-                    networkId
-                )
-
-                _ = try await VotingLegacy.buildVotingPczt(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    seedFingerprint
-                )
-
-                let result = try await VotingLegacy.precomputeDelegationPir(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    pirEndpoints,
-                    expectedSnapshotHeight,
-                    networkId,
-                    pirLayout.pirDepth,
-                    pirLayout.tier0Layers,
-                    pirLayout.tier1Layers,
-                    polyLen
-                )
-                totalCached += result.cachedCount
-                totalFetched += result.fetchedCount
-                LoggerProxy.info(
-                    "Delegation PIR precompute bundle \(bundleIndex + 1)/\(bundleCount): " +
-                        "cached=\(result.cachedCount) fetched=\(result.fetchedCount)"
-                )
             }
-
-            LoggerProxy.info(
-                "Delegation PIR precompute complete: cached=\(totalCached) fetched=\(totalFetched)"
-            )
             await send(.delegationPrecomputeCompleted(roundId: roundId))
         } catch: { error, send in
             await send(.delegationPrecomputeFailed(roundId: roundId, error: error.localizedDescription))
@@ -2543,86 +2505,6 @@ extension VotingCoordFlow {
     }
 
     // MARK: - Per-action state updates
-
-    func reduceBatchSubmissionProgress(
-        _ state: inout State,
-        roundId: String,
-        currentIndex: Int,
-        totalCount: Int,
-        proposalId: UInt32
-    ) -> Effect<Action> {
-        mutateSession(&state, roundId: roundId) { roundSession in
-            roundSession.batchSubmissionStatus = .submitting(
-                currentIndex: currentIndex,
-                totalCount: totalCount,
-                currentProposalId: proposalId
-            )
-            roundSession.submittingProposalId = proposalId
-            roundSession.isSubmittingVote = true
-            roundSession.voteSubmissionStep = nil
-            roundSession.currentVoteBundleIndex = nil
-        }
-        return .none
-    }
-
-    func reduceVoteSubmissionBundleStarted(
-        _ state: inout State,
-        roundId: String,
-        bundleIndex: UInt32
-    ) -> Effect<Action> {
-        mutateSession(&state, roundId: roundId) { $0.currentVoteBundleIndex = bundleIndex }
-        return .none
-    }
-
-    func reduceVoteSubmissionStepUpdated(
-        _ state: inout State,
-        roundId: String,
-        step: VoteSubmissionStep
-    ) -> Effect<Action> {
-        mutateSession(&state, roundId: roundId) { $0.voteSubmissionStep = step }
-        return .none
-    }
-
-    func reduceBatchVoteSubmitted(
-        _ state: inout State,
-        roundId: String,
-        proposalId: UInt32,
-        choice: VoteChoice
-    ) -> Effect<Action> {
-        let account = state.selectedWalletAccount?.account
-        guard var session = state.roundCache[roundId] else { return .none }
-        var nextVotes = session.votes
-        var nextDrafts = session.draftVotes
-        nextVotes[proposalId] = choice
-        nextDrafts.removeValue(forKey: proposalId)
-
-        do {
-            try Voting.persistRoundChoices(
-                drafts: nextDrafts,
-                submittedVotes: nextVotes,
-                roundId: roundId,
-                account: account
-            )
-            session.votes = nextVotes
-            session.draftVotes = nextDrafts
-        } catch {
-            LoggerProxy.error("Failed to persist submitted voting choice: \(error)")
-            session.batchVoteErrors[proposalId] = votingMetadataPersistenceMessage(error)
-            state.submissionAlert = .votingMetadataPersistenceFailed(error)
-        }
-        state.roundCache[roundId] = session
-        return .none
-    }
-
-    func reduceBatchVoteFailed(
-        _ state: inout State,
-        roundId: String,
-        proposalId: UInt32,
-        error: String
-    ) -> Effect<Action> {
-        mutateSession(&state, roundId: roundId) { $0.batchVoteErrors[proposalId] = error }
-        return .none
-    }
 
     func reduceBatchSubmissionCompleted(
         _ state: inout State,
@@ -3477,62 +3359,14 @@ extension VotingCoordFlow {
         }
     }
 
-    private func loadSubmittedVotesFromDb(roundId: String) -> Effect<Action> {
-        .run { send in
-            let records = try await VotingLegacy.getVotes(roundId)
-            let bundleCount = (try? await VotingLegacy.getBundleCount(roundId)) ?? 0
-            let votes = submittedVotesByProposal(records, bundleCount: bundleCount)
-            // Finding #8 (CHP.md): mirror Task 8F's `getVotes` × `getShareDelegations`
-            // pairing here, at every round hydration, so a submitted-but-shareless
-            // proposal is visible to the CTA gates before the user ever taps Confirm —
-            // not just to the in-loop recovery check 8F added.
-            let shareDelegations = (try? await VotingLegacy.getShareDelegations(roundId)) ?? []
-            let undeliveredShareProposalIds = Self.undeliveredShareProposalIds(
-                records: records,
-                shareDelegations: shareDelegations
-            )
-            await send(.submittedVotesLoaded(
-                roundId: roundId,
-                votes: votes,
-                undeliveredShareProposalIds: undeliveredShareProposalIds
-            ))
-        } catch: { error, _ in
-            LoggerProxy.warn("Failed to load submitted voting choices: \(error)")
-        }
-    }
-
-    /// Finding #8 (CHP.md): proposals with at least one `submitted` vote
-    /// bundle that has no matching recorded share delegation. Same pairing
-    /// as Task 8F's in-loop `bundlesWithRecordedShares` check
-    /// (`VotingCoordFlowCoordinator`'s batch `.run` effect), generalized to
-    /// every proposal in the round in one pass instead of one proposal at a
-    /// time, so it can run ahead of the submission loop rather than inside it.
-    static func undeliveredShareProposalIds(
-        records: [VoteRecord],
-        shareDelegations: [VotingShareDelegation]
-    ) -> Set<UInt32> {
-        var submittedBundlesByProposal: [UInt32: Set<UInt32>] = [:]
-        for record in records where record.submitted {
-            submittedBundlesByProposal[record.proposalId, default: []].insert(record.bundleIndex)
-        }
-        var sharedBundlesByProposal: [UInt32: Set<UInt32>] = [:]
-        for delegation in shareDelegations {
-            sharedBundlesByProposal[delegation.proposalId, default: []].insert(delegation.bundleIndex)
-        }
-        return submittedBundlesByProposal.reduce(into: Set<UInt32>()) { result, entry in
-            let (proposalId, submittedBundles) = entry
-            let sharedBundles = sharedBundlesByProposal[proposalId] ?? []
-            if !submittedBundles.isSubset(of: sharedBundles) {
-                result.insert(proposalId)
-            }
-        }
-    }
-
     private func canStartSubmission(_ session: RoundSession) -> Bool {
-        // Finding #8 (CHP.md): `draftVotes` alone misses a proposal that's
-        // already on-chain but whose shares never got delegated — see
-        // `RoundSession.hasPendingSubmissionWork`.
-        guard session.hasPendingSubmissionWork else { return false }
+        // Drafts alone miss a round that has cast every choice and still owes
+        // work — a delivery a run stopped part-way through, say. The plan is
+        // the driver's own answer to "is there anything left", so a round with
+        // no drafts is still submittable while it says yes.
+        let hasWork = session.hasPendingSubmissionWork
+            || session.roundPlan?.hasRecoverableVoteOrShareWork == true
+        guard hasWork else { return false }
         guard session.bundleCount > 0 else { return false }
         switch session.batchSubmissionStatus {
         case .idle, .authorizationFailed, .submissionFailed:
@@ -3590,193 +3424,6 @@ extension VotingCoordFlow {
             }
             return signingState.roundId == roundId
         }
-    }
-
-    private static func eligibleTotals(for notes: [NoteInfo]) -> (weight: UInt64, bundleCount: UInt32) {
-        let bundleResult = notes.smartBundles()
-        return (bundleResult.eligibleWeight, UInt32(bundleResult.bundles.count))
-    }
-
-    /// Once bundle rows exist, the round may contain non-reproducible
-    /// delegation material. Restart recovery must preserve the entire round.
-    static func shouldResumePersistedRound(existingBundleCount: UInt32) -> Bool {
-        existingBundleCount > 0
-    }
-
-    /// Distinguish an absent round from a failed database read. A read failure
-    /// must propagate so the caller cannot mistake it for an empty round and
-    /// authorize `prepareFreshRound` to clear persisted recovery material.
-    static func loadExistingRoundSetup(
-        roundId: String,
-        votingCrypto: VotingCryptoClient
-    ) async throws -> (state: RoundStateInfo?, bundleCount: UInt32) {
-        let rounds = try await votingCrypto.listRounds()
-        guard rounds.contains(where: { $0.roundId == roundId }) else {
-            return (nil, 0)
-        }
-
-        let state = try await VotingLegacy.getRoundState(roundId)
-        let bundleCount = try await VotingLegacy.getBundleCount(roundId)
-        return (state, bundleCount)
-    }
-
-    private static func votingWeight(for notes: [NoteInfo], bundleCount: UInt32) -> UInt64 {
-        let allBundles = notes.smartBundles().bundles
-        guard bundleCount > 0, Int(bundleCount) < allBundles.count else {
-            return notes.smartBundles().eligibleWeight
-        }
-
-        return (0..<Int(bundleCount)).reduce(UInt64(0)) { total, index in
-            let raw = allBundles[index].reduce(UInt64(0)) { $0 + $1.value }
-            return total + quantizeWeight(raw)
-        }
-    }
-
-    /// What a surviving `rounds` row means for this setup attempt.
-    enum ExistingRoundRow: Equatable {
-        /// No row: this is a genuine first setup, so insert one.
-        case absent
-        /// A row from a setup interrupted between `initRound` and
-        /// `setupBundles`. Reuse it.
-        case reusable
-        /// A row that no longer describes the round the session reports.
-        /// Reused anyway: a row only reaches this classification with no
-        /// bundles yet, so there is nothing at stake to protect.
-        case parametersChanged
-    }
-
-    /// Classifies a surviving round row.
-    ///
-    /// A row reaches `prepareFreshRound` only when the round carries no
-    /// bundles, i.e. setup was interrupted between `initRound` and
-    /// `setupBundles`.
-    ///
-    /// Only `snapshotHeight` is compared, because that is the only round
-    /// parameter `RoundStateInfo` carries. A round whose `ea_pk`, `nc_root` or
-    /// `nullifier_imt_root` changed under a stable id is NOT detected here;
-    /// catching that needs those fields on `RoundStateInfo`, or the crate's
-    /// `ensure_round` exposed through the FFI with its network-only comparison
-    /// widened to the full parameter set.
-    static func classifyExistingRoundRow(
-        existingState: RoundStateInfo?,
-        snapshotHeight: UInt64
-    ) -> ExistingRoundRow {
-        guard let existingState else { return .absent }
-        return existingState.snapshotHeight == snapshotHeight ? .reusable : .parametersChanged
-    }
-
-    private static func prepareFreshRound(
-        roundId: String,
-        existingState: RoundStateInfo?,
-        session: VotingSession,
-        snapshotHeight: UInt64,
-        walletDbPath: String,
-        networkId: UInt32,
-        notes: [NoteInfo],
-        votingCrypto: VotingCryptoClient,
-        sdkSynchronizer: SDKSynchronizerClient,
-        send: Send<Action>
-    ) async throws -> Bool {
-        let params = VotingRoundParams(
-            voteRoundId: session.voteRoundId,
-            snapshotHeight: snapshotHeight,
-            eaPK: session.eaPK,
-            ncRoot: session.ncRoot,
-            nullifierIMTRoot: session.nullifierIMTRoot
-        )
-
-        switch classifyExistingRoundRow(existingState: existingState, snapshotHeight: snapshotHeight) {
-        case .absent:
-            try await VotingLegacy.initRound(params, nil)
-        case .reusable:
-            break
-        case .parametersChanged:
-            // Reached only when the round has no bundles yet (a round with
-            // bundles takes the `shouldResumePersistedRound` path instead), so
-            // there is no `van_comm_rand` here to protect by hard-failing.
-            // Reuse the row rather than making the round permanently
-            // unopenable: every value it feeds into a proof or submission is
-            // re-verified independently downstream, so a stale row fails
-            // loudly there instead of silently corrupting anything.
-            LoggerProxy.warn(
-                "Reusing round \(roundId) despite a snapshotHeight mismatch (no bundles exist yet to protect)"
-            )
-        }
-
-        try await VotingLegacy.clearRecoveryState(roundId)
-
-        let setupResult = try await VotingLegacy.setupBundles(roundId, notes)
-        let bundleCount = setupResult.bundleCount
-        let eligibleWeight = setupResult.eligibleWeight
-        guard bundleCount > 0, eligibleWeight > 0 else {
-            let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
-            await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
-            return false
-        }
-
-        // Early-eligibility signal: setupBundles passed, the wallet qualifies.
-        // Hand navigation off to the proposal list now so the user isn't
-        // staring at a frozen polls list while the witness / tree-state work
-        // (the slow part of the pipeline) completes.
-        await send(.earlyEligibilityConfirmed(roundId: roundId))
-
-        let allWitnesses = try await completeDeterministicRoundSetup(
-            roundId: roundId,
-            snapshotHeight: snapshotHeight,
-            walletDbPath: walletDbPath,
-            networkId: networkId,
-            notes: notes,
-            bundleCount: bundleCount,
-            votingCrypto: votingCrypto,
-            sdkSynchronizer: sdkSynchronizer
-        )
-
-        await send(.votingWeightLoaded(
-            roundId: roundId,
-            weight: eligibleWeight,
-            notes: notes,
-            witnesses: allWitnesses,
-            bundleCount: bundleCount,
-            delegationReady: false
-        ))
-        return true
-    }
-
-    /// Completes only deterministic tree-state and witness work for a persisted
-    /// round. This must not clear the round or rebuild delegation authorization.
-    static func completeDeterministicRoundSetup(
-        roundId: String,
-        snapshotHeight: UInt64,
-        walletDbPath: String,
-        networkId: UInt32,
-        notes: [NoteInfo],
-        bundleCount: UInt32,
-        votingCrypto: VotingCryptoClient,
-        sdkSynchronizer: SDKSynchronizerClient
-    ) async throws -> [WitnessData] {
-        let treeStateBytes = try await sdkSynchronizer.getTreeState(snapshotHeight)
-        try await VotingLegacy.storeTreeState(roundId, treeStateBytes)
-
-        let noteChunks = notes.smartBundles().bundles
-        guard Int(bundleCount) <= noteChunks.count else {
-            throw VotingFlowError.inconsistentBundleSetup(
-                bundleCount: bundleCount,
-                noteChunkCount: noteChunks.count
-            )
-        }
-
-        var allWitnesses: [WitnessData] = []
-        for bundleIndex: UInt32 in 0..<bundleCount {
-            let witnesses = try await VotingLegacy.generateNoteWitnesses(
-                roundId,
-                bundleIndex,
-                walletDbPath,
-                noteChunks[Int(bundleIndex)],
-                networkId
-            )
-            allWitnesses.append(contentsOf: witnesses)
-        }
-        return allWitnesses
     }
 
     /// Look up the live `VotingSession` for a round id by scoping into
@@ -3884,121 +3531,6 @@ extension VotingCoordFlow {
         return false
     }
 
-    /// If we have a cached vote TX hash for `(roundId, bundleIndex, proposalId)`
-    /// that confirmed on-chain, finish the share delegation step without
-    /// rebuilding the commitment. Returns true if the bundle was resumed
-    /// from cache.
-    // swiftlint:disable:next function_body_length cyclomatic_complexity function_parameter_count
-    static func tryRecoverInflightVote(
-        roundId: String,
-        bundleIndex: UInt32,
-        proposalId: UInt32,
-        choice: VoteChoice,
-        submitAtDeadline: Double?,
-        shareServerURLs: inout [String],
-        votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient,
-        send: Send<Action>,
-        roundIdAction: () -> String
-    ) async throws -> Bool {
-        guard case let .present(cachedTxHash)? = try? await VotingLegacy.getVoteTxHash(roundId, bundleIndex, proposalId) else {
-            return false
-        }
-        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
-              confirmation.code == 0 else {
-            return false
-        }
-
-        let eventsPayload: [[String: Any]] = confirmation.events.map { event in
-            [
-                "type": event.type,
-                "attributes": event.attributes.map { attribute in
-                    ["key": attribute.key, "value": attribute.value]
-                }
-            ]
-        }
-        guard let eventsData = try? JSONSerialization.data(withJSONObject: eventsPayload) else {
-            return false
-        }
-        let eventsJson = String(decoding: eventsData, as: UTF8.self)
-
-        guard let voteConfirmation = try? await VotingLegacy.confirmVoteSubmission(
-            roundId, bundleIndex, proposalId, cachedTxHash, eventsJson
-        ) else {
-            return false
-        }
-
-        guard let stored = try? await VotingLegacy.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
-            LoggerProxy.error(
-                """
-                Recovered on-chain vote \(proposalId) for bundle \(bundleIndex), \
-                but the saved commitment bundle is missing; cannot delegate tally shares.
-                """
-            )
-            throw VotingFlowError.missingVoteCommitmentBundle
-        }
-
-        await send(.voteSubmissionStepUpdated(roundId: roundIdAction(), step: .sendingShares))
-
-        // Finding #9 (CHP.md, 2026-08-12): the old guess of `singleShare ? 1 : numOptions`
-        // under-delivered live (server accepted 16 built shares on a 2-option proposal; the
-        // guess would have resubmitted 2). `recoverableShareIndices` reads the crate's own
-        // `recover_payloads` slicing instead, so recovery resubmits exactly what it built.
-        let shareIndices = try await VotingLegacy.recoverableShareIndices(stored.bundleJson)
-        let now = Date().timeIntervalSince1970
-        var payloads: [SharePayload] = []
-        var submitAtByShareIndex: [UInt32: UInt64] = [:]
-        for shareIndex in shareIndices {
-            let submitAt: UInt64
-            if let deadline = submitAtDeadline, deadline > now {
-                submitAt = UInt64(now + Double.random(in: 0..<(deadline - now)))
-            } else {
-                submitAt = 0
-            }
-            submitAtByShareIndex[shareIndex] = submitAt
-            let wireJson = try await VotingLegacy.recoverWireJson(
-                stored.bundleJson, proposalId, shareIndex,
-                voteConfirmation.voteCommitmentTreePosition, submitAt
-            )
-            payloads.append(SharePayload(wireJson: wireJson, shareIndex: shareIndex))
-        }
-
-        let recoveryResult = try await Voting.delegateSharesWithFallback(
-            payloads,
-            proposalId: proposalId,
-            votingAPI: votingAPI,
-            serverURLs: shareServerURLs
-        )
-        shareServerURLs = recoveryResult.remainingServerURLs
-        // A share the servers already accepted must not be allowed to vanish from local
-        // bookkeeping: record every delegation the loop can reach first (a write fault on one
-        // share must not cost later shares their record), then throw once if any write failed,
-        // so this bundle is never reported recovered. A silent `true` return here would let the
-        // caller's `catch` never fire, and `reduceBatchSubmissionCompleted` would write a
-        // completion record over shares invisible to `getShareDelegations` (8O adversarial
-        // finding, CHP.md 2026-08-13) — the server still holds the share, so the vote itself
-        // stays safe; only local resubmission bookkeeping for that specific share is at risk.
-        // `markVoteSubmitted` still runs unconditionally below: the on-chain vote really is
-        // confirmed at this point, and 8F already proved that call idempotent to re-mark on retry.
-        var shareRecordFailures: [Error] = []
-        for info in recoveryResult.delegatedShares {
-            do {
-                try await VotingLegacy.recordShareDelegation(
-                    roundId, bundleIndex, info.proposalId, info.shareIndex,
-                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
-                )
-            } catch {
-                LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
-                shareRecordFailures.append(error)
-            }
-        }
-        try await VotingLegacy.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
-        if let firstFailure = shareRecordFailures.first {
-            throw firstFailure
-        }
-        return true
-    }
-
     // MARK: - Delegation pipeline (Zashi inline)
 
     /// 3.0 bump (MOB-1678): `pir_layout.poly_len` is load-bearing — `zcash_voting` 3.0
@@ -4010,323 +3542,38 @@ extension VotingCoordFlow {
     static let missingPolyLenConfigError = VotingConfigError.decodeFailed(
         "pir_layout.poly_len is required for delegation"
     )
+}
 
-    /// Mirrors `Voting.runDelegationPipeline` but sends back to
-    /// `VotingCoordFlow.Action`. The legacy version targets `Voting.Action`,
-    /// so cross-type dispatching is the only reason we duplicate this here.
-    // swiftlint:disable:next function_body_length function_parameter_count
-    static func runDelegationPipeline(
-        roundId: String,
-        cachedNotes: [NoteInfo],
-        senderSeed: [UInt8],
-        hotkeySeed: [UInt8],
-        networkId: UInt32,
-        accountIndex: UInt32,
-        roundName: String,
-        pirEndpoints: [String],
-        expectedSnapshotHeight: UInt64,
-        pirDepth: UInt32,
-        tier0Layers: UInt32,
-        tier1Layers: UInt32,
-        polyLen: UInt32,
-        delegationPrepared: Bool = false,
-        seedFingerprint: Data? = nil,
-        votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient,
-        send: Send<Action>,
-        delegationConfirmationTimeout: TimeInterval = 90,
-        delegationConfirmationRetryDelay: Duration = .seconds(2)
-    ) async throws {
-        let noteChunks = cachedNotes.smartBundles().bundles
-        let bundleCount = UInt32(noteChunks.count)
-        var completedBundles = Set<UInt32>()
-        for idx: UInt32 in 0..<bundleCount {
-            // Single probe (timeout 0): a cached hash that never propagated —
-            // an earlier attempt died before confirmation — must fall through
-            // to a fresh delegation immediately instead of holding this
-            // bundle's full confirmation budget. The fresh submission below
-            // keeps the full `delegationConfirmationTimeout` wait.
-            if let vanPosition = try await recoverDelegationVanPosition(
-                roundId: roundId,
-                bundleIndex: idx,
-                votingCrypto: votingCrypto,
-                votingAPI: votingAPI,
-                confirmationTimeout: 0,
-                retryDelay: delegationConfirmationRetryDelay
-            ) {
-                LoggerProxy.debug("Recovered delegation bundle \(idx) VAN position: \(vanPosition)")
-                completedBundles.insert(idx)
-            }
-        }
+// MARK: - Round session transport
 
-        for bundleIndex: UInt32 in 0..<bundleCount {
-            if completedBundles.contains(bundleIndex) {
-                LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) already submitted, skipping")
-                continue
-            }
-            let bundleNotes = noteChunks[Int(bundleIndex)]
-            LoggerProxy.info("Delegation bundle \(bundleIndex + 1)/\(bundleCount) (\(bundleNotes.count) notes)")
+/// Where a round session's traffic goes, validated once from the service config.
+///
+/// A config that names no vote servers or no PIR endpoints cannot host a
+/// session, and one that predates `pir_layout.poly_len` names a PIR geometry
+/// the crate refuses — `zcash_voting` validates the layout locally and the PIR
+/// handshake re-checks it against the server, so failing here costs nothing and
+/// fabricating a value would be worse than stopping.
+struct VotingSessionTransport: Equatable, Sendable {
+    let voteServerURLs: [String]
+    let pirEndpointURLs: [String]
+    let pirLayout: VotingPirLayout
 
-            let registration: DelegationRegistration
-            // The cache probe is now two calls: signing succeeds once the bundle's PCZT setup
-            // is stored, and the submission only assembles once its proof is too. Either one
-            // failing means this bundle is not finished yet, so fall through and build it.
-            let cachedSignature = try? await VotingLegacy.signDelegationRequest(
-                roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
-            )
-            let cachedRegistration: DelegationRegistration?
-            if let cachedSignature {
-                cachedRegistration = try? await VotingLegacy.getDelegationSubmission(
-                    roundId, bundleIndex, cachedSignature.signature, cachedSignature.sighash
-                )
-            } else {
-                cachedRegistration = nil
-            }
-
-            if let cachedRegistration {
-                LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
-                registration = cachedRegistration
-            } else {
-                // Finding #10 (CHP.md): `zcash_voting` stores `pczt_sighash` write-once per
-                // (round, wallet, bundle) and every `buildVotingPczt` samples fresh randomness,
-                // so re-building over persisted setup can never reproduce the stored sighash —
-                // the crate refuses with "refusing to overwrite pczt_sighash" and the bundle
-                // wedges permanently. A successful `cachedSignature` probe proves the persisted
-                // setup (sighash + alpha, bound to this seed's fingerprint) already exists, so
-                // skip the build and let `buildAndProveDelegation` resume deterministically
-                // from the stored randomness instead.
-                if delegationPrepared || cachedSignature != nil {
-                    LoggerProxy.debug(
-                        "Delegation bundle \(bundleIndex + 1)/\(bundleCount) resuming persisted PCZT setup (precomputed: \(delegationPrepared))"
-                    )
-                } else {
-                    let orchardFvk = try seedFingerprint.map { _ in
-                        try votingCrypto.extractOrchardFvkFromUfvk(bundleNotes[0].ufvkStr, networkId)
-                    }
-                    _ = try await VotingLegacy.buildVotingPczt(
-                        roundId, bundleIndex, bundleNotes,
-                        senderSeed, hotkeySeed, networkId, accountIndex, roundName,
-                        orchardFvk, seedFingerprint
-                    )
-                }
-
-                for try await event in VotingLegacy.buildAndProveDelegation(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    senderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    pirEndpoints,
-                    expectedSnapshotHeight,
-                    pirDepth,
-                    tier0Layers,
-                    tier1Layers,
-                    polyLen
-                ) {
-                    switch event {
-                    case .progress(let progress):
-                        let overallProgress = (Double(bundleIndex) + progress) / Double(bundleCount)
-                        LoggerProxy.debug("ZKP #1 bundle \(bundleIndex) progress: \(Int(progress * 100))%")
-                        await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
-                    case .completed(let proof):
-                        LoggerProxy.info("ZKP #1 bundle \(bundleIndex) COMPLETE — proof size: \(proof.count) bytes")
-                    }
-                }
-
-                let signed = try await VotingLegacy.signDelegationRequest(
-                    roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
-                )
-                registration = try await VotingLegacy.getDelegationSubmission(
-                    roundId, bundleIndex, signed.signature, signed.sighash
-                )
-            }
-            let delegTxResult = try await votingAPI.submitDelegation(registration)
-            guard try await isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
-                throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
-            }
-            LoggerProxy.info("Delegation TX \(bundleIndex) submitted: \(delegTxResult.txHash)")
-
-            try await VotingLegacy.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)
-
-            let vanPosition = try await requireDelegationVanPosition(
-                txHash: delegTxResult.txHash,
-                votingAPI: votingAPI,
-                confirmationTimeout: delegationConfirmationTimeout,
-                retryDelay: delegationConfirmationRetryDelay
-            )
-            try await VotingLegacy.storeVanPosition(roundId, bundleIndex, vanPosition)
-            LoggerProxy.debug("VAN position stored for bundle \(bundleIndex): \(vanPosition)")
-        }
-
-        await send(.delegationProofCompleted(roundId: roundId))
-    }
-
-    /// Three-valued probe over a bundle's on-chain delegation-registration state.
-    ///
-    /// `.unknown` covers every inconclusive path — no locally cached TX hash, a network
-    /// failure while asking, or a chain answer that arrived but couldn't be parsed — so
-    /// that callers gate destructive recovery decisions on `.registered` / `.notRegistered`
-    /// alone and never mistake "we couldn't tell" for "it isn't registered".
-    static func probeDelegationRegistration(
-        roundId: String,
-        bundleIndex: UInt32,
-        votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient,
-        confirmationTimeout: TimeInterval,
-        retryDelay: Duration
-    ) async -> DelegationRegistrationProbe {
-        guard case let .present(txHash) = try? await VotingLegacy.getDelegationTxHash(roundId, bundleIndex) else {
-            return .unknown
-        }
-
-        do {
-            switch try await delegationTxConfirmationStatus(
-                txHash: txHash,
-                votingAPI: votingAPI,
-                confirmationTimeout: confirmationTimeout,
-                retryDelay: retryDelay
-            ) {
-            case let .confirmed(vanPosition):
-                do {
-                    try await VotingLegacy.storeVanPosition(roundId, bundleIndex, vanPosition)
-                    return .registered(vanPosition: vanPosition)
-                } catch {
-                    // Registered on-chain but the local write failed — same net effect as an
-                    // inconclusive check, since neither outcome can be trusted as conclusive.
-                    return .unknown
-                }
-
-            case let .failed(code, log) where code != 0:
-                LoggerProxy.warn(
-                    "Cached delegation TX \(txHash) for bundle \(bundleIndex) is not reusable: code=\(code) log=\(log)"
-                )
-                return .notRegistered
-
-            case .failed:
-                // code == 0 (e.g. "missing delegate_vote leaf_index"): the chain call
-                // succeeded but the response was unusable — the TX may well have landed.
-                LoggerProxy.debug(
-                    "Cached delegation TX \(txHash) for bundle \(bundleIndex) confirmation is unusable: missing leaf index"
-                )
-                return .unknown
-
-            case .notFound:
-                LoggerProxy.debug("Cached delegation TX \(txHash) for bundle \(bundleIndex) is not confirmed yet")
-                return .unknown
-            }
-        } catch {
-            return .unknown
-        }
-    }
-
-    /// Decides what an interrupted round's local delegation state is worth on resume.
-    ///
-    /// Rows (in order): a confirmed on-chain registration wins outright and names exactly
-    /// the bundles that are reusable; failing that, any local material — a saved Keystone
-    /// signature or a delegation TX this device already broadcast — keeps the round's rows
-    /// alive; only when neither holds is the round genuinely disposable.
-    ///
-    /// `.unknown` probes deliberately count for nothing on either side: they are "we
-    /// couldn't tell", never "it isn't registered", so they can never be the reason
-    /// alpha/rk/sighash rows are destroyed under a registration that may already exist.
-    static func roundResumeDecision(
-        probes: [UInt32: DelegationRegistrationProbe],
-        savedSignatureCount: Int,
-        anyLocalDelegationTxHash: Bool
-    ) -> RoundResumeDecision {
-        var recoveredIndices: Set<UInt32> = []
-        for (bundleIndex, probe) in probes {
-            if case .registered = probe {
-                recoveredIndices.insert(bundleIndex)
-            }
-        }
-
-        if !recoveredIndices.isEmpty {
-            return .reuseRecovered(recoveredIndices: recoveredIndices)
-        }
-
-        if savedSignatureCount > 0 || anyLocalDelegationTxHash {
-            return .resumeInPlace
-        }
-
-        return .freshRound
-    }
-
-    private static func recoverDelegationVanPosition(
-        roundId: String,
-        bundleIndex: UInt32,
-        votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient,
-        confirmationTimeout: TimeInterval = 90,
-        retryDelay: Duration = .seconds(2)
-    ) async throws -> UInt32? {
-        switch await probeDelegationRegistration(
-            roundId: roundId,
-            bundleIndex: bundleIndex,
-            votingCrypto: votingCrypto,
-            votingAPI: votingAPI,
-            confirmationTimeout: confirmationTimeout,
-            retryDelay: retryDelay
-        ) {
-        case let .registered(vanPosition):
-            return vanPosition
-
-        case .notRegistered, .unknown:
-            return nil
-        }
-    }
-
-    private static func requireDelegationVanPosition(
-        txHash: String,
-        votingAPI: VotingAPIClient,
-        confirmationTimeout: TimeInterval = 90,
-        retryDelay: Duration = .seconds(2)
-    ) async throws -> UInt32 {
-        switch try await delegationTxConfirmationStatus(
-            txHash: txHash,
-            votingAPI: votingAPI,
-            confirmationTimeout: confirmationTimeout,
-            retryDelay: retryDelay
-        ) {
-        case let .confirmed(vanPosition):
-            return vanPosition
-
-        case let .failed(code, log):
-            throw VotingFlowError.delegationTxFailed(code: code, log: log)
-
-        case .notFound:
-            throw VotingFlowError.delegationTxFailed(code: 0, log: "")
-        }
-    }
-
-    private static func delegationTxConfirmationStatus(
-        txHash: String,
-        votingAPI: VotingAPIClient,
-        confirmationTimeout: TimeInterval = 90,
-        retryDelay: Duration = .seconds(2)
-    ) async throws -> DelegationTxConfirmationStatus {
-        let deadline = Date().addingTimeInterval(confirmationTimeout)
-
-        repeat {
-            if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash) {
-                guard confirmation.code == 0 else {
-                    return .failed(code: confirmation.code, log: confirmation.log)
-                }
-                guard let vanPosition = delegationVanPosition(from: confirmation) else {
-                    return .failed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
-                }
-                return .confirmed(vanPosition: vanPosition)
-            }
-
-            guard Date() < deadline else {
-                return .notFound
-            }
-
-            try await Task.sleep(for: retryDelay)
-        } while true
+    init?(serviceConfig: VotingServiceConfig) {
+        let voteServerURLs = serviceConfig.voteServers.map(\.url)
+        let pirEndpointURLs = serviceConfig.pirEndpoints.map(\.url)
+        guard
+            !voteServerURLs.isEmpty,
+            !pirEndpointURLs.isEmpty,
+            let polyLen = serviceConfig.pirLayout.polyLen
+        else { return nil }
+        self.voteServerURLs = voteServerURLs
+        self.pirEndpointURLs = pirEndpointURLs
+        self.pirLayout = VotingPirLayout(
+            pirDepth: serviceConfig.pirLayout.pirDepth,
+            tier0Layers: serviceConfig.pirLayout.tier0Layers,
+            tier1Layers: serviceConfig.pirLayout.tier1Layers,
+            polyLen: polyLen
+        )
     }
 }
 
@@ -4386,41 +3633,9 @@ private extension Array where Element == String {
 
 // MARK: - Delegation registration probe
 
-/// Outcome of `VotingCoordFlow.probeDelegationRegistration`. `.unknown` means the check
-/// was inconclusive — no locally cached TX hash, a network failure, or an unusable chain
-/// answer — and must never be treated as evidence that the bundle is not registered.
-enum DelegationRegistrationProbe: Equatable, Sendable {
-    case registered(vanPosition: UInt32)
-    case notRegistered
-    case unknown
-}
-
 // MARK: - Round resume decision
 
-/// What an interrupted round's local delegation state is worth when the pipeline re-enters
-/// it. `.freshRound` is the only outcome that destroys local rows, and it is reached only
-/// when no probe found a registration and nothing local hints that one might exist.
-enum RoundResumeDecision: Equatable, Sendable {
-    /// At least one bundle is confirmed registered on-chain — reuse exactly those.
-    case reuseRecovered(recoveredIndices: Set<UInt32>)
-    /// Nothing conclusive either way, but there is local material worth keeping: stay on
-    /// the existing rows and clear only the per-session leftovers.
-    case resumeInPlace
-    /// Nothing recoverable — safe to rebuild the round from scratch.
-    case freshRound
-}
-
 // MARK: - Delegation TX confirmation status
-
-/// Result of polling for a delegation TX's confirmation. The legacy file
-/// has a private copy; we redeclare it here because cross-file access
-/// would require widening the legacy declaration. Stage 5D removes one of
-/// them when the legacy reducer is deleted.
-private enum DelegationTxConfirmationStatus: Sendable {
-    case confirmed(vanPosition: UInt32)
-    case failed(code: UInt32, log: String)
-    case notFound
-}
 
 extension VotingCoordFlow {
     /// The message shown when the round pipeline fails.
@@ -4430,18 +3645,6 @@ extension VotingCoordFlow {
         crypto: VotingCryptoClient
     ) async -> String {
         VotingErrorMapper.userFriendlyMessage(from: error)
-    }
-}
-
-extension VotingCoordFlow {
-    static func syncVoteTree(
-        roundId: String,
-        chainNodeUrl: String,
-        hotkeyStoredSecret: Data,
-        networkId: UInt32,
-        votingCrypto: VotingCryptoClient
-    ) async throws -> UInt32 {
-        try await votingCrypto.syncVoteTree(roundId, chainNodeUrl)
     }
 }
 

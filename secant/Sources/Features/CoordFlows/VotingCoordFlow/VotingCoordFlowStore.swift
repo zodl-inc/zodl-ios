@@ -179,8 +179,21 @@ struct VotingCoordFlow {
             let status: SessionStatus
         }
 
+        /// The generation to stamp the next round session with.
+        ///
+        /// Monotonic for the flow's lifetime and never reused: a run report or
+        /// event carrying an older generation belongs to a session that has
+        /// since been replaced, and writing it back would undo newer state.
+        var votingSessionEpoch: UInt64 = 0
+
         @Shared(.inMemory(.selectedWalletAccount))
         var selectedWalletAccount: WalletAccount?
+
+        /// Whether the wallet routes its API traffic through Tor. A round
+        /// session is opened on the same terms, and `.tor` fails closed rather
+        /// than quietly announcing the voter over a plain connection.
+        @Shared(.inMemory(.swapAPIAccess))
+        var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
         @Shared(.appStorage(.hasSeenHowToVote))
         var hasSeenHowToVoteForZashi: Bool = false
@@ -253,15 +266,11 @@ struct VotingCoordFlow {
         case startActiveRoundPipeline(roundId: String)
         case walletNotSynced(roundId: String, scannedHeight: UInt64, snapshotHeight: UInt64)
         case walletSyncProgressUpdated(height: UInt64)
-        case votingWeightLoaded(
-            roundId: String,
-            weight: UInt64,
-            notes: [NoteInfo],
-            witnesses: [WitnessData],
-            bundleCount: UInt32,
-            delegationReady: Bool
-        )
-        case hotkeyLoaded(roundId: String, address: String)
+        /// The round's bundle totals, from the layout bundle setup answered
+        /// with or from an eligibility check on a round whose bundles already
+        /// exist. Pure state: the voting power the ballot and confirmation
+        /// screens show.
+        case votingWeightLoaded(roundId: String, weight: UInt64, bundleCount: UInt32)
         case pipelineFailed(roundId: String, message: String)
         case submittedVotesLoaded(
             roundId: String,
@@ -310,21 +319,34 @@ struct VotingCoordFlow {
         /// while the user is choosing votes so the actual ZKP doesn't
         /// start from cold.
         case maybeStartDelegationPrecompute(roundId: String)
-        /// Overall progress of the background (speculative) authorization
-        /// proof, 0...1 across every bundle. Mirrored onto
-        /// `delegationProofStatus` only while a Confirm is waiting on it.
-        case delegationPrecomputeProgress(roundId: String, progress: Double)
         case delegationPrecomputeCompleted(roundId: String)
         case delegationPrecomputeFailed(roundId: String, error: String)
 
-        // MARK: - Stage 5: per-proposal vote submission loop
+        // MARK: - Stage 5: the round session
 
-        case batchSubmissionProgress(roundId: String, currentIndex: Int, totalCount: Int, proposalId: UInt32)
-        case voteSubmissionBundleStarted(roundId: String, bundleIndex: UInt32)
-        case voteSubmissionStepUpdated(roundId: String, step: VoteSubmissionStep)
-        case batchVoteSubmitted(roundId: String, proposalId: UInt32, choice: VoteChoice)
-        case batchVoteFailed(roundId: String, proposalId: UInt32, error: String)
-        case submissionAttemptSettled(roundId: String, attemptId: UUID, successCount: Int)
+        /// A session is open for the round and has answered with its plan --
+        /// the driver's own view of what the round still owes.
+        case roundSessionOpened(roundId: String, plan: VotingRoundPlan)
+        case roundSessionOpenFailed(roundId: String, error: VotingError)
+        /// The round's bundle rows are persisted; the layout says how many and
+        /// for how much voting power.
+        case bundlesSetUp(roundId: String, layout: VotingBundleLayout)
+        case bundleSetupFailed(roundId: String, error: VotingError)
+        /// One step of the background delegation-proof precompute for a bundle.
+        case precomputeProofEvent(roundId: String, bundleIndex: UInt32, event: VotingDelegationProofEvent)
+        /// A precompute that failed. Recorded, never blocking: Confirm runs the
+        /// proof itself if it has to.
+        case precomputeProofFailed(roundId: String, bundleIndex: UInt32, error: VotingError)
+        /// One element of a round run's stream, stamped with the session
+        /// generation it came from so a replaced session's events can be
+        /// dropped.
+        case roundRunEvent(roundId: String, epoch: UInt64, event: VotingRoundRunEvent)
+        case roundRunFailed(roundId: String, epoch: UInt64, error: VotingError)
+        /// What the host owes the round now that one run has stopped.
+        case roundRunDecision(roundId: String, decision: VotingRoundHostDecision)
+
+        // MARK: - Stage 5: submission results
+
         case batchSubmissionCompleted(roundId: String, successCount: Int, failCount: Int)
         case batchAuthorizationFailed(roundId: String, error: String)
         case batchSubmissionFailed(roundId: String, error: String, submittedCount: Int, totalCount: Int)
@@ -355,9 +377,8 @@ struct VotingCoordFlow {
         case delegationRejected(roundId: String)
     }
 
-    @Dependency(\.votingSubmissionTiming)
-    var votingSubmissionTiming
     @Dependency(\.backgroundTask) var backgroundTask
+    @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.keystoneHandler) var keystoneHandler
     @Dependency(\.localAuthentication) var localAuthentication
@@ -383,6 +404,11 @@ struct VotingCoordFlow {
 
     /// Cancellation id for the delegation proof (ZKP #1) `.run` effect.
     let cancelDelegationProofId = UUID()
+
+    /// Cancellation id for the backoff between two runs of a round. Its own id,
+    /// not the submission's: a scheduled re-run must not cancel the run that
+    /// scheduled it.
+    let cancelRunRetryId = UUID()
 
     /// Cancellation id for Zashi's background delegation PIR precompute.
     let cancelDelegationPrecomputeId = UUID()

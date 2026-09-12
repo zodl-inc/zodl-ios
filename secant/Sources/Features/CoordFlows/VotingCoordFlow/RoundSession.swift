@@ -218,6 +218,23 @@ struct RoundSession: Equatable {
     /// Bundles the session says still await the voter's signature, ascending —
     /// the order the Keystone loop walks them in.
     var keystoneBundlesToSign: [UInt32] = []
+
+    /// Whether this entry into the round has already asked the session to
+    /// persist its bundle plan. One attempt per entry: a plan that still says
+    /// `needsBundleSetup` after a setup answered is a disagreement to surface,
+    /// not a loop to run.
+    var didAttemptBundleSetup: Bool = false
+
+    /// How many times a run has been re-scheduled for this round after stopping
+    /// with work still to do. Bounded, because a backoff the voter cannot see
+    /// is indistinguishable from the app doing nothing.
+    var runRetryCount: Int = 0
+
+    /// What the last run isolated or skipped, when it finished with work it
+    /// could not do. Nil when the run was clean; a completed run with this set
+    /// is a partial success, and saying otherwise would be a lie about where
+    /// the voter's ballot went.
+    var lastRunFailureSummary: String?
 }
 
 // MARK: - Submission state machine types

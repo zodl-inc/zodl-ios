@@ -142,6 +142,30 @@ import Testing
 
     // MARK: - Event factories
 
+    /// A vote commitment is its own proof and the crate reports no fraction for
+    /// it, so the delegation's last fraction must not stay on screen claiming
+    /// to describe it.
+    @Test func aVoteCommitStepProgressDropsTheDelegationFraction() throws {
+        var snapshot = VotingRoundProgressSnapshot()
+
+        snapshot.apply(try Self.makeEvent("""
+        {
+            "kind": "step_progress",
+            "progress": {
+                "kind": "delegation",
+                "bundle_index": 1,
+                "delegation_progress": "proof_progress",
+                "proof_progress": 0.5
+            }
+        }
+        """))
+        snapshot.apply(try Self.makeEvent(#"{"kind": "step_progress", "progress": {"kind": "vote_commit", "bundle_index": 1}}"#))
+
+        #expect(snapshot.stage == VotingRoundProgressStage.proving)
+        #expect(snapshot.proofFraction == nil)
+        #expect(snapshot.activeBundleIndex == 1)
+    }
+
     private static func makeEvent(_ json: String) throws -> VotingRoundDriveEvent {
         try JSONDecoder().decode(VotingRoundDriveEvent.self, from: Data(json.utf8))
     }

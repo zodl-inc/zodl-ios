@@ -86,6 +86,12 @@ extension VotingRoundProgressSnapshot {
             activeBundleIndex = stepProgress.bundleIndex
         case .voteCommit:
             stage = VotingRoundProgressStage.proving
+            // A vote commitment is its own proof, and the crate reports no
+            // fraction for it. Keeping the delegation's last fraction here
+            // would show the voter a bar that has stopped moving but still
+            // claims to describe what is running.
+            proofFraction = nil
+            activeBundleIndex = stepProgress.bundleIndex ?? activeBundleIndex
         case .delegateAndVoteBatchPersisted, .helperPlansPrepared:
             stage = VotingRoundProgressStage.submitting
         case .chainOutcome:
