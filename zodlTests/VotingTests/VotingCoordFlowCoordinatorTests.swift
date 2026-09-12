@@ -8,7 +8,7 @@ import Testing
 // Drives a TCA coordinator that touches process-global `@Shared` state (e.g. `selectedWalletAccount`)
 // and uses plain `Store`s for the async cases, so the suite is serialized to match XCTest's previous
 // serial execution and avoid cross-test races on that shared state.
-@Suite(.serialized) struct VotingCoordFlowCoordinatorTests {
+@Suite(.serialized) struct VotingCoordFlowCoordinatorTests: VotingTestSuite {
     @Test func batchSubmissionCompletedAcceptsPartialBallotWhenDraftsAreDrained() {
         let metadata = VotingMetadataBox()
         var state = VotingCoordFlow.State()
@@ -263,7 +263,6 @@ import Testing
     }
 
     private let roundId = "round-1"
-    private let activeRoundId = String(repeating: "aa", count: 32)
 
     private func roundSession(
         roundId: String? = nil,
@@ -278,146 +277,11 @@ import Testing
         return session
     }
 
-    private func votingSession(
-        status: SessionStatus = .active,
-        proposalCount: Int = 1,
-        voteEndsIn: TimeInterval = 60
-    ) -> VotingSession {
-        VotingSession(
-            voteRoundId: Data(repeating: 0xAA, count: 32),
-            snapshotHeight: 123,
-            snapshotBlockhash: Data(repeating: 0x01, count: 32),
-            proposalsHash: Data(repeating: 0x02, count: 32),
-            voteEndTime: .now.addingTimeInterval(voteEndsIn),
-            ceremonyStart: .now.addingTimeInterval(-60),
-            eaPK: Data(repeating: 0x03, count: 32),
-            vkZkp1: Data(repeating: 0x04, count: 32),
-            vkZkp2: Data(repeating: 0x05, count: 32),
-            vkZkp3: Data(repeating: 0x06, count: 32),
-            ncRoot: Data(repeating: 0x07, count: 32),
-            nullifierIMTRoot: Data(repeating: 0x08, count: 32),
-            creator: "creator",
-            description: "Round description",
-            proposals: (1...max(proposalCount, 1)).map { index in
-                VotingProposal(
-                    id: UInt32(index),
-                    title: "Proposal \(index)",
-                    description: "Description \(index)",
-                    options: [
-                        VoteOption(index: 0, label: "Support"),
-                        VoteOption(index: 1, label: "Oppose")
-                    ]
-                )
-            },
-            status: status,
-            createdAtHeight: 123,
-            title: "Round"
-        )
-    }
-
-    private static func makeServiceConfig(
-        voteServers: [VotingServiceConfig.ServiceEndpoint] = [],
-        rounds: [String: VotingServiceConfig.RoundEntry] = [:]
-    ) -> VotingServiceConfig {
-        VotingServiceConfig(
-            configVersion: 1,
-            voteServers: voteServers,
-            pirEndpoints: [VotingServiceConfig.ServiceEndpoint(url: "https://pir.example.com", label: "pir")],
-            supportedVersions: VotingServiceConfig.SupportedVersions(
-                pir: ["v0"],
-                voteProtocol: "v0",
-                tally: "v0",
-                voteServer: "v1"
-            ),
-            rounds: rounds,
-            pirLayout: VotingServiceConfig.PirLayout(pirDepth: 1, tier0Layers: 1, tier1Layers: 1, polyLen: 4096)
-        )
-    }
-
-    private static func roundEntry() -> VotingServiceConfig.RoundEntry {
-        VotingServiceConfig.RoundEntry(
-            authVersion: 2,
-            eaPk: Data(repeating: 0x03, count: 32),
-            signatures: []
-        )
-    }
-
     private func isDelegationSigningTop(_ state: VotingCoordFlow.State) -> Bool {
         guard case .delegationSigning = state.path.last else {
             return false
         }
         return true
-    }
-
-    @MainActor
-    private func waitForStore(
-        // Generous ceiling, not a responsiveness claim: starved CI runners have inflated
-        // trivially-fast tests to 60-120 s (unit_tests runs 33367909253, 33371909793 — the
-        // 2 s budget this replaces lost twice), the poll exits the moment the condition
-        // lands, and a real regression still fails, just slower.
-        timeoutNanoseconds: UInt64 = 60_000_000_000,
-        sourceLocation: SourceLocation = #_sourceLocation,
-        condition: @escaping @MainActor () -> Bool
-    ) async {
-        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
-        while !condition(), DispatchTime.now().uptimeNanoseconds < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
-    }
-
-    private func tryUnwrap<T>(_ value: T?) -> T {
-        guard let value else {
-            fatalError("tryUnwrap: required value was unexpectedly nil")
-        }
-        return value
-    }
-
-    private func keystoneWalletAccount() -> WalletAccount {
-        WalletAccount(Account(
-            id: AccountUUID(id: [UInt8](repeating: 0x01, count: 16)),
-            name: "Keystone",
-            keySource: String(localizable: .accountsKeystone).lowercased(),
-            seedFingerprint: [UInt8](repeating: 0x02, count: 32),
-            hdAccountIndex: Zip32AccountIndex(0),
-            ufvk: nil,
-            uivk: nil
-        ))
-    }
-
-    private func zashiWalletAccount() -> WalletAccount {
-        WalletAccount(Account(
-            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
-            name: "Zashi",
-            keySource: nil,
-            seedFingerprint: [UInt8](repeating: 0x04, count: 32),
-            hdAccountIndex: Zip32AccountIndex(0),
-            ufvk: nil,
-            uivk: nil
-        ))
-    }
-
-    private func votingMetadataClient(
-        _ box: VotingMetadataBox
-    ) -> VotingMetadataProviderClient {
-        var client = VotingMetadataProviderClient()
-        client.load = { _ in }
-        client.store = { _ in }
-        client.resetAccount = { _ in }
-        client.reset = {}
-        client.loadDrafts = { box.drafts[$0] ?? [:] }
-        client.setDrafts = { drafts, roundId in box.drafts[roundId] = drafts }
-        client.clearDrafts = { roundId in box.drafts[roundId] = [:] }
-        client.loadSubmittedVotes = { box.submittedVotes[$0] ?? [:] }
-        client.setSubmittedVotes = { votes, roundId in
-            box.submittedVotes[roundId] = votes
-        }
-        client.clearSubmittedVotes = { roundId in box.submittedVotes[roundId] = [:] }
-        client.record = { box.records[$0] }
-        client.allRecords = { box.records }
-        client.setRecord = { record, roundId in box.records[roundId] = record }
-        client.clearRecord = { roundId in box.records.removeValue(forKey: roundId) }
-        return client
     }
 
     // MARK: - Round session flow (software wallets)
@@ -1213,302 +1077,11 @@ import Testing
         #expect(store.state.roundCache[activeRoundId]?.sessionEpoch == 2)
     }
 
-    /// Wires one gate into the voting client, so a store's effects and a Root reset running
-    /// beside them ask the same one — which is what the app does, the live client holding it.
-    private func teardownDependencies(_ dependencies: inout DependencyValues, gate: VotingTeardown) {
-        dependencies.votingCrypto.beginWalletTeardown = { gate.begin() }
-        dependencies.votingCrypto.endWalletTeardown = { gate.end() }
-        dependencies.votingCrypto.teardownGenerationIfIdle = { gate.generationIfIdle }
-        dependencies.votingCrypto.teardownAllowsOpen = { gate.allowsOpen(capturedGeneration: $0) }
-        dependencies.votingCrypto.teardownBegan = { gate.began }
-    }
-
-    /// A directory of this test's own to stand in for `Documents`.
-    ///
-    /// The sidecar has one name and the suites run in parallel, so two tests that
-    /// each create and delete the real `Documents/voting.sqlite3` would be deleting
-    /// each other's.
-    static func temporaryDocumentsDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("voting-sidecar-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
-    }
-
-    private static func isSessionLifecycleEvent(_ event: String) -> Bool {
-        event.hasPrefix("setOperationEpoch")
-            || event.hasPrefix("cancelRoundSession")
-            || event.hasPrefix("closeRoundSession")
-    }
-
     // MARK: - Keystone round fixtures
-
-    private static let keystoneConflictMessage = "a stored signature disagrees with the scanned bundle"
-
-    /// Signs whichever bundle the flow has put on screen, the way the voter
-    /// does it: open the scanner, then hand back the PCZT the device signed.
-    @MainActor
-    private func scanKeystoneSignature(_ store: StoreOf<VotingCoordFlow>, bundleIndex: UInt32) async {
-        await waitForStore {
-            store.state.roundCache[self.activeRoundId]?.pendingKeystoneRequest?.bundleIndex == bundleIndex
-        }
-        store.send(.openKeystoneSignatureScan)
-        store.send(.keystoneScan(.presented(.foundVotingDelegationPCZT(Data([0xAB, UInt8(bundleIndex)])))))
-    }
-
-    /// Everything a Keystone round touches outside the per-test signature and
-    /// run stubs.
-    private func keystoneDependencies(
-        _ dependencies: inout DependencyValues,
-        recorder: EventRecorder,
-        bundleCount: UInt32
-    ) {
-        sessionDependencies(&dependencies, recorder: recorder)
-        dependencies.keystoneHandler = .noOp
-        dependencies.votingCrypto.sessionPlan = { _ in
-            let call = recorder.recordAndCount("sessionPlan")
-            return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
-        }
-        dependencies.votingCrypto.setupBundles = { _ in
-            try self.bundleLayout(bundleCount: bundleCount, eligibleWeight: 100_000_000)
-        }
-        dependencies.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
-        dependencies.votingCrypto.keystoneSignatures = { _ in [] }
-        dependencies.votingCrypto.keystoneSigningRequests = { _, bundleIndices in
-            recorder.record("keystoneSigningRequests:\(Self.indexList(bundleIndices))")
-            return try bundleIndices.map {
-                try self.keystoneSigningRequest(bundleIndex: $0, bundleCount: bundleCount)
-            }
-        }
-    }
-
-    private static func runRoundEvent(_ signer: VotingDelegationSigner) -> String {
-        signer == VotingDelegationSigner.keystoneStored ? "runRound.keystoneStored" : "runRound.otherSigner"
-    }
-
-    private static func indexList(_ indices: [UInt32]) -> String {
-        indices.map { String($0) }.joined(separator: ",")
-    }
-
-    private func keystoneSigningRequest(
-        bundleIndex: UInt32,
-        bundleCount: UInt32,
-        delegatedWeight: UInt64 = 50_000_000,
-        eligibleWeight: UInt64 = 100_000_000
-    ) throws -> VotingKeystoneSigningRequest {
-        let payload: [String: Any] = [
-            "bundle_index": Int(bundleIndex),
-            "bundle_count": Int(bundleCount),
-            "redacted_pczt": Data([0x0A, UInt8(bundleIndex)]).base64EncodedString(),
-            "pczt_sighash": Data(repeating: UInt8(bundleIndex) + 1, count: 32).base64EncodedString(),
-            "rk": Data(repeating: 0x0C, count: 32).base64EncodedString(),
-            "action_index": 0,
-            "display_memo": "Round",
-            "eligible_weight_zatoshi": Int(eligibleWeight),
-            "delegated_weight_zatoshi": Int(delegatedWeight)
-        ]
-        return try JSONDecoder().decode(
-            VotingKeystoneSigningRequest.self,
-            from: JSONSerialization.data(withJSONObject: payload)
-        )
-    }
-
-    private func keystoneBatchResult(inserted: UInt32) throws -> VotingKeystoneSignatureBatchResult {
-        let payload: [String: Any] = ["inserted": Int(inserted), "already_present": 0]
-        return try JSONDecoder().decode(
-            VotingKeystoneSignatureBatchResult.self,
-            from: JSONSerialization.data(withJSONObject: payload)
-        )
-    }
 
     // MARK: - Round session fixtures
 
-    private static let walletSeed = [UInt8](repeating: 0x07, count: 32)
-
-    /// The state an active round is entered from: one active round, a resolved
-    /// service config, a software wallet account, and the polls-list spinner the
-    /// entry is expected to clear.
-    private func sessionFlowState(
-        drafts: [UInt32: VoteChoice] = [:],
-        isKeystone: Bool = false,
-        voteEndsIn: TimeInterval = 60
-    ) -> VotingCoordFlow.State {
-        var session = RoundSession(roundId: activeRoundId)
-        session.draftVotes = drafts
-        var state = VotingCoordFlow.State()
-        state.roundCache[activeRoundId] = session
-        state.allRounds = [
-            RoundListItem(roundNumber: 1, session: votingSession(proposalCount: 2, voteEndsIn: voteEndsIn))
-        ]
-        state.serviceConfig = Self.makeServiceConfig(
-            voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")]
-        )
-        state.checkingEligibilityRoundId = activeRoundId
-        state.isKeystoneUser = isKeystone
-        state.$selectedWalletAccount.withLock { $0 = isKeystone ? keystoneWalletAccount() : zashiWalletAccount() }
-        state.$swapAPIAccess.withLock { $0 = .direct }
-        return state
-    }
-
-    /// Everything the round-session path touches outside `votingCrypto`'s
-    /// session calls, which each test stubs for itself.
-    private func sessionDependencies(_ dependencies: inout DependencyValues, recorder: EventRecorder) {
-        dependencies.sdkSynchronizer = .mocked(
-            latestState: {
-                var latestState = SynchronizerState.zero
-                latestState.fullyScannedHeight = 1_000
-                return latestState
-            }
-        )
-        dependencies.sdkSynchronizer.getTreeState = { _ in Data([0x01]) }
-        dependencies.databaseFiles.dataDbURLFor = { _ in URL(fileURLWithPath: "/tmp/voting-tests-data.db") }
-        dependencies.mnemonic.toSeed = { _ in Self.walletSeed }
-        dependencies.walletStorage.exportWallet = { StoredWallet.placeholder }
-        dependencies.walletStorage.exportVotingHotkey = { _ in
-            StoredVotingHotkey(storedSecret: VotingHotkeySecret(Data(repeating: 0x11, count: 32)), version: 1)
-        }
-        dependencies.localAuthentication.authenticate = { true }
-        dependencies.backgroundTask = .noOp
-        dependencies.votingAPI.startHealthProbeSweep = { }
-        dependencies.votingMetadata = votingMetadataClient(VotingMetadataBox())
-        dependencies.continuousClock = ImmediateClock()
-        dependencies.votingCrypto.openRoundSession = { _, _, _, _ in recorder.record("openRoundSession") }
-        dependencies.votingCrypto.closeRoundSession = { _ in }
-        dependencies.votingCrypto.cancelRoundSession = { _ in }
-        dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
-    }
-
-    private func isProposalListTop(_ state: VotingCoordFlow.State) -> Bool {
-        guard case .proposalList = state.path.last else { return false }
-        return true
-    }
-
-    /// The crate's own wire shape for a plan, decoded rather than constructed:
-    /// the SDK's views are `Decodable` only, and going through JSON keeps these
-    /// tests honest about what a session actually answers with.
-    private func plan(
-        needsBundleSetup: Bool = false,
-        openProposals: [UInt32] = [],
-        allDecided: Bool = false,
-        delegationBundlesNeedingWork: [UInt32] = [],
-        delegationBundlesNeedingSigning: [UInt32] = [],
-        completedChoices: [(UInt32, UInt32?)]? = nil
-    ) throws -> VotingRoundPlan {
-        let payload = planPayload(
-            needsBundleSetup: needsBundleSetup,
-            openProposals: openProposals,
-            allDecided: allDecided,
-            delegationBundlesNeedingWork: delegationBundlesNeedingWork,
-            delegationBundlesNeedingSigning: delegationBundlesNeedingSigning,
-            completedChoices: completedChoices
-        )
-        return try JSONDecoder().decode(VotingRoundPlan.self, from: JSONSerialization.data(withJSONObject: payload))
-    }
-
-    private func planPayload(
-        needsBundleSetup: Bool = false,
-        openProposals: [UInt32] = [],
-        allDecided: Bool = false,
-        delegationBundlesNeedingWork: [UInt32] = [],
-        delegationBundlesNeedingSigning: [UInt32] = [],
-        completedChoices: [(UInt32, UInt32?)]? = nil
-    ) -> [String: Any] {
-        let noIntents: [Int] = []
-        var payload: [String: Any] = [
-            "round_id": activeRoundId,
-            "pending_recovery": false,
-            "blocking_recovery": false,
-            "blocking_share_work": false,
-            "has_unconfirmed_shares": false,
-            "hotkey_bound": true,
-            "completed_for_display": completedChoices != nil,
-            "needs_draft_setup": false,
-            "needs_bundle_setup": needsBundleSetup,
-            "needs_delegation_signing": false,
-            "has_in_flight_delegation": false,
-            "delegation_bundles_needing_work": delegationBundlesNeedingWork.map { Int($0) },
-            "delegation_bundles_needing_signing": delegationBundlesNeedingSigning.map { Int($0) },
-            "needs_vote_polling": false,
-            "has_remaining_vote_or_share_work": !allDecided,
-            "has_recoverable_vote_or_share_work": !allDecided,
-            "primary_action": needsBundleSetup ? "delegate" : "vote",
-            "delegation_statuses": [["bundle_index": 0, "phase": "prepared", "terminal": false]],
-            "open_proposals": openProposals.map { Int($0) },
-            "unrostered_intents": noIntents,
-            "immediate_share_confirmed": false,
-            "all_decided": allDecided
-        ]
-        if let completedChoices {
-            payload["completed_vote_display"] = [
-                "choices": completedChoices.map { choice -> [String: Any] in
-                    ["proposal_id": Int(choice.0), "choice": choice.1.map { Int($0) } as Any]
-                }
-            ]
-        }
-        return payload
-    }
-
-    private func bundleLayout(bundleCount: UInt32, eligibleWeight: UInt64) throws -> VotingBundleLayout {
-        let payload: [String: Any] = [
-            "bundle_count": Int(bundleCount),
-            "eligible_weight": Int(eligibleWeight),
-            "dropped_count": 0,
-            "privacy_trim_dropped_bundles": 0,
-            "privacy_trim_dropped_notes": 0
-        ]
-        return try JSONDecoder().decode(VotingBundleLayout.self, from: JSONSerialization.data(withJSONObject: payload))
-    }
-
-    private func eligibilityReport(eligibleWeight: UInt64 = 50_000_000) throws -> VotingEligibilityReport {
-        let payload: [String: Any] = [
-            "distinct_note_count": 1,
-            "eligible_weight": Int(eligibleWeight),
-            "is_eligible": eligibleWeight > 0,
-            "privacy_trim_dropped_value_zatoshi": 0
-        ]
-        return try JSONDecoder().decode(VotingEligibilityReport.self, from: JSONSerialization.data(withJSONObject: payload))
-    }
-
-    private func runReport(
-        kind: String,
-        completedProposals: UInt32,
-        totalProposals: UInt32,
-        chainOutcomeKind: String? = nil,
-        diagnostic: String? = nil,
-        completedChoices: [(UInt32, UInt32?)]? = nil,
-        bundles: [UInt32] = []
-    ) throws -> VotingRoundRunReport {
-        var quiescence: [String: Any] = ["kind": kind]
-        if !bundles.isEmpty {
-            quiescence["bundles"] = bundles.map { Int($0) }
-        }
-        if let chainOutcomeKind {
-            var outcome: [String: Any] = ["kind": chainOutcomeKind]
-            if let diagnostic {
-                outcome["diagnostic"] = ["message": diagnostic]
-            }
-            quiescence["chain_outcome"] = outcome
-        }
-        var payload: [String: Any] = [
-            "quiescence": quiescence,
-            "tally": [
-                "completed_proposals": Int(completedProposals),
-                "total_proposals": Int(totalProposals),
-                "remaining_obligations": Int(totalProposals - completedProposals)
-            ]
-        ]
-        if let completedChoices {
-            payload["plan"] = planPayload(allDecided: true, completedChoices: completedChoices)
-        }
-        return try JSONDecoder().decode(VotingRoundRunReport.self, from: JSONSerialization.data(withJSONObject: payload))
-    }
-
     // MARK: - Share tracking
-
-    /// The wallet id the pending-share rows are scoped to. Shares belong to the
-    /// wallet that delivered them, and the sidecar answers for every wallet it
-    /// holds, so a round of somebody else's is not this flow's to resume.
-    private static let pendingWalletId = "0303030303030303030303030303030303030303030303030303030303030303"
 
     /// A helper that is still failing is re-armed on a bounded backoff rather
     /// than abandoned: 15 s after the first pass that stopped short, 30 s after
@@ -1623,16 +1196,15 @@ import Testing
         #expect(sleeps.value.isEmpty)
     }
 
-    /// A second `.pollShareStatus` landing while a pass is live must not stop
-    /// the live one.
-    ///
-    /// Cancelling a tracking consumer runs the stream's termination hook, which
-    /// cancels the round's *session* — permanently, and against whichever
-    /// session the registry holds by then. So the re-send is a no-op, not a
-    /// restart: the round keeps its one pass and its session is never
-    /// cancelled.
+    /// Re-entering a round resets the flag that says a pass is running, because
+    /// the pass belonged to the session the entry is replacing. That must not
+    /// let a second `.pollShareStatus` start another pass onto the session being
+    /// opened: the entry's own plan is what says whether the round still owes
+    /// share work, and the pass the entry left alone is still consuming — so
+    /// cancelling nothing is also the point, since cancelling a pass finishes
+    /// the round's session under it.
     @MainActor
-    @Test func aSecondPollDoesNotCancelALivePass() async throws {
+    @Test func aPollDuringARoundReEntryStartsNoSecondPass() async throws {
         let recorder = EventRecorder()
         let gate = TestGate()
         let confirmed = try shareTrackingReport(kind: "all_confirmed")
@@ -1640,16 +1212,16 @@ import Testing
             VotingCoordFlow()
         } withDependencies: {
             self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
             $0.votingCrypto.cancelRoundSession = { roundId in recorder.record("cancelRoundSession:\(roundId)") }
             $0.votingCrypto.trackShares = { _, _ in
                 recorder.record("trackShares")
                 return AsyncThrowingStream { continuation in
                     let task = Task {
-                        // Parked where a real pass waits on its helpers, so the
-                        // second send lands while this one is still live.
                         await gate.wait()
                         continuation.yield(VotingShareTrackingRunEvent.finished(confirmed))
                         continuation.finish()
+                        recorder.record("trackShares.finished")
                     }
                     continuation.onTermination = { reason in
                         if case .cancelled = reason {
@@ -1665,12 +1237,80 @@ import Testing
         await waitForStore { recorder.events().contains("trackShares") }
         #expect(store.state.roundCache[self.activeRoundId]?.isTrackingShares == true)
 
+        // Both sends land before the entry's own open can answer, so the second
+        // poll sees exactly the state the re-entry left: not tracking, and a
+        // session being opened.
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        #expect(store.state.roundCache[self.activeRoundId]?.isTrackingShares == false)
+
+        // The reducer answers synchronously, so this is the whole question: a
+        // poll that had started a pass would have put the flag back on here.
         store.send(.pollShareStatus(roundId: activeRoundId))
+        #expect(
+            store.state.roundCache[self.activeRoundId]?.isTrackingShares == false,
+            "a poll landing while the round's session is being reopened must start no pass"
+        )
+
         await gate.open()
-        await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+        await waitForStore { recorder.events().contains("trackShares.finished") }
 
         #expect(recorder.events().filter { $0 == "trackShares" } == ["trackShares"])
         #expect(!recorder.events().contains { $0.hasPrefix("cancelRoundSession") })
+    }
+
+    /// A vote that closes ends the round's share tracking: the pass is cancelled,
+    /// and because a cancelled effect delivers no terminal action, the flags it
+    /// would have cleared are cleared here. Left alone, the round keeps a pass
+    /// that no longer exists and a delivery that never finishes.
+    @Test func aRoundThatStopsVotingEndsItsShareTracking() {
+        for status in [SessionStatus.tallying, SessionStatus.finalized] {
+            var session = RoundSession(roundId: activeRoundId)
+            session.isTrackingShares = true
+            session.shareTrackingStatus = .tracking(pass: 2)
+            session.shareTrackingAttempt = 3
+            session.voteRecord = Voting.VoteRecord(
+                votedAt: Date(),
+                votingWeight: 50_000_000,
+                proposalCount: 2
+            )
+            var state = VotingCoordFlow.State()
+            state.roundCache[activeRoundId] = session
+            state.openRoundSessionIds = [activeRoundId]
+            state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession(proposalCount: 2))]
+            state.path.append(.proposalList(ProposalList.State(roundId: activeRoundId)))
+
+            _ = VotingCoordFlow().coordinatorReduce().reduce(
+                into: &state,
+                action: .roundStatusUpdated(roundId: activeRoundId, status: status)
+            )
+
+            let updated = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(updated.isTrackingShares == false)
+            #expect(updated.shareTrackingStatus == .ended)
+            #expect(updated.shareTrackingAttempt == 0)
+        }
+    }
+
+    /// A round whose shares were confirmed before the vote closed keeps that
+    /// answer: `.ended` would say they never landed.
+    @Test func aClosedVoteKeepsConfirmedSharesConfirmed() {
+        var session = RoundSession(roundId: activeRoundId)
+        session.isTrackingShares = true
+        session.shareTrackingStatus = .confirmed
+        var state = VotingCoordFlow.State()
+        state.roundCache[activeRoundId] = session
+        state.openRoundSessionIds = [activeRoundId]
+        state.allRounds = [RoundListItem(roundNumber: 1, session: votingSession(proposalCount: 2))]
+        state.path.append(.proposalList(ProposalList.State(roundId: activeRoundId)))
+
+        _ = VotingCoordFlow().coordinatorReduce().reduce(
+            into: &state,
+            action: .roundStatusUpdated(roundId: activeRoundId, status: .tallying)
+        )
+
+        let updated = tryUnwrap(state.roundCache[activeRoundId])
+        #expect(updated.isTrackingShares == false)
+        #expect(updated.shareTrackingStatus == .confirmed)
     }
 
     /// The re-arm is bounded by the round's own vote end. A backoff that would
@@ -1701,52 +1341,6 @@ import Testing
 
         #expect(recorder.events().filter { $0 == "trackShares" } == ["trackShares"])
         #expect(sleeps.value.isEmpty)
-    }
-
-    /// A round with an open session and nothing tracking it yet -- the state a
-    /// `.pollShareStatus` trigger finds -- on a vote that ends far enough away
-    /// for the whole backoff ladder to fit before it.
-    private func shareTrackingState(voteEndsIn: TimeInterval = 3_600) -> VotingCoordFlow.State {
-        var state = sessionFlowState(voteEndsIn: voteEndsIn)
-        state.checkingEligibilityRoundId = nil
-        state.openRoundSessionIds = [activeRoundId]
-        state.sessionRouteAccess = .direct
-        return state
-    }
-
-    private func shareTrackingReport(
-        kind: String,
-        passes: UInt32 = 1,
-        messages: [String] = []
-    ) throws -> VotingShareTrackingRunReport {
-        var quiescence: [String: Any] = ["kind": kind]
-        if !messages.isEmpty {
-            quiescence["messages"] = messages
-        }
-        let payload: [String: Any] = ["quiescence": quiescence, "passes": Int(passes)]
-        return try JSONDecoder().decode(
-            VotingShareTrackingRunReport.self,
-            from: JSONSerialization.data(withJSONObject: payload)
-        )
-    }
-
-    private func shareTrackingEvent(kind: String, pass: UInt32?) throws -> VotingShareTrackingEvent {
-        var payload: [String: Any] = ["kind": kind]
-        if let pass {
-            payload["pass"] = Int(pass)
-        }
-        return try JSONDecoder().decode(
-            VotingShareTrackingEvent.self,
-            from: JSONSerialization.data(withJSONObject: payload)
-        )
-    }
-
-    private func pendingShareRound(walletId: String, roundId: String) throws -> VotingPendingShareRound {
-        let payload: [String: Any] = ["wallet_id": walletId, "round_id": roundId]
-        return try JSONDecoder().decode(
-            VotingPendingShareRound.self,
-            from: JSONSerialization.data(withJSONObject: payload)
-        )
     }
 
     // MARK: - MOB-1810 health sweep hooks
@@ -1824,12 +1418,6 @@ import Testing
     }
 }
 
-private final class VotingMetadataBox: @unchecked Sendable {
-    var drafts: [String: [String: UInt32]] = [:]
-    var submittedVotes: [String: [String: UInt32]] = [:]
-    var records: [String: PersistedVotingRecord] = [:]
-}
-
 private actor RecoveryOrderRecorder {
     private var recordedEvents: [String] = []
 
@@ -1844,84 +1432,6 @@ private actor RecoveryOrderRecorder {
 
     func events() -> [String] {
         recordedEvents
-    }
-}
-
-/// A one-shot gate a stubbed dependency parks on until the test opens it, so an effect can be
-/// held at a chosen suspension point without a real-time sleep.
-private actor TestGate {
-    private var isOpen = false
-    private var waiting: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        guard !isOpen else { return }
-        await withCheckedContinuation { waiting.append($0) }
-    }
-
-    func open() {
-        isOpen = true
-        let resumable = waiting
-        waiting.removeAll()
-        for continuation in resumable {
-            continuation.resume()
-        }
-    }
-}
-
-/// Records what a reducer asked to sleep for and returns at once.
-///
-/// A `TestClock` would answer the same question, but only if the test manages
-/// to advance it *after* the effect has registered its sleep — a race a plain
-/// `Store` gives no hook to win. Recording the duration instead asserts the
-/// backoff ladder exactly, with no real time passing and nothing to order.
-///
-/// `now` is a fixed instant so `sleep(for:)`'s deadline arithmetic is exact:
-/// the duration recorded here is the one that was asked for, to the attosecond.
-private struct RecordingImmediateClock: Clock {
-    typealias Instant = ContinuousClock.Instant
-    // Spelled out because `ZcashLightClientKit` exports a `Duration` of its own,
-    // and an unqualified one in this file resolves to that instead.
-    typealias Duration = Swift.Duration
-
-    let sleeps: LockIsolated<[Swift.Duration]>
-    let epoch = ContinuousClock().now
-
-    var now: Instant { epoch }
-    var minimumResolution: Swift.Duration { .zero }
-
-    func sleep(until deadline: Instant, tolerance: Swift.Duration?) async throws {
-        // A real clock's sleep is a cancellation point, and an effect that is
-        // cancelled while waiting out a backoff must not go on to send.
-        try Task.checkCancellation()
-        sleeps.withValue { $0.append(epoch.duration(to: deadline)) }
-        await Task.yield()
-        try Task.checkCancellation()
-    }
-}
-
-private final class EventRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recordedEvents: [String] = []
-
-    func record(_ event: String) {
-        lock.lock()
-        recordedEvents.append(event)
-        lock.unlock()
-    }
-
-    /// Appends `event` and returns how many times it has now been recorded, letting a
-    /// closure double behave differently on its first call versus later calls.
-    func recordAndCount(_ event: String) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        recordedEvents.append(event)
-        return recordedEvents.filter { $0 == event }.count
-    }
-
-    func events() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedEvents
     }
 }
 

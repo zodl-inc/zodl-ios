@@ -1095,15 +1095,12 @@ extension VotingCoordFlow {
                     } else if isCurrentRound {
                         replacePathWithStatusScreen(&state, roundId: roundId, status: status)
                     }
+                    guard isCurrentRound else { return .none }
                     // The vote is over, so there is nothing left for a helper
                     // to confirm: the round's tracking stops here rather than
                     // waiting to be told `voteEndReached`.
-                    return isCurrentRound
-                        ? .merge(
-                            .cancel(id: cancelStatusPollingId),
-                            cancelShareTracking(for: roundId)
-                        )
-                        : .none
+                    let stopTracking = endShareTracking(&state, roundId: roundId)
+                    return .merge(.cancel(id: cancelStatusPollingId), stopTracking)
 
                 case .finalized:
                     let isCurrentRound = topPathRoundId(state) == roundId
@@ -1112,14 +1109,14 @@ extension VotingCoordFlow {
                     } else if isCurrentRound {
                         replacePathWithStatusScreen(&state, roundId: roundId, status: status)
                     }
-                    return isCurrentRound
-                        ? .merge(
-                            .cancel(id: cancelStatusPollingId),
-                            cancelShareTracking(for: roundId),
-                            .send(.fetchTallyResults(roundId: roundId)),
-                            .send(.startNewRoundPolling)
-                        )
-                        : .none
+                    guard isCurrentRound else { return .none }
+                    let stopTracking = endShareTracking(&state, roundId: roundId)
+                    return .merge(
+                        .cancel(id: cancelStatusPollingId),
+                        stopTracking,
+                        .send(.fetchTallyResults(roundId: roundId)),
+                        .send(.startNewRoundPolling)
+                    )
 
                 case .active, .unspecified:
                     return .none
@@ -1604,6 +1601,13 @@ extension VotingCoordFlow {
     /// still to do. A backoff the voter cannot see is indistinguishable from
     /// the app doing nothing, so it is bounded and then reported.
     static let maxRunRetries = 3
+
+    /// How long the flow waits before driving a round again after a run refused
+    /// to start for a reason the crate itself called retryable. Short, because
+    /// such a refusal is a contention -- a session another pass is holding, a
+    /// store that was busy -- rather than something a long wait makes likelier
+    /// to clear.
+    static let runFailureRetrySeconds: Double = 2
 
     /// The crate takes at most this many chain endpoints and vote-tree nodes.
     static let maxSessionChainEndpoints = 8
@@ -2099,15 +2103,50 @@ extension VotingCoordFlow {
     ) -> Effect<Action> {
         guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
         LoggerProxy.error("Round run for \(roundId) failed: \(error.message)")
-        return .send(.batchAuthorizationFailed(
+        let failed: () -> Effect<Action> = {
+            .send(.batchAuthorizationFailed(
+                roundId: roundId,
+                error: VotingErrorMapper.userFriendlyMessage(from: error)
+            ))
+        }
+        // The crate's own answer rather than an inference from the kind: a
+        // refusal it calls retryable is a contention the next run can win, and
+        // it takes the same bounded ladder a run that stopped short takes.
+        // Everything else fails the same way however often it is asked, so the
+        // voter is told instead of watching a wait they cannot see.
+        guard error.retryable else { return failed() }
+        return scheduleRunRetry(
+            &state,
             roundId: roundId,
-            error: VotingErrorMapper.userFriendlyMessage(from: error)
-        ))
+            seconds: Self.runFailureRetrySeconds,
+            exhausted: failed
+        )
+    }
+
+    /// Schedules another run of the round after `seconds`, or answers with what
+    /// `exhausted` says when the round has had its re-runs.
+    ///
+    /// Bounded, because a backoff the voter cannot see is indistinguishable from
+    /// the app doing nothing.
+    private func scheduleRunRetry(
+        _ state: inout State,
+        roundId: String,
+        seconds: Double,
+        exhausted: () -> Effect<Action>
+    ) -> Effect<Action> {
+        guard let session = state.roundCache[roundId], session.runRetryCount < Self.maxRunRetries else {
+            return exhausted()
+        }
+        state.roundCache[roundId]?.runRetryCount += 1
+        return .run { [continuousClock] send in
+            try await continuousClock.sleep(for: .seconds(seconds))
+            await send(.retryBatchSubmission(roundId: roundId))
+        }
+        .cancellable(id: cancelRunRetryId, cancelInFlight: true)
     }
 
     /// `.roundRunDecision` handler. One branch per thing a stopped run can
     /// leave the host owing.
-    // swiftlint:disable:next cyclomatic_complexity
     func reduceRoundRunDecision(
         _ state: inout State,
         roundId: String,
@@ -2178,7 +2217,7 @@ extension VotingCoordFlow {
             ))
 
         case .retryLater(let seconds):
-            guard session.runRetryCount < Self.maxRunRetries else {
+            return scheduleRunRetry(&state, roundId: roundId, seconds: seconds) {
                 LoggerProxy.error("Round \(roundId) still had work after \(Self.maxRunRetries) re-runs")
                 return .send(.batchSubmissionFailed(
                     roundId: roundId,
@@ -2187,12 +2226,6 @@ extension VotingCoordFlow {
                     totalCount: totalCount
                 ))
             }
-            state.roundCache[roundId]?.runRetryCount += 1
-            return .run { [continuousClock] send in
-                try await continuousClock.sleep(for: .seconds(seconds))
-                await send(.retryBatchSubmission(roundId: roundId))
-            }
-            .cancellable(id: cancelRunRetryId, cancelInFlight: true)
 
         case let .failed(message, retryable):
             LoggerProxy.error("Round \(roundId) run failed (retryable: \(retryable)): \(message)")
@@ -2723,10 +2756,11 @@ extension VotingCoordFlow {
     /// `.pollShareStatus` handler. Runs one pass of the session's share-tracking
     /// driver over the round's unconfirmed helper shares.
     ///
-    /// Three things stop a pass before it starts, and each of them is a
+    /// Four things stop a pass before it starts, and each of them is a
     /// contention the SDK would otherwise answer with `sessionBusy`: a round
-    /// with no open session has nothing to drive, a pass already in flight is
-    /// the one that will report, and a run holds the session for itself.
+    /// with no open session has nothing to drive, a round whose session is being
+    /// opened has nothing to drive *yet*, a pass already in flight is the one
+    /// that will report, and a run holds the session for itself.
     ///
     /// `cancelInFlight` is deliberately off. `isTrackingShares` is already the
     /// serializer, and it is reset out from under a live pass on round entry --
@@ -2738,6 +2772,12 @@ extension VotingCoordFlow {
     /// costs nothing.
     func reducePollShareStatus(_ state: inout State, roundId: String) -> Effect<Action> {
         guard state.openRoundSessionIds.contains(roundId) else { return .none }
+        // An entry into the round is about to replace its session, and it clears
+        // `isTrackingShares` for the session it is opening -- so without this, a
+        // poll landing in that window gets past the flag and starts a second
+        // pass beside the one the entry deliberately left running. The entry's
+        // own plan is what says whether the round still owes share work.
+        guard state.pendingPipelineRoundId != roundId else { return .none }
         guard let session = state.roundCache[roundId] else { return .none }
         guard !session.isTrackingShares else { return .none }
         guard !isBatchSubmitting(session), !session.isSubmittingVote else { return .none }
@@ -3030,6 +3070,27 @@ extension VotingCoordFlow {
             .cancel(id: cancelShareTrackingReArmId(roundId)),
             .cancel(id: cancelShareTrackingResumeId(roundId))
         )
+    }
+
+    /// Stops one round's tracking for good, and forgets the pass that was
+    /// running it.
+    ///
+    /// Cancelling an effect delivers no terminal action, so the flags a live
+    /// pass set stay exactly as it left them: the round would go on saying a
+    /// pass holds it, and show a delivery that is never going to finish. The
+    /// reset mirrors the one the resume path does, for the same reason.
+    private func endShareTracking(_ state: inout State, roundId: String) -> Effect<Action> {
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.isTrackingShares = false
+            roundSession.shareTrackingAttempt = 0
+            // A round whose shares were confirmed before the vote closed keeps
+            // that answer. Every other round gets the terminal one: the vote is
+            // over, so no later pass can change what it is holding.
+            if roundSession.shareTrackingStatus != .confirmed {
+                roundSession.shareTrackingStatus = .ended
+            }
+        }
+        return cancelShareTracking(for: roundId)
     }
 
     /// Stops tracking for every round this flow could still be driving one for.
