@@ -3200,23 +3200,6 @@
         }
       }
     },
-    "coinVote.delegationSigning.duplicateSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That Keystone signature was already scanned for bundle %@ of %@. Sign the current bundle on Keystone, then scan the new QR."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That Keystone signature was already scanned for bundle %@ of %@. Sign the current bundle on Keystone, then scan the new QR."
-          }
-        }
-      }
-    },
     "coinVote.delegationSigning.finalizingAuthorizationEllipsis" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3723,23 +3706,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Continue without the remaining %@ ZEC."
-          }
-        }
-      }
-    },
-    "coinVote.delegationSigning.wrongSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That signature is for a different bundle. Sign bundle %@ of %@ on Keystone, then scan the new QR."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That signature is for a different bundle. Sign bundle %@ of %@ on Keystone, then scan the new QR."
           }
         }
       }
