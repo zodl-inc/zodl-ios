@@ -11,6 +11,10 @@ extension VotingCryptoClient: DependencyKey {
     static var liveValue: Self {
         let dbActor = DatabaseActor()
         let stateSubject = CurrentValueSubject<VotingDbState, Never>(.initial)
+        // Process-wide, because there is one wallet to tear down and one sidecar to
+        // delete: `liveValue` is resolved once, so this is the gate every voting open
+        // in the app asks. See `VotingTeardown`.
+        let teardown = VotingTeardown()
 
         // Sessions are made by the synchronizer rather than by the backend: a
         // `.tor` session borrows the Tor runtime the synchronizer owns, and the
@@ -50,6 +54,21 @@ extension VotingCryptoClient: DependencyKey {
                 try await Task.detached(priority: .userInitiated) {
                     try VotingRustBackend.warmProvingCaches()
                 }.value
+            },
+            beginWalletTeardown: {
+                teardown.begin()
+            },
+            endWalletTeardown: {
+                teardown.end()
+            },
+            teardownGenerationIfIdle: {
+                teardown.generationIfIdle
+            },
+            teardownAllowsOpen: { capturedGeneration in
+                teardown.allowsOpen(capturedGeneration: capturedGeneration)
+            },
+            teardownBegan: {
+                teardown.began
             },
             openDatabase: { path, networkId in
                 try await dbActor.open(path: path, networkId: networkId)

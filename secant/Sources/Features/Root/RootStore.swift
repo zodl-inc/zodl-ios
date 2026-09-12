@@ -925,6 +925,19 @@ extension Root {
         readTransactionsStorage: ReadTransactionsStorageClient,
         closeVotingDatabase: @Sendable () async -> Void = Root.closeVotingDatabase
     ) async {
+        #if VOTING_ENABLED
+        // Opened before the close and held until the last delete: the voting flow's
+        // own effects are not reliably cancelled on this path -- Root composes
+        // Settings, and the voting flow under it, through a case-filtered scope, so
+        // no presentation reducer runs here to cancel them -- and an effect
+        // suspended in a config fetch would otherwise wake up between the close
+        // below and the delete further down and recreate the file.
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        votingCrypto.beginWalletTeardown()
+        defer { votingCrypto.endWalletTeardown() }
+        #endif
         await closeVotingDatabase()
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)

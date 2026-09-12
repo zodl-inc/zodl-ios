@@ -987,12 +987,11 @@ import Testing
 
         // The run that was driving the round when the account changed still has
         // its stream open, and what it reports belongs to the previous wallet.
-        store.send(.roundRunEvent(roundId: activeRoundId, epoch: openedEpoch, event: .finished(report)))
+        // Awaited to completion, so the decision and the metadata write this event
+        // would have handed on have run by the time it is judged.
+        await store.send(.roundRunEvent(roundId: activeRoundId, epoch: openedEpoch, event: .finished(report))).finish()
 
         #expect(store.state.roundCache[activeRoundId] == nil, "a late event must not resurrect the round")
-        // Nothing the report could have written is asynchronous, but the decision
-        // it would have handed on is: give it the chance it would have had.
-        try await Task.sleep(for: .milliseconds(50))
         #expect(store.state.voteRecords.isEmpty)
         #expect(metadata.records.isEmpty)
     }
@@ -1025,6 +1024,187 @@ import Testing
         #expect(recorder.events().filter { $0.hasPrefix("openRoundSession") } == ["openRoundSession:tor"])
         #expect(store.state.path.isEmpty)
         #expect(store.state.roundCache[activeRoundId]?.roundPlan == nil)
+    }
+
+    /// A session's transport is fixed when it is opened, so a wallet that turns Tor
+    /// on mid-round has to lose the sessions it has: they are fenced and closed, and
+    /// the next entry into the round opens on the route the wallet asks for now. The
+    /// wallet re-announcing the route it already had is not that, and does nothing.
+    @MainActor
+    @Test func routeChangeClosesOpenSessionsAndReopensOnTheNewRoute() async throws {
+        let recorder = EventRecorder()
+        var initialState = sessionFlowState()
+        let swapAPIAccess = initialState.$swapAPIAccess
+        let store = Store(initialState: initialState) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+            $0.votingCrypto.openRoundSession = { _, _, route, epoch in
+                recorder.record("openRoundSession:\(route):\(epoch)")
+            }
+            $0.votingCrypto.setOperationEpoch = { roundId, epoch in
+                recorder.record("setOperationEpoch:\(roundId):\(epoch)")
+            }
+            $0.votingCrypto.cancelRoundSession = { roundId in recorder.record("cancelRoundSession:\(roundId)") }
+            $0.votingCrypto.closeRoundSession = { roundId in recorder.record("closeRoundSession:\(roundId)") }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { self.isProposalListTop(store.state) }
+        #expect(store.state.roundCache[activeRoundId]?.sessionEpoch == 1)
+
+        // Announced again with the value it already had — which the shared value also
+        // does to every new subscriber — and then really changed. Both reach the same
+        // subscriber in this order, so the single triple below is what says the first
+        // one did nothing.
+        swapAPIAccess.withLock { $0 = .direct }
+        swapAPIAccess.withLock { $0 = .protected }
+        await waitForStore { recorder.events().contains("closeRoundSession:\(self.activeRoundId)") }
+
+        #expect(
+            recorder.events().filter { Self.isSessionLifecycleEvent($0) } == [
+                "setOperationEpoch:\(activeRoundId):2",
+                "cancelRoundSession:\(activeRoundId)",
+                "closeRoundSession:\(activeRoundId)"
+            ]
+        )
+
+        // Re-entering the round is the "next use" that opens on the new route.
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { recorder.events().contains("openRoundSession:tor:3") }
+
+        #expect(
+            recorder.events().filter { $0.hasPrefix("openRoundSession") }
+                == ["openRoundSession:direct:1", "openRoundSession:tor:3"]
+        )
+        #expect(store.state.roundCache[activeRoundId]?.sessionEpoch == 3)
+    }
+
+    /// A wallet reset deletes `voting.sqlite3` while this flow's effects may still be
+    /// in flight, and nothing cancels them for it: Root composes the voting flow under
+    /// a case-filtered scope, so no presentation reducer runs on that path, and
+    /// cancellation would not reach a `.run` already suspended inside a call anyway. A
+    /// config load parked in its fetch must therefore refuse to reopen the database the
+    /// reset has just closed and deleted — and must be free to open it again after.
+    @MainActor
+    @Test func aWalletTeardownStopsAConfigLoadFromReopeningTheSidecar() async throws {
+        let recorder = EventRecorder()
+        let gate = TestGate()
+        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
+        let sidecar = documents.appendingPathComponent("voting.sqlite3")
+        try Data([0x01]).write(to: sidecar)
+        defer { try? FileManager.default.removeItem(at: sidecar) }
+
+        let teardownGate = VotingTeardown()
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.teardownDependencies(&$0, gate: teardownGate)
+            $0.votingAPI.configureURLs = { _ in
+                // The first load parks where a real one waits on the network, so the
+                // reset lands while it is in flight.
+                if recorder.recordAndCount("configureURLs") == 1 {
+                    await gate.wait()
+                }
+            }
+            $0.votingAPI.fetchAllRounds = { [] }
+            $0.votingAPI.fetchZodlEndorsedRoundIds = { [] }
+            $0.votingAPI.startHealthProbeSweep = { }
+            $0.votingCrypto.openDatabase = { path, _ in
+                recorder.record("openDatabase")
+                // What the real one does, and the whole problem: the file is back.
+                try? Data([0x02]).write(to: URL(fileURLWithPath: path))
+            }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingCrypto.configureProving = { _ in }
+            $0.votingCrypto.warmProvingCaches = { }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
+        await waitForStore { recorder.events().contains("configureURLs") }
+        #expect(store.state.hasConfiguredProving, "the load under test must have started")
+
+        // Root's side of a reset: the drain, then the delete, with the window that
+        // refuses an open in between held for the whole of it.
+        var userStoredPreferences = UserPreferencesStorageClient()
+        userStoredPreferences.removeAll = { }
+        await withDependencies {
+            // The same gate the store's effects ask, which is what the app has: the live
+            // client holds one, and everything that opens or tears down goes through it.
+            self.teardownDependencies(&$0, gate: teardownGate)
+        } operation: {
+            await Root.clearDeviceScopedWalletState(
+                userDefaults: .noOp,
+                flexaHandler: .noOp,
+                userStoredPreferences: userStoredPreferences,
+                readTransactionsStorage: .noOp,
+                closeVotingDatabase: { recorder.record("closeVotingDatabase") }
+            )
+        }
+
+        #expect(recorder.events().contains("closeVotingDatabase"))
+        #expect(!FileManager.default.fileExists(atPath: sidecar.path))
+
+        // The parked load wakes up with the wallet already gone.
+        await gate.open()
+        await waitForStore { !store.state.hasConfiguredProving }
+
+        #expect(!recorder.events().contains("openDatabase"), "the reset's delete must be the last word")
+        #expect(
+            !FileManager.default.fileExists(atPath: sidecar.path),
+            "nothing may recreate the sidecar behind the reset"
+        )
+
+        // The refusal belongs to the teardown, not to the process: the next load opens.
+        store.send(.serviceConfigLoaded(Self.makeServiceConfig()))
+        await waitForStore { recorder.events().contains("openDatabase") }
+        #expect(FileManager.default.fileExists(atPath: sidecar.path))
+    }
+
+    /// A teardown that reaches a flow which is still alive does not wait to be refused:
+    /// the flow gives back the sessions it is holding, so the reset's own close has
+    /// nothing left to wait on and no event from them can write back afterwards.
+    @MainActor
+    @Test func votingTeardownFencesTheSessionsTheFlowStillHolds() async throws {
+        let recorder = EventRecorder()
+        let store = Store(initialState: sessionFlowState()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            self.sessionDependencies(&$0, recorder: recorder)
+            $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+            $0.votingCrypto.setOperationEpoch = { roundId, epoch in
+                recorder.record("setOperationEpoch:\(roundId):\(epoch)")
+            }
+            $0.votingCrypto.cancelRoundSession = { roundId in recorder.record("cancelRoundSession:\(roundId)") }
+            $0.votingCrypto.closeRoundSession = { roundId in recorder.record("closeRoundSession:\(roundId)") }
+        }
+
+        store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+        await waitForStore { self.isProposalListTop(store.state) }
+
+        store.send(.votingTeardownBegan)
+        await waitForStore { recorder.events().contains("closeRoundSession:\(self.activeRoundId)") }
+
+        #expect(
+            recorder.events().filter { Self.isSessionLifecycleEvent($0) } == [
+                "setOperationEpoch:\(activeRoundId):2",
+                "cancelRoundSession:\(activeRoundId)",
+                "closeRoundSession:\(activeRoundId)"
+            ]
+        )
+        #expect(store.state.roundCache[activeRoundId]?.sessionEpoch == 2)
+    }
+
+    /// Wires one gate into the voting client, so a store's effects and a Root reset running
+    /// beside them ask the same one — which is what the app does, the live client holding it.
+    private func teardownDependencies(_ dependencies: inout DependencyValues, gate: VotingTeardown) {
+        dependencies.votingCrypto.beginWalletTeardown = { gate.begin() }
+        dependencies.votingCrypto.endWalletTeardown = { gate.end() }
+        dependencies.votingCrypto.teardownGenerationIfIdle = { gate.generationIfIdle }
+        dependencies.votingCrypto.teardownAllowsOpen = { gate.allowsOpen(capturedGeneration: $0) }
+        dependencies.votingCrypto.teardownBegan = { gate.began }
     }
 
     private static func isSessionLifecycleEvent(_ event: String) -> Bool {
@@ -1383,6 +1563,27 @@ private actor RecoveryOrderRecorder {
 
     func events() -> [String] {
         recordedEvents
+    }
+}
+
+/// A one-shot gate a stubbed dependency parks on until the test opens it, so an effect can be
+/// held at a chosen suspension point without a real-time sleep.
+private actor TestGate {
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let resumable = waiting
+        waiting.removeAll()
+        for continuation in resumable {
+            continuation.resume()
+        }
     }
 }
 

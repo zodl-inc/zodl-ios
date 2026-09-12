@@ -252,6 +252,18 @@ struct VotingCoordFlow {
         /// session's route is fixed when it is opened, so every open session is
         /// fenced and closed and the next use of a round opens on the new route.
         case swapAPIAccessChanged(WalletStorage.SwapAPIAccess)
+        /// A wallet reset or heal has begun: the sidecar is about to be closed and
+        /// deleted. Everything this flow has open goes now, and ``VotingTeardown``
+        /// refuses the opens that would otherwise recreate it.
+        case votingTeardownBegan
+        /// A config load that ended without asking for a proving policy -- it was
+        /// refused by a teardown, or it failed before reaching the ask. The flag
+        /// that makes the ask once-per-process is released so a later load can.
+        case provingPolicyNotApplied
+        /// A round entry abandoned before its session was opened, because a wallet
+        /// teardown began while it was in flight. Not an error the voter did
+        /// anything about: the entry state is cleared and the polls list stays.
+        case roundEntryAbandoned(roundId: String)
         case dismissFlow
         /// Done CTA on the success screen — lands the user on the just-
         /// submitted round's read-only ProposalList instead of tearing the
@@ -453,6 +465,11 @@ struct VotingCoordFlow {
     /// which lives exactly as long as there is a session whose route it could
     /// invalidate.
     let cancelRouteObservationId = UUID()
+
+    /// Cancellation id for the subscription to wallet teardowns, which lives for
+    /// as long as the flow does: a reset can begin at any point after the flow
+    /// has opened the sidecar, not only while a round session is open.
+    let cancelTeardownObservationId = UUID()
 
     var body: some Reducer<State, Action> {
         coordinatorReduce()

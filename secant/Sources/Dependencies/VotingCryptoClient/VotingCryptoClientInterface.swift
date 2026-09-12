@@ -51,6 +51,23 @@ struct VotingCryptoClient {
     /// them.
     var warmProvingCaches: @Sendable () async throws -> Void = {}
 
+    // MARK: - Wallet teardown
+
+    /// Open the window in which nothing may open the sidecar or a round session, for a reset or
+    /// a heal that is about to close the database and delete its file. Balanced by
+    /// ``endWalletTeardown``. See ``VotingTeardown``.
+    var beginWalletTeardown: @Sendable () -> Void = { }
+    var endWalletTeardown: @Sendable () -> Void = { }
+    /// The teardown generation an open should capture, or nil while one is under way -- in which
+    /// case the open must not start at all.
+    var teardownGenerationIfIdle: @Sendable () -> UInt64? = { 0 }
+    /// Whether an open that captured `capturedGeneration` may still go ahead, asked again
+    /// immediately before the call that would create the database or the session.
+    var teardownAllowsOpen: @Sendable (_ capturedGeneration: UInt64) -> Bool = { _ in true }
+    /// Announced when a teardown begins, so a flow that is still alive can stop its in-flight
+    /// opens and give back the sessions it holds rather than wait to be refused.
+    var teardownBegan: @Sendable () -> AnyPublisher<Void, Never> = { Empty().eraseToAnyPublisher() }
+
     // MARK: - Database lifecycle
 
     var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void

@@ -118,6 +118,24 @@ extension VotingCoordFlow {
             case let .swapAPIAccessChanged(access):
                 return reduceSwapAPIAccessChanged(&state, access: access)
 
+            case .votingTeardownBegan:
+                return reduceVotingTeardownBegan(&state)
+
+            case .provingPolicyNotApplied:
+                // Nothing asked the crate for a policy, so the next config load
+                // must be allowed to.
+                state.hasConfiguredProving = false
+                return .none
+
+            case let .roundEntryAbandoned(roundId):
+                if state.pendingPipelineRoundId == roundId {
+                    state.pendingPipelineRoundId = nil
+                }
+                if state.checkingEligibilityRoundId == roundId {
+                    state.checkingEligibilityRoundId = nil
+                }
+                return .none
+
             case .initialize:
                 // Sweep legacy plaintext keys from a prior internal-build
                 // persistence shape. Idempotent and cheap; safe to keep.
@@ -140,7 +158,17 @@ extension VotingCoordFlow {
                 let overrideURLString = UserDefaults.standard
                     .string(forKey: .votingConfigOverrideURL) ?? ""
 
-                return .run { [votingAPI] send in
+                // Watched for the flow's whole life, not just while a session is
+                // open: a reset can begin at any point after the sidecar was
+                // opened, and the effect that opened it is the one that has to be
+                // stopped. The refusals in `VotingTeardown` are what protect an
+                // effect this never reaches; this is what stops the rest.
+                let observeTeardown: Effect<Action> = .publisher { [votingCrypto] in
+                    votingCrypto.teardownBegan().map { _ in VotingCoordFlow.Action.votingTeardownBegan }
+                }
+                .cancellable(id: cancelTeardownObservationId, cancelInFlight: true)
+
+                return .merge(observeTeardown, .run { [votingAPI] send in
                     let override: PinnedConfigSource?
                     if overrideURLString.isEmpty {
                         override = nil
@@ -154,9 +182,17 @@ extension VotingCoordFlow {
                     let message = (error as? LocalizedError)?.errorDescription
                         ?? error.localizedDescription
                     await send(.configUnsupported(message))
-                }
+                })
 
             case .serviceConfigLoaded(let config):
+                // This effect is the one that recreates `voting.sqlite3`, so it is
+                // the one a wallet reset or heal has to stop. Refused outright
+                // while a teardown is under way; the generation captured here is
+                // what refuses it if one begins while it is in flight.
+                guard let teardownGeneration = votingCrypto.teardownGenerationIfIdle() else {
+                    LoggerProxy.info("Voting: a wallet teardown is under way; the voting database stays closed")
+                    return .none
+                }
                 state.serviceConfig = config
                 let walletId = state.walletId
                 let network = zcashSDKEnvironment.network()
@@ -168,7 +204,7 @@ extension VotingCoordFlow {
                 // over a load already running) cannot both ask.
                 let shouldConfigureProving = !state.hasConfiguredProving
                 state.hasConfiguredProving = true
-                return .run { [votingAPI, votingCrypto, networkId, shouldConfigureProving] send in
+                return .run { [votingAPI, votingCrypto, networkId, shouldConfigureProving, teardownGeneration] send in
                     // 1. Configure API client URLs from the loaded config.
                     await votingAPI.configureURLs(config)
 
@@ -176,6 +212,16 @@ extension VotingCoordFlow {
                     let dbPath = FileManager.default
                         .urls(for: .documentDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent("voting.sqlite3").path
+                    // Asked again here rather than only at the top, because the
+                    // config fetch above suspends for as long as the network takes
+                    // and a reset can begin in that time. Last possible moment
+                    // before the call that would recreate the file a reset is
+                    // deleting.
+                    guard votingCrypto.teardownAllowsOpen(teardownGeneration) else {
+                        LoggerProxy.info("Voting: a wallet teardown began while the config loaded; the sidecar stays closed")
+                        await send(.provingPolicyNotApplied)
+                        return
+                    }
                     try await votingCrypto.openDatabase(dbPath, networkId)
                     try await votingCrypto.setWalletId(walletId)
 
@@ -211,6 +257,10 @@ extension VotingCoordFlow {
                     }
                 } catch: { error, send in
                     LoggerProxy.error("Voting initialization failed: \(error)")
+                    // Only the database calls above the policy ask can throw here --
+                    // the ask survives its own failure and the rounds fetch has its
+                    // own catch -- so a load that fails never applied a policy.
+                    await send(.provingPolicyNotApplied)
                     await send(.initializeFailed(error.localizedDescription))
                 }
 
@@ -359,6 +409,7 @@ extension VotingCoordFlow {
                     .cancel(id: cancelShareTrackingId),
                     // Nothing is left to invalidate once the sessions are gone.
                     .cancel(id: cancelRouteObservationId),
+                    .cancel(id: cancelTeardownObservationId),
                     // A round session holds a database handle and, on the Tor
                     // route, its own isolated client. Leaving the flow is where
                     // those go back.
@@ -1343,6 +1394,36 @@ extension VotingCoordFlow {
         )
     }
 
+    /// `.votingTeardownBegan` handler. A wallet reset or heal is about to close
+    /// the sidecar and delete it.
+    ///
+    /// ``VotingTeardown`` refuses the opens this flow has not started yet, and
+    /// refuses the ones already in flight when they reach their own check. This is
+    /// the other half, for a flow that is still alive to act on: stop the effects
+    /// that are waiting on the network or the crate, and give back the sessions
+    /// the flow is holding rather than making the reset's own close wait for them.
+    func reduceVotingTeardownBegan(_ state: inout State) -> Effect<Action> {
+        guard !state.openRoundSessionIds.isEmpty || state.pendingPipelineRoundId != nil else {
+            return .none
+        }
+
+        LoggerProxy.info("Voting: a wallet teardown began; closing every open round session")
+        state.pendingPipelineRoundId = nil
+        state.checkingEligibilityRoundId = nil
+        let fenceSessions = fenceOpenRoundSessions(&state)
+        return .merge(
+            .cancel(id: cancelPipelineId),
+            .cancel(id: cancelSubmissionId),
+            .cancel(id: cancelDelegationProofId),
+            .cancel(id: cancelDelegationPrecomputeId),
+            .cancel(id: cancelRunRetryId),
+            .cancel(id: cancelStatusPollingId),
+            .cancel(id: cancelNewRoundPollingId),
+            .cancel(id: cancelShareTrackingId),
+            fenceSessions
+        )
+    }
+
     /// Fence and close every session the flow has open, answering with the work
     /// that does it.
     ///
@@ -1532,6 +1613,12 @@ extension VotingCoordFlow {
             LoggerProxy.error("Voting config or selected account missing; cannot open a round session")
             return .none
         }
+        // A wallet being reset or healed has no round to enter, and the session
+        // this would open holds the sidecar the reset is about to delete.
+        guard let teardownGeneration = votingCrypto.teardownGenerationIfIdle() else {
+            LoggerProxy.info("Voting: a wallet teardown is under way; no round session is opened")
+            return .none
+        }
         // Fail closed before the FFI on a config the session cannot be opened
         // on: no endpoints to reach, or a PIR geometry this build predates.
         guard let transport = VotingSessionTransport(serviceConfig: serviceConfig) else {
@@ -1596,7 +1683,7 @@ extension VotingCoordFlow {
         }
         .cancellable(id: cancelRouteObservationId, cancelInFlight: true)
 
-        let open: Effect<Action> = .run { [sdkSynchronizer, votingCrypto, walletStorage] send in
+        let open: Effect<Action> = .run { [sdkSynchronizer, votingCrypto, walletStorage, teardownGeneration] send in
             // 1. Wallet sync gate.
             //
             // Spend-before-Sync scans head-first and birthday-first in
@@ -1645,6 +1732,15 @@ extension VotingCoordFlow {
                 walletDbPath: walletDbPath,
                 anchorTreeState: try await sdkSynchronizer.getTreeState(snapshotHeight)
             )
+            // Asked again after the sync gate, the keychain and the tree-state
+            // read have all suspended: a session opened now would hold the
+            // sidecar a reset is deleting, and would register behind the close
+            // that was meant to be the last one.
+            guard votingCrypto.teardownAllowsOpen(teardownGeneration) else {
+                LoggerProxy.info("Voting: a wallet teardown began while \(roundId) was opening; no session is opened")
+                await send(.roundEntryAbandoned(roundId: roundId))
+                return
+            }
             try await votingCrypto.openRoundSession(
                 inputs,
                 VotingSessionBinding(roster: roster, hotkeySecret: hotkeySecret),
@@ -1760,6 +1856,18 @@ extension VotingCoordFlow {
     /// `.roundSessionOpened` handler. Stores the plan and either persists the
     /// round's bundle rows or moves on to the ballot.
     func reduceRoundSessionOpened(_ state: inout State, roundId: String, plan: VotingRoundPlan) -> Effect<Action> {
+        // A session that finished opening after its round was fenced -- the open
+        // was already inside the SDK call when the wallet, the route or the
+        // database went away -- is one nothing is tracking any more. Give it back
+        // here rather than let it hold the sidecar until the flow is dismissed.
+        guard state.openRoundSessionIds.contains(roundId) else {
+            LoggerProxy.info("Round \(roundId) opened after it was fenced; closing the session it registered")
+            return .run { [votingCrypto] _ in
+                await votingCrypto.cancelRoundSession(roundId)
+                await votingCrypto.closeRoundSession(roundId)
+            }
+        }
+
         if state.pendingPipelineRoundId == roundId {
             state.pendingPipelineRoundId = nil
         }
