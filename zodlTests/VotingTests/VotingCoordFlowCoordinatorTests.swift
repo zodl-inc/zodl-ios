@@ -1484,6 +1484,10 @@ extension VotingSharedStateSuites {
                 #expect(updated.isTrackingShares == false)
                 #expect(updated.shareTrackingStatus == .ended)
                 #expect(updated.shareTrackingAttempt == 0)
+                // Cancelling the pass finishes the SDK session anyway, so the round
+                // is closed here rather than left registered, holding the sidecar
+                // and its transport for a vote that is over.
+                #expect(state.openRoundSessionIds.isEmpty)
             }
         }
 

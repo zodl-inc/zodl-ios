@@ -377,9 +377,10 @@ struct VotingCoordFlow {
         /// delegation happens inside the run, with no step for the host.
         case startDelegationProof(roundId: String)
 
-        /// Zashi-only PIR precompute optimization. Runs in the background
-        /// while the user is choosing votes so the actual ZKP doesn't
-        /// start from cold.
+        /// Zashi-only delegation-proof precompute. Runs in the background
+        /// while the user is choosing votes so Confirm does not start the
+        /// proof from cold; the crate warms its own PIR material inside the
+        /// same call.
         case maybeStartDelegationPrecompute(roundId: String)
         case delegationPrecomputeCompleted(roundId: String)
         case delegationPrecomputeFailed(roundId: String, error: String)

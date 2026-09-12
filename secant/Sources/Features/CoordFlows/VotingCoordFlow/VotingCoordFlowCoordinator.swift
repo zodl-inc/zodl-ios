@@ -2311,19 +2311,15 @@ extension VotingCoordFlow {
         return .send(.startDelegationProof(roundId: roundId))
     }
 
-    /// What a run that reached the end of its work leaves on screen.
-    ///
-    /// A run can isolate one bundle and finish the rest, so a clean quiescence
-    /// is not a clean run: a partial result is shown as one, with the counts,
-    /// rather than as a completed ballot.
     /// Moves every draft this run decided into the round's cast votes.
     ///
     /// The intents the host wrote are the authoritative list of what the run
-    /// was asked to decide; the plan's completed display is only what a
-    /// finished round shows, and a proposal the voter skipped carries no choice
-    /// and appears in neither. Draining from the intents is what keeps a
-    /// skipped proposal from surviving as a draft and turning a completed run
-    /// into a submission failure.
+    /// was asked to decide. The plan's completed display is not that list: a
+    /// proposal the voter skipped appears in it with no choice at all, so
+    /// `submittedVotes(from:)` drops it and a drain taken from there would
+    /// leave the skip as a draft — outliving the round and turning a completed
+    /// run into a submission failure. Draining from the intents is what covers
+    /// it.
     ///
     /// A skipped proposal is recorded with the choice the voter drafted — the
     /// synthetic Abstain included, exactly as the per-proposal loop recorded it
@@ -2361,6 +2357,11 @@ extension VotingCoordFlow {
         state.roundCache[roundId] = session
     }
 
+    /// What a run that reached the end of its work leaves on screen.
+    ///
+    /// A run can isolate one bundle and finish the rest, so a clean quiescence
+    /// is not a clean run: a partial result is shown as one, with the counts,
+    /// rather than as a completed ballot.
     private func finishedRunEffect(
         roundId: String,
         session: RoundSession,
@@ -3183,13 +3184,21 @@ extension VotingCoordFlow {
         )
     }
 
-    /// Stops one round's tracking for good, and forgets the pass that was
-    /// running it.
+    /// Stops one round's tracking for good, gives the round's session back, and
+    /// forgets the pass that was running it.
     ///
     /// Cancelling an effect delivers no terminal action, so the flags a live
     /// pass set stay exactly as it left them: the round would go on saying a
     /// pass holds it, and show a delivery that is never going to finish. The
     /// reset mirrors the one the resume path does, for the same reason.
+    ///
+    /// Cancelling the pass also reaches the SDK session — the consumer's
+    /// termination hook cancels it, and the SDK's cancellation is permanent —
+    /// so the session is finished whatever this does next. Leaving it
+    /// registered would only keep the sidecar, and on Tor its isolated client,
+    /// held by a round the vote has closed. So it is closed here and the round
+    /// leaves the open list: the vote is over, and nothing reopens a round to
+    /// track shares no helper can confirm any more.
     private func endShareTracking(_ state: inout State, roundId: String) -> Effect<Action> {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isTrackingShares = false
@@ -3201,7 +3210,15 @@ extension VotingCoordFlow {
                 roundSession.shareTrackingStatus = .ended
             }
         }
-        return cancelShareTracking(for: roundId)
+        let wasOpen = state.openRoundSessionIds.contains(roundId)
+        state.openRoundSessionIds.removeAll { $0 == roundId }
+        guard wasOpen else { return cancelShareTracking(for: roundId) }
+        return .merge(
+            cancelShareTracking(for: roundId),
+            .run { [votingCrypto] _ in
+                await votingCrypto.closeRoundSession(roundId)
+            }
+        )
     }
 
     /// Stops tracking for every round this flow could still be driving one for.

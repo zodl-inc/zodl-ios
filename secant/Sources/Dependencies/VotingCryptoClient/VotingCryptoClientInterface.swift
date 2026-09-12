@@ -109,6 +109,15 @@ struct VotingCryptoClient {
     /// The route is fixed for the session's whole life and `.tor` fails closed:
     /// a session that cannot have the Tor route is refused rather than opened
     /// over a direct connection.
+    ///
+    /// The route governs the session's **chain and helper traffic only**. PIR
+    /// queries and vote-tree reads always take the crate's own direct
+    /// transport, whatever this route says, and the app points
+    /// `voteTreeNodeUrls` at the same hosts as `chainEndpoints` — so a voter on
+    /// Tor still reaches those operators over a plain connection and reveals
+    /// their IP to them. Nothing here can change that; it is a property of the
+    /// crate's transport split, and it is stated so no call site reads `.tor`
+    /// as "the whole round is over Tor".
     var openRoundSession: @Sendable (
         _ inputs: VotingSessionInputs,
         _ binding: VotingSessionBinding,
