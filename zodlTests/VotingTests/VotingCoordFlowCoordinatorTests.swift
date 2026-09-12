@@ -960,6 +960,52 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[activeRoundId]?.sessionEpoch == 3)
         }
 
+        /// A fence keeps the round's cache and takes its session away, so a warm
+        /// cache is no longer proof there is anything to act on. Tapping the round
+        /// again is the voter's only recovery — the flow is still open, so nothing
+        /// clears the cache — and it has to open a session rather than walk past
+        /// the open into a Confirm the SDK answers `notOpen`.
+        @MainActor
+        @Test func tappingAFencedRoundOpensASessionAgain() async throws {
+            let recorder = EventRecorder()
+            let initialState = sessionFlowState()
+            let swapAPIAccess = initialState.$swapAPIAccess
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.roundPlan = { _, _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.openRoundSession = { _, _, route, epoch in
+                    recorder.record("openRoundSession:\(route):\(epoch)")
+                }
+                $0.votingCrypto.setOperationEpoch = { _, _ in }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            #expect(store.state.openRoundSessionIds == [activeRoundId])
+
+            // With the session open the cache hit is a real one, and re-tapping
+            // opens nothing — which is the whole point of the fast path.
+            store.send(.roundTapped(activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            #expect(recorder.events().filter { $0.hasPrefix("openRoundSession") } == ["openRoundSession:direct:1"])
+
+            // The fence. `roundCache` is deliberately kept, so the round goes on
+            // carrying a bound hotkey and its bundles.
+            swapAPIAccess.withLock { $0 = .protected }
+            await waitForStore { store.state.openRoundSessionIds.isEmpty }
+            let fenced = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(fenced.hotkeyAddress != nil)
+            #expect(fenced.bundleCount > 0)
+
+            store.send(.roundTapped(activeRoundId))
+            await waitForStore { recorder.events().contains("openRoundSession:tor:3") }
+
+            #expect(store.state.openRoundSessionIds == [activeRoundId])
+        }
+
         /// A wallet reset deletes `voting.sqlite3` while this flow's effects may still be
         /// in flight, and nothing cancels them for it: Root composes the voting flow under
         /// a case-filtered scope, so no presentation reducer runs on that path, and

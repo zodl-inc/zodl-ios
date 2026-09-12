@@ -525,9 +525,19 @@ extension VotingCoordFlow {
                     // Cache hit (hotkey + bundles ready): eligibility is
                     // already proven for this session, push the proposal
                     // list immediately — no spinner needed.
+                    //
+                    // The open session is part of the hit, not a detail of it.
+                    // A fence — an account switch, a route change, a wallet
+                    // teardown — closes the sessions and deliberately keeps the
+                    // cache, so without this the round still looks warm while
+                    // nothing can act on it: the voter would reach the ballot
+                    // and Confirm would answer `notOpen`. Re-tapping the round
+                    // is the one recovery path the voter has, so it has to open
+                    // a session rather than skip past the open.
                     if let cached = state.roundCache[roundId],
                        cached.hotkeyAddress != nil,
-                       cached.bundleCount > 0 {
+                       cached.bundleCount > 0,
+                       state.openRoundSessionIds.contains(roundId) {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
                             startHealthSweep,
