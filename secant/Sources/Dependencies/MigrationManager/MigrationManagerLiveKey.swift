@@ -1059,12 +1059,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// [MOB-1861] Whether `statuses` carry a preparation-kind row (`preparationRows` answers nil
     /// otherwise).
     private static func hasPreparationStatus(_ statuses: [MigrationTransactionStatus]) -> Bool {
-        statuses.contains { status in
-            if case MigrationTransactionStatus.Kind.preparation = status.kind {
-                return true
-            }
-            return false
-        }
+        statuses.contains { $0.kind.isPreparation }
     }
 
     /// R11, the split's matching gap: the engine's `.mined` state carries NO txid (the SDK model
