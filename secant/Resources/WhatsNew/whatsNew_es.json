@@ -1,6 +1,32 @@
 {
     "releases": [
         {
+            "version": "3.13.0",
+            "date": "11-09-2026",
+            "timestamp": 1789127082,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos una advertencia antes de continuar con un swap o un pago con CrossPay de menos de $300, ya que NEAR no reembolsa errores como una dirección o una red incorrecta por debajo de ese monto. Puedes desactivarla una vez que la hayas leído."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos las explicaciones sobre reembolsos de NEAR en Swap y CrossPay para aclarar cuándo aplica un reembolso.",
+                        "Ahora el aviso para respaldar tu frase de recuperación aparece antes que cualquier otro mensaje de la pantalla principal cuando tu billetera ha recibido fondos."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios problemas del motor de sincronización Slipstream: lentitud y bloqueos durante la sincronización, transacciones atascadas en \"Enviando…\", restauraciones detenidas en 0 %, el saldo mostrado como 0 al volver a abrir la app y la lista de transacciones vacía."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.12.0",
             "date": "08-09-2026",
             "timestamp": 1788860758,
