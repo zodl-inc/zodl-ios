@@ -254,11 +254,15 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
     /// Makes `proposalId`'s delivery succeed — every share accepted and recorded — but come back
     /// with no helper servers left in the working set.
     ///
-    /// That is a real shape, not a contrivance: `delegateSharePayloads` prunes a server from the
-    /// set the moment a POST to it fails, and a share that already has one acceptance still counts
-    /// as delivered, so a commitment can land in full while the last server drops out behind it.
-    /// `deliverShares` prunes the pool *before* it writes the share records, which makes
-    /// `record:<b>:<p>:<last>` the point at which the batch provably has nowhere left to send.
+    /// This models the state the broadcast gate reads, not the route production takes to it. A
+    /// successful `delegateSharePayloads` keeps the server that accepted the last share, so in
+    /// production the pool only empties on the throwing `noReachableVoteServers` path, which
+    /// `deliverShares` turns into `prune(to: [])` before it rethrows. The knob empties the pool on
+    /// a success instead because that is the only way to park a pipeline on the commit gate with
+    /// the pool provably empty: a failed delivery is attributed only by `settleDeliveries`, which
+    /// cannot run while a pipeline is parked. `deliverShares` prunes the pool *before* it writes
+    /// the share records, which makes `record:<b>:<p>:<last>` the point at which the batch has
+    /// nowhere left to send, and the gate does not care how the pool got there.
     func emptyServerPool(afterProposal proposalId: UInt32) {
         knobs.withLockUnchecked { _ = $0.poolEmptyingProposals.insert(proposalId) }
     }

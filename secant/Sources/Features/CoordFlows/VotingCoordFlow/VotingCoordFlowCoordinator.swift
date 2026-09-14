@@ -4507,6 +4507,14 @@ extension VotingCoordFlow {
             return try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
         }
 
+        // The serialized region ends at the witness on purpose. `commitVote` takes the witness by
+        // value (the auth path, position and anchor height below) and the Rust shim rebuilds it
+        // from those arguments alone: `zcashlc_voting_commit_vote` in `rust/src/voting/vote.rs`
+        // calls `VanWitness::from_wire` and never reads `handle.tree_sync`. Only the sync and
+        // witness entry points in `rust/src/voting/tree.rs` and the two session-reset entry points
+        // touch the shared tree client, so a sibling's sync landing between this witness and this
+        // commit cannot change what gets committed. Keeping the commit outside the queue lets the
+        // sibling pipeline sync and take its own witness while this one signs.
         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
             roundId, bundleIndex, context.hotkeySeed, proposalId, work.choice,
             work.numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight,
@@ -4641,7 +4649,8 @@ extension VotingCoordFlow {
             proposalId: resolution.proposalId
         ))
     }
-    // MARK: - Delegation pipeline (Zashi inline)
+    
+// MARK: - Delegation pipeline (Zashi inline)
 
     /// 3.0 bump (MOB-1678): `pir_layout.poly_len` is load-bearing — `zcash_voting` 3.0
     /// validates it locally (`poly_len ∈ {2048, 4096}`) and the PIR connect handshake
@@ -4992,14 +5001,23 @@ extension VotingCoordFlow {
 /// before the first has finished, however many times either suspends. An operation that throws does
 /// not break the chain: the link the next caller waits on absorbs the error, and only the caller
 /// that submitted the failing operation sees it.
+///
+/// The wait is not cancellable. A caller cancelled while it is queued still waits for the
+/// operations ahead of it and then for its own before it can notice the cancellation at its next
+/// check, so with two pipelines the extra wait is at most one sibling's sync and witness; raising
+/// `maxConcurrentVoteBundles` raises it accordingly. That is also what keeps a queued operation
+/// from outliving the batch effect: every caller awaits its own operation to completion, and the
+/// effect awaits every pipeline.
 actor VotingSerialQueue {
     private var last: Task<Void, Never>?
 
     func run<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         let previous = last
+        // `Task.init`, not `Task.detached`: the operation has to inherit the caller's task-local
+        // values, because `syncVoteTree` resolves a `@Dependency` inside it and the tests rely on
+        // their overrides reaching that lookup.
         let task = Task<T, Error> {
             _ = await previous?.value
-            try Task.checkCancellation()
             return try await operation()
         }
         last = Task { _ = try? await task.value }
