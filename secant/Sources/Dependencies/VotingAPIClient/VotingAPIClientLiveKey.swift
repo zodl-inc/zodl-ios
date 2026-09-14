@@ -623,7 +623,7 @@ private func parseTxResult(_ json: [String: Any]) throws -> TxResult {
 /// Whether a broadcast error is transient and worth retrying.
 /// Network failures and 502/503 (CometBFT gateway errors) are retryable.
 /// Deterministic failures like 422 (CheckTx rejection) and 400 (bad request) are not.
-private func isBroadcastRetryable(_ error: Error) -> Bool {
+func isBroadcastRetryable(_ error: Error) -> Bool {
     if error is URLError { return true }
     if case SvAPIError.httpError(let status, _) = error {
         return status == 502 || status == 503
@@ -632,12 +632,14 @@ private func isBroadcastRetryable(_ error: Error) -> Bool {
 }
 
 /// Retry an async operation with exponential backoff.
-/// Only retries when `isRetryable` returns true for the thrown error.
-private func retryWithBackoff<T>(
+/// Only retries when `isRetryable` returns true for the thrown error. `sleep` is the wait between
+/// attempts, injectable so a test can cover the retry path without waiting it out.
+func retryWithBackoff<T>(
     maxAttempts: Int = 3,
     initialDelay: TimeInterval = 2,
     factor: Double = 2,
     isRetryable: (Error) -> Bool,
+    sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     operation: () async throws -> T
 ) async throws -> T {
     precondition(maxAttempts > 0, "retryWithBackoff requires at least one attempt")
@@ -656,7 +658,7 @@ private func retryWithBackoff<T>(
                 (\(error.localizedDescription)); retrying in \(delay)s
                 """
             )
-            try await Task.sleep(for: .seconds(delay))
+            try await sleep(.seconds(delay))
             delay *= factor
         }
     }
@@ -1049,7 +1051,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 }
             },
-            submitVoteCommitment: { bundle, signature in
+            submitVoteCommitment: { bundle, signature, admission in
                 @Dependency(\.transactionGuard) var transactionGuard
                 // voteRoundId is a hex string; chain expects base64-encoded bytes
                 let roundIdBytes = dataFromHex(bundle.voteRoundId)
@@ -1064,12 +1066,12 @@ extension VotingAPIClient: DependencyKey {
                     "r_vpk": bundle.rVpkBytes.base64EncodedString(),
                     "vote_auth_sig": signature.voteAuthSig.base64EncodedString()
                 ]
-                // Guard per attempt, not across the back-off sleeps between them — see submitDelegation.
-                return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
-                    try await transactionGuard.withSubmission {
-                        let json = try await postJSON("/shielded-vote/v1/cast-vote", body: body)
-                        return try parseTxResult(json)
-                    }
+                // Guard per attempt, not across the back-off sleeps between them, and the caller's
+                // admission check re-taken inside the guard right before each POST — see
+                // VotingBroadcastDispatch.
+                return try await VotingBroadcastDispatch.run(transactionGuard: transactionGuard, admission: admission) {
+                    let json = try await postJSON("/shielded-vote/v1/cast-vote", body: body)
+                    return try parseTxResult(json)
                 }
             },
             delegateShares: { payloads, proposalId, serverURLs in

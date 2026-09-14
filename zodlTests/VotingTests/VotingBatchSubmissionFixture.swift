@@ -14,7 +14,8 @@
 //      sync                            the vote tree was synced (the call carries no bundle)
 //      witness:<bundle>                the bundle's VAN witness was generated from that sync
 //      commit:<bundle>:<proposal>      `commitVote` built the vote commitment
-//      submit:<proposal>               the commitment was broadcast
+//      broadcast:<proposal>            the commitment reached the broadcast, before its admission check
+//      submit:<proposal>               the commitment was broadcast (its admission check passed)
 //      confirm:<bundle>:<proposal>     the confirmed transaction was written back
 //      deliver:<proposal>              helper-share delivery reached `delegateShares`
 //      record:<bundle>:<proposal>:<s>  share `s`'s delegation was recorded locally
@@ -131,6 +132,7 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         var deliveryGates: [UInt32: ResumableGate] = [:]
         var confirmationGates: [BundleProposal: ResumableGate] = [:]
         var commitGates: [BundleProposal: ResumableGate] = [:]
+        var broadcastGates: [UInt32: ResumableGate] = [:]
         /// `syncVoteTree` carries no bundle index, so the only gate it can offer is "the first call
         /// of the run"; `firstSyncGateClaimed` is what makes it fire once rather than on every sync.
         var firstSyncGate: ResumableGate?
@@ -216,6 +218,21 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
             }
             let gate = ResumableGate()
             state.commitGates[key] = gate
+            return gate
+        }
+    }
+
+    /// Registers (and so closes) the gate the broadcast of `proposalId` parks on after it records
+    /// `broadcast:<proposal>` and before its admission check runs. Stands in for the wait on the
+    /// transaction guard: what the pool looks like when the gate opens is what the check sees.
+    @discardableResult
+    func broadcastGate(forProposal proposalId: UInt32) -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.broadcastGates[proposalId] {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.broadcastGates[proposalId] = gate
             return gate
         }
     }
@@ -448,7 +465,12 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         }
 
         values.votingAPI.startHealthProbeSweep = { }
-        values.votingAPI.submitVoteCommitment = { [self] bundle, _ in
+        values.votingAPI.submitVoteCommitment = { [self] bundle, _, admission in
+            recorder.record("broadcast:\(bundle.proposalId)")
+            await broadcastGateIfRegistered(proposal: bundle.proposalId)?.wait()
+            // The admission check runs where the live client runs it: after the broadcast is
+            // admitted (here: past its gate) and before the POST is recorded.
+            try await admission()
             recorder.record("submit:\(bundle.proposalId)")
             return TxResult(txHash: "tx-\(bundle.proposalId)", code: 0)
         }
@@ -607,6 +629,10 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
 
     private func gateIfRegistered(proposal proposalId: UInt32) -> ResumableGate? {
         knobs.withLockUnchecked { $0.deliveryGates[proposalId] }
+    }
+
+    private func broadcastGateIfRegistered(proposal proposalId: UInt32) -> ResumableGate? {
+        knobs.withLockUnchecked { $0.broadcastGates[proposalId] }
     }
 
     private func confirmationGateIfRegistered(bundle bundleIndex: UInt32, proposal proposalId: UInt32) -> ResumableGate? {

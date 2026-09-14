@@ -4531,7 +4531,16 @@ extension VotingCoordFlow {
         }
 
         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
-        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
+        // The check above spares the `.confirming` step; this one is the real gate. The broadcast
+        // takes the transaction guard, and the guard is a queue: it can wait behind a helper
+        // delivery for seconds, and that delivery may be the one that empties the pool. The API
+        // runs this closure inside the guard right before each POST attempt.
+        let serverPool = context.serverPool
+        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig) {
+            if await serverPool.isExhausted {
+                throw ShareDelegationError.noReachableVoteServers
+            }
+        }
         guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
             throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
         }
