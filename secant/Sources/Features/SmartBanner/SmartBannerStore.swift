@@ -1746,10 +1746,18 @@ struct SmartBanner {
             var isSyncing = false
             if case let .syncing(syncProgress, isScanProgressComplete) = snapshot.syncStatus {
                 state.lastKnownSyncPercentage = Double(syncProgress)
-                state.lastKnownBlocksRemaining = max(
-                    0,
-                    latestState.data.latestBlockHeight - latestState.data.fullyScannedHeight
-                )
+                // MOB-1912: a fully-scanned height of 0 is "unknown", not "nothing scanned". The
+                // states the SDK publishes before a pass — `start()`'s `.syncing(progress)` and
+                // `stop()`'s `.stopped` — carry only the chain tip, and 0 here made the subtraction
+                // say the whole chain was left: the banner flashed in on every foreground and on a
+                // new wallet's first start, and out again one throttle window later. Keep the last
+                // real figure; the first in-pass state, which carries the real heights, decides.
+                if latestState.data.fullyScannedHeight > 0 {
+                    state.lastKnownBlocksRemaining = max(
+                        0,
+                        latestState.data.latestBlockHeight - latestState.data.fullyScannedHeight
+                    )
+                }
                 state.isScanProgressComplete = isScanProgressComplete
                 isSyncing = true
 
