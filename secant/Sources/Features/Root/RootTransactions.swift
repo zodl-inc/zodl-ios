@@ -52,10 +52,27 @@ extension Root {
                     }
                     .cancellable(id: state.CancelSyncStalledEventId, cancelInFlight: true),
                     .publisher {
+                        // MOB-1954: EDGE-triggered, not level-triggered. The Slipstream poll loop
+                        // publishes a state every 2 s and never deduplicates, so on a synced wallet
+                        // every tick used to map to a full-history fetch here, and the MOB-1856
+                        // gate below then turned that into back-to-back `getAllTransactions` reads
+                        // for as long as the app stayed open -- on a 1,255-transaction wallet each
+                        // one a 25 s read that parked a cooperative-pool thread in SQLite (field,
+                        // 2026-09-14). The list refreshes when the status BECOMES `.upToDate`, i.e.
+                        // the first synced state after a pass; a transaction that lands while the
+                        // status stays up to date arrives through `foundTransactions` /
+                        // `minedTransaction` above, and a pending row keeps the 30 s reconciliation
+                        // poller alive. `SyncStatus` is `Equatable`: `.syncing` with moving
+                        // progress and `.error` pass the dedup and map to `.noChangeInTransactions`
+                        // as before. The dedup state is per subscription, so every
+                        // `.observeTransactions` start (cold launch, `.retryStart`) sees the next
+                        // `.upToDate` as an edge.
                         sdkSynchronizer.stateStream()
                             .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
-                            .map {
-                                if $0.syncStatus == .upToDate {
+                            .map(\.syncStatus)
+                            .removeDuplicates()
+                            .map { status in
+                                if status == .upToDate {
                                     return Root.Action.fetchTransactionsForTheSelectedAccount
                                 }
                                 return Root.Action.noChangeInTransactions
