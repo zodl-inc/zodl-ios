@@ -7,6 +7,28 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-09-10
+
+### Changed
+
+- [MOB-1858] Sending no longer waits behind unrelated network work. Preparing a payment now runs alongside other activity instead of blocking it, and if the wallet is still busy with something else by the time it's ready to broadcast, the transaction is shown as pending and submitted automatically in the background instead of being reported as a failure.
+
+### Fixed
+
+- [MOB-1869] Send and outgoing Swap and Pay no longer report insufficient funds, or allow Review, while the wallet is still working out your spendable balance after a restore or a server change; they wait the same way the home screen does. Swapping another asset into ZEC is unaffected.
+- [MOB-1854] Sync now resumes after a migration broadcast even when the resume request arrives while the previous start is still finishing.
+- [MOB-1862] After switching accounts, a balance or pending amount that was still loading for the previous account can no longer be shown as the new account's. The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain — shown as updating during that check, with Send and Swap waiting for it rather than claiming you have insufficient funds. Funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent, and swapping another asset into ZEC no longer waits for the wallet's spendable balance to be confirmed, since that swap doesn't spend it.
+- [MOB-1854] Putting the app in the background while sync was about to restart can no longer leave that restart running in the background or re-arm background work when the app returns.
+- [MOB-1862] A balance that was still being read when a newer balance arrived from the wallet can no longer briefly replace the newer value on the home screen or the balance breakdown.
+- [MOB-1860] Leaving a voting screen while a proof is being prepared stops that work instead of letting it run in the background.
+- [MOB-1859] Opening the wallet no longer generates a fresh receive address for every account on each load, so loading is faster during sync.
+- [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.
+- [MOB-1856] The app stays responsive while it catches up on a long transaction history.
+- [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync, and after switching accounts, a failed refresh can no longer show the previous account's transactions as the new account's history.
+- [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself. When the wallet's own reconnection attempts give up, the app rebuilds the connection instead — to a better server when one is available, otherwise the current one — waiting for an in-progress send to finish first instead of giving up on the rebuild, and never switching servers a second time on top of it; after two rebuilds in one session it shows the error state.
+- [MOB-1853] If you switch servers while the wallet is recovering from a stalled sync, the recovery now respects your new choice instead of switching back to the server it had picked earlier.
+- [MOB-1853] Sending the app to the background while it was rebuilding sync after a stall no longer leaves that rebuild running in the background, and a rebuild that was cancelled that way cannot affect the next foreground's recovery.
+
 ## [3.12.0] - 2026-09-08
 
 ### Fixed

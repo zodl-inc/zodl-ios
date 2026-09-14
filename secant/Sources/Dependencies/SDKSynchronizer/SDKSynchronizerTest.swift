@@ -96,6 +96,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         getLocalAccountBalances: unimplemented("\(Self.self).getLocalAccountBalances", placeholder: nil),
         wipe: unimplemented("\(Self.self).wipe", placeholder: nil),
         switchToEndpoint: unimplemented("\(Self.self).switchToEndpoint"),
+        restartSync: unimplemented("\(Self.self).restartSync"),
         proposeTransfer: unimplemented("\(Self.self).proposeTransfer", placeholder: .testOnlyFakeProposal(totalFee: 0)),
         sendMaxAmount: unimplemented("\(Self.self).sendMaxAmount", placeholder: Zatoshi(0)),
         createAndSubmitProposedTransactions: unimplemented("\(Self.self).createAndSubmitProposedTransactions", placeholder: .success(txIds: [])),
@@ -196,6 +197,7 @@ extension SDKSynchronizerClient {
         getLocalAccountBalances: { nil },
         wipe: { Empty<Void, Error>().eraseToAnyPublisher() },
         switchToEndpoint: { _ in },
+        restartSync: { _ in },
         proposeTransfer: { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
         sendMaxAmount: { _, _, _ in Zatoshi(0) },
         createAndSubmitProposedTransactions: { _, _ in .success(txIds: []) },
@@ -240,7 +242,10 @@ extension SDKSynchronizerClient {
         latestState: @escaping @Sendable () -> SynchronizerState = { .zero },
         latestScannedHeight: @escaping @Sendable () -> BlockHeight = { 0 },
         prepareWith: @escaping @Sendable ([UInt8], BlockHeight?, String, String?) async throws -> Initializer.InitializationResult = { _, _, _, _ in .success },
-        start: @escaping @Sendable (_ retry: Bool) throws -> Void = { _ in },
+        // MOB-1854: `async` (matching `SDKSynchronizerClient.start`'s real type) so a test's stub can
+        // genuinely suspend (e.g. on a gate) rather than only throw/return synchronously — every
+        // existing call site passes a non-awaiting closure, which stays valid under this wider type.
+        start: @escaping @Sendable (_ retry: Bool) async throws -> Void = { _ in },
         stop: @escaping @Sendable () -> Void = { },
         isSyncing: @escaping @Sendable () -> Bool = { false },
         isInitialized: @escaping @Sendable () -> Bool = { false },
@@ -299,7 +304,11 @@ extension SDKSynchronizerClient {
         },
         rescanFrom: @escaping @Sendable (BlockHeight) async throws -> Void = { _ in },
         rewind: @escaping @Sendable (RewindPolicy) -> AnyPublisher<Void, Error> = { _ in return Empty<Void, Error>().eraseToAnyPublisher() },
-        getAllTransactions: @escaping @Sendable (AccountUUID?) -> IdentifiedArrayOf<TransactionState> = { _ in
+        // MOB-1856: `async throws` (matching `SDKSynchronizerClient.getAllTransactions`'s real type,
+        // `SDKSynchronizerInterface.swift`) so a test's stub can genuinely suspend (e.g. on a gate)
+        // or fail -- every existing call site passes a synchronous, non-throwing closure, which
+        // stays valid under this wider type. Same widening `mocked(start:)` already got for MOB-1854.
+        getAllTransactions: @escaping @Sendable (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState> = { _ in
             let mockedCleared: [TransactionStateMockHelper] = [
                 TransactionStateMockHelper(date: 1651039202, amount: Zatoshi(1), status: .paid, uuid: "aa11"),
                 TransactionStateMockHelper(date: 1651039101, amount: Zatoshi(2), uuid: "bb22"),
@@ -375,6 +384,7 @@ extension SDKSynchronizerClient {
         getLocalAccountBalances: @escaping @Sendable () async -> [AccountUUID: AccountBalance]? = { nil },
         wipe: @escaping @Sendable () -> AnyPublisher<Void, Error>? = { Fail(error: "Error").eraseToAnyPublisher() },
         switchToEndpoint: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
+        restartSync: @escaping @Sendable (LightWalletEndpoint) async throws -> Void = { _ in },
         proposeTransfer:
         @escaping @Sendable (AccountUUID, Recipient, Zatoshi, Memo?) async throws -> Proposal = { _, _, _, _ in .testOnlyFakeProposal(totalFee: 0) },
         sendMaxAmount: @escaping @Sendable (AccountUUID, Recipient, Memo?) async throws -> Zatoshi = { _, _, _ in Zatoshi(0) },
@@ -470,6 +480,7 @@ extension SDKSynchronizerClient {
             getLocalAccountBalances: getLocalAccountBalances,
             wipe: wipe,
             switchToEndpoint: switchToEndpoint,
+            restartSync: restartSync,
             proposeTransfer: proposeTransfer,
             sendMaxAmount: sendMaxAmount,
             createAndSubmitProposedTransactions: createAndSubmitProposedTransactions,

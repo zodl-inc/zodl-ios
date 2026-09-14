@@ -148,7 +148,8 @@ jobs:
     # build_ffi is skipped in remote mode; accept success OR skipped. The draft guard lives on validate_sdk_pin and propagates through needs.
     if: ${{ !cancelled() && needs.validate_sdk_pin.result == 'success' && (needs.build_ffi.result == 'success' || needs.build_ffi.result == 'skipped') }}
     runs-on: macos-26
-    timeout-minutes: 30
+    # A cold compile plus a retried Swift Testing run did not fit thirty minutes on the shared runner.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4

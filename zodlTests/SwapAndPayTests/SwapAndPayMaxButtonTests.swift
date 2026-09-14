@@ -480,4 +480,144 @@ private enum SwapMaxButtonTestError: Error {
         state.walletBalancesState.spendability = .nothing
         #expect(!state.isPayMaxButtonEnabled)
     }
+
+    // MARK: - Masked spendability (MOB-1862 parity: the Swap/Pay form waits for the value
+    // instead of calling it insufficient, exactly like Send — SendFormStore.swift, covered by
+    // WalletBalancesMaskedSpendableTests.swift's own `sendFormHoldsTheFormWhileTheSpendableValueIsMasked`).
+
+    @Test func swapFormHoldsInsufficientFundsWhileTheSpendableValueIsMasked() {
+        var state = swapState()
+        state.amountText = "1.5"
+        // `SwapAndPay.State.amount` is hard-wired to zero under the test build (see this file's
+        // header note), so the only way to drive `amount > shieldedBalance` true here is a
+        // spendable balance below zero, exactly like the Send-form equivalent test. The
+        // production case this stands for is the opposite shape: a masked spendable value reads
+        // as zero, so any typed amount exceeds it.
+        state.walletBalancesState.shieldedBalance = Zatoshi(-1)
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isInsufficientFunds)
+        // `isValidForm` also requires `amount > 0`, which the test build always reads as zero,
+        // so it is always false in this harness regardless of masking. Asserted below for parity
+        // with the production expression, not as proof of the branch where amount > 0.
+        #expect(!state.isValidForm)
+
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(state.isSpendabilityBeingDetermined)
+        // Without the gate the form would tell the user the funds are insufficient for an amount
+        // the wallet may well be able to send once the value stops being masked.
+        #expect(!state.isInsufficientFunds)
+        #expect(!state.isValidForm)
+
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(!state.isSpendabilityBeingDetermined)
+        #expect(state.isInsufficientFunds)
+    }
+
+    @Test func swapFormUnmaskedKeepsTheOrdinaryInsufficientFundsAnswer() {
+        var state = swapState()
+        state.amountText = "1.5"
+        state.walletBalancesState.shieldedBalance = Zatoshi(500_000_000)
+        state.walletBalancesState.isSpendableMasked = false
+
+        #expect(!state.isSpendabilityBeingDetermined)
+        #expect(!state.isInsufficientFunds)
+    }
+
+    @Test func crossPayInsufficientFundsIsHeldWhileTheSpendableValueIsMasked() {
+        var state = swapState()
+        state.amountText = "1.5"
+        // `assetAmount` reads as zero under the test build (see this file's header note), so a
+        // spendable balance below zero is the only way to drive the unmasked `>=` verdict true.
+        state.walletBalancesState.shieldedBalance = Zatoshi(-1)
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isCrossPayInsufficientFunds)
+
+        state.walletBalancesState.isSpendableMasked = true
+        // The Pay screen's red field border and "You'll pay" label read this verdict directly,
+        // so it has to wait for the value exactly like `isInsufficientFunds` does.
+        #expect(!state.isCrossPayInsufficientFunds)
+
+        state.walletBalancesState.isSpendableMasked = false
+        #expect(state.isCrossPayInsufficientFunds)
+    }
+
+    // MARK: - Incoming-swap exemption from the masked gate (MOB-1862 follow-on): an incoming
+    // swap deposits another asset and pays ZEC out to this wallet, so it never spends local ZEC.
+    // Masking the wallet's own spendable value must not block it the way it blocks Swap/Pay above.
+
+    @Test func incomingSwapCanRequestAQuoteWhileLocalSpendabilityIsMasked() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = true
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(state.isValidForm)
+    }
+
+    @Test func outgoingSwapStaysBlockedWhileMasked() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = false
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(!state.isValidForm)
+    }
+
+    @Test func incomingSwapWithEmptyAddressStaysInvalid() {
+        var state = swapState()
+        state.isSwapToZecExperienceEnabled = true
+        state.address = ""
+        state.amountText = "1.5"
+        state.amountOverrideForTesting = 1.5
+        state.walletBalancesState.isSpendableMasked = true
+        #expect(!state.isValidForm)
+    }
+
+    // MARK: - Syncing without a concrete balance counts as undetermined too (MOB-1869): the
+    // masked flag alone is not the full "being determined" signal — mirrors the home balance's
+    // own gate (WalletBalancesStore.swift's `isProcessingZeroAvailableBalance`) and the Send-form
+    // equivalent above `SendFormMaxButtonTests.syncingWithoutAConcreteBalanceCountsAsUndetermined`.
+
+    @Test func syncingWithoutAConcreteBalanceCountsAsUndetermined() {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1"
+        state.amountOverrideForTesting = 1
+        state.walletBalancesState.isSpendableMasked = false
+        state.walletBalancesState.isSyncInProgress = true
+        state.walletBalancesState.concreteBalanceAccountId = nil
+        state.walletBalancesState.shieldedBalance = .zero
+
+        #expect(state.isSpendabilityBeingDetermined)
+        #expect(!state.isInsufficientFunds, "no verdict against an initial zero while the balance is unknown")
+        #expect(!state.isValidForm, "Review stays disabled")
+    }
+
+    @Test func aConcreteZeroEndsDeterminationAndAppliesTheKnownZeroVerdict() {
+        var state = swapState()
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+
+        state.address = "t1validLookingAddressForTheFixture"
+        state.amountText = "1"
+        state.amountOverrideForTesting = 1
+        state.walletBalancesState.isSpendableMasked = false
+        state.walletBalancesState.isSyncInProgress = true
+        // The sync is still running, but a concrete (zero) balance has now been published for the
+        // selected account — pending confirmations live in `shieldedWithPendingBalance`, not the
+        // spendable value — so determination is over and the known-zero verdict applies.
+        state.walletBalancesState.concreteBalanceAccountId = testWalletAccount.id
+        state.walletBalancesState.shieldedBalance = .zero
+        state.walletBalancesState.shieldedWithPendingBalance = Zatoshi(500)
+
+        #expect(!state.isSpendabilityBeingDetermined)
+        #expect(state.isInsufficientFunds)
+    }
 }

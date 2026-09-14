@@ -17,6 +17,20 @@ struct SwapAndPay {
     enum Constants {
         static let zecAsset = "zec.zec"
         static let defaultSlippage = Decimal(2.0)
+        /// NEAR refuses to refund user error below this deposit value, so it is their policy
+        /// figure rather than ours (MOB-1889). Evaluated at CTA tap against the estimated USD
+        /// value; near-boundary cases where the quote lands the other side of $300 are handled
+        /// manually by NEAR support, which is why an estimate is good enough here.
+        static let refundThresholdUsd = Decimal(300)
+    }
+
+    /// Which of the three forms the one reducer is currently serving. The store encodes this in
+    /// two booleans whose defaults overlap (`isSwapExperienceEnabled` starts true), so resolving
+    /// it once here keeps every caller from having to remember the precedence.
+    enum RefundWarningSurface: Equatable {
+        case swapToZec
+        case swapFromZec
+        case crossPay
     }
     
     @ObservableState
@@ -50,6 +64,8 @@ struct SwapAndPay {
         var isQuoteToZecPresented = false
         var isQuoteUnavailablePresented = false
         var isRefundAddressExplainerEnabled = false
+        var isRefundWarningPresented = false
+        var refundWarningDontShowAgain = false
         var isSlippagePresented = false
         var isSwapCanceled = false
         var isSwapExperienceEnabled = true
@@ -71,6 +87,12 @@ struct SwapAndPay {
         var selectedSlippageChip = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
+        @Shared(.appStorage(.refundWarningSuppressedSwapToZec))
+        var isRefundWarningSuppressedSwapToZec = false
+        @Shared(.appStorage(.refundWarningSuppressedSwapFromZec))
+        var isRefundWarningSuppressedSwapFromZec = false
+        @Shared(.appStorage(.refundWarningSuppressedCrossPay))
+        var isRefundWarningSuppressedCrossPay = false
         @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
         @Shared(.inMemory(.swapAssets)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
         var swapAssetFailedCounter = 0
@@ -99,27 +121,96 @@ struct SwapAndPay {
             "\(address)-\(selectedAsset?.chain ?? "zcash")"
         }
         
+        /// The SDK has not said what is spendable yet. Distinct from "nothing is spendable":
+        /// the answer is still coming, so the form waits for it instead of judging on a zero.
+        /// Same predicate the home balance uses: masked, or syncing without a concrete balance
+        /// yet for the selected account.
+        var isSpendabilityBeingDetermined: Bool {
+            walletBalancesState.isProcessingZeroAvailableBalance
+        }
+
+        /// Only a flow that spends local ZEC has to wait for the spendable value; an incoming swap
+        /// deposits another asset and receives ZEC, so masking must not block funding a wallet
+        /// that is still syncing. Mirrors the exemption in `isInsufficientFunds`.
+        var refundWarningSurface: RefundWarningSurface {
+            if isSwapToZecExperienceEnabled {
+                return .swapToZec
+            }
+            return isSwapExperienceEnabled ? .swapFromZec : .crossPay
+        }
+
+        var isRefundWarningSuppressed: Bool {
+            switch refundWarningSurface {
+            case .swapToZec: return isRefundWarningSuppressedSwapToZec
+            case .swapFromZec: return isRefundWarningSuppressedSwapFromZec
+            case .crossPay: return isRefundWarningSuppressedCrossPay
+            }
+        }
+
+        /// USD value of the deposit, which is the figure NEAR applies the $300 rule to.
+        ///
+        /// Derived from `amount` and the assets' own `usdPrice` rather than read off `usdAmount`:
+        /// that computed parses the formatted USD field through the live formatter and is
+        /// `_XCTIsTesting`-poisoned to 0, so a threshold built on it would read as under $300 in
+        /// every reducer test and prove nothing. `amount` has the `amountOverrideForTesting`
+        /// seam, so this stays drivable.
+        ///
+        /// The unit `amount` carries differs per surface, mirroring `isInsufficientFunds`:
+        /// ZEC when swapping FROM ZEC, the selected token otherwise, or USD directly when the
+        /// field is in USD mode. For CrossPay the deposit is ZEC but the entered token value is
+        /// the same figure in USD, so the selected asset's price is the right multiplier there
+        /// too.
+        var refundWarningDepositUsd: Decimal? {
+            if isInputInUsd {
+                return amount
+            }
+            switch refundWarningSurface {
+            case .swapFromZec:
+                guard let zecAsset, zecAsset.usdPrice > 0 else { return nil }
+                return amount * zecAsset.usdPrice
+            case .swapToZec, .crossPay:
+                guard let selectedAsset, selectedAsset.usdPrice > 0 else { return nil }
+                return amount * selectedAsset.usdPrice
+            }
+        }
+
+        /// Nil deposit value means no usable price. Unreachable in practice -- `isValidForm`
+        /// needs a selected asset and the CTA is disabled without one -- but if it ever happens
+        /// the safe answer is to warn rather than wave a swap through unwarned.
+        var isBelowRefundThreshold: Bool {
+            guard let deposit = refundWarningDepositUsd else { return true }
+            return deposit < Constants.refundThresholdUsd
+        }
+
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
             && amount > 0
             && !isInsufficientFunds
+            && (isSwapToZecExperienceEnabled || !isSpendabilityBeingDetermined)
         }
-        
+
         var isInsufficientFunds: Bool {
             guard !isSwapToZecExperienceEnabled else { return false }
 
             guard !amountText.isEmpty else {
                 return false
             }
-            
+
             guard let selectedAsset else {
                 return false
             }
-            
+
             guard let zecAsset else {
                 return false
             }
+
+            // A masked spendable value arrives as zero, so every typed amount would exceed it and
+            // the form would accuse the user of insufficient funds over a figure the SDK has
+            // simply declined to state. Holding the error needs the matching gate in `isValidForm`
+            // to go with it: without that, Swap/Pay would look enabled while the answer is
+            // unknown, and with only that, the error would still be on screen underneath it.
+            guard !isSpendabilityBeingDetermined else { return false }
 
             let spendableZec = walletBalancesState.shieldedBalance.decimalValue.decimalValue
             
@@ -148,9 +239,15 @@ struct SwapAndPay {
                 return false
             }
 
+            // Same gate as `isInsufficientFunds` above: a masked spendable value reads as zero,
+            // and the Pay screen renders this verdict directly (red field border, "You'll pay"
+            // label), so it must wait for the value instead of judging on a figure the SDK has
+            // declined to state.
+            guard !isSpendabilityBeingDetermined else { return false }
+
             let spendableZec = walletBalancesState.shieldedBalance.decimalValue.decimalValue
             let amountInToken = (assetAmount * selectedAsset.usdPrice) / zecAsset.usdPrice
-            
+
             return amountInToken >= spendableZec
         }
 
@@ -188,10 +285,16 @@ struct SwapAndPay {
 
                 return numberFormatter.number(amountText)?.decimalValue ?? 0.0
             } else {
-                return 0.0
+                // Test builds have no live formatter; a test that needs a positive amount sets this.
+                return amountOverrideForTesting ?? 0.0
             }
         }
-        
+
+        /// Interim seam: test builds can't run `amount` through the live formatter dependency
+        /// above, so it always reads zero there unless a test opts in here. Remove once the
+        /// formatter dependency is injectable in tests (MOB-1873).
+        var amountOverrideForTesting: Decimal?
+
         var assetAmount: Decimal {
             if !_XCTIsTesting {
                 @Dependency(\.numberFormatter) var numberFormatter
@@ -239,7 +342,7 @@ struct SwapAndPay {
         case eraseSearchTermTapped
         //case exchangeRateSetupChanged
         case getQuote
-        case getQuoteTapped
+        case getQuoteTapped(skipRefundWarning: Bool)
         case helpSheetRequested(Int)
         case internalBackButtonTapped
         case maxAmountFailed
@@ -300,6 +403,8 @@ struct SwapAndPay {
         case qrCodeTapped
         case refundAddressCloseTapped
         case refundAddressTapped
+        case refundWarningCancelTapped
+        case refundWarningContinueTapped
         case rememberEnlargedQR(CGImage?)
         case rememberQR(CGImage?)
         case sentTheFundsButtonTapped
@@ -785,13 +890,21 @@ struct SwapAndPay {
                 state.searchTerm = ""
                 return .send(.updateAssetsAccordingToSearchTerm)
                 
-            case .getQuoteTapped:
+            case .getQuoteTapped(let skipRefundWarning):
+                // MOB-1889: the sub-$300 warning is an interstitial, so it intercepts ahead of
+                // everything below -- the MOB-1803 UA rotation included, which is a wallet-DB
+                // write not worth spending on a swap the user is about to cancel.
+                // `skipRefundWarning` is how the sheet's Continue re-enters without re-arming
+                // the sheet; nothing else passes true.
+                if !skipRefundWarning, !state.isRefundWarningSuppressed, state.isBelowRefundThreshold {
+                    state.refundWarningDontShowAgain = false
+                    state.isRefundWarningPresented = true
+                    return .none
+                }
                 guard let account = state.selectedWalletAccount else {
                     return .send(.getQuote)
                 }
-                let isKeystone = account.vendor == .keystone
                 let uuid = account.id
-                let receivers: Set<ReceiverType> = isKeystone ? [.orchard] : [.sapling, .orchard]
                 // Rotate-ahead by one (MOB-1803): `getCustomUnifiedAddress` is a wallet-DB write
                 // that can stall for seconds behind the sync engine. `.getQuote` hard-requires
                 // `privateUnifiedAddress` (the refund address — its guard silently no-ops on nil),
@@ -801,13 +914,24 @@ struct SwapAndPay {
                     state.$selectedWalletAccount.withLock {
                         let stash = $0?.nextPrivateUA
                         $0?.privateUA = stash
-                        $0?.nextPrivateUA = nil
                     }
+                    // Clear the consumed stash in the `walletAccounts` array entry too, not only
+                    // the selected copy — otherwise switching away and back
+                    // (`WalletAccountsSheet` installs the ARRAY entry as the new selection) could
+                    // re-install and re-show `stash`, the address just promoted above, breaking
+                    // the MOB-1803 guarantee.
+                    PrivateUAStash.write(
+                        nil,
+                        forAccountId: uuid,
+                        walletAccounts: state.$walletAccounts,
+                        selectedWalletAccount: state.$selectedWalletAccount
+                    )
                     return .merge(
                         .send(.getQuote),
                         .run { send in
-                            let freshUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
-                            await send(.updateNextPrivateUA(freshUA, uuid))
+                            await PrivateUAStash.refill(accounts: [account], sdkSynchronizer: sdkSynchronizer) { ua, accountId in
+                                await send(.updateNextPrivateUA(ua, accountId))
+                            }
                         }
                         .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
                     )
@@ -816,22 +940,30 @@ struct SwapAndPay {
                 // its refund address — then generate one more UA so the stash self-heals and the
                 // next quote request promotes instantly.
                 return .run { send in
-                    let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
+                    let privateUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account))
                     await send(.updatePrivateUA(privateUA, uuid))
                     await send(.getQuote)
-                    let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, receivers)
-                    await send(.updateNextPrivateUA(stashUA, uuid))
+                    // A failed generation must not be reported as nil: `.updateNextPrivateUA`
+                    // writes through unconditionally and would clear a stash another path wrote
+                    // while this call was resolving (the same rule `PrivateUAStash.refill` follows).
+                    if let stashUA = try? await sdkSynchronizer.getCustomUnifiedAddress(uuid, PrivateUAStash.receivers(for: account)) {
+                        await send(.updateNextPrivateUA(stashUA, uuid))
+                    }
                 }
                 .cancellable(id: state.UAGenerationCancelId, cancelInFlight: true)
 
             case let .updateNextPrivateUA(nextPrivateUA, accountId):
                 // The UA was derived for `accountId`; if the selection changed while the
-                // generation was in flight, dropping it beats stashing one account's
-                // address under another.
-                state.$selectedWalletAccount.withLock {
-                    guard $0?.id == accountId else { return }
-                    $0?.nextPrivateUA = nextPrivateUA
-                }
+                // generation was in flight, dropping it beats stashing one account's address
+                // under another (the helper itself guards `id == accountId` on every slot).
+                // Writing through the array too keeps it the source of truth an account switch
+                // reads (`WalletAccountsSheet`), not just this visit's live `selectedWalletAccount`.
+                PrivateUAStash.write(
+                    nextPrivateUA,
+                    forAccountId: accountId,
+                    walletAccounts: state.$walletAccounts,
+                    selectedWalletAccount: state.$selectedWalletAccount
+                )
                 return .none
 
             case let .updatePrivateUA(privateUA, accountId):
@@ -1302,6 +1434,30 @@ struct SwapAndPay {
             case .refundAddressCloseTapped:
                 state.isRefundAddressExplainerEnabled = false
                 return .none
+
+            case .refundWarningCancelTapped:
+                // Nothing submitted and nothing persisted: ticking the box and then cancelling
+                // must not silence the warning.
+                state.isRefundWarningPresented = false
+                state.refundWarningDontShowAgain = false
+                return .none
+
+            case .refundWarningContinueTapped:
+                // The preference is written here rather than on the toggle, so that the box only
+                // takes effect for a user who actually went ahead.
+                if state.refundWarningDontShowAgain {
+                    switch state.refundWarningSurface {
+                    case .swapToZec:
+                        state.$isRefundWarningSuppressedSwapToZec.withLock { $0 = true }
+                    case .swapFromZec:
+                        state.$isRefundWarningSuppressedSwapFromZec.withLock { $0 = true }
+                    case .crossPay:
+                        state.$isRefundWarningSuppressedCrossPay.withLock { $0 = true }
+                    }
+                }
+                state.isRefundWarningPresented = false
+                state.refundWarningDontShowAgain = false
+                return .send(.getQuoteTapped(skipRefundWarning: true))
                 
                 // MARK: deposit funds
                 

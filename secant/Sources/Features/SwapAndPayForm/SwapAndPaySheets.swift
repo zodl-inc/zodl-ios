@@ -117,6 +117,62 @@ extension SwapAndPayForm {
             }
         }
     }
+    /// The sub-$300 refund warning (MOB-1889). One sheet serves all three surfaces; only the
+    /// noun in the body changes, and which suppression flag Continue writes is decided in the
+    /// reducer.
+    @ViewBuilder func refundWarningSheetContent(_ colorScheme: ColorScheme) -> some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 0) {
+                Asset.Assets.Icons.alertTriangle.image
+                    .zImage(size: 20, style: Design.Utility.WarningYellow._500)
+                    .background {
+                        Circle()
+                            .fill(Design.Utility.WarningYellow._50.color(colorScheme))
+                            .frame(width: 44, height: 44)
+                    }
+                    .padding(.top, 48)
+                    .padding(.leading, 12)
+
+                Text(localizable: .swapAndPayRefundWarningTitle)
+                    .zFont(.semiBold, size: 24, style: Design.Text.primary)
+                    .padding(.top, 24)
+                    .padding(.bottom, 12)
+
+                Text(
+                    store.refundWarningSurface == .crossPay
+                    ? String(localizable: .swapAndPayRefundWarningPayMessage)
+                    : String(localizable: .swapAndPayRefundWarningSwapMessage)
+                )
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2)
+                .padding(.bottom, 20)
+
+                ZashiToggle(
+                    isOn: $store.refundWarningDontShowAgain,
+                    label: String(localizable: .swapAndPayRefundWarningDontShowAgain)
+                )
+                .accessibilityIdentifier(AccessibilityID.RefundWarning.dontShowAgainToggle)
+                .padding(.bottom, 24)
+
+                ZashiButton(
+                    String(localizable: .generalCancel),
+                    type: .secondary
+                ) {
+                    store.send(.refundWarningCancelTapped)
+                }
+                .accessibilityIdentifier(AccessibilityID.RefundWarning.cancelButton)
+                .padding(.bottom, 8)
+
+                ZashiButton(String(localizable: .generalContinue)) {
+                    store.send(.refundWarningContinueTapped)
+                }
+                .accessibilityIdentifier(AccessibilityID.RefundWarning.continueButton)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
+            }
+        }
+    }
 }
 
 struct FocusableTextField: UIViewRepresentable {
@@ -181,4 +237,5 @@ struct FocusableTextField: UIViewRepresentable {
             isFirstResponder = false
         }
     }
+
 }

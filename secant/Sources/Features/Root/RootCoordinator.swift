@@ -287,7 +287,7 @@ extension Root {
                     migrationTickLoopEffect(state: state)
                 )
 
-            // G1 (field 2026-08-05): THE IN-FLOW COMMIT CURE. `flowFinished` below re-spawns the
+            // The in-flow commit cure for the 2026-08-05 field incident. `flowFinished` below re-spawns the
             // tick loop for a run committed mid-session — but only when the user LEAVES the flow,
             // and the session that commits then sits watching the progress screen never does: its
             // R0 open-lane credit is long spent (the log's "afterSync SKIPPED — already driven"),
@@ -721,6 +721,28 @@ extension Root {
         state.autoUpdateSwapCandidates.removeAll()
         state.homeState.transactionListState.isInvalidated = true
         state.transactionsCoordFlowState.transactionsManagerState.isInvalidated = true
+        // MOB-1856: the `.cancel` below drops whatever fetch is still running for the account just
+        // left -- TCA drops actions sent from a cancelled effect, so neither `.fetchedTransactions`
+        // nor `.transactionsFetchFailed` ever arrives for it to reset the coalescing gate itself
+        // (see `RootTransactions.swift`). Without this reset, `isTransactionsFetchInFlight` would
+        // stick `true` forever and the fresh fetch sent below would be coalesced as dirty instead of
+        // actually starting -- parking the newly-selected account's fetch forever.
+        state.isTransactionsFetchInFlight = false
+        state.isTransactionsFetchDirty = false
+        // MOB-1855: the rows still sitting in the shared `transactions` array belong to the account just
+        // LEFT -- both lists above are now invalidated and show their loading placeholder, so
+        // nothing renderable may remain for a failed fetch to leave on screen as if it were the new
+        // account's history. `transactionsAccountId` drops to `nil` alongside it, so neither the
+        // empty-fetch keep-guard nor the failure path in `RootTransactions.swift` can mistake the
+        // (now empty) array for a confirmed answer about the newly-selected account until ITS OWN
+        // fetch actually lands.
+        state.$transactions.withLock { $0 = [] }
+        state.transactionsAccountId = nil
+        // MOB-1862: derived from those same rows (`RootTransactions.swift`'s `.fetchedTransactions`
+        // handler) and read straight into the balance breakdown's "Pending" row, so it must not
+        // outlive the transactions it was computed from -- or the breakdown could transiently
+        // subtract the account just left's figure from the newly-selected account's pending lanes.
+        state.$unminedMigrationPendingValue.withLock { $0 = .zero }
         return .merge(
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),

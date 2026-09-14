@@ -455,6 +455,19 @@ extension Root.State: @retroactive Equatable {
         )
         #endif
 
+        // MOB-1889: all three surfaces, so the next wallet on this device is warned about the
+        // $300 floor rather than inheriting a previous owner's dismissal.
+        for key in [
+            String.refundWarningSuppressedSwapToZec,
+            .refundWarningSuppressedSwapFromZec,
+            .refundWarningSuppressedCrossPay
+        ] {
+            #expect(
+                removedKeys.value.contains(key),
+                "\(key) must be cleared before healing a stale database"
+            )
+        }
+
         await drain(store)
     }
 
