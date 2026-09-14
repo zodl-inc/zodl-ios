@@ -2083,12 +2083,17 @@ extension VotingCoordFlow {
                 serverPool: serverPool,
                 deliveryWindow: deliveryWindow,
                 tracker: tracker,
+                treeQueue: VotingSerialQueue(),
                 votingCrypto: votingCrypto,
                 votingAPI: votingAPI
             )
 
             // A synthetic abstain, and a question every bundle has already submitted with its
             // shares recorded, carry no bundle work at all: they are done before the walk starts.
+            // The check is what the old loop's first-iteration `checkCancellation` did for them:
+            // a cancellation landing here must not still report abstains as submitted, which
+            // `batchVoteSubmitted` would also persist.
+            try Task.checkCancellation()
             for resolution in await tracker.resolveProposalsWithoutWork() {
                 await Self.announceProposalResolution(resolution, context: context, send: send)
             }
@@ -4252,6 +4257,9 @@ extension VotingCoordFlow {
         let serverPool: VotingShareServerPool
         let deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>
         let tracker: VotingProposalCompletionTracker
+        /// Serializes each pipeline's vote-tree sync together with the witness it anchors. See
+        /// `voteBundleWork`.
+        let treeQueue: VotingSerialQueue
         let votingCrypto: VotingCryptoClient
         let votingAPI: VotingAPIClient
     }
@@ -4479,20 +4487,40 @@ extension VotingCoordFlow {
             return recoveredDelivery
         }
 
-        let anchorHeight = try await Self.syncVoteTree(
-            roundId: roundId,
-            chainNodeUrl: context.chainNodeUrl,
-            hotkeyStoredSecret: Data(context.hotkeySeed),
-            networkId: context.networkId,
-            votingCrypto: votingCrypto
-        )
-        let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
+        // MOB-1930: the tree sync and the witness it anchors are one unit. The SDK's lock
+        // serializes each of those FFI calls on its own but not the pair, so with two pipelines a
+        // sibling's sync landing between this sync and this witness is not a rare interleaving but
+        // the steady state — and nothing in the crate's contract says the witness is rooted at the
+        // `anchorHeight` we passed rather than at whatever the tree holds when it runs. Rather than
+        // rely on a guarantee nobody has stated, the pair goes through a queue every pipeline
+        // shares. Plain actor isolation would not do it: an actor is reentrant at every `await`
+        // inside the pair, which is exactly where the sibling would slip in. Both calls are cheap
+        // next to proving and chain waits, so the design loses nothing.
+        let vanWitness = try await context.treeQueue.run {
+            let anchorHeight = try await Self.syncVoteTree(
+                roundId: roundId,
+                chainNodeUrl: context.chainNodeUrl,
+                hotkeyStoredSecret: Data(context.hotkeySeed),
+                networkId: context.networkId,
+                votingCrypto: votingCrypto
+            )
+            return try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
+        }
 
         let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
             roundId, bundleIndex, context.hotkeySeed, proposalId, work.choice,
             work.numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight,
             context.singleShare
         )
+
+        // The pool can only be seen empty at a question boundary, so this question's proof was
+        // unavoidable once the walk was past that check — the broadcast is not. A vote confirmed on
+        // chain whose tally shares have nowhere to go leaves the voter with stranded shares for the
+        // recovery lane to find; a proof nobody broadcasts costs only the CPU already spent. The
+        // per-question catch reports this question failed and the next boundary ends the walk.
+        if await context.serverPool.isExhausted {
+            throw ShareDelegationError.noReachableVoteServers
+        }
 
         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
         let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
@@ -4948,6 +4976,34 @@ extension VotingCoordFlow {
 
             try await Task.sleep(for: retryDelay)
         } while true
+    }
+}
+
+// MARK: - Serial execution (MOB-1930)
+
+/// Runs `async` operations strictly one after another, in the order `run` was called.
+///
+/// This exists because **actor isolation is not serialization**. An actor guarantees that only one
+/// task touches its state at a time, but it is reentrant at every `await`: the moment an isolated
+/// method suspends, another call gets in. So an actor cannot keep two `await`s of one caller
+/// adjacent — which is exactly what a vote-tree sync and the witness anchored on it need.
+///
+/// Each `run` chains on the task the previous one left behind, so a second operation cannot start
+/// before the first has finished, however many times either suspends. An operation that throws does
+/// not break the chain: the link the next caller waits on absorbs the error, and only the caller
+/// that submitted the failing operation sees it.
+actor VotingSerialQueue {
+    private var last: Task<Void, Never>?
+
+    func run<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        let previous = last
+        let task = Task<T, Error> {
+            _ = await previous?.value
+            try Task.checkCancellation()
+            return try await operation()
+        }
+        last = Task { _ = try? await task.value }
+        return try await task.value
     }
 }
 

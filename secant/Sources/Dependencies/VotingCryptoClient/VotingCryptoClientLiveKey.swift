@@ -35,13 +35,25 @@ extension VotingCryptoClient: DependencyKey {
             stateSubject.send(dbState)
         }
 
-        /// Run one blocking `VotingRustBackend` call off the cooperative pool.
+        /// Run one blocking `VotingRustBackend` call outside the calling task.
         ///
         /// MOB-1930: every voting FFI call serializes behind the backend's own lock, and the vote
-        /// pipeline now has up to `VotingCoordFlow.maxConcurrentVoteBundles` bundles issuing them
-        /// at once. A caller that blocks on that lock from a cooperative thread takes the thread
-        /// down with it — and the pool is exactly what the other bundle's chain wait and its share
-        /// deliveries need to make progress. A detached task blocks a thread of its own instead.
+        /// pipeline now has up to `VotingCoordFlow.maxConcurrentVoteBundles` bundles issuing them at
+        /// once. What this buys is that the *caller* suspends instead of sitting inside the lock:
+        /// the block moves off the caller's task, so an actor — or `@MainActor` — caller is not held
+        /// hostage by it.
+        ///
+        /// It does **not** remove the block. `Task.detached` schedules onto the same global
+        /// cooperative pool, so the number of cooperative threads parked inside the lock at any
+        /// moment is unchanged; the block is relocated, not eliminated. A hard guarantee that the
+        /// pool cannot be starved would take a dedicated non-cooperative executor, which this
+        /// is not.
+        ///
+        /// Two traps for anything added here later. A detached task inherits no task-locals, so an
+        /// `@Dependency` resolved *inside* `body` would silently read live values rather than the
+        /// caller's overrides — resolve outside and capture the value, as every call site here
+        /// does. And `await …value` is not cancellable, so these calls cannot be interrupted once
+        /// started; they could not be before either, so that is not a regression.
         // @Sendable: captured by Task.detached; `VotingRustBackend` is `@unchecked Sendable`.
         @Sendable func detachedBackendCall<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
             try await Task.detached(priority: .userInitiated) { try body() }.value

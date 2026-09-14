@@ -11,11 +11,17 @@
 //
 //  The recorded event vocabulary, in the order one bundle produces it:
 //
+//      sync                            the vote tree was synced (the call carries no bundle)
+//      witness:<bundle>                the bundle's VAN witness was generated from that sync
 //      commit:<bundle>:<proposal>      `commitVote` built the vote commitment
 //      submit:<proposal>               the commitment was broadcast
 //      confirm:<bundle>:<proposal>     the confirmed transaction was written back
 //      deliver:<proposal>              helper-share delivery reached `delegateShares`
 //      record:<bundle>:<proposal>:<s>  share `s`'s delegation was recorded locally
+//
+//  `sync` and `witness:` are a pair: the witness has to be anchored at the height its own sync
+//  returned, so a run in which a second `sync` lands between a `sync` and its `witness:` is a bug,
+//  not an interleaving.
 //
 //  Plus one event that only a cancelled run produces:
 //
@@ -125,6 +131,11 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         var deliveryGates: [UInt32: ResumableGate] = [:]
         var confirmationGates: [BundleProposal: ResumableGate] = [:]
         var commitGates: [BundleProposal: ResumableGate] = [:]
+        /// `syncVoteTree` carries no bundle index, so the only gate it can offer is "the first call
+        /// of the run"; `firstSyncGateClaimed` is what makes it fire once rather than on every sync.
+        var firstSyncGate: ResumableGate?
+        var firstSyncGateClaimed = false
+        var poolEmptyingProposals: Set<UInt32> = []
         var deliveryFailures: [UInt32: DeliveryFailure] = [:]
         var commitFailures: Set<BundleProposal> = []
         var speculativeProofGates: [UInt32: ResumableGate] = [:]
@@ -222,6 +233,34 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
             state.delegationSubmitGates[bundleIndex] = gate
             return gate
         }
+    }
+
+    /// Registers (and so closes) the gate the **first** `syncVoteTree` of the run parks on, after
+    /// it records its `sync` event. The call carries no bundle index, so "first" is the only thing
+    /// the fixture can single out — which is all a test needs to hold one bundle's sync-and-witness
+    /// pair open and watch whether another bundle's sync slips into the middle of it.
+    @discardableResult
+    func firstTreeSyncGate() -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.firstSyncGate {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.firstSyncGate = gate
+            return gate
+        }
+    }
+
+    /// Makes `proposalId`'s delivery succeed — every share accepted and recorded — but come back
+    /// with no helper servers left in the working set.
+    ///
+    /// That is a real shape, not a contrivance: `delegateSharePayloads` prunes a server from the
+    /// set the moment a POST to it fails, and a share that already has one acceptance still counts
+    /// as delivered, so a commitment can land in full while the last server drops out behind it.
+    /// `deliverShares` prunes the pool *before* it writes the share records, which makes
+    /// `record:<b>:<p>:<last>` the point at which the batch provably has nowhere left to send.
+    func emptyServerPool(afterProposal proposalId: UInt32) {
+        knobs.withLockUnchecked { _ = $0.poolEmptyingProposals.insert(proposalId) }
     }
 
     /// Makes `delegateShares` throw for `proposalId` — after it has recorded `deliver:<proposal>`
@@ -367,9 +406,14 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         values.votingCrypto.getShareDelegations = { _ in [] }
         values.votingCrypto.getUnconfirmedDelegations = { _ in [] }
         values.votingCrypto.getVoteTxHash = { _, _, _ in .notFound }
-        values.votingCrypto.syncVoteTree = { _, _ in 100 }
-        values.votingCrypto.generateVanWitness = { _, _, anchorHeight in
-            VanWitness(
+        values.votingCrypto.syncVoteTree = { [self] _, _ in
+            recorder.record("sync")
+            await claimFirstSyncGate()?.wait()
+            return 100
+        }
+        values.votingCrypto.generateVanWitness = { [self] _, bundleIndex, anchorHeight in
+            recorder.record("witness:\(bundleIndex)")
+            return VanWitness(
                 authPath: (0..<24).map { Data(repeating: UInt8($0), count: 32) },
                 position: 0,
                 anchorHeight: anchorHeight
@@ -432,7 +476,7 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
                         acceptedByServers: serverURLs
                     )
                 },
-                remainingServerURLs: serverURLs
+                remainingServerURLs: shouldEmptyPool(proposal: proposalId) ? [] : serverURLs
             )
         }
 
@@ -567,6 +611,20 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
 
     private func commitGateIfRegistered(bundle bundleIndex: UInt32, proposal proposalId: UInt32) -> ResumableGate? {
         knobs.withLockUnchecked { $0.commitGates[BundleProposal(bundle: bundleIndex, proposal: proposalId)] }
+    }
+
+    /// Hands out the first-sync gate exactly once, so only the opening `syncVoteTree` of a run
+    /// parks on it and every later sync runs straight through.
+    private func claimFirstSyncGate() -> ResumableGate? {
+        knobs.withLockUnchecked { state in
+            guard let gate = state.firstSyncGate, !state.firstSyncGateClaimed else { return nil }
+            state.firstSyncGateClaimed = true
+            return gate
+        }
+    }
+
+    private func shouldEmptyPool(proposal proposalId: UInt32) -> Bool {
+        knobs.withLockUnchecked { $0.poolEmptyingProposals.contains(proposalId) }
     }
 
     private func deliveryFailure(proposal proposalId: UInt32) -> DeliveryFailure? {

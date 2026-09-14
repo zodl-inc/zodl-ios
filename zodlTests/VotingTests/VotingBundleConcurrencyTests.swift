@@ -149,6 +149,84 @@ struct VotingBundleConcurrencyTests {
         }
     }
 
+    /// The vote-tree sync and the VAN witness it anchors are one unit, whatever else is running.
+    ///
+    /// The SDK's lock serializes each of those FFI calls on its own but not the pair, so with two
+    /// pipelines a sibling's sync landing between one bundle's sync and its own witness would be
+    /// the steady state — and nothing in the crate's contract says the witness is rooted at the
+    /// anchor height that sync returned rather than at whatever the tree holds when it runs.
+    @Test func theTreeSyncAndItsWitnessAreNotInterleavedAcrossBundles() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 1, bundleCount: 2)
+        // Holds the very first sync open, which is the whole window the other bundle would have to
+        // slip its own sync into.
+        let firstSync = fixture.firstTreeSyncGate()
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.recorder.awaitEvent("sync")
+        let duringPair = fixture.recorder.events()
+        #expect(duringPair.filter { $0 == "sync" }.count == 1)
+        #expect(!duringPair.contains { $0.hasPrefix("witness:") })
+
+        firstSync.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 1)
+        }
+
+        // Two complete pairs, one after the other — never `sync, sync, witness, witness`. Which
+        // bundle wins the queue is the scheduler's business (both pipelines are admitted together
+        // and the queue is FIFO on arrival), so the pairing is asserted, not the bundle order.
+        let treeEvents = fixture.recorder.events().filter { $0 == "sync" || $0.hasPrefix("witness:") }
+        #expect(treeEvents.count == 4)
+        guard treeEvents.count == 4 else { return }
+        #expect(treeEvents[0] == "sync")
+        #expect(treeEvents[1].hasPrefix("witness:"))
+        #expect(treeEvents[2] == "sync")
+        #expect(treeEvents[3].hasPrefix("witness:"))
+        #expect(Set([treeEvents[1], treeEvents[3]]) == ["witness:0", "witness:1"])
+    }
+
+    /// The helper pool can only be seen empty at a question boundary, so a question whose proof was
+    /// already under way when the last server dropped out cannot avoid being proved. It can avoid
+    /// being broadcast — and it must: a vote confirmed on chain whose tally shares have nowhere to
+    /// go leaves the voter with stranded shares, where an unbroadcast proof costs only CPU.
+    @Test func aVoteProvedAfterThePoolRanDryIsNeverBroadcast() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 3, bundleCount: 1)
+        // Question 1's shares all land, but every helper drops out of the working set behind them.
+        fixture.emptyServerPool(afterProposal: 1)
+        let firstDelivery = fixture.gate(forProposal: 1)
+        let secondQuestionProof = fixture.commitGate(forBundle: 0, proposal: 2)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        // Question 1's delivery is parked before it can prune anything, and question 2 is already
+        // past its boundary check — its witness is generated — so the pool it saw was still full.
+        await fixture.recorder.awaitEvent("deliver:1")
+        await fixture.recorder.awaitEvents { $0.filter { $0 == "witness:0" }.count >= 2 }
+
+        // Let the delivery finish and empty the pool, then release the proof it was racing.
+        firstDelivery.open()
+        await fixture.recorder.awaitEvent("record:0:1:\(VotingBatchSubmissionFixture.shareCount - 1)")
+        secondQuestionProof.open()
+
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus.isFailureState == true
+        }
+
+        let events = fixture.recorder.events()
+        #expect(events.contains("commit:0:2"))
+        // The proof was spent; the on-chain vote was not.
+        #expect(!events.contains("submit:2"))
+        // And the pipeline stops there rather than proving question 3 as well.
+        #expect(!events.contains("commit:0:3"))
+
+        let session = try #require(store.state.roundCache[roundId])
+        #expect(Set(session.batchVoteErrors.keys) == [2])
+        #expect(Set(session.votes.keys) == [1])
+    }
+
     // MARK: - Helpers
 
     private func makeStore(_ fixture: VotingBatchSubmissionFixture) -> StoreOf<VotingCoordFlow> {
