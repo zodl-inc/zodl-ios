@@ -10,7 +10,8 @@
 //  each one a 25 s read, with up to nine reads in flight together with the migration ones (field,
 //  2026-09-14). The fetch is now EDGE-triggered: it fires when the status BECOMES `.upToDate`; the
 //  transaction events, the initial one-shot fetch and the 30 s pending-transaction poller cover
-//  everything else, and these tests pin all three.
+//  everything else. The transaction events and the initial one-shot fetch are what these tests
+//  pin; the poller stays pinned by `RootPendingTransactionRefreshTests.swift`.
 //
 //  Mirrors `RootPendingTransactionRefreshTests.swift`: a plain `Store`, a file-scoped
 //  `baseNoOpDependencies`, a `DispatchQueue.test` scheduler injected as `mainQueue` so the 0.2 s

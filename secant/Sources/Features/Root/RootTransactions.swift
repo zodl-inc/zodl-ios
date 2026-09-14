@@ -66,11 +66,17 @@ extension Root {
                         // progress and `.error` pass the dedup and map to `.noChangeInTransactions`
                         // as before. The dedup state is per subscription, so every
                         // `.observeTransactions` start (cold launch, `.retryStart`) sees the next
-                        // `.upToDate` as an edge.
+                        // `.upToDate` as an edge. The dedup deliberately runs BEFORE the throttle:
+                        // a `latest: true` window holding `[.syncing, .upToDate]` emits only
+                        // `.upToDate`, which dedupping afterwards would collapse against the
+                        // PREVIOUS `.upToDate` and drop the edge entirely. Deduplicating first
+                        // leaves the throttle a stream of distinct statuses, where the worst a
+                        // window can do is coalesce consecutive identical ones -- never an edge
+                        // into its predecessor.
                         sdkSynchronizer.stateStream()
-                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .map(\.syncStatus)
                             .removeDuplicates()
+                            .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
                             .map { status in
                                 if status == .upToDate {
                                     return Root.Action.fetchTransactionsForTheSelectedAccount
