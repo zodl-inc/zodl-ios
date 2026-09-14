@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Changed
+
+- [MOB-1927] Coinholder polling supports rounds with up to 50 questions and works on vote chains upgraded to the new voting circuit. A round the app cannot read is hidden on its own instead of hiding every round.
+
 ## [3.13.0] - 2026-09-10
 
 ### Changed

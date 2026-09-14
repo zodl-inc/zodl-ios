@@ -707,15 +707,24 @@ private func hexString(from data: Data) -> String {
 
 // MARK: - Response Parsers
 
+/// Proposal ids the vote circuit accepts. `zcash_voting` 4.0 raised the circuit's limit from 15
+/// to 50 (`MAX_PROPOSAL_ID`); the count bound follows because every proposal in a round needs
+/// its own id in this range.
+let votingProposalIdRange: ClosedRange<UInt32> = 1...50
+
 private func validateProposals(_ proposals: [VotingProposal]) throws {
-    guard (1...15).contains(proposals.count) else {
-        throw SvAPIError.invalidResponse("proposals must contain between 1 and 15 entries")
+    guard (1...Int(votingProposalIdRange.upperBound)).contains(proposals.count) else {
+        throw SvAPIError.invalidResponse(
+            "proposals must contain between 1 and \(votingProposalIdRange.upperBound) entries"
+        )
     }
 
     var proposalIds = Set<UInt32>()
     for proposal in proposals {
-        guard (1...15).contains(proposal.id) else {
-            throw SvAPIError.invalidResponse("proposal id must be in the range 1 to 15")
+        guard votingProposalIdRange.contains(proposal.id) else {
+            throw SvAPIError.invalidResponse(
+                "proposal id must be in the range \(votingProposalIdRange.lowerBound) to \(votingProposalIdRange.upperBound)"
+            )
         }
         guard proposalIds.insert(proposal.id).inserted else {
             throw SvAPIError.invalidResponse("proposal ids must be unique")
@@ -796,6 +805,19 @@ func parseVotingSession(from round: [String: Any]) throws -> VotingSession {
     )
 }
 
+/// Parses every round entry the server returned, dropping an entry that fails validation so one
+/// malformed or not-yet-supported round hides only itself instead of emptying the whole list.
+func parseVotingSessions(skippingInvalidRounds rounds: [[String: Any]]) -> [VotingSession] {
+    rounds.compactMap { round in
+        do {
+            return try parseVotingSession(from: round)
+        } catch {
+            LoggerProxy.error("Skipping a round that failed validation: \(error)")
+            return nil
+        }
+    }
+}
+
 /// Authenticate a chain-sourced round before the wallet treats it as usable.
 ///
 /// Vote servers are endpoint-discovery targets from the dynamic config, not
@@ -831,8 +853,7 @@ private func authenticateVotingSession(_ session: VotingSession) async throws ->
 
 private func authenticatedVotingSessions(from rounds: [[String: Any]]) async throws -> [VotingSession] {
     var authenticated: [VotingSession] = []
-    for round in rounds {
-        let session = try parseVotingSession(from: round)
+    for session in parseVotingSessions(skippingInvalidRounds: rounds) {
         do {
             authenticated.append(try await authenticateVotingSession(session))
         } catch SvAPIError.noActiveVotingSession {
