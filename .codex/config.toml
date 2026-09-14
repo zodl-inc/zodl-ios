@@ -1,0 +1,13 @@
+# Repository permissions matching .claude/settings.json.
+# Select zodl-secrets in the app's permissions menu for existing tasks.
+# Legacy sandbox_mode settings and --sandbox override default_permissions.
+default_permissions = "zodl-secrets"
+
+[permissions.zodl-secrets]
+description = "Workspace access with Zodl credential files blocked."
+extends = ":workspace"
+
+[permissions.zodl-secrets.filesystem.":workspace_roots"]
+"secant/Resources/PartnerKeys.plist" = "deny"
+"fastlane/.env" = "deny"
+"fastlane/**/*.p8" = "deny"
