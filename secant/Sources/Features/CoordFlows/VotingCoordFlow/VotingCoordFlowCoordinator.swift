@@ -2341,6 +2341,10 @@ extension VotingCoordFlow {
             // effect — normal end, failure, or cancellation — or the next round's precompute
             // would start already promoted and prove at interactive priority behind the
             // user's back.
+            // A Confirm that lands in the last instant of the previous run can arm that shared
+            // promotion after the run's own reset has already run; disarm it again here so this
+            // run starts unpromoted whatever the previous one left behind.
+            votingCrypto.resetDelegationProvingPromotion()
             defer { votingCrypto.resetDelegationProvingPromotion() }
 
             let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
@@ -4413,6 +4417,13 @@ extension VotingCoordFlow {
             if let cachedRegistration {
                 LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
                 registration = cachedRegistration
+                // The interactive prover would have driven the authorization progress here; a
+                // reused proof has none to report, so count the bundle as authorized instead of
+                // leaving the Confirm screen at zero through the chain confirmation below.
+                await send(.delegationProofProgress(
+                    roundId: roundId,
+                    progress: Double(bundleIndex + 1) / Double(bundleCount)
+                ))
             } else {
                 // Finding #10 (CHP.md): `zcash_voting` stores `pczt_sighash` write-once per
                 // (round, wallet, bundle) and every `buildVotingPczt` samples fresh randomness,

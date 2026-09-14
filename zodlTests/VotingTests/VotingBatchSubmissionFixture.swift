@@ -130,6 +130,7 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         var speculativeProofGates: [UInt32: ResumableGate] = [:]
         var speculativeProofFinishGates: [UInt32: ResumableGate] = [:]
         var speculativeProofFailures: Set<UInt32> = []
+        var delegationSubmitGates: [UInt32: ResumableGate] = [:]
         /// Bundles whose `buildVotingPczt` has run, and whose proof has completed — the two
         /// pieces of persisted state the delegation pipeline probes for.
         var storedSetups: Set<UInt32> = []
@@ -204,6 +205,21 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
             }
             let gate = ResumableGate()
             state.commitGates[key] = gate
+            return gate
+        }
+    }
+
+    /// Registers (and so closes) the gate `submitDelegation` parks on for one bundle, after its
+    /// registration was assembled and before its `deleg-submit:` event. Pins the state the
+    /// Confirm screen shows while a reused proof waits on the chain.
+    @discardableResult
+    func delegationSubmitGate(forBundle bundleIndex: UInt32) -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.delegationSubmitGates[bundleIndex] {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.delegationSubmitGates[bundleIndex] = gate
             return gate
         }
     }
@@ -477,6 +493,9 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         }
         values.votingAPI.submitDelegation = { [self] registration in
             let bundleIndex = UInt32(registration.sighash.first ?? 0)
+            if let gate = knobs.withLockUnchecked({ $0.delegationSubmitGates[bundleIndex] }) {
+                await gate.wait()
+            }
             recorder.record("deleg-submit:\(bundleIndex)")
             return TxResult(txHash: "\(Self.delegationTxPrefix)\(bundleIndex)", code: 0)
         }

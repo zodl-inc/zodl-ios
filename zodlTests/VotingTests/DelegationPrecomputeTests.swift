@@ -45,7 +45,7 @@ struct DelegationPrecomputeTests {
         let events = fixture.recorder.events()
         #expect(
             events == [
-                "pczt:0", "pir:0", "specprove:0",
+                "reset-promotion", "pczt:0", "pir:0", "specprove:0",
                 "pczt:1", "pir:1", "specprove:1",
                 "reset-promotion"
             ]
@@ -170,6 +170,47 @@ struct DelegationPrecomputeTests {
         // Both bundles ended up registered on chain regardless of which lane proved them.
         #expect(events.contains("van:0"))
         #expect(events.contains("van:1"))
+    }
+
+    /// A Confirm that lands in the last instant of a run can arm the shared promotion after
+    /// that run's own reset; the next run must therefore start by disarming it.
+    @Test func aNewRunDisarmsAnyLeftoverPromotionBeforeItsFirstProof() async throws {
+        let fixture = makeFixture()
+        let store = makeStore(fixture)
+
+        store.send(.maybeStartDelegationPrecompute(roundId: roundId))
+        await fixture.recorder.awaitEvent("specprove:0")
+
+        let events = fixture.recorder.events()
+        let resetIndex = try #require(events.firstIndex(of: "reset-promotion"))
+        let proofIndex = try #require(events.firstIndex(of: "specprove:0"))
+        #expect(resetIndex < proofIndex)
+    }
+
+    /// With every proof already stored, the pipeline after Confirm reuses each bundle's
+    /// registration without proving; the authorization progress the Confirm screen shows must
+    /// still move, one step per bundle, instead of sitting at zero through the chain wait.
+    @Test func reusingAStoredProofMovesTheAuthorizationProgress() async throws {
+        let fixture = makeFixture()
+        let secondSubmit = fixture.delegationSubmitGate(forBundle: 1)
+        let store = makeStore(fixture)
+
+        store.send(.maybeStartDelegationPrecompute(roundId: roundId))
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.delegationPrecomputeStatus == .ready
+        }
+
+        store.send(.submitAllDraftsTapped(roundId: roundId))
+        await fixture.recorder.awaitEvent("registration:1")
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.delegationProofStatus == .generating(progress: 1.0)
+        }
+
+        secondSubmit.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.delegationProofStatus == .complete
+        }
+        #expect(!fixture.recorder.events().contains { $0.hasPrefix("prove:") })
     }
 
     // MARK: - Helpers
