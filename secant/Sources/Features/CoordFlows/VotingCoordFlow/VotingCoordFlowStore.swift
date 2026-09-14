@@ -310,6 +310,10 @@ struct VotingCoordFlow {
         /// while the user is choosing votes so the actual ZKP doesn't
         /// start from cold.
         case maybeStartDelegationPrecompute(roundId: String)
+        /// Overall progress of the background (speculative) authorization
+        /// proof, 0...1 across every bundle. Mirrored onto
+        /// `delegationProofStatus` only while a Confirm is waiting on it.
+        case delegationPrecomputeProgress(roundId: String, progress: Double)
         case delegationPrecomputeCompleted(roundId: String)
         case delegationPrecomputeFailed(roundId: String, error: String)
 
