@@ -227,6 +227,43 @@ struct VotingBundleConcurrencyTests {
         #expect(Set(session.votes.keys) == [1])
     }
 
+    /// The post-proof check runs before the broadcast waits for the transaction guard, and the
+    /// delivery it waits behind can be the one that empties the pool. The API re-checks the pool
+    /// inside the guard right before the POST — the fixture's broadcast gate stands in for that
+    /// wait — so a vote whose servers vanished while it queued is never broadcast.
+    @Test func aVoteWhosePoolEmptiedWhileItsBroadcastWasQueuedIsNeverBroadcast() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 3, bundleCount: 1)
+        // Question 1's shares all land, but every helper drops out of the working set behind them.
+        fixture.emptyServerPool(afterProposal: 1)
+        let firstDelivery = fixture.gate(forProposal: 1)
+        let secondBroadcast = fixture.broadcastGate(forProposal: 2)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        // Question 2 is proved and its broadcast is parked, i.e. it passed the post-proof check
+        // while the pool was still full; question 1's delivery has not pruned anything yet.
+        await fixture.recorder.awaitEvent("broadcast:2")
+        #expect(fixture.recorder.events().contains("commit:0:2"))
+
+        // The delivery finishes and empties the pool while the broadcast waits its turn.
+        firstDelivery.open()
+        await fixture.recorder.awaitEvent("record:0:1:\(VotingBatchSubmissionFixture.shareCount - 1)")
+        secondBroadcast.open()
+
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus.isFailureState == true
+        }
+
+        let events = fixture.recorder.events()
+        #expect(!events.contains("submit:2"))
+        #expect(!events.contains("commit:0:3"))
+
+        let session = try #require(store.state.roundCache[roundId])
+        #expect(Set(session.batchVoteErrors.keys) == [2])
+        #expect(Set(session.votes.keys) == [1])
+    }
+
     // MARK: - Helpers
 
     private func makeStore(_ fixture: VotingBatchSubmissionFixture) -> StoreOf<VotingCoordFlow> {
