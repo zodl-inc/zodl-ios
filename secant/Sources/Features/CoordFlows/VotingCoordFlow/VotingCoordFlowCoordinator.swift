@@ -1229,6 +1229,7 @@ extension VotingCoordFlow {
                     roundSession.delegationProofStatus = .notStarted
                     roundSession.isDelegationProofInFlight = false
                     roundSession.delegationPrecomputeStatus = .notStarted
+                    roundSession.delegationPrecomputeProgress = nil
                     roundSession.isDelegationPrecomputeInFlight = false
                     if state.isKeystoneUser {
                         roundSession.currentKeystoneBundleIndex =

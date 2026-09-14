@@ -775,7 +775,7 @@ final class VotingProvingPromotion: Sendable {
     /// A speculative proof ended. Releases the boost once the last in-flight proof ends.
     func speculativeProofEnded() {
         let shouldRelease = state.withLock { state -> Bool in
-            state.inFlight -= 1
+            state.inFlight = max(0, state.inFlight - 1)
             return state.inFlight == 0
         }
         if shouldRelease {
@@ -818,7 +818,8 @@ final class VotingProvingPromotion: Sendable {
 
     /// Registers the continuation the held task is waiting on. If `release()` already ran
     /// before this call reached it — the early-release race — resumes immediately instead of
-    /// parking it.
+    /// parking it, then re-checks whether a proof that started during that window still needs a
+    /// hold: `acquireIfNeeded()` refused it while this reservation was still active.
     private func register(_ continuation: CheckedContinuation<Void, Never>) {
         let resumeNow = state.withLock { state -> Bool in
             if state.releaseRequested {
@@ -830,6 +831,7 @@ final class VotingProvingPromotion: Sendable {
         }
         if resumeNow {
             continuation.resume()
+            acquireIfNeeded()
         }
     }
 

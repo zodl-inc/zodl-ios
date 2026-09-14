@@ -120,6 +120,35 @@ struct VotingProvingPromotionTests {
         await records.countReached(2)
         #expect(records.values == ["begin", "end"])
     }
+    @Test func aProofStartingDuringAnEarlyReleaseStillGetsTheBoost() async throws {
+        let records = SignalledRecords<String>()
+        let gate = ResumableGate()
+        // The gate parks the hold task after it has entered the boost but before its
+        // continuation registers, holding the early-release window open on purpose.
+        let promotion = VotingProvingPromotion(boost: { body in
+            records.record("begin")
+            await gate.wait()
+            await body()
+            records.record("end")
+        })
+
+        promotion.promote()
+        promotion.speculativeProofStarted()
+        await records.countReached(1)
+        promotion.speculativeProofEnded()
+        promotion.speculativeProofStarted()
+        gate.open()
+
+        // The parked hold releases and, because a proof is still in flight, a fresh hold begins;
+        // the order of that end and the new begin is not fixed, so count them.
+        await records.countReached(3)
+        #expect(records.values.filter { $0 == "begin" }.count == 2)
+        #expect(records.values.filter { $0 == "end" }.count == 1)
+
+        promotion.speculativeProofEnded()
+        await records.countReached(4)
+        #expect(records.values.filter { $0 == "end" }.count == 2)
+    }
 }
 
 /// A `VotingProvingPromotion.Boost` that records "begin", awaits the body, then records "end" —
