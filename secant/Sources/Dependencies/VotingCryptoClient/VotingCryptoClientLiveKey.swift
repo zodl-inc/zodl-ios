@@ -3,6 +3,7 @@
 import ComposableArchitecture
 import VotingRecovery
 import Foundation
+import os
 @preconcurrency import ZcashLightClientKit
 
 // MARK: - Live key
@@ -10,6 +11,7 @@ import Foundation
 extension VotingCryptoClient: DependencyKey {
     static var liveValue: Self {
         let dbActor = DatabaseActor()
+        let promotion = VotingProvingPromotion()
         let stateSubject = CurrentValueSubject<VotingDbState, Never>(.initial)
 
         /// Query rounds + votes tables and publish combined state.
@@ -370,6 +372,45 @@ extension VotingCryptoClient: DependencyKey {
                     return Data(result.proof)
                 }
             },
+            // swiftlint:disable:next line_length
+            precomputeDelegationProof: { roundId, bundleIndex, bundleNotes, orchardFvk, hotkeyStoredSecret, seedFingerprint, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
+                VotingCryptoClient.makeDelegationProofStream { progress in
+                    let backend = try await dbActor.backend()
+                    let keys = VotingDelegationKeyInputs(
+                        fvk: [UInt8](orchardFvk),
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        seedFingerprint: [UInt8](seedFingerprint),
+                        accountIndex: accountIndex,
+                        roundName: roundName
+                    )
+                    let params = VotingDelegationProofParams(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        notes: bundleNotes.map { $0.toSDK() },
+                        keys: keys
+                    )
+                    // Re-check cancellation after the awaits above, same as the interactive path.
+                    try Task.checkCancellation()
+                    promotion.speculativeProofStarted()
+                    defer { promotion.speculativeProofEnded() }
+                    let result = try await backend.buildAndProveDelegation(
+                        params,
+                        pirEndpoints: pirEndpoints,
+                        expectedSnapshotHeight: expectedSnapshotHeight,
+                        pirLayout: VotingPirLayout(
+                            pirDepth: pirDepth,
+                            tier0Layers: tier0Layers,
+                            tier1Layers: tier1Layers,
+                            polyLen: polyLen
+                        ),
+                        intent: .speculative,
+                        progress: progress
+                    )
+                    return Data(result.proof)
+                }
+            },
+            promoteDelegationProving: { promotion.promote() },
+            resetDelegationProvingPromotion: { promotion.reset() },
             extractOrchardFvkFromUfvk: { ufvkStr, networkId in
                 Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
             },
@@ -694,6 +735,116 @@ extension VotingCryptoClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+// MARK: - Proving promotion
+
+/// Pairs the SDK's scoped interactive proving boost with the speculative proofs of one
+/// precompute run. `promote()` arms the promotion and, if a speculative proof is in flight,
+/// starts holding the boost; a speculative proof that starts while armed also holds it; the
+/// hold is released when the last in-flight proof ends or when the run is reset. The boost is
+/// held by a single task running `withInteractiveProvingBoost`, whose body waits on a
+/// continuation, so every begin is paired with its end by the helper itself.
+final class VotingProvingPromotion: Sendable {
+    typealias Boost = @Sendable (_ body: @Sendable () async -> Void) async -> Void
+
+    private struct State {
+        var inFlight = 0
+        var armed = false
+        var holdActive = false
+        var releaseRequested = false
+        var release: CheckedContinuation<Void, Never>?
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+    private let boost: Boost
+
+    init(boost: @escaping Boost = { body in await VotingRustBackend.withInteractiveProvingBoost { await body() } }) {
+        state = OSAllocatedUnfairLock(initialState: State())
+        self.boost = boost
+    }
+
+    /// A speculative proof started. If the promotion is armed and no hold is active yet, this
+    /// starts holding the boost.
+    func speculativeProofStarted() {
+        state.withLock { $0.inFlight += 1 }
+        acquireIfNeeded()
+    }
+
+    /// A speculative proof ended. Releases the boost once the last in-flight proof ends.
+    func speculativeProofEnded() {
+        let shouldRelease = state.withLock { state -> Bool in
+            state.inFlight -= 1
+            return state.inFlight == 0
+        }
+        if shouldRelease {
+            release()
+        }
+    }
+
+    /// Arms the promotion. If a speculative proof is already in flight, starts holding the
+    /// boost immediately.
+    func promote() {
+        state.withLock { $0.armed = true }
+        acquireIfNeeded()
+    }
+
+    /// Disarms the promotion and releases the boost, so a promotion from a finished or failed
+    /// precompute run can never leak into the next one.
+    func reset() {
+        state.withLock { $0.armed = false }
+        release()
+    }
+
+    /// Starts holding the boost when armed, in flight, and not already held — the same
+    /// condition regardless of whether `speculativeProofStarted()` or `promote()` triggered it.
+    private func acquireIfNeeded() {
+        let shouldAcquire = state.withLock { state -> Bool in
+            guard state.armed, state.inFlight > 0, !state.holdActive else { return false }
+            state.holdActive = true
+            state.releaseRequested = false
+            return true
+        }
+        guard shouldAcquire else { return }
+        Task {
+            await self.boost {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.register(continuation)
+                }
+            }
+        }
+    }
+
+    /// Registers the continuation the held task is waiting on. If `release()` already ran
+    /// before this call reached it — the early-release race — resumes immediately instead of
+    /// parking it.
+    private func register(_ continuation: CheckedContinuation<Void, Never>) {
+        let resumeNow = state.withLock { state -> Bool in
+            if state.releaseRequested {
+                state.holdActive = false
+                return true
+            }
+            state.release = continuation
+            return false
+        }
+        if resumeNow {
+            continuation.resume()
+        }
+    }
+
+    /// Ends the current hold if its continuation is already registered. Otherwise — the
+    /// early-release race — only marks the release requested; `holdActive` stays true (still
+    /// reserved by the in-flight acquire) until `register(_:)` sees the request and resumes.
+    private func release() {
+        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.releaseRequested = true
+            guard let continuation = state.release else { return nil }
+            state.release = nil
+            state.holdActive = false
+            return continuation
+        }
+        continuation?.resume()
     }
 }
 

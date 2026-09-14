@@ -137,6 +137,35 @@ struct VotingCryptoClient {
         _ polyLen: UInt32
     ) -> AsyncThrowingStream<ProofEvent, Error>
         = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+    /// Prepares bundle `bundleIndex`'s delegation proof before the user reaches Confirm, using
+    /// only viewing material — the Orchard FVK, the stored hotkey secret, and the seed
+    /// fingerprint — never the wallet seed. Runs at speculative priority
+    /// (`VotingProvingIntent.speculative`) until `promoteDelegationProving` raises the proving
+    /// pool for it.
+    var precomputeDelegationProof: @Sendable (
+        _ roundId: String,
+        _ bundleIndex: UInt32,
+        _ bundleNotes: [NoteInfo],
+        _ orchardFvk: Data,
+        _ hotkeyStoredSecret: [UInt8],
+        _ seedFingerprint: Data,
+        _ accountIndex: UInt32,
+        _ roundName: String,
+        _ pirEndpoints: [String],
+        _ expectedSnapshotHeight: UInt64,
+        _ pirDepth: UInt32,
+        _ tier0Layers: UInt32,
+        _ tier1Layers: UInt32,
+        _ polyLen: UInt32
+    ) -> AsyncThrowingStream<ProofEvent, Error>
+        = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
+    /// Raises the proving pool for the rest of the current speculative proof — and any further
+    /// speculative proofs of this flow — until the precompute run finishes. Call once Confirm
+    /// needs the proof that `precomputeDelegationProof` started ahead of time.
+    var promoteDelegationProving: @Sendable () async -> Void = {}
+    /// Clears the promotion armed by `promoteDelegationProving`, so it cannot leak into the next
+    /// precompute run. Called when the precompute effect finishes or fails.
+    var resetDelegationProvingPromotion: @Sendable () -> Void = {}
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
     /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.
