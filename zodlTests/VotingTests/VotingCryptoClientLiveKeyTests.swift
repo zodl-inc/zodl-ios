@@ -135,6 +135,60 @@ import os
         await records.countReached(2)
         #expect(records.values == ["begin", "end"])
     }
+
+    /// The producer's own priority is what `prove` observes: the stream hands events over through a
+    /// continuation, not a task handle, so the consumer — the test's own high-priority task here —
+    /// cannot escalate it. A detached task without an explicit priority runs at `.medium`; the
+    /// speculative precompute asks for `.utility` so the proof it awaits is not dragged up.
+    @Test func theProducerRunsAtTheRequestedPriority() async throws {
+        for priority in [TaskPriority.utility, TaskPriority.userInitiated] {
+            let observed = SignalledRecords<TaskPriority>()
+            let stream = VotingCryptoClient.makeDelegationProofStream(priority: priority, prove: { _ in
+                observed.record(Task.currentPriority)
+                return Data()
+            })
+            for try await _ in stream { }
+            #expect(observed.values == [priority])
+        }
+    }
+
+    /// The shape the live speculative closure has once it reaches the SDK: the speculative intent
+    /// runs the proof on `Task.detached(priority: .utility)` and awaits its value. Awaiting a task
+    /// handle escalates the awaited task to the awaiting task's priority, so a medium producer drags
+    /// the proof up to medium the moment it awaits. A utility producer leaves it alone.
+    @available(iOS 26.0, *)
+    @Test func aUtilityProducerDoesNotEscalateTheProofItAwaits() async throws {
+        let escalations = SignalledRecords<TaskPriority>()
+        let observed = SignalledRecords<TaskPriority>()
+        let producer = SignalledRecords<String>()
+        let proofEntered = ResumableGate()
+        let proofRelease = ResumableGate()
+
+        let stream = VotingCryptoClient.makeDelegationProofStream(priority: .utility, prove: { _ in
+            let proof = Task.detached(priority: .utility) {
+                await withTaskPriorityEscalationHandler {
+                    proofEntered.open()
+                    await proofRelease.wait()
+                } onPriorityEscalated: { _, newPriority in
+                    escalations.record(newPriority)
+                }
+                observed.record(Task.currentPriority)
+                return Data()
+            }
+            producer.record("awaiting")
+            return await proof.value
+        })
+        let consumer = Task<Void, Error> {
+            for try await _ in stream { }
+        }
+        await proofEntered.wait()
+        await producer.recorded { $0.contains("awaiting") }
+        proofRelease.open()
+        try await consumer.value
+
+        #expect(escalations.values.isEmpty)
+        #expect(observed.values == [.utility])
+    }
 }
 
 /// Spy standing in for the delegation-proving backend call inside `makeDelegationProofStream`.

@@ -374,7 +374,7 @@ extension VotingCryptoClient: DependencyKey {
             },
             // swiftlint:disable:next line_length
             precomputeDelegationProof: { roundId, bundleIndex, bundleNotes, orchardFvk, hotkeyStoredSecret, seedFingerprint, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
-                VotingCryptoClient.makeDelegationProofStream { progress in
+                VotingCryptoClient.makeDelegationProofStream(priority: .utility) { progress in
                     let backend = try await dbActor.backend()
                     let keys = VotingDelegationKeyInputs(
                         fvk: [UInt8](orchardFvk),
@@ -714,11 +714,17 @@ extension VotingCryptoClient {
     /// completed proof to a stream nobody is consuming anymore.
     /// Factored out of `liveValue` so a test can substitute a spy `prove` and drive the stream's
     /// cancellation behavior directly.
+    /// `priority` is the producer's own priority. The speculative precompute passes `.utility`: a
+    /// detached task defaults to `.medium`, and a task that awaits another task's handle escalates
+    /// that task to its own priority, so a medium producer would drag the SDK's utility proving
+    /// task up to medium the moment it awaited it. The interactive path keeps the default; its
+    /// proving priority comes from the SDK's interactive intent, not from the producer.
     static func makeDelegationProofStream(
+        priority: TaskPriority? = nil,
         prove: @escaping @Sendable (_ progress: @escaping @Sendable (Double) -> Void) async throws -> Data
     ) -> AsyncThrowingStream<ProofEvent, Error> {
         AsyncThrowingStream<ProofEvent, Error> { continuation in
-            let task = Task.detached {
+            let task = Task.detached(priority: priority) {
                 guard !Task.isCancelled else {
                     continuation.finish()
                     return
