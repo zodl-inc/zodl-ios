@@ -2035,193 +2035,228 @@ extension VotingCoordFlow {
             let serverPool = VotingShareServerPool(urls: voteServerURLs)
             var proposalsAwaitingDelivery: [AwaitingShareDelivery] = []
 
-            draftLoop: for (draftIndex, draft) in drafts.enumerated() {
-                let proposalId = draft.key
-                let choice = draft.value
-                let proposal = proposals.first { $0.id == proposalId }
-                let numOptions = UInt32(proposal?.options.count ?? 3)
+            let settlement: ShareDeliverySettlement
+            do {
+                // MOB-1928: one handler covers the whole walk, not just the drain. The window owns
+                // unstructured tasks, so cancelling this effect never reaches them on its own, and
+                // nothing below would notice a cancellation either — the walk would keep proving
+                // and broadcasting votes for a flow the user has already left. `onCancel` cancels
+                // and joins the deliveries, the per-iteration `checkCancellation` ends the walk,
+                // and the `catch` awaits that same cancel so the effect can never return while a
+                // delivery is still writing share records.
+                settlement = try await withTaskCancellationHandler {
+                    draftLoop: for (draftIndex, draft) in drafts.enumerated() {
+                        let proposalId = draft.key
+                        let choice = draft.value
+                        let proposal = proposals.first { $0.id == proposalId }
+                        let numOptions = UInt32(proposal?.options.count ?? 3)
 
-                // Every helper server has proved unreachable — a delivery that ended in
-                // `noReachableVoteServers` empties the pool — so there is nowhere left to send
-                // shares and proving further votes would only strand them.
-                if await serverPool.isExhausted {
-                    break draftLoop
-                }
+                        // Outside the per-proposal `do` on purpose: a cancelled batch must end the
+                        // walk, not mark this proposal failed and go on proving the next one. By the
+                        // time this fires the flow is already gone (`.dismissFlow`, an account
+                        // switch, or a retry's `cancelInFlight`), so another proof — and another
+                        // on-chain broadcast — would be work for a screen the user has left.
+                        try Task.checkCancellation()
 
-                await send(.batchSubmissionProgress(
-                    roundId: roundId,
-                    currentIndex: draftIndex,
-                    totalCount: totalCount,
-                    proposalId: proposalId
-                ))
-
-                // Synthetic abstain: no on-chain submission, just mark done.
-                if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
-                    successCount += 1
-                    await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
-                    continue
-                }
-
-                do {
-                    let existingVotes = try await votingCrypto.getVotes(roundId)
-                    let submittedBundles = Set(
-                        existingVotes
-                            .filter { $0.proposalId == proposalId && $0.submitted }
-                            .map(\.bundleIndex)
-                    )
-                    // A tally-share delegation failure can land *after* `markVoteSubmitted` runs
-                    // (see Task 8E), leaving `submitted == true` with zero recorded share
-                    // delegations — no other lane ever retries an orphaned share. A bundle only
-                    // counts as done once it is both submitted AND has a recorded delegation for
-                    // this proposal; anything less must fall through to `tryRecoverInflightVote`
-                    // below, which re-confirms the cached tx and re-runs share delegation end to end.
-                    let bundlesWithRecordedShares = Set(
-                        try await votingCrypto.getShareDelegations(roundId)
-                            .filter { $0.proposalId == proposalId }
-                            .map(\.bundleIndex)
-                    )
-
-                    var bundleDeliveries: [VotingShareDeliveryIdentity] = []
-                    for bundleIndex: UInt32 in 0..<bundleCount {
-                        let alreadySubmitted = submittedBundles.contains(bundleIndex)
-                        let hasRecordedShare = bundlesWithRecordedShares.contains(bundleIndex)
-                        if alreadySubmitted && hasRecordedShare {
-                            LoggerProxy.debug("Batch: bundle \(bundleIndex + 1)/\(bundleCount) already submitted for proposal \(proposalId)")
-                            continue
+                        // Every helper server has proved unreachable — a delivery that ended in
+                        // `noReachableVoteServers` empties the pool — so there is nowhere left to send
+                        // shares and proving further votes would only strand them.
+                        if await serverPool.isExhausted {
+                            break draftLoop
                         }
 
-                        await send(.voteSubmissionBundleStarted(roundId: roundId, bundleIndex: bundleIndex))
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .preparingProof))
-
-                        // Crash recovery: if this bundle's TX already landed on-chain,
-                        // skip to share delegation rather than re-proving.
-                        if let recoveredDelivery = try await Self.tryRecoverInflightVote(
+                        await send(.batchSubmissionProgress(
                             roundId: roundId,
-                            bundleIndex: bundleIndex,
-                            proposalId: proposalId,
-                            choice: choice,
-                            submitAtDeadline: submitAtDeadline,
-                            serverPool: serverPool,
-                            deliveryWindow: deliveryWindow,
-                            votingCrypto: votingCrypto,
-                            votingAPI: votingAPI,
-                            send: send,
-                            roundIdAction: { roundId }
-                        ) {
-                            bundleDeliveries.append(recoveredDelivery)
-                            continue
-                        }
-
-                        let anchorHeight = try await Self.syncVoteTree(
-                            roundId: roundId,
-                            chainNodeUrl: chainNodeUrl,
-                            hotkeyStoredSecret: Data(hotkeySeed),
-                            networkId: networkId,
-                            votingCrypto: votingCrypto
-                        )
-                        let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
-
-                        let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
-                            roundId, bundleIndex, hotkeySeed, proposalId, choice,
-                            numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
-                        )
-
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
-                        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
-                        guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
-                            throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
-                        }
-                        try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
-
-                        let voteDeadline = Date().addingTimeInterval(90)
-                        var voteConfirmation: TxConfirmation?
-                        repeat {
-                            voteConfirmation = try? await votingAPI.fetchTxConfirmation(txResult.txHash)
-                            if voteConfirmation != nil { break }
-                            try await Task.sleep(for: .seconds(2))
-                        } while Date() < voteDeadline
-
-                        guard let voteConfirmation, voteConfirmation.code == 0 else {
-                            throw VotingFlowError.voteCommitmentTxFailed(
-                                code: voteConfirmation?.code ?? 0,
-                                log: voteConfirmation?.log ?? ""
-                            )
-                        }
-
-                        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
-
-                        let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
-                            [
-                                "type": event.type,
-                                "attributes": event.attributes.map { attribute in
-                                    ["key": attribute.key, "value": attribute.value]
-                                }
-                            ]
-                        }
-                        let eventsData = try JSONSerialization.data(withJSONObject: eventsPayload)
-                        let eventsJson = String(decoding: eventsData, as: UTF8.self)
-
-                        let confirmation = try await votingCrypto.confirmVoteSubmission(
-                            roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
-                        )
-
-                        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
-                        guard let stored = try await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
-                            throw VotingFlowError.missingVoteCommitmentBundle
-                        }
-                        // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-160`) slices its
-                        // own encrypted-share list to the first element when the bundle is single-share.
-                        // Mirror that here, position-based (not a computed `0..<N` range), so we only
-                        // ever ask `recoverWireJson` for a share the crate can actually serve.
-                        let sharesToDelegate = singleShare ? Array(builtBundle.encShares.prefix(1)) : builtBundle.encShares
-                        let identity = VotingShareDeliveryIdentity(
-                            roundId: roundId,
-                            bundleIndex: bundleIndex,
+                            currentIndex: draftIndex,
+                            totalCount: totalCount,
                             proposalId: proposalId
-                        )
-                        try await Self.enqueueDelivery(
-                            into: deliveryWindow,
-                            identity: identity,
-                            bundleJson: stored.bundleJson,
-                            shareIndices: sharesToDelegate.map(\.shareIndex),
-                            voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition,
-                            submitAtDeadline: submitAtDeadline,
-                            serverPool: serverPool,
-                            votingCrypto: votingCrypto,
-                            votingAPI: votingAPI
-                        )
-                        bundleDeliveries.append(identity)
-                    }
-
-                    if bundleDeliveries.isEmpty {
-                        // Nothing left to deliver — every bundle was already submitted with its
-                        // shares recorded — so this proposal is done the moment the walk is.
-                        successCount += 1
-                        await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
-                    } else {
-                        proposalsAwaitingDelivery.append(AwaitingShareDelivery(
-                            proposalId: proposalId,
-                            choice: choice,
-                            identities: bundleDeliveries
                         ))
-                    }
-                } catch {
-                    failCount += 1
-                    LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
-                    await send(.batchVoteFailed(
-                        roundId: roundId,
-                        proposalId: proposalId,
-                        error: VotingErrorMapper.userFriendlyMessage(from: error)
-                    ))
-                }
-            }
 
-            let settlement = try await Self.settleDeliveries(
-                roundId: roundId,
-                awaiting: proposalsAwaitingDelivery,
-                deliveryWindow: deliveryWindow,
-                send: send
-            )
+                        // Synthetic abstain: no on-chain submission, just mark done.
+                        if Voting.isSyntheticAbstain(choice: choice, proposal: proposal) {
+                            successCount += 1
+                            await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
+                            continue
+                        }
+
+                        do {
+                            let existingVotes = try await votingCrypto.getVotes(roundId)
+                            let submittedBundles = Set(
+                                existingVotes
+                                    .filter { $0.proposalId == proposalId && $0.submitted }
+                                    .map(\.bundleIndex)
+                            )
+                            // A tally-share delegation failure can land *after* `markVoteSubmitted` runs
+                            // (see Task 8E), leaving `submitted == true` with zero recorded share
+                            // delegations — no other lane ever retries an orphaned share. A bundle only
+                            // counts as done once it is both submitted AND has a recorded delegation for
+                            // this proposal; anything less must fall through to `tryRecoverInflightVote`
+                            // below, which re-confirms the cached tx and re-runs share delegation end to end.
+                            let bundlesWithRecordedShares = Set(
+                                try await votingCrypto.getShareDelegations(roundId)
+                                    .filter { $0.proposalId == proposalId }
+                                    .map(\.bundleIndex)
+                            )
+
+                            var bundleDeliveries: [VotingShareDeliveryIdentity] = []
+                            for bundleIndex: UInt32 in 0..<bundleCount {
+                                // A multi-bundle proposal is the long stretch of the walk; a
+                                // cancellation arriving inside it must not have to wait for the
+                                // remaining bundles' proofs and broadcasts. The `catch` below
+                                // rethrows this rather than counting it as a failed vote.
+                                try Task.checkCancellation()
+                                let alreadySubmitted = submittedBundles.contains(bundleIndex)
+                                let hasRecordedShare = bundlesWithRecordedShares.contains(bundleIndex)
+                                if alreadySubmitted && hasRecordedShare {
+                                    LoggerProxy.debug("Batch: bundle \(bundleIndex + 1)/\(bundleCount) already submitted for proposal \(proposalId)")
+                                    continue
+                                }
+
+                                await send(.voteSubmissionBundleStarted(roundId: roundId, bundleIndex: bundleIndex))
+                                await send(.voteSubmissionStepUpdated(roundId: roundId, step: .preparingProof))
+
+                                // Crash recovery: if this bundle's TX already landed on-chain,
+                                // skip to share delegation rather than re-proving.
+                                if let recoveredDelivery = try await Self.tryRecoverInflightVote(
+                                    roundId: roundId,
+                                    bundleIndex: bundleIndex,
+                                    proposalId: proposalId,
+                                    choice: choice,
+                                    submitAtDeadline: submitAtDeadline,
+                                    serverPool: serverPool,
+                                    deliveryWindow: deliveryWindow,
+                                    votingCrypto: votingCrypto,
+                                    votingAPI: votingAPI,
+                                    send: send,
+                                    roundIdAction: { roundId }
+                                ) {
+                                    bundleDeliveries.append(recoveredDelivery)
+                                    continue
+                                }
+
+                                let anchorHeight = try await Self.syncVoteTree(
+                                    roundId: roundId,
+                                    chainNodeUrl: chainNodeUrl,
+                                    hotkeyStoredSecret: Data(hotkeySeed),
+                                    networkId: networkId,
+                                    votingCrypto: votingCrypto
+                                )
+                                let vanWitness = try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
+
+                                let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
+                                    roundId, bundleIndex, hotkeySeed, proposalId, choice,
+                                    numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight, singleShare
+                                )
+
+                                await send(.voteSubmissionStepUpdated(roundId: roundId, step: .confirming))
+                                let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig)
+                                guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
+                                    throw VotingFlowError.voteCommitmentTxFailed(code: txResult.code, log: txResult.log)
+                                }
+                                try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
+
+                                let voteDeadline = Date().addingTimeInterval(90)
+                                var voteConfirmation: TxConfirmation?
+                                repeat {
+                                    voteConfirmation = try? await votingAPI.fetchTxConfirmation(txResult.txHash)
+                                    if voteConfirmation != nil { break }
+                                    try await Task.sleep(for: .seconds(2))
+                                } while Date() < voteDeadline
+
+                                guard let voteConfirmation, voteConfirmation.code == 0 else {
+                                    throw VotingFlowError.voteCommitmentTxFailed(
+                                        code: voteConfirmation?.code ?? 0,
+                                        log: voteConfirmation?.log ?? ""
+                                    )
+                                }
+
+                                try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
+
+                                let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
+                                    [
+                                        "type": event.type,
+                                        "attributes": event.attributes.map { attribute in
+                                            ["key": attribute.key, "value": attribute.value]
+                                        }
+                                    ]
+                                }
+                                let eventsData = try JSONSerialization.data(withJSONObject: eventsPayload)
+                                let eventsJson = String(decoding: eventsData, as: UTF8.self)
+
+                                let confirmation = try await votingCrypto.confirmVoteSubmission(
+                                    roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
+                                )
+
+                                await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
+                                guard let stored = try await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
+                                    throw VotingFlowError.missingVoteCommitmentBundle
+                                }
+                                // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-160`) slices its
+                                // own encrypted-share list to the first element when the bundle is single-share.
+                                // Mirror that here, position-based (not a computed `0..<N` range), so we only
+                                // ever ask `recoverWireJson` for a share the crate can actually serve.
+                                let sharesToDelegate = singleShare ? Array(builtBundle.encShares.prefix(1)) : builtBundle.encShares
+                                let identity = VotingShareDeliveryIdentity(
+                                    roundId: roundId,
+                                    bundleIndex: bundleIndex,
+                                    proposalId: proposalId
+                                )
+                                try await Self.enqueueDelivery(
+                                    into: deliveryWindow,
+                                    identity: identity,
+                                    bundleJson: stored.bundleJson,
+                                    shareIndices: sharesToDelegate.map(\.shareIndex),
+                                    voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition,
+                                    submitAtDeadline: submitAtDeadline,
+                                    serverPool: serverPool,
+                                    votingCrypto: votingCrypto,
+                                    votingAPI: votingAPI
+                                )
+                                bundleDeliveries.append(identity)
+                            }
+
+                            if bundleDeliveries.isEmpty {
+                                // Nothing left to deliver — every bundle was already submitted with its
+                                // shares recorded — so this proposal is done the moment the walk is.
+                                successCount += 1
+                                await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
+                            } else {
+                                proposalsAwaitingDelivery.append(AwaitingShareDelivery(
+                                    proposalId: proposalId,
+                                    choice: choice,
+                                    identities: bundleDeliveries
+                                ))
+                            }
+                        } catch let cancellation as CancellationError {
+                            // Cancellation is not a failed vote. It has to leave the walk instead of
+                            // being reported per proposal — the old shape marked every remaining
+                            // proposal failed and kept going. `enqueue` raises this too once the
+                            // window has been closed by `cancelAndDrain`.
+                            throw cancellation
+                        } catch {
+                            failCount += 1
+                            LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
+                            await send(.batchVoteFailed(
+                                roundId: roundId,
+                                proposalId: proposalId,
+                                error: VotingErrorMapper.userFriendlyMessage(from: error)
+                            ))
+                        }
+                    }
+
+                    return try await Self.settleDeliveries(
+                        roundId: roundId,
+                        awaiting: proposalsAwaitingDelivery,
+                        deliveryWindow: deliveryWindow,
+                        send: send
+                    )
+                } onCancel: {
+                    Task { await deliveryWindow.cancelAndDrain() }
+                }
+            } catch {
+                await deliveryWindow.cancelAndDrain()
+                throw error
+            }
 
             await send(.batchSubmissionCompleted(
                 roundId: roundId,
@@ -4122,27 +4157,26 @@ extension VotingCoordFlow {
     /// proposal whose bundles all delivered is reported submitted here, one with any failed
     /// delivery is reported failed with that first failure's message. Returns what to add to
     /// the batch's success/fail tallies.
+    ///
+    /// The drain is unconditional. A proposal that threw *after* admitting one of its bundles'
+    /// deliveries is already reported failed and never reaches `awaiting`, but its delivery is
+    /// still ours to join: returning without draining would let it outlive the effect, writing
+    /// share records beside a retry's. Nobody is left to attribute it to, which is the point —
+    /// the proposal already carries its failure. The caller installs the cancellation handler
+    /// that covers this wait, since it covers the walk that fed it too.
     static func settleDeliveries(
         roundId: String,
         awaiting: [AwaitingShareDelivery],
         deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>,
         send: Send<Action>
     ) async throws -> ShareDeliverySettlement {
-        guard !awaiting.isEmpty else {
-            return ShareDeliverySettlement(successCount: 0, failCount: 0)
+        if !awaiting.isEmpty {
+            await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
         }
-
-        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
 
         var failures: [VotingShareDeliveryIdentity: Error] = [:]
         do {
-            _ = try await withTaskCancellationHandler {
-                try await deliveryWindow.drain()
-            } onCancel: {
-                // The window owns unstructured tasks, so cancelling this effect does not reach
-                // them: cancel and join them explicitly rather than leaving deliveries running.
-                Task { await deliveryWindow.cancelAndDrain() }
-            }
+            _ = try await deliveryWindow.drain()
         } catch let aggregate as VotingShareDeliveryAggregateError<ShareDelegationResult> {
             failures = aggregate.failures
         } catch {

@@ -17,6 +17,10 @@
 //      deliver:<proposal>              helper-share delivery reached `delegateShares`
 //      record:<bundle>:<proposal>:<s>  share `s`'s delegation was recorded locally
 //
+//  Plus one event that only a cancelled run produces:
+//
+//      deliver-cancelled:<proposal>    a gated delivery was cancelled rather than opened
+//
 //  Pauses are `ResumableGate`s and waits are `SignalledRecords`-backed (see TestSignals.swift):
 //  no polling inside a mock, no wall-clock deadline, so a starved runner slows a test down
 //  instead of failing it.
@@ -298,7 +302,20 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         values.votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
         values.votingAPI.delegateShares = { [self] payloads, proposalId, serverURLs in
             recorder.record("deliver:\(proposalId)")
-            await gateIfRegistered(proposal: proposalId)?.wait()
+            if let gate = gateIfRegistered(proposal: proposalId) {
+                // Cancelling this delivery releases the park just as opening the gate does — the
+                // idiom `VotingHelperDeliveryWindowTests` uses — so a test can prove the window
+                // really reached this task rather than waiting on a gate nobody will open.
+                await withTaskCancellationHandler {
+                    await gate.wait()
+                } onCancel: {
+                    gate.open()
+                }
+                if Task.isCancelled {
+                    recorder.record("deliver-cancelled:\(proposalId)")
+                    throw CancellationError()
+                }
+            }
             if let failure = deliveryFailure(proposal: proposalId) {
                 throw failure.thrown
             }

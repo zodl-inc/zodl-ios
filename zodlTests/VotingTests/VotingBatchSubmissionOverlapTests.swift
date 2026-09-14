@@ -147,6 +147,62 @@ struct VotingBatchSubmissionOverlapTests {
         #expect(session.votes.isEmpty)
     }
 
+    /// Leaving the flow cancels the batch. The walk has to stop there — every further proposal
+    /// would be a proof and an on-chain broadcast for a screen the user has left — and the
+    /// deliveries the window still owns are cancelled and joined instead of outliving the effect.
+    @Test func cancellingTheBatchStopsTheLoopAndJoinsInFlightDeliveries() async {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 3)
+        fixture.gate(forProposal: 1)
+        // Parks the walk part-way through proposal 2, so the cancellation below lands while the
+        // walk is provably still inside the ballot rather than racing its last iteration.
+        let secondConfirmation = fixture.confirmationGate(forBundle: 0, proposal: 2)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+        await fixture.recorder.awaitEvent("commit:0:2")
+
+        // The cancel site a user reaches by leaving the poll: `.dismissFlow` cancels
+        // `cancelSubmissionId` among others.
+        store.send(.dismissFlow)
+        secondConfirmation.open()
+
+        // Proposal 1's delivery is parked on a gate this test never opens, so the only thing that
+        // can release it is the window cancelling it — which is what this wait proves.
+        await fixture.recorder.awaitEvent("deliver-cancelled:1")
+        #expect(!fixture.recorder.events().contains("commit:0:3"))
+    }
+
+    /// A proposal that fails on a later bundle has already handed an earlier bundle's shares to
+    /// the window. Those are still the effect's to join: the batch cannot report itself complete
+    /// while one is running, or it would leave a delivery writing share records beside a retry's.
+    @Test func aProposalThatFailsAfterEnqueueingStillWaitsForItsDelivery() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 1, bundleCount: 2)
+        let firstDelivery = fixture.gate(forProposal: 1)
+        fixture.failCommit(forBundle: 1, proposal: 1)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        // Bundle 0's shares are in the window; bundle 1's proof then fails the whole proposal, so
+        // it never joins the awaiting list — and with one proposal in the ballot, the walk is over.
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchVoteErrors[1] != nil
+        }
+        await fixture.recorder.awaitEvent("deliver:1")
+        let pending = try #require(store.state.roundCache[roundId])
+        #expect(Self.isSubmitting(pending.batchSubmissionStatus))
+
+        firstDelivery.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus.isFailureState == true
+        }
+        let session = try #require(store.state.roundCache[roundId])
+        #expect(Set(session.batchVoteErrors.keys) == [1])
+        #expect(session.votes.isEmpty)
+        // The delivery that outlived its proposal still finished its own bookkeeping.
+        #expect(fixture.recorder.events().contains("record:0:1:15"))
+    }
+
     // MARK: - Helpers
 
     private func makeStore(_ fixture: VotingBatchSubmissionFixture) -> StoreOf<VotingCoordFlow> {
