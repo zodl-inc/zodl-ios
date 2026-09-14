@@ -15,7 +15,7 @@ import os
 /// voting screen mid-proof left that proof running at proving priority in the background while the
 /// next one started. These tests exercise the seam directly with a spy `prove`, standing in for the
 /// real backend call, instead of driving the whole coordinator + Rust FFI.
-@Suite struct VotingCryptoClientLiveKeyTests {
+@Suite(.timeLimit(.minutes(1))) struct VotingCryptoClientLiveKeyTests {
     @Test func uncancelledRunYieldsProgressThenCompletedInOrder() async throws {
         let spy = DelegationProofSpy(behavior: .succeedsImmediately(progress: [0.25, 0.75], proof: Data([1, 2, 3])))
 
@@ -80,6 +80,61 @@ import os
         #expect(!invoked || observedCancellation)
         #expect(events.values.isEmpty)
     }
+
+    /// The shape the live `precomputeDelegationProof` closure has: `speculativeProofStarted` at the
+    /// top of `prove`, `speculativeProofEnded` when it returns. A proof already inside native code
+    /// keeps running after its consumer is cancelled, so its end lands after the replacement run's
+    /// proof has started. The replacement must stay boosted for its whole life, and every begin
+    /// must get its end.
+    @Test func aPredecessorEndingAfterItsReplacementStartedLeavesTheReplacementBoosted() async throws {
+        let records = SignalledRecords<String>()
+        let lifecycle = SignalledRecords<String>()
+        let promotion = VotingProvingPromotion(boost: { body in
+            records.record("begin")
+            await body()
+            records.record("end")
+        })
+        let predecessor = ParkedProof()
+        let replacement = ParkedProof()
+
+        promotion.promote()
+
+        let firstConsumer = Task<Void, Error> {
+            for try await _ in VotingCryptoClient.makeDelegationProofStream(prove: { _ in
+                promotion.speculativeProofStarted()
+                let proof = try await predecessor.run()
+                promotion.speculativeProofEnded()
+                lifecycle.record("predecessor-ended")
+                return proof
+            }) { }
+        }
+        await predecessor.entered.wait()
+        await records.countReached(1)
+        // Leaving the flow cancels the consumer; the parked proof does not notice, exactly like the
+        // native call.
+        firstConsumer.cancel()
+        _ = await firstConsumer.result
+
+        let secondConsumer = Task<Void, Error> {
+            for try await _ in VotingCryptoClient.makeDelegationProofStream(prove: { _ in
+                promotion.speculativeProofStarted()
+                let proof = try await replacement.run()
+                promotion.speculativeProofEnded()
+                return proof
+            }) { }
+        }
+        await replacement.entered.wait()
+
+        // The predecessor finishes now: its end must not take the replacement's boost away.
+        predecessor.finish()
+        await lifecycle.recorded { $0.contains("predecessor-ended") }
+        #expect(records.values == ["begin"])
+
+        replacement.finish()
+        _ = await secondConsumer.result
+        await records.countReached(2)
+        #expect(records.values == ["begin", "end"])
+    }
 }
 
 /// Spy standing in for the delegation-proving backend call inside `makeDelegationProofStream`.
@@ -125,6 +180,23 @@ private final class DelegationProofSpy: @unchecked Sendable {
                 pending?.resume(throwing: CancellationError())
             }
         }
+    }
+}
+
+/// A proof that is "inside the FFI": opens `entered` when it starts, parks until `finish()`, and
+/// ignores cancellation the way the native call does (`ResumableGate.wait()` is not cancellable).
+private final class ParkedProof: @unchecked Sendable {
+    let entered = ResumableGate()
+    private let release = ResumableGate()
+
+    func run() async throws -> Data {
+        entered.open()
+        await release.wait()
+        return Data([0xAB])
+    }
+
+    func finish() {
+        release.open()
     }
 }
 

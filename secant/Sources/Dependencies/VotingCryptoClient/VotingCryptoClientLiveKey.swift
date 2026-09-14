@@ -746,6 +746,11 @@ extension VotingCryptoClient {
 /// hold is released when the last in-flight proof ends or when the run is reset. The boost is
 /// held by a single task running `withInteractiveProvingBoost`, whose body waits on a
 /// continuation, so every begin is paired with its end by the helper itself.
+///
+/// Every event takes its decision and its state change in one critical section and performs the
+/// side effect (starting a hold task, resuming a continuation) outside the lock. That is what makes
+/// a proof ending and a replacement proof starting safe to overlap: the replacement either sees the
+/// count above zero, so no release happens, or sees the hold already gone and reserves its own.
 final class VotingProvingPromotion: Sendable {
     typealias Boost = @Sendable (_ body: @Sendable () async -> Void) async -> Void
 
@@ -755,58 +760,101 @@ final class VotingProvingPromotion: Sendable {
         var holdActive = false
         var releaseRequested = false
         var release: CheckedContinuation<Void, Never>?
+
+        /// Reserves a hold when the promotion is armed with a proof in flight and nothing holds
+        /// the boost yet. The caller starts the hold task outside the lock.
+        mutating func reserveHoldIfNeeded() -> Bool {
+            guard armed, inFlight > 0, !holdActive else { return false }
+            holdActive = true
+            releaseRequested = false
+            return true
+        }
+
+        /// Takes the current hold's continuation, if one is registered, for the caller to resume
+        /// outside the lock. Without a registered continuation — the early-release race — only
+        /// marks the release requested; `holdActive` stays true (still reserved by the in-flight
+        /// acquire) until `register(_:)` sees the request.
+        mutating func takeRelease() -> CheckedContinuation<Void, Never>? {
+            releaseRequested = true
+            guard let continuation = release else { return nil }
+            release = nil
+            holdActive = false
+            return continuation
+        }
     }
 
     private let state: OSAllocatedUnfairLock<State>
     private let boost: Boost
+    /// Seams for tests, nil in production: `afterHoldRegistered` runs once the hold's continuation
+    /// is stored (from then on a release resumes it directly instead of taking the early-release
+    /// path); `afterReleaseDecision` runs after a critical section decided to end the hold and
+    /// before the resume.
+    private let afterHoldRegistered: (@Sendable () -> Void)?
+    private let afterReleaseDecision: (@Sendable () -> Void)?
 
-    init(boost: @escaping Boost = { body in await VotingRustBackend.withInteractiveProvingBoost { await body() } }) {
+    init(
+        boost: @escaping Boost = { body in await VotingRustBackend.withInteractiveProvingBoost { await body() } },
+        afterHoldRegistered: (@Sendable () -> Void)? = nil,
+        afterReleaseDecision: (@Sendable () -> Void)? = nil
+    ) {
         state = OSAllocatedUnfairLock(initialState: State())
         self.boost = boost
+        self.afterHoldRegistered = afterHoldRegistered
+        self.afterReleaseDecision = afterReleaseDecision
     }
 
     /// A speculative proof started. If the promotion is armed and no hold is active yet, this
     /// starts holding the boost.
     func speculativeProofStarted() {
-        state.withLock { $0.inFlight += 1 }
-        acquireIfNeeded()
+        let shouldAcquire = state.withLock { state -> Bool in
+            state.inFlight += 1
+            return state.reserveHoldIfNeeded()
+        }
+        if shouldAcquire {
+            startHold()
+        }
     }
 
-    /// A speculative proof ended. Releases the boost once the last in-flight proof ends.
+    /// A speculative proof ended. When it was the last one in flight, the release is decided and
+    /// taken in the same critical section as the decrement: a replacement starting after this
+    /// section finds no active hold and reserves its own; one starting before it keeps the count
+    /// above zero and nothing is released. Only the resume runs outside the lock.
     func speculativeProofEnded() {
-        let shouldRelease = state.withLock { state -> Bool in
+        let decision = state.withLock { state -> (decided: Bool, continuation: CheckedContinuation<Void, Never>?) in
             state.inFlight = max(0, state.inFlight - 1)
-            return state.inFlight == 0
+            guard state.inFlight == 0 else { return (false, nil) }
+            return (true, state.takeRelease())
         }
-        if shouldRelease {
-            release()
-        }
+        guard decision.decided else { return }
+        afterReleaseDecision?()
+        decision.continuation?.resume()
     }
 
     /// Arms the promotion. If a speculative proof is already in flight, starts holding the
     /// boost immediately.
     func promote() {
-        state.withLock { $0.armed = true }
-        acquireIfNeeded()
+        let shouldAcquire = state.withLock { state -> Bool in
+            state.armed = true
+            return state.reserveHoldIfNeeded()
+        }
+        if shouldAcquire {
+            startHold()
+        }
     }
 
     /// Disarms the promotion and releases the boost, so a promotion from a finished or failed
     /// precompute run can never leak into the next one.
     func reset() {
-        state.withLock { $0.armed = false }
-        release()
+        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.armed = false
+            return state.takeRelease()
+        }
+        continuation?.resume()
     }
 
-    /// Starts holding the boost when armed, in flight, and not already held — the same
-    /// condition regardless of whether `speculativeProofStarted()` or `promote()` triggered it.
-    private func acquireIfNeeded() {
-        let shouldAcquire = state.withLock { state -> Bool in
-            guard state.armed, state.inFlight > 0, !state.holdActive else { return false }
-            state.holdActive = true
-            state.releaseRequested = false
-            return true
-        }
-        guard shouldAcquire else { return }
+    /// Runs the boost on its own task. The boost's body parks on a continuation that
+    /// `register(_:)` stores and a later release resumes.
+    private func startHold() {
         Task {
             await self.boost {
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -816,37 +864,28 @@ final class VotingProvingPromotion: Sendable {
         }
     }
 
-    /// Registers the continuation the held task is waiting on. If `release()` already ran
-    /// before this call reached it — the early-release race — resumes immediately instead of
-    /// parking it, then re-checks whether a proof that started during that window still needs a
-    /// hold: `acquireIfNeeded()` refused it while this reservation was still active.
+    /// Registers the continuation the held task is waiting on. If a release already ran before
+    /// this call reached it — the early-release race — resumes immediately instead of parking
+    /// it, and in the same critical section re-checks whether a proof that started during that
+    /// window still needs a hold: the reservation this call belonged to refused it.
     private func register(_ continuation: CheckedContinuation<Void, Never>) {
-        let resumeNow = state.withLock { state -> Bool in
+        let outcome = state.withLock { state -> (resumeNow: Bool, acquireAgain: Bool, registered: Bool) in
             if state.releaseRequested {
                 state.holdActive = false
-                return true
+                return (true, state.reserveHoldIfNeeded(), false)
             }
             state.release = continuation
-            return false
+            return (false, false, true)
         }
-        if resumeNow {
+        if outcome.resumeNow {
             continuation.resume()
-            acquireIfNeeded()
         }
-    }
-
-    /// Ends the current hold if its continuation is already registered. Otherwise — the
-    /// early-release race — only marks the release requested; `holdActive` stays true (still
-    /// reserved by the in-flight acquire) until `register(_:)` sees the request and resumes.
-    private func release() {
-        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            state.releaseRequested = true
-            guard let continuation = state.release else { return nil }
-            state.release = nil
-            state.holdActive = false
-            return continuation
+        if outcome.acquireAgain {
+            startHold()
         }
-        continuation?.resume()
+        if outcome.registered {
+            afterHoldRegistered?()
+        }
     }
 }
 
