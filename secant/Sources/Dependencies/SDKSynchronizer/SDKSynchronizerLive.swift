@@ -271,6 +271,14 @@ extension SDKSynchronizerClient: DependencyKey {
                     synchronizer: synchronizer
                 )
             },
+            getMinedTransactionIds: { accountUUID in
+                let transactions = try await synchronizer.allTransactions()
+                return Set(
+                    transactions
+                        .filter { $0.accountUUID == accountUUID && $0.minedHeight != nil }
+                        .map { $0.rawID.toHexStringTxId() }
+                )
+            },
             transactionStatesFromZcashTransactions: { accountUUID, zcashTransactions in
                 try await SDKSynchronizerClient.transactionStatesFromZcashTransactions(
                     accountUUID: accountUUID,

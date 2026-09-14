@@ -16,6 +16,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-1861] Opening the app and visiting Advanced Settings are no longer slowed down by the migration checks re-reading the whole transaction history; on a wallet that never migrated, those checks no longer read it at all, so sync starts right away.
 - [MOB-1954] On a wallet with a long transaction history, the app no longer re-reads the whole history every two seconds once sync is up to date. The list refreshes when a sync pass completes, when a transaction arrives or is mined, and while a sent transaction is still pending. If reading the history fails, the app now retries on its own with increasing delays instead of waiting for the next change.
 
 ## [3.13.0] - 2026-09-10

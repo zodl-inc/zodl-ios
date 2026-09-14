@@ -1019,7 +1019,7 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// hex ids (`TransactionState.id` ≡ `SentRecord.txId`, both `toHexStringTxId()`) of every
     /// transaction the wallet's OWN store has observed mined. This is the set that decides which
     /// rows render green: same standard as Activity and the home balances, because it IS their
-    /// source (`getAllTransactions`).
+    /// source (the same transaction store `getAllTransactions` reads, through `getMinedTransactionIds`).
     ///
     /// Kept for two reasons of its own. (1) Starvation: the read queues behind prove sweeps like
     /// every other DB read here, and a derivation must not pay for a fresh confirmation read on
@@ -1034,12 +1034,37 @@ final class MigrationManagerImpl: @unchecked Sendable {
     /// from `walletMinedTxIdsCache` on a failed read, and `nil` only when no read has ever
     /// succeeded for this account (the engine-truth fallback signal).
     private func walletMinedTxIds(accountUUID: AccountUUID) async -> Set<String>? {
-        if let transactions = try? await sdkSynchronizer.getAllTransactions(accountUUID) {
-            let set = Set(transactions.filter { $0.minedHeight != nil }.map { $0.id })
+        // [MOB-1861] One `v_transactions` read, no per-row output reads: `getAllTransactions`
+        // used to serve this and cost transactions × notes on a long history (a 25 s read per
+        // call on a 1,255-transaction wallet, field 2026-09-14) for a set that needs only the
+        // mined txids.
+        if let set = try? await sdkSynchronizer.getMinedTransactionIds(accountUUID) {
             walletMinedTxIdsCache.withLock { $0[accountUUID] = set }
             return set
         }
         return walletMinedTxIdsCache.withLock { $0[accountUUID] }
+    }
+
+    /// [MOB-1861] Whether `statuses` carry a transfer-kind row -- the only rows the wallet-confirmed
+    /// set can gate in the status-only lane (`statusOnlyTransferRows` answers nil otherwise).
+    private static func hasTransferStatus(_ statuses: [MigrationTransactionStatus]) -> Bool {
+        statuses.contains { status in
+            if case MigrationTransactionStatus.Kind.transfer = status.kind {
+                return true
+            }
+            return false
+        }
+    }
+
+    /// [MOB-1861] Whether `statuses` carry a preparation-kind row (`preparationRows` answers nil
+    /// otherwise).
+    private static func hasPreparationStatus(_ statuses: [MigrationTransactionStatus]) -> Bool {
+        statuses.contains { status in
+            if case MigrationTransactionStatus.Kind.preparation = status.kind {
+                return true
+            }
+            return false
+        }
     }
 
     /// R11, the split's matching gap: the engine's `.mined` state carries NO txid (the SDK model
@@ -1186,11 +1211,22 @@ final class MigrationManagerImpl: @unchecked Sendable {
             // (an empty/throwing read) does this fall further back to `synthesizedTransferRows`,
             // the pure progress-count approximation. On a missing account, `[]`.
             let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+            // [MOB-1861] The wallet-confirmed set gates only the `.broadcast(txid:)` TRANSFER rows
+            // (`statusOnlyTransferRows`'s doc), and that derivation answers nil outright when the
+            // statuses carry no transfer at all -- which is every wallet with no run. So the set is
+            // read only when a transfer row exists to consume it. Before this guard the read ran
+            // first, as this call's argument, and a no-run wallet paid a whole-history read for
+            // nothing on every open (before sync could start) and on every Advanced Settings
+            // appearance (field, 2026-09-14).
+            var confirmedTxIds: Set<String>?
+            if Self.hasTransferStatus(statuses) {
+                confirmedTxIds = await walletMinedTxIds(accountUUID: resolvedAccountUUID)
+            }
             if let statusRows = MigrationDerivations.statusOnlyTransferRows(
                 statuses: statuses,
                 clock: await chainClock(accountUUID: resolvedAccountUUID),
                 isProvingStalled: isProvingStalled,
-                confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID)
+                confirmedTxIds: confirmedTxIds
             ) {
                 return (statusRows, statuses.isEmpty ? nil : statuses)
             }
@@ -2884,11 +2920,17 @@ final class MigrationManagerImpl: @unchecked Sendable {
     private func migrationPreparationRowsComputing(accountUUID: AccountUUID?) async -> [MigrationTransferRow]? {
         guard let resolvedAccountUUID = accountUUID ?? selectedWalletAccount?.id else { return nil }
         let statuses = (try? await sdkSynchronizer.migrationTransactionStatuses(resolvedAccountUUID)) ?? []
+        // [MOB-1861] `preparationRows` answers nil when no preparation row exists, so the
+        // wallet-confirmed set is read only when one does -- see `migrationTransfersUntimed`.
+        var confirmedTxIds: Set<String>?
+        if Self.hasPreparationStatus(statuses) {
+            confirmedTxIds = await walletMinedTxIds(accountUUID: resolvedAccountUUID)
+        }
         return MigrationDerivations.preparationRows(
             statuses: statuses,
             clock: await chainClock(accountUUID: resolvedAccountUUID),
             isProvingStalled: isProvingStalled,
-            confirmedTxIds: await walletMinedTxIds(accountUUID: resolvedAccountUUID),
+            confirmedTxIds: confirmedTxIds,
             rememberedTxIds: rememberBroadcastTxIds(from: statuses, accountUUID: resolvedAccountUUID)
         )
     }
