@@ -139,6 +139,11 @@ actor VotingHelperDeliveryWindow<Report: Sendable> {
 /// The helper servers still worth contacting during one batch. Deliveries read the current set
 /// when they start and prune it when a server proved unreachable, so a later delivery does not
 /// retry a dead server.
+///
+/// The set only ever shrinks. A delivery's remaining list was computed from the set it read at its
+/// own start, and two deliveries overlap, so it is applied as an intersection: a late success can
+/// never put back a server an earlier failure removed, and once the pool is empty it stays empty
+/// for the rest of the batch.
 actor VotingShareServerPool {
     private var urls: [String]
 
@@ -150,8 +155,9 @@ actor VotingShareServerPool {
         urls
     }
 
+    /// Keeps only the servers `remaining` still lists, in the pool's current order.
     func prune(to remaining: [String]) {
-        urls = remaining
+        urls = urls.filter { remaining.contains($0) }
     }
 
     var isExhausted: Bool {

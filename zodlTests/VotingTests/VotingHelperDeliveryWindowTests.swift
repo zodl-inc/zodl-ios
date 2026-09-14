@@ -140,6 +140,41 @@ struct VotingHelperDeliveryWindowTests {
         #expect(await pool.isExhausted == true)
     }
 
+    /// A delivery's remaining list is a snapshot of the pool it read when it started, so a late
+    /// result must never put back what a later failure removed — least of all refill a pool that
+    /// ran dry, which would reopen bundle admission and the broadcast gate against servers the
+    /// batch already gave up on.
+    @Test func aStaleResultCannotRefillAnExhaustedPool() async {
+        let pool = VotingShareServerPool(urls: ["https://helper-a.example", "https://helper-b.example"])
+
+        await pool.prune(to: [])
+        #expect(await pool.isExhausted == true)
+
+        await pool.prune(to: ["https://helper-a.example", "https://helper-b.example"])
+        #expect(await pool.current().isEmpty)
+        #expect(await pool.isExhausted == true)
+    }
+
+    @Test func aStaleResultCannotRestoreARemovedServer() async {
+        let pool = VotingShareServerPool(urls: ["https://helper-a.example", "https://helper-b.example"])
+
+        await pool.prune(to: ["https://helper-b.example"])
+        await pool.prune(to: ["https://helper-a.example", "https://helper-b.example"])
+
+        #expect(await pool.current() == ["https://helper-b.example"])
+        #expect(await pool.isExhausted == false)
+    }
+
+    @Test func pruningKeepsThePoolsOwnOrder() async {
+        let pool = VotingShareServerPool(urls: [
+            "https://helper-a.example", "https://helper-b.example", "https://helper-c.example"
+        ])
+
+        await pool.prune(to: ["https://helper-c.example", "https://helper-a.example"])
+
+        #expect(await pool.current() == ["https://helper-a.example", "https://helper-c.example"])
+    }
+
     private func deliveryIdentities(count: Int) -> [VotingShareDeliveryIdentity] {
         (0..<count).map { index in
             VotingShareDeliveryIdentity(roundId: "round", bundleIndex: 0, proposalId: UInt32(index))
