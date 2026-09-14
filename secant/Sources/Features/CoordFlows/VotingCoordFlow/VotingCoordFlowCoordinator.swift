@@ -540,13 +540,17 @@ extension VotingCoordFlow {
                     roundSession.isDelegationPrecomputeInFlight = false
                     roundSession.delegationPrecomputeProgress = nil
                 }
+                // The run is over: disarm the shared promotion before anything resumes.
+                let disarm: Effect<Action> = .run { [votingCrypto] _ in
+                    votingCrypto.resetDelegationProvingPromotion()
+                }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
                     // Resume the pending submission. The ticket is consumed by
                     // `.authenticationSucceeded` itself; resetting the status
                     // here would flash `.idle` for one action-cycle.
-                    return .send(.authenticationSucceeded(roundId: roundId))
+                    return .concatenate(disarm, .send(.authenticationSucceeded(roundId: roundId)))
                 }
-                return .none
+                return disarm
 
             case let .delegationPrecomputeFailed(roundId, error):
                 let message = VotingErrorMapper.userFriendlyMessage(from: error)
@@ -555,12 +559,15 @@ extension VotingCoordFlow {
                     roundSession.isDelegationPrecomputeInFlight = false
                     roundSession.delegationPrecomputeProgress = nil
                 }
+                let disarm: Effect<Action> = .run { [votingCrypto] _ in
+                    votingCrypto.resetDelegationProvingPromotion()
+                }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
                     // Same resume/no-reset rule as `.delegationPrecomputeCompleted`;
                     // the batch effect re-runs delegation inline from cold.
-                    return .send(.authenticationSucceeded(roundId: roundId))
+                    return .concatenate(disarm, .send(.authenticationSucceeded(roundId: roundId)))
                 }
-                return .none
+                return disarm
 
             case let .batchSubmissionProgress(roundId, currentIndex, totalCount, proposalId):
                 return reduceBatchSubmissionProgress(
@@ -2334,18 +2341,21 @@ extension VotingCoordFlow {
         let networkId: UInt32 = network.networkType.votingRustNetworkId
         let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
         let roundName = activeSession.title
+        // A Confirm may already be parked on this run (a restart after `.votingWeightLoaded`,
+        // for instance); it promoted a run that no longer exists, so this one promotes itself.
+        let confirmWaiting = state.pendingBatchSubmission && !state.isKeystoneUser
 
         return .run { [votingCrypto, walletStorage, pirLayout] send in
             // MOB-1929: the promotion `.authenticationSucceeded` may arm lives on one object
-            // shared by the whole flow, so it has to be disarmed on every way out of this
-            // effect — normal end, failure, or cancellation — or the next round's precompute
-            // would start already promoted and prove at interactive priority behind the
-            // user's back.
-            // A Confirm that lands in the last instant of the previous run can arm that shared
-            // promotion after the run's own reset has already run; disarm it again here so this
-            // run starts unpromoted whatever the previous one left behind.
+            // shared by the whole flow. Every run starts by disarming whatever the previous one
+            // left behind (a Confirm landing in its last instant can arm it after the fact), and
+            // the completion and failure reducers disarm it again at the end. A cancelled run
+            // deliberately resets nothing: its native proof may return long after a newer run
+            // has started, and a late reset would strip that run of a legitimate promotion.
             votingCrypto.resetDelegationProvingPromotion()
-            defer { votingCrypto.resetDelegationProvingPromotion() }
+            if confirmWaiting {
+                await votingCrypto.promoteDelegationProving()
+            }
 
             let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
             let noteChunks = cachedNotes.smartBundles().bundles

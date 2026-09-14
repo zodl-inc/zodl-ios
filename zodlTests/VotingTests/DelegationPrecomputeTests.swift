@@ -40,7 +40,8 @@ struct DelegationPrecomputeTests {
         }
         // The promotion is armed per run and must not survive it; the reset is the effect's
         // last act, after the completion action it already sent.
-        await fixture.recorder.awaitEvent("reset-promotion")
+        // Two resets bracket a run: one at its start, one from the completion reducer.
+        await fixture.recorder.awaitEvents { $0.filter { $0 == "reset-promotion" }.count == 2 }
 
         let events = fixture.recorder.events()
         #expect(
@@ -149,7 +150,7 @@ struct DelegationPrecomputeTests {
         }
         #expect(store.state.roundCache[roundId]?.delegationPrecomputeProgress == nil)
         // The failure path arms nothing for the next round either.
-        #expect(fixture.recorder.events().contains("reset-promotion"))
+        await fixture.recorder.awaitEvents { $0.filter { $0 == "reset-promotion" }.count == 2 }
 
         store.send(.submitAllDraftsTapped(roundId: roundId))
         await fixture.waitForStoreState(store) { state in
@@ -211,6 +212,24 @@ struct DelegationPrecomputeTests {
             state.roundCache[self.roundId]?.delegationProofStatus == .complete
         }
         #expect(!fixture.recorder.events().contains { $0.hasPrefix("prove:") })
+    }
+
+    /// A run can start while a Confirm is already parked (a restart after the round's weight
+    /// reloads, for instance); the promotion that Confirm gave the previous run is gone with
+    /// it, so the new run promotes itself before its first proof.
+    @Test func aRunStartedWhileConfirmIsWaitingPromotesItself() async throws {
+        let fixture = makeFixture()
+        var pendingState = fixture.makeState()
+        pendingState.pendingBatchSubmission = true
+        let store = makeStore(fixture, state: pendingState)
+
+        store.send(.maybeStartDelegationPrecompute(roundId: roundId))
+        await fixture.recorder.awaitEvent("specprove:0")
+
+        let events = fixture.recorder.events()
+        let promoteIndex = try #require(events.firstIndex(of: "promote"))
+        let proofIndex = try #require(events.firstIndex(of: "specprove:0"))
+        #expect(promoteIndex < proofIndex)
     }
 
     // MARK: - Helpers
