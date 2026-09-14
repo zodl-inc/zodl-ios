@@ -35,6 +35,18 @@ extension VotingCryptoClient: DependencyKey {
             stateSubject.send(dbState)
         }
 
+        /// Run one blocking `VotingRustBackend` call off the cooperative pool.
+        ///
+        /// MOB-1930: every voting FFI call serializes behind the backend's own lock, and the vote
+        /// pipeline now has up to `VotingCoordFlow.maxConcurrentVoteBundles` bundles issuing them
+        /// at once. A caller that blocks on that lock from a cooperative thread takes the thread
+        /// down with it — and the pool is exactly what the other bundle's chain wait and its share
+        /// deliveries need to make progress. A detached task blocks a thread of its own instead.
+        // @Sendable: captured by Task.detached; `VotingRustBackend` is `@unchecked Sendable`.
+        @Sendable func detachedBackendCall<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+            try await Task.detached(priority: .userInitiated) { try body() }.value
+        }
+
         // VotingRecovery: the one place the module is handed the app's open
         // database and logger. Delete with the package.
         VotingRecovery.configure(
@@ -91,8 +103,9 @@ extension VotingCryptoClient: DependencyKey {
             },
             getVotes: { roundId in
                 let backend = try await dbActor.backend()
-                let votes = try backend.getVotes(roundId: roundId)
-                return votes.map { $0.toModel() }
+                return try await detachedBackendCall {
+                    try backend.getVotes(roundId: roundId).map { $0.toModel() }
+                }
             },
             listRounds: {
                 let backend = try await dbActor.backend()
@@ -518,20 +531,35 @@ extension VotingCryptoClient: DependencyKey {
             },
             syncVoteTree: { roundId, nodeUrl in
                 let backend = try await dbActor.backend()
-                return try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
+                return try await detachedBackendCall {
+                    try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
+                }
             },
             generateVanWitness: { roundId, bundleIndex, anchorHeight in
                 let backend = try await dbActor.backend()
-                let witness = try backend.generateVanWitness(roundId: roundId, bundleIndex: bundleIndex, anchorHeight: anchorHeight)
-                return VanWitness(
-                    authPath: witness.authPath.map { Data($0) },
-                    position: witness.position,
-                    anchorHeight: witness.anchorHeight
-                )
+                return try await detachedBackendCall {
+                    let witness = try backend.generateVanWitness(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        anchorHeight: anchorHeight
+                    )
+                    return VanWitness(
+                        authPath: witness.authPath.map { Data($0) },
+                        position: witness.position,
+                        anchorHeight: witness.anchorHeight
+                    )
+                }
             },
             markVoteSubmitted: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
-                try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
+                try await detachedBackendCall {
+                    try backend.markVoteSubmitted(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash
+                    )
+                }
                 publishState(backend: backend, roundId: roundId)
             },
             resetTreeClient: {
@@ -554,51 +582,74 @@ extension VotingCryptoClient: DependencyKey {
             },
             storeVoteTxHash: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
-                try backend.storeVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
+                try await detachedBackendCall {
+                    try backend.storeVoteTxHash(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash
+                    )
+                }
             },
             getVoteTxHash: { roundId, bundleIndex, proposalId in
                 let backend = try await dbActor.backend()
-                if let txHash = try backend.getVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) {
+                let txHash = try await detachedBackendCall {
+                    try backend.getVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId)
+                }
+                if let txHash {
                     return .present(txHash)
                 }
                 return .notFound
             },
             confirmVoteSubmission: { roundId, bundleIndex, proposalId, txHash, eventsJson in
                 let backend = try await dbActor.backend()
-                let confirmation = try backend.confirmVoteSubmission(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    txHash: txHash,
-                    eventsJson: eventsJson
-                )
+                let info = try await detachedBackendCall {
+                    let confirmation = try backend.confirmVoteSubmission(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash,
+                        eventsJson: eventsJson
+                    )
+                    return VoteConfirmationInfo(
+                        txHash: confirmation.txHash,
+                        vanLeafPosition: confirmation.vanLeafPosition,
+                        voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
+                    )
+                }
                 publishState(backend: backend, roundId: roundId)
-                return VoteConfirmationInfo(
-                    txHash: confirmation.txHash,
-                    vanLeafPosition: confirmation.vanLeafPosition,
-                    voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
-                )
+                return info
             },
             getCommitmentBundleJson: { roundId, bundleIndex, proposalId in
                 let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else {
-                    return nil
+                return try await detachedBackendCall { () -> (bundleJson: String, vcTreePosition: UInt64)? in
+                    guard let result = try backend.getCommitmentBundle(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId
+                    ) else {
+                        return nil
+                    }
+                    return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
                 }
-                return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
             },
             recoverWireJson: { commitmentBundleJson, proposalId, shareIndex, voteCommitmentTreePosition, submitAt in
-                try VotingRustBackend.recoverWireJson(
-                    commitmentBundleJson: commitmentBundleJson,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    voteCommitmentTreePosition: voteCommitmentTreePosition,
-                    submitAt: submitAt
-                )
+                try await detachedBackendCall {
+                    try VotingRustBackend.recoverWireJson(
+                        commitmentBundleJson: commitmentBundleJson,
+                        proposalId: proposalId,
+                        shareIndex: shareIndex,
+                        voteCommitmentTreePosition: voteCommitmentTreePosition,
+                        submitAt: submitAt
+                    )
+                }
             },
             recoverableShareIndices: { commitmentBundleJson in
-                try VotingRustBackend.recoverableShareIndices(
-                    commitmentBundleJson: commitmentBundleJson
-                )
+                try await detachedBackendCall {
+                    try VotingRustBackend.recoverableShareIndices(
+                        commitmentBundleJson: commitmentBundleJson
+                    )
+                }
             },
             storeKeystoneBundleSignature: { roundId, info in
                 let backend = try await dbActor.backend()
@@ -660,18 +711,22 @@ extension VotingCryptoClient: DependencyKey {
             },
             recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, submitAt in
                 let backend = try await dbActor.backend()
-                try backend.recordShareDelegation(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    sentToURLs: sentToURLs,
-                    submitAt: submitAt
-                )
+                try await detachedBackendCall {
+                    try backend.recordShareDelegation(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        shareIndex: shareIndex,
+                        sentToURLs: sentToURLs,
+                        submitAt: submitAt
+                    )
+                }
             },
             getShareDelegations: { roundId in
                 let backend = try await dbActor.backend()
-                return try backend.getShareDelegations(roundId: roundId)
+                return try await detachedBackendCall {
+                    try backend.getShareDelegations(roundId: roundId)
+                }
             },
             getUnconfirmedDelegations: { roundId in
                 let backend = try await dbActor.backend()
