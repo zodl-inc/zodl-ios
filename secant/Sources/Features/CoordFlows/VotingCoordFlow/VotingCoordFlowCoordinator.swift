@@ -4649,8 +4649,8 @@ extension VotingCoordFlow {
             proposalId: resolution.proposalId
         ))
     }
-    
-// MARK: - Delegation pipeline (Zashi inline)
+
+    // MARK: - Delegation pipeline (Zashi inline)
 
     /// 3.0 bump (MOB-1678): `pir_layout.poly_len` is load-bearing — `zcash_voting` 3.0
     /// validates it locally (`poly_len ∈ {2048, 4096}`) and the PIR connect handshake
