@@ -83,6 +83,21 @@ import ComposableArchitecture
         )
     }
 
+    private static func preparationStatus(state: MigrationTransactionStatus.State) -> MigrationTransactionStatus {
+        MigrationTransactionStatus(
+            id: 7,
+            kind: MigrationTransactionStatus.Kind.preparation(layer: 0, index: 0),
+            state: state,
+            scheduledHeight: 4_199_990,
+            expiryHeight: nil,
+            isReady: false,
+            nextAction: nil,
+            blockedOn: nil,
+            dependsOn: [],
+            anchorBoundaryHeight: nil
+        )
+    }
+
     // MARK: - (1) No run: no history read at all
 
     /// Empty statuses and no committed schedule -- every wallet that never migrated. Neither the
@@ -198,6 +213,83 @@ import ComposableArchitecture
                 afterFailure.map(\.status) == [MigrationTransferRow.Status.sent],
                 "a failed read must serve the cached set, never un-confirm the row"
             )
+        }
+    }
+
+    // MARK: - (4) The preparation lane reads the mined ids too, and renders from them
+
+    /// The transfer lane's mirror for `migrationPreparationRows` — the OTHER gated surface, and the
+    /// one whose failure mode is silent. `preparationRows` greens a `.broadcast(txid:)` split only
+    /// when the set contains its display-form txid, and greens a `.mined` split only when the set
+    /// contains the txid the manager remembered from that split's earlier broadcast; with NO set at
+    /// all (`confirmedTxIds == nil`) its `.mined` arm falls back to ENGINE truth and greens
+    /// unconditionally. So if `hasPreparationStatus` ever answered false for real preparations, the
+    /// set would arrive nil, split rows would green one privacy window early, and R11 would be
+    /// silently reverted for preparations. Phase 3 is the assertion that catches exactly that: a
+    /// `.mined` split whose txid the wallet has NOT seen must read `.confirming`, which a nil set
+    /// could not produce.
+    @Test func aBroadcastPreparationReadsTheMinedIdsOnceAndRendersFromThem() async {
+        Self.installCandidateAccount()
+        let minedIdReads = LockIsolated<Int>(0)
+        let historyReads = LockIsolated<Int>(0)
+        let walletHasSeenIt = LockIsolated<Bool>(false)
+        let engineReportsMined = LockIsolated<Bool>(false)
+
+        await withDependencies {
+            $0.sdkSynchronizer = .mocked(
+                latestState: { Self.caughtUpState() },
+                migrationTransactionStatuses: { _ in
+                    if engineReportsMined.value {
+                        return [Self.preparationStatus(state: MigrationTransactionStatus.State.mined(height: Self.tip - 2))]
+                    }
+                    return [Self.preparationStatus(state: MigrationTransactionStatus.State.broadcast(txid: Self.broadcastTxId))]
+                },
+                getAllTransactions: { _ in
+                    historyReads.withValue { $0 += 1 }
+                    return []
+                },
+                getMinedTransactionIds: { _ in
+                    minedIdReads.withValue { $0 += 1 }
+                    return walletHasSeenIt.value ? [Self.broadcastTxId.toHexStringTxId()] : []
+                }
+            )
+            $0.zcashSDKEnvironment.ironwoodActivationHeight = { Self.activationHeight }
+        } operation: {
+            let manager = Self.makeManager()
+
+            // (1) Broadcast, wallet has not seen it: `.confirming`, from the mined-id read alone.
+            let confirming = await manager.migrationPreparationRows(accountUUID: Self.accountUUID)
+            #expect(confirming?.map(\.status) == [MigrationTransferRow.Status.confirming])
+            #expect(confirming?.map(\.kind) == [MigrationTransferRow.Kind.splitBalance])
+            #expect(minedIdReads.value == 1, "the mined-id read runs once per derivation")
+            #expect(historyReads.value == 0, "the whole-history read is gone from this path too")
+
+            // (2) Same broadcast, now in the wallet's own store: green.
+            walletHasSeenIt.setValue(true)
+            let sent = await manager.migrationPreparationRows(accountUUID: Self.accountUUID)
+            #expect(sent?.map(\.status) == [MigrationTransferRow.Status.sent])
+            #expect(minedIdReads.value == 2)
+            #expect(historyReads.value == 0)
+
+            // (3) The engine now calls it mined while the wallet has NOT seen it — the privacy
+            // window R11 exists for. The join is the txid remembered from phases 1-2, and the row
+            // must un-green. A nil set here would read `.sent` instead.
+            engineReportsMined.setValue(true)
+            walletHasSeenIt.setValue(false)
+            let engineMinedOnly = await manager.migrationPreparationRows(accountUUID: Self.accountUUID)
+            #expect(
+                engineMinedOnly?.map(\.status) == [MigrationTransferRow.Status.confirming],
+                "engine-mined is not green until the wallet's own store has the remembered txid"
+            )
+            #expect(minedIdReads.value == 3)
+            #expect(historyReads.value == 0)
+
+            // (4) The wallet catches up on the same remembered txid: green.
+            walletHasSeenIt.setValue(true)
+            let walletConfirmed = await manager.migrationPreparationRows(accountUUID: Self.accountUUID)
+            #expect(walletConfirmed?.map(\.status) == [MigrationTransferRow.Status.sent])
+            #expect(minedIdReads.value == 4)
+            #expect(historyReads.value == 0)
         }
     }
 }
