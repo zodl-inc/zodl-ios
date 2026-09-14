@@ -2025,13 +2025,28 @@ extension VotingCoordFlow {
 
             var successCount = 0
             var failCount = 0
-            var shareServerURLs = voteServerURLs
+            // MOB-1928: helper-share delivery no longer blocks the walk. Each bundle's shares go
+            // into a window of two and the loop moves straight on to the next bundle — or the next
+            // proposal — while they travel; `settleDeliveries` below is what finally decides each
+            // proposal's outcome, so a proposal is reported submitted only once its own shares are
+            // accepted. The pool is the live helper-server set those deliveries share: one
+            // delivery pruning a dead server spares every later one from retrying it.
+            let deliveryWindow = VotingHelperDeliveryWindow<ShareDelegationResult>()
+            let serverPool = VotingShareServerPool(urls: voteServerURLs)
+            var proposalsAwaitingDelivery: [AwaitingShareDelivery] = []
 
             draftLoop: for (draftIndex, draft) in drafts.enumerated() {
                 let proposalId = draft.key
                 let choice = draft.value
                 let proposal = proposals.first { $0.id == proposalId }
                 let numOptions = UInt32(proposal?.options.count ?? 3)
+
+                // Every helper server has proved unreachable — a delivery that ended in
+                // `noReachableVoteServers` empties the pool — so there is nowhere left to send
+                // shares and proving further votes would only strand them.
+                if await serverPool.isExhausted {
+                    break draftLoop
+                }
 
                 await send(.batchSubmissionProgress(
                     roundId: roundId,
@@ -2066,6 +2081,7 @@ extension VotingCoordFlow {
                             .map(\.bundleIndex)
                     )
 
+                    var bundleDeliveries: [VotingShareDeliveryIdentity] = []
                     for bundleIndex: UInt32 in 0..<bundleCount {
                         let alreadySubmitted = submittedBundles.contains(bundleIndex)
                         let hasRecordedShare = bundlesWithRecordedShares.contains(bundleIndex)
@@ -2079,18 +2095,20 @@ extension VotingCoordFlow {
 
                         // Crash recovery: if this bundle's TX already landed on-chain,
                         // skip to share delegation rather than re-proving.
-                        if try await Self.tryRecoverInflightVote(
+                        if let recoveredDelivery = try await Self.tryRecoverInflightVote(
                             roundId: roundId,
                             bundleIndex: bundleIndex,
                             proposalId: proposalId,
                             choice: choice,
                             submitAtDeadline: submitAtDeadline,
-                            shareServerURLs: &shareServerURLs,
+                            serverPool: serverPool,
+                            deliveryWindow: deliveryWindow,
                             votingCrypto: votingCrypto,
                             votingAPI: votingAPI,
                             send: send,
                             roundIdAction: { roundId }
                         ) {
+                            bundleDeliveries.append(recoveredDelivery)
                             continue
                         }
 
@@ -2151,85 +2169,64 @@ extension VotingCoordFlow {
                         guard let stored = try await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
                             throw VotingFlowError.missingVoteCommitmentBundle
                         }
-                        let nowSec = Date().timeIntervalSince1970
-                        var payloads: [SharePayload] = []
-                        var submitAtByShareIndex: [UInt32: UInt64] = [:]
                         // `zcash_voting::share::recover_payloads` (rc.5 `share.rs:148-160`) slices its
                         // own encrypted-share list to the first element when the bundle is single-share.
                         // Mirror that here, position-based (not a computed `0..<N` range), so we only
                         // ever ask `recoverWireJson` for a share the crate can actually serve.
                         let sharesToDelegate = singleShare ? Array(builtBundle.encShares.prefix(1)) : builtBundle.encShares
-                        for share in sharesToDelegate {
-                            let submitAt: UInt64
-                            if let deadline = submitAtDeadline, deadline > nowSec {
-                                submitAt = UInt64(nowSec + Double.random(in: 0..<(deadline - nowSec)))
-                            } else {
-                                submitAt = 0
-                            }
-                            submitAtByShareIndex[share.shareIndex] = submitAt
-                            let wireJson = try await votingCrypto.recoverWireJson(
-                                stored.bundleJson, proposalId, share.shareIndex,
-                                confirmation.voteCommitmentTreePosition, submitAt
-                            )
-                            payloads.append(SharePayload(wireJson: wireJson, shareIndex: share.shareIndex))
-                        }
-                        let batchDelegationResult = try await Voting.delegateSharesWithFallback(
-                            payloads,
-                            proposalId: proposalId,
-                            votingAPI: votingAPI,
-                            serverURLs: shareServerURLs
+                        let identity = VotingShareDeliveryIdentity(
+                            roundId: roundId,
+                            bundleIndex: bundleIndex,
+                            proposalId: proposalId
                         )
-                        shareServerURLs = batchDelegationResult.remainingServerURLs
-                        // A share the servers already accepted must not be allowed to vanish from
-                        // local bookkeeping: record every delegation the loop can reach first (a
-                        // write fault on one share must not cost later shares their record), then
-                        // throw once if any write failed, so this bundle counts as failed instead
-                        // of done. A silent success here would let `reduceBatchSubmissionCompleted`
-                        // write a completion record over shares invisible to `getShareDelegations`
-                        // (8O adversarial finding, CHP.md 2026-08-13) — the server still holds the
-                        // share, so the vote itself stays safe; only local resubmission bookkeeping
-                        // for that specific share is at risk.
-                        var shareRecordFailures: [Error] = []
-                        for info in batchDelegationResult.delegatedShares {
-                            do {
-                                try await votingCrypto.recordShareDelegation(
-                                    roundId, bundleIndex, info.proposalId, info.shareIndex,
-                                    info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
-                                )
-                            } catch {
-                                LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
-                                shareRecordFailures.append(error)
-                            }
-                        }
-                        if let firstFailure = shareRecordFailures.first {
-                            throw firstFailure
-                        }
+                        try await Self.enqueueDelivery(
+                            into: deliveryWindow,
+                            identity: identity,
+                            bundleJson: stored.bundleJson,
+                            shareIndices: sharesToDelegate.map(\.shareIndex),
+                            voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition,
+                            submitAtDeadline: submitAtDeadline,
+                            serverPool: serverPool,
+                            votingCrypto: votingCrypto,
+                            votingAPI: votingAPI
+                        )
+                        bundleDeliveries.append(identity)
                     }
 
-                    successCount += 1
-                    await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
+                    if bundleDeliveries.isEmpty {
+                        // Nothing left to deliver — every bundle was already submitted with its
+                        // shares recorded — so this proposal is done the moment the walk is.
+                        successCount += 1
+                        await send(.batchVoteSubmitted(roundId: roundId, proposalId: proposalId, choice: choice))
+                    } else {
+                        proposalsAwaitingDelivery.append(AwaitingShareDelivery(
+                            proposalId: proposalId,
+                            choice: choice,
+                            identities: bundleDeliveries
+                        ))
+                    }
                 } catch {
                     failCount += 1
                     LoggerProxy.error("Batch vote failed for proposal \(proposalId): \(error)")
-                    let shouldStopBatch = error as? ShareDelegationError == .noReachableVoteServers
-                    if shouldStopBatch {
-                        shareServerURLs = []
-                    }
                     await send(.batchVoteFailed(
                         roundId: roundId,
                         proposalId: proposalId,
                         error: VotingErrorMapper.userFriendlyMessage(from: error)
                     ))
-                    if shouldStopBatch {
-                        break draftLoop
-                    }
                 }
             }
 
+            let settlement = try await Self.settleDeliveries(
+                roundId: roundId,
+                awaiting: proposalsAwaitingDelivery,
+                deliveryWindow: deliveryWindow,
+                send: send
+            )
+
             await send(.batchSubmissionCompleted(
                 roundId: roundId,
-                successCount: successCount,
-                failCount: failCount
+                successCount: successCount + settlement.successCount,
+                failCount: failCount + settlement.failCount
             ))
         } catch: { error, send in
             LoggerProxy.error("Batch submission failed at top level: \(error)")
@@ -3902,9 +3899,11 @@ extension VotingCoordFlow {
     }
 
     /// If we have a cached vote TX hash for `(roundId, bundleIndex, proposalId)`
-    /// that confirmed on-chain, finish the share delegation step without
-    /// rebuilding the commitment. Returns true if the bundle was resumed
-    /// from cache.
+    /// that confirmed on-chain, hand this bundle's tally shares to the delivery
+    /// window without rebuilding the commitment. Returns the identity the
+    /// delivery was enqueued under — the caller collects it so the proposal is
+    /// reported submitted only once that delivery settles — or `nil` when
+    /// nothing was recoverable.
     // swiftlint:disable:next function_body_length cyclomatic_complexity function_parameter_count
     static func tryRecoverInflightVote(
         roundId: String,
@@ -3912,18 +3911,19 @@ extension VotingCoordFlow {
         proposalId: UInt32,
         choice: VoteChoice,
         submitAtDeadline: Double?,
-        shareServerURLs: inout [String],
+        serverPool: VotingShareServerPool,
+        deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>,
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
         send: Send<Action>,
         roundIdAction: () -> String
-    ) async throws -> Bool {
+    ) async throws -> VotingShareDeliveryIdentity? {
         guard case let .present(cachedTxHash)? = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId) else {
-            return false
+            return nil
         }
         guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
               confirmation.code == 0 else {
-            return false
+            return nil
         }
 
         let eventsPayload: [[String: Any]] = confirmation.events.map { event in
@@ -3935,14 +3935,14 @@ extension VotingCoordFlow {
             ]
         }
         guard let eventsData = try? JSONSerialization.data(withJSONObject: eventsPayload) else {
-            return false
+            return nil
         }
         let eventsJson = String(decoding: eventsData, as: UTF8.self)
 
         guard let voteConfirmation = try? await votingCrypto.confirmVoteSubmission(
             roundId, bundleIndex, proposalId, cachedTxHash, eventsJson
         ) else {
-            return false
+            return nil
         }
 
         guard let stored = try? await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
@@ -3962,6 +3962,72 @@ extension VotingCoordFlow {
         // guess would have resubmitted 2). `recoverableShareIndices` reads the crate's own
         // `recover_payloads` slicing instead, so recovery resubmits exactly what it built.
         let shareIndices = try await votingCrypto.recoverableShareIndices(stored.bundleJson)
+
+        // The on-chain vote really is confirmed at this point, so the bundle is marked submitted
+        // before its shares are handed over rather than after: 8F proved the call idempotent to
+        // re-mark on a later retry, and a bundle marked submitted whose shares never land is
+        // exactly the state the caller's `getShareDelegations` check sends back through here.
+        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
+
+        // Delivery — including the 8P rule that every accepted share is recorded locally before
+        // any write failure is raised — happens inside the window, so this lane returns as soon
+        // as the work is admitted. The identity is how the caller learns, at drain time, whether
+        // this bundle's shares arrived.
+        let identity = VotingShareDeliveryIdentity(
+            roundId: roundId,
+            bundleIndex: bundleIndex,
+            proposalId: proposalId
+        )
+        try await enqueueDelivery(
+            into: deliveryWindow,
+            identity: identity,
+            bundleJson: stored.bundleJson,
+            shareIndices: shareIndices,
+            voteCommitmentTreePosition: voteConfirmation.voteCommitmentTreePosition,
+            submitAtDeadline: submitAtDeadline,
+            serverPool: serverPool,
+            votingCrypto: votingCrypto,
+            votingAPI: votingAPI
+        )
+        return identity
+    }
+
+    // MARK: - Helper-share delivery (MOB-1928)
+
+    /// One proposal whose on-chain votes are all in, waiting only on the tally-share deliveries
+    /// its bundles enqueued. `batchVoteSubmitted` is deferred until those settle.
+    struct AwaitingShareDelivery: Sendable {
+        let proposalId: UInt32
+        let choice: VoteChoice
+        let identities: [VotingShareDeliveryIdentity]
+    }
+
+    /// What the post-loop settlement added to the batch's tallies.
+    struct ShareDeliverySettlement: Sendable {
+        let successCount: Int
+        let failCount: Int
+    }
+
+    /// Rebuild one bundle's helper-share payloads and hand them to the helper servers.
+    ///
+    /// Extracted from the batch loop so the same body serves the recovery lane and so it can run
+    /// inside `VotingHelperDeliveryWindow` while the caller proves the next vote. The server set
+    /// is read from `serverPool` when the delivery starts and pruned when it finishes, so a
+    /// server that proved unreachable is not retried by a later delivery; a whole-set exhaustion
+    /// empties the pool, which is what stops the batch.
+    // swiftlint:disable:next function_parameter_count
+    static func deliverShares(
+        roundId: String,
+        bundleIndex: UInt32,
+        proposalId: UInt32,
+        bundleJson: String,
+        shareIndices: [UInt32],
+        voteCommitmentTreePosition: UInt64,
+        submitAtDeadline: Double?,
+        serverPool: VotingShareServerPool,
+        votingCrypto: VotingCryptoClient,
+        votingAPI: VotingAPIClient
+    ) async throws -> ShareDelegationResult {
         let now = Date().timeIntervalSince1970
         var payloads: [SharePayload] = []
         var submitAtByShareIndex: [UInt32: UInt64] = [:]
@@ -3974,46 +4040,137 @@ extension VotingCoordFlow {
             }
             submitAtByShareIndex[shareIndex] = submitAt
             let wireJson = try await votingCrypto.recoverWireJson(
-                stored.bundleJson, proposalId, shareIndex,
-                voteConfirmation.voteCommitmentTreePosition, submitAt
+                bundleJson, proposalId, shareIndex,
+                voteCommitmentTreePosition, submitAt
             )
             payloads.append(SharePayload(wireJson: wireJson, shareIndex: shareIndex))
         }
 
-        let recoveryResult = try await Voting.delegateSharesWithFallback(
-            payloads,
-            proposalId: proposalId,
-            votingAPI: votingAPI,
-            serverURLs: shareServerURLs
-        )
-        shareServerURLs = recoveryResult.remainingServerURLs
+        let result: ShareDelegationResult
+        do {
+            result = try await Voting.delegateSharesWithFallback(
+                payloads,
+                proposalId: proposalId,
+                votingAPI: votingAPI,
+                serverURLs: await serverPool.current()
+            )
+        } catch let error as ShareDelegationError where error == .noReachableVoteServers {
+            // Nothing reachable is left: empty the pool so the batch loop stops proving votes it
+            // has nowhere to send, exactly as the old inline `shouldStopBatch` did.
+            await serverPool.prune(to: [])
+            throw error
+        }
+        await serverPool.prune(to: result.remainingServerURLs)
+
         // A share the servers already accepted must not be allowed to vanish from local
-        // bookkeeping: record every delegation the loop can reach first (a write fault on one
+        // bookkeeping: record every delegation this loop can reach first (a write fault on one
         // share must not cost later shares their record), then throw once if any write failed,
-        // so this bundle is never reported recovered. A silent `true` return here would let the
-        // caller's `catch` never fire, and `reduceBatchSubmissionCompleted` would write a
-        // completion record over shares invisible to `getShareDelegations` (8O adversarial
-        // finding, CHP.md 2026-08-13) — the server still holds the share, so the vote itself
-        // stays safe; only local resubmission bookkeeping for that specific share is at risk.
-        // `markVoteSubmitted` still runs unconditionally below: the on-chain vote really is
-        // confirmed at this point, and 8F already proved that call idempotent to re-mark on retry.
+        // so this bundle counts as failed instead of done. A silent success here would let
+        // `reduceBatchSubmissionCompleted` write a completion record over shares invisible to
+        // `getShareDelegations` (8O adversarial finding, CHP.md 2026-08-13) — the server still
+        // holds the share, so the vote itself stays safe; only local resubmission bookkeeping
+        // for that specific share is at risk.
         var shareRecordFailures: [Error] = []
-        for info in recoveryResult.delegatedShares {
+        for info in result.delegatedShares {
             do {
                 try await votingCrypto.recordShareDelegation(
                     roundId, bundleIndex, info.proposalId, info.shareIndex,
                     info.acceptedByServers, submitAtByShareIndex[info.shareIndex] ?? 0
                 )
             } catch {
-                LoggerProxy.warn("Batch recovery: failed to record share delegation for share \(info.shareIndex): \(error)")
+                LoggerProxy.warn("Batch: failed to record share delegation for share \(info.shareIndex): \(error)")
                 shareRecordFailures.append(error)
             }
         }
-        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, cachedTxHash)
         if let firstFailure = shareRecordFailures.first {
             throw firstFailure
         }
-        return true
+        return result
+    }
+
+    /// Admit one bundle's delivery into the window. Returns once it is admitted, which — when the
+    /// window is already full — is when the oldest still-running delivery settles.
+    // swiftlint:disable:next function_parameter_count
+    static func enqueueDelivery(
+        into deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>,
+        identity: VotingShareDeliveryIdentity,
+        bundleJson: String,
+        shareIndices: [UInt32],
+        voteCommitmentTreePosition: UInt64,
+        submitAtDeadline: Double?,
+        serverPool: VotingShareServerPool,
+        votingCrypto: VotingCryptoClient,
+        votingAPI: VotingAPIClient
+    ) async throws {
+        try await deliveryWindow.enqueue(identity: identity) {
+            try await Self.deliverShares(
+                roundId: identity.roundId,
+                bundleIndex: identity.bundleIndex,
+                proposalId: identity.proposalId,
+                bundleJson: bundleJson,
+                shareIndices: shareIndices,
+                voteCommitmentTreePosition: voteCommitmentTreePosition,
+                submitAtDeadline: submitAtDeadline,
+                serverPool: serverPool,
+                votingCrypto: votingCrypto,
+                votingAPI: votingAPI
+            )
+        }
+    }
+
+    /// Wait for every enqueued delivery and attribute the outcome back to its proposal: a
+    /// proposal whose bundles all delivered is reported submitted here, one with any failed
+    /// delivery is reported failed with that first failure's message. Returns what to add to
+    /// the batch's success/fail tallies.
+    static func settleDeliveries(
+        roundId: String,
+        awaiting: [AwaitingShareDelivery],
+        deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>,
+        send: Send<Action>
+    ) async throws -> ShareDeliverySettlement {
+        guard !awaiting.isEmpty else {
+            return ShareDeliverySettlement(successCount: 0, failCount: 0)
+        }
+
+        await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
+
+        var failures: [VotingShareDeliveryIdentity: Error] = [:]
+        do {
+            _ = try await withTaskCancellationHandler {
+                try await deliveryWindow.drain()
+            } onCancel: {
+                // The window owns unstructured tasks, so cancelling this effect does not reach
+                // them: cancel and join them explicitly rather than leaving deliveries running.
+                Task { await deliveryWindow.cancelAndDrain() }
+            }
+        } catch let aggregate as VotingShareDeliveryAggregateError<ShareDelegationResult> {
+            failures = aggregate.failures
+        } catch {
+            await deliveryWindow.cancelAndDrain()
+            throw error
+        }
+
+        var successCount = 0
+        var failCount = 0
+        for proposal in awaiting {
+            guard let firstFailure = proposal.identities.compactMap({ failures[$0] }).first else {
+                successCount += 1
+                await send(.batchVoteSubmitted(
+                    roundId: roundId,
+                    proposalId: proposal.proposalId,
+                    choice: proposal.choice
+                ))
+                continue
+            }
+            failCount += 1
+            LoggerProxy.error("Batch: share delivery failed for proposal \(proposal.proposalId): \(firstFailure)")
+            await send(.batchVoteFailed(
+                roundId: roundId,
+                proposalId: proposal.proposalId,
+                error: VotingErrorMapper.userFriendlyMessage(from: firstFailure)
+            ))
+        }
+        return ShareDeliverySettlement(successCount: successCount, failCount: failCount)
     }
 
     // MARK: - Delegation pipeline (Zashi inline)

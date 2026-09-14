@@ -1698,9 +1698,10 @@ import Testing
     // `recordShareDelegation` write faults. Share 0's local write fails here while share
     // 1's succeeds, proving two things at once: the loop keeps going past the first
     // failure (share 1 still gets recorded — `events` below pins the order), and the
-    // function throws once at the end instead of returning `true`, so this bundle cannot
-    // be mistaken for fully recovered.
-    @Test func tryRecoverInflightVoteRecordsAllSharesThenThrowsWhenOneShareFailsToRecord() async {
+    // failure is raised rather than swallowed, so this bundle cannot be mistaken for
+    // fully recovered. MOB-1928 moved the delivery itself into the window, so the throw
+    // now surfaces from `drain()` attributed to this bundle's identity.
+    @Test func tryRecoverInflightVoteRecordsAllSharesThenThrowsWhenOneShareFailsToRecord() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getVoteTxHash = { _, _, _ in .present("cached-tx") }
@@ -1732,33 +1733,45 @@ import Testing
             )
         }
 
-        var shareServerURLs = ["https://a.example.com"]
-        await #expect(throws: TestError.self) {
-            _ = try await VotingCoordFlow.tryRecoverInflightVote(
+        let serverPool = VotingShareServerPool(urls: ["https://a.example.com"])
+        let deliveryWindow = VotingHelperDeliveryWindow<ShareDelegationResult>()
+        let identity = try #require(
+            await VotingCoordFlow.tryRecoverInflightVote(
                 roundId: "aabb",
                 bundleIndex: 0,
                 proposalId: 1,
                 choice: .option(0),
                 submitAtDeadline: nil,
-                shareServerURLs: &shareServerURLs,
+                serverPool: serverPool,
+                deliveryWindow: deliveryWindow,
                 votingCrypto: votingCrypto,
                 votingAPI: votingAPI,
                 send: Send<VotingCoordFlow.Action>(send: { _ in }),
                 roundIdAction: { "aabb" }
             )
+        )
+        #expect(identity == VotingShareDeliveryIdentity(roundId: "aabb", bundleIndex: 0, proposalId: 1))
+
+        do {
+            _ = try await deliveryWindow.drain()
+            Issue.record("Expected the failed share record to be raised by the delivery window")
+        } catch let error as VotingShareDeliveryAggregateError<ShareDelegationResult> {
+            #expect(Set(error.failures.keys) == Set([identity]))
+            #expect(error.failures[identity] is TestError)
         }
 
         // `markVoteSubmitted` still runs: the on-chain vote really is confirmed here,
         // only local share bookkeeping is incomplete (8F proved that call idempotent
-        // to re-mark on a later retry).
+        // to re-mark on a later retry). It now runs before the shares are handed over,
+        // since the delivery outlives this call.
         let events = await recorder.events()
-        #expect(events == ["record:0", "record:1", "mark"])
+        #expect(events == ["mark", "record:0", "record:1"])
     }
 
     // Regression guard for the same code path: when every share records
-    // successfully, behavior is unchanged from before Task 8P — no throw, `true`
-    // returned, `markVoteSubmitted` still runs after both records.
-    @Test func tryRecoverInflightVoteReturnsTrueWhenAllShareRecordsSucceed() async throws {
+    // successfully, behavior is unchanged from before Task 8P — no throw, the bundle's
+    // delivery identity returned, `markVoteSubmitted` still run.
+    @Test func tryRecoverInflightVoteReturnsIdentityWhenAllShareRecordsSucceed() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getVoteTxHash = { _, _, _ in .present("cached-tx") }
@@ -1785,23 +1798,27 @@ import Testing
             )
         }
 
-        var shareServerURLs = ["https://a.example.com"]
+        let serverPool = VotingShareServerPool(urls: ["https://a.example.com"])
+        let deliveryWindow = VotingHelperDeliveryWindow<ShareDelegationResult>()
         let recovered = try await VotingCoordFlow.tryRecoverInflightVote(
             roundId: "aabb",
             bundleIndex: 0,
             proposalId: 1,
             choice: .option(0),
             submitAtDeadline: nil,
-            shareServerURLs: &shareServerURLs,
+            serverPool: serverPool,
+            deliveryWindow: deliveryWindow,
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: Send<VotingCoordFlow.Action>(send: { _ in }),
             roundIdAction: { "aabb" }
         )
+        let reports = try await deliveryWindow.drain()
 
-        #expect(recovered)
+        #expect(recovered == VotingShareDeliveryIdentity(roundId: "aabb", bundleIndex: 0, proposalId: 1))
+        #expect(Set(reports.keys) == Set([recovered].compactMap { $0 }))
         let events = await recorder.events()
-        #expect(events == ["record:0", "record:1", "mark"])
+        #expect(events == ["mark", "record:0", "record:1"])
     }
 
     // Fix A (MOB-1802): no locally cached delegation TX hash is NOT evidence the bundle
