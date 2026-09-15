@@ -22,6 +22,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
 - [MOB-1962] Coinholder polling picks up a mined vote sooner and reliably keeps checking over Tor: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
 - [MOB-1964] Authorizing a wallet for coinholder polling reuses private-information-retrieval server connections across matching note bundles and preparation steps, so wallets with several bundles start faster.
+- [MOB-1965] Coinholder polling submits at most two note bundles when the rest carry under 1 % of the wallet's voting weight (and under 1,000 ZEC), so rounds with many small notes finish in minutes instead of hours. The confirmation screen shows the weight that was left out.
 
 ### Fixed
 

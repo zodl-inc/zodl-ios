@@ -2605,6 +2605,57 @@
         }
       }
     },
+    "coinVote.confirmSubmission.detailNotIncluded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not included"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not included"
+          }
+        }
+      }
+    },
+    "coinVote.confirmSubmission.detailNotIncludedValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC in %2$lld small bundles"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC in %2$lld small bundles"
+          }
+        }
+      }
+    },
+    "coinVote.confirmSubmission.detailNotIncludedValueSingle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC in one small bundle"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC in one small bundle"
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.detailPoll" : {
       "extractionState" : "manual",
       "localizations" : {

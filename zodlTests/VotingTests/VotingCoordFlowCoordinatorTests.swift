@@ -1032,6 +1032,142 @@ import Testing
         ])
     }
 
+    /// Twenty notes bundle into four value-descending bundles of 9000, 890, 60 and 50 ballot units.
+    /// The trim budget is 1 % of 10,000, so the 50 goes and the 60 stays: the tail row is deleted
+    /// through the skipped-suffix path and the kept prefix's quantized weight is reported.
+    @Test func freshSetupTrimsTheCheapestTailBundleAndDeletesItsRow() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let unit = ballotDivisor
+        var notes: [NoteInfo] = []
+        for (bundleIndex, perNote) in [UInt64(1_800), 178, 12, 10].enumerated() {
+            for slot in 0..<5 {
+                notes.append(note(value: perNote * unit, position: UInt64(bundleIndex * 5 + slot)))
+            }
+        }
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.deleteSkippedBundles = { storedRoundId, keepCount in
+            await recorder.record("delete-skipped:\(storedRoundId):\(keepCount)")
+        }
+
+        let trim = try await VotingCoordFlow.applyBundleTrim(
+            roundId: roundId,
+            notes: notes,
+            setupResult: BundleSetupResult(bundleCount: 4, eligibleWeight: 10_000 * unit),
+            votingCrypto: votingCrypto
+        )
+
+        #expect(trim.keepCount == 3)
+        #expect(trim.trimmedBundleCount == 1)
+        #expect(trim.keptWeight == quantizeWeight(9_000 * unit) + quantizeWeight(890 * unit) + quantizeWeight(60 * unit))
+        #expect(trim.trimmedWeight == quantizeWeight(50 * unit))
+        #expect(await recorder.events() == ["delete-skipped:\(roundId):3"])
+    }
+
+    @Test func aSetupWithinTheBundleCapIsNotTrimmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let unit = ballotDivisor
+        let notes = (0..<10).map { index in note(value: (index < 5 ? 100 : 1) * unit, position: UInt64(index)) }
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.deleteSkippedBundles = { storedRoundId, keepCount in
+            await recorder.record("delete-skipped:\(storedRoundId):\(keepCount)")
+        }
+
+        let trim = try await VotingCoordFlow.applyBundleTrim(
+            roundId: roundId,
+            notes: notes,
+            setupResult: BundleSetupResult(bundleCount: 2, eligibleWeight: 505 * unit),
+            votingCrypto: votingCrypto
+        )
+
+        #expect(trim == VotingBundleTrim(keepCount: 2, keptWeight: 505 * unit, trimmedBundleCount: 0, trimmedWeight: 0))
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func aBundleCountTheAppCannotReproduceIsLeftUntrimmed() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let unit = ballotDivisor
+        let notes = (0..<20).map { index in note(value: (index < 5 ? 1_800 : 10) * unit, position: UInt64(index)) }
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.deleteSkippedBundles = { storedRoundId, keepCount in
+            await recorder.record("delete-skipped:\(storedRoundId):\(keepCount)")
+        }
+
+        // The stored setup says five bundles; the app's bundling of these notes says four.
+        let trim = try await VotingCoordFlow.applyBundleTrim(
+            roundId: roundId,
+            notes: notes,
+            setupResult: BundleSetupResult(bundleCount: 5, eligibleWeight: 9_150 * unit),
+            votingCrypto: votingCrypto
+        )
+
+        #expect(trim.keepCount == 5)
+        #expect(trim.trimmedBundleCount == 0)
+        #expect(await recorder.events().isEmpty)
+    }
+
+    /// A trimmed round abandoned before its first delegation broadcast comes back as a fresh round
+    /// with its trimmed rows still stored. Setting the bundles up again would fail in the crate,
+    /// so the stored prefix is adopted as it is, with the kept weight it carries.
+    @Test func reenteringATrimmedRoundAdoptsTheStoredBundlesWithoutSettingUpAgain() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let unit = ballotDivisor
+        var notes: [NoteInfo] = []
+        for (bundleIndex, perNote) in [UInt64(1_800), 178, 12, 10].enumerated() {
+            for slot in 0..<5 {
+                notes.append(note(value: perNote * unit, position: UInt64(bundleIndex * 5 + slot)))
+            }
+        }
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.setupBundles = { storedRoundId, _ in
+            await recorder.record("setup:\(storedRoundId)")
+            throw TestError.proofFailed
+        }
+        votingCrypto.deleteSkippedBundles = { storedRoundId, keepCount in
+            await recorder.record("delete-skipped:\(storedRoundId):\(keepCount)")
+        }
+
+        let setup = try await VotingCoordFlow.resolveFreshBundleSetup(
+            roundId: roundId,
+            notes: notes,
+            existingBundleCount: 3,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.keepCount == 3)
+        #expect(setup.keptWeight == quantizeWeight(9_000 * unit) + quantizeWeight(890 * unit) + quantizeWeight(60 * unit))
+        #expect(await recorder.events().isEmpty)
+    }
+
+    @Test func aRoundWithoutRowsSetsUpItsBundlesAndTrimsThem() async throws {
+        let recorder = RecoveryOrderRecorder()
+        let unit = ballotDivisor
+        var notes: [NoteInfo] = []
+        for (bundleIndex, perNote) in [UInt64(1_800), 178, 12, 10].enumerated() {
+            for slot in 0..<5 {
+                notes.append(note(value: perNote * unit, position: UInt64(bundleIndex * 5 + slot)))
+            }
+        }
+        var votingCrypto = VotingCryptoClient()
+        votingCrypto.setupBundles = { storedRoundId, _ in
+            await recorder.record("setup:\(storedRoundId)")
+            return BundleSetupResult(bundleCount: 4, eligibleWeight: 10_000 * unit)
+        }
+        votingCrypto.deleteSkippedBundles = { storedRoundId, keepCount in
+            await recorder.record("delete-skipped:\(storedRoundId):\(keepCount)")
+        }
+
+        let setup = try await VotingCoordFlow.resolveFreshBundleSetup(
+            roundId: roundId,
+            notes: notes,
+            existingBundleCount: 0,
+            votingCrypto: votingCrypto
+        )
+
+        #expect(setup.keepCount == 3)
+        #expect(setup.trimmedBundleCount == 1)
+        #expect(await recorder.events() == ["setup:\(roundId)", "delete-skipped:\(roundId):3"])
+    }
+
     @Test func absentRoundLoadsAsFreshSetup() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingCrypto = VotingCryptoClient()
@@ -1351,6 +1487,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1410,6 +1547,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1480,6 +1618,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1541,6 +1680,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1619,6 +1759,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1703,6 +1844,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1779,6 +1921,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
@@ -1845,6 +1988,7 @@ import Testing
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
             cachedNotes: [note(value: ballotDivisor, position: 0)],
+            bundleCount: 1,
             senderSeed: [],
             hotkeySeed: [],
             networkId: 1,
