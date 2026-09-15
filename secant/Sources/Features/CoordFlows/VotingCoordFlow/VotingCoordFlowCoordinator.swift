@@ -2111,18 +2111,16 @@ extension VotingCoordFlow {
                 // ends its walk, and the `catch` awaits that same cancel so the effect can never
                 // return while a delivery is still writing share records.
                 settlement = try await withTaskCancellationHandler {
-                    let votesStarted = ContinuousClock().now
-                    await Self.runBundlePipelines(plan.workByBundle, context: context, send: send)
-                    VotingSubmissionTrace.info(VotingSubmissionTrace.endLine(
-                        step: "votes", context: traceContext, milliseconds: VotingSubmissionTrace.milliseconds(since: votesStarted)
-                    ))
+                    try await VotingSubmissionTrace.measure("votes", traceContext, totals: context.trace) {
+                        await Self.runBundlePipelines(plan.workByBundle, context: context, send: send)
+                    }
                     // A pipeline reports a cancellation back rather than throwing it, so that one
                     // bundle stopping never tears the group down while another sits between a
                     // broadcast and its confirmation. The effect's own cancellation is raised here
                     // instead, once: a cancelled batch must not mark its remaining questions failed
                     // and must not report itself complete.
                     try Task.checkCancellation()
-                    return try await VotingSubmissionTrace.measure("sharesJoin", traceContext) {
+                    return try await VotingSubmissionTrace.measure("sharesJoin", traceContext, totals: context.trace) {
                         try await Self.settleDeliveries(
                             roundId: roundId,
                             awaiting: await tracker.awaitingDeliveries(),
@@ -2138,15 +2136,14 @@ extension VotingCoordFlow {
                 throw error
             }
 
-            let stepTotals = await context.trace.summary(["sync", "witness", "prove", "broadcast", "confirm", "record", "deliver"])
-            VotingSubmissionTrace.info(
-                """
-                Voting submission summary \(traceContext) \
-                bundles=\(bundleCount) questions=\(totalCount) \
-                totalMs=\(VotingSubmissionTrace.milliseconds(since: submissionStarted)) \
-                \(stepTotals)
-                """
+            let summary = await VotingSubmissionTrace.submissionSummary(
+                context: traceContext,
+                bundleCount: bundleCount,
+                questionCount: totalCount,
+                totalMilliseconds: VotingSubmissionTrace.milliseconds(since: submissionStarted),
+                totals: context.trace
             )
+            VotingSubmissionTrace.info(summary)
             let walk = await tracker.tallies()
             await send(.batchSubmissionCompleted(
                 roundId: roundId,

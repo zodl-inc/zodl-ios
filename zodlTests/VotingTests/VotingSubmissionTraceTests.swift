@@ -71,5 +71,47 @@ struct VotingSubmissionTraceTests {
         #expect(await totals.value("deliver") == 0)
         #expect(await totals.summary(["prove", "confirm", "deliver"]) == "proveMs=150 confirmMs=250 deliverMs=0")
     }
+
+    @Test func productionSubmissionSummaryIncludesWholePhaseTotals() async {
+        let totals = VotingSubmissionTrace.Totals()
+        await totals.add("votes", 250)
+        await totals.add("sharesJoin", 40)
+        await totals.add("prove", 500)
+
+        let summary = await VotingSubmissionTrace.submissionSummary(
+            context: "round=aabbccdd",
+            bundleCount: 2,
+            questionCount: 3,
+            totalMilliseconds: 900,
+            totals: totals
+        )
+
+        #expect(
+            summary == "Voting submission summary round=aabbccdd bundles=2 questions=3 totalMs=900 votesMs=250 sharesJoinMs=40 proveMs=500 witnessMs=0 syncMs=0 broadcastMs=0 confirmMs=0 recordMs=0 deliverMs=0"
+        )
+    }
+
+    @Test func measureUsesInjectedClockAndAddsOneExactTotal() async throws {
+        let reads = SignalledRecords<Void>()
+        let origin = ContinuousClock().now
+        let now: @Sendable () -> ContinuousClock.Instant = {
+            reads.recordCall() == 1 ? origin : origin.advanced(by: .milliseconds(42))
+        }
+        let lines = SignalledRecords<String>()
+        let totals = VotingSubmissionTrace.Totals()
+
+        _ = try await VotingSubmissionTrace.measure(
+            "votes",
+            "round=aabbccdd",
+            totals: totals,
+            sink: { lines.record($0) },
+            now: now
+        ) {
+            42
+        }
+
+        #expect(await totals.value("votes") == 42)
+        #expect(lines.values == ["Voting trace end votes round=aabbccdd ms=42"])
+    }
 }
 #endif

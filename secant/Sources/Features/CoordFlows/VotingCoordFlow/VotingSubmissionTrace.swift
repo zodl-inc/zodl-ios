@@ -43,7 +43,12 @@ enum VotingSubmissionTrace {
 
     /// Elapsed whole milliseconds since `start` on the continuous clock.
     static func milliseconds(since start: ContinuousClock.Instant) -> Int64 {
-        let elapsed = ContinuousClock().now - start
+        milliseconds(since: start, until: ContinuousClock().now)
+    }
+
+    /// Elapsed whole milliseconds between two instants on the continuous clock.
+    static func milliseconds(since start: ContinuousClock.Instant, until end: ContinuousClock.Instant) -> Int64 {
+        let elapsed = end - start
         return Int64(elapsed.components.seconds) * 1000 + Int64(elapsed.components.attoseconds / 1_000_000_000_000_000)
     }
 
@@ -54,21 +59,36 @@ enum VotingSubmissionTrace {
         _ context: String,
         totals: Totals? = nil,
         sink: Sink = info,
+        now: @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
         _ body: () async throws -> T
     ) async throws -> T {
-        let started = ContinuousClock().now
+        let started = now()
         do {
             let result = try await body()
-            let elapsed = milliseconds(since: started)
+            let elapsed = milliseconds(since: started, until: now())
             sink(endLine(step: step, context: context, milliseconds: elapsed))
             await totals?.add(step, elapsed)
             return result
         } catch {
-            let elapsed = milliseconds(since: started)
+            let elapsed = milliseconds(since: started, until: now())
             sink(failedLine(step: step, context: context, milliseconds: elapsed, error: error))
             await totals?.add(step, elapsed)
             throw error
         }
+    }
+
+    /// Format the production summary for one complete vote submission.
+    static func submissionSummary(
+        context: String,
+        bundleCount: UInt32,
+        questionCount: Int,
+        totalMilliseconds: Int64,
+        totals: Totals
+    ) async -> String {
+        let stepTotals = await totals.summary([
+            "votes", "sharesJoin", "prove", "witness", "sync", "broadcast", "confirm", "record", "deliver"
+        ])
+        return "Voting submission summary \(context) bundles=\(bundleCount) questions=\(questionCount) totalMs=\(totalMilliseconds) \(stepTotals)"
     }
 
     /// Per-step totals across the pipelines of one submission.
