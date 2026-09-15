@@ -317,6 +317,32 @@ import Testing
         }
     }
 
+    @Test func resolvesAConfigThatAdvertisesVoteProtocolV1() {
+        let config = makeConfig(
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v1", tally: "v0", voteServer: "v1")
+        )
+
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func rejectsAnUnknownVoteProtocol() {
+        let config = makeConfig(
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v2", tally: "v0", voteServer: "v1")
+        )
+
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
+        }
+        guard case .unsupportedVersion(let component, let advertised)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "vote_protocol")
+        #expect(advertised == "v2")
+    }
+
     @Test func validateRejectsUnknownVoteProtocol() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v99", tally: "v0", voteServer: "v1")
@@ -854,6 +880,18 @@ import Testing
         }
     }
 
+    @Test func parseVotingSessionAcceptsThirtySevenProposals() throws {
+        let session = try parseVotingSession(from: makeRound(proposals: (1...37).map { makeProposal(id: $0) }))
+
+        #expect(session.proposals.count == 37)
+    }
+
+    @Test func parseVotingSessionAcceptsProposalIdFifty() {
+        #expect(throws: Never.self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 50)]))
+        }
+    }
+
     @Test func parseVotingSessionRejectsEmptyProposals() {
         #expect(throws: (any Error).self) {
             try parseVotingSession(from: makeRound(proposals: []))
@@ -862,13 +900,19 @@ import Testing
 
     @Test func parseVotingSessionRejectsTooManyProposals() {
         #expect(throws: (any Error).self) {
-            try parseVotingSession(from: makeRound(proposals: (1...16).map { makeProposal(id: $0) }))
+            try parseVotingSession(from: makeRound(proposals: (1...51).map { makeProposal(id: $0) }))
         }
     }
 
     @Test func parseVotingSessionRejectsProposalIdOutsideRange() {
         #expect(throws: (any Error).self) {
-            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 16)]))
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 51)]))
+        }
+    }
+
+    @Test func parseVotingSessionRejectsProposalIdZero() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 0)]))
         }
     }
 
@@ -910,9 +954,31 @@ import Testing
         }
     }
 
-    private func makeRound(proposals: [[String: Any]]? = nil) -> [String: Any] {
+    @Test func parseVotingSessionsSkipsARoundThatFailsValidation() {
+        let validRound = makeRound(roundIdByte: 0xAA)
+        let invalidRound = makeRound(proposals: [makeProposal(id: 51)])
+        let validRound2 = makeRound(roundIdByte: 0xBB)
+
+        let sessions = parseVotingSessions(skippingInvalidRounds: [validRound, invalidRound, validRound2])
+
+        #expect(sessions.map(\.voteRoundId) == [
+            Data(repeating: 0xAA, count: 32),
+            Data(repeating: 0xBB, count: 32)
+        ])
+    }
+
+    @Test func parseVotingSessionsReturnsEmptyWhenEveryRoundIsInvalid() {
+        let sessions = parseVotingSessions(skippingInvalidRounds: [
+            makeRound(proposals: []),
+            makeRound(proposals: [makeProposal(id: 51)])
+        ])
+
+        #expect(sessions.isEmpty)
+    }
+
+    private func makeRound(roundIdByte: UInt8 = 0xAA, proposals: [[String: Any]]? = nil) -> [String: Any] {
         [
-            "vote_round_id": Data(repeating: 0xAA, count: 32).base64EncodedString(),
+            "vote_round_id": Data(repeating: roundIdByte, count: 32).base64EncodedString(),
             "snapshot_height": 1,
             "snapshot_blockhash": Data(repeating: 0x01, count: 32).base64EncodedString(),
             "proposals_hash": Data(repeating: 0x02, count: 32).base64EncodedString(),
