@@ -14,6 +14,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
 - [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
 
+### Fixed
+
+- [MOB-1954] On a wallet with a long transaction history, the app no longer re-reads the whole history every two seconds once sync is up to date. The list refreshes when a sync pass completes, when a transaction arrives or is mined, and while a sent transaction is still pending. If reading the history fails, the app now retries on its own with increasing delays instead of waiting for the next change.
+
 ## [3.13.0] - 2026-09-10
 
 ### Changed

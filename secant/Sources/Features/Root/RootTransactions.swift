@@ -52,10 +52,33 @@ extension Root {
                     }
                     .cancellable(id: state.CancelSyncStalledEventId, cancelInFlight: true),
                     .publisher {
+                        // MOB-1954: EDGE-triggered, not level-triggered. The Slipstream poll loop
+                        // publishes a state every 2 s and never deduplicates, so on a synced wallet
+                        // every tick used to map to a full-history fetch here, and the MOB-1856
+                        // gate below then turned that into back-to-back `getAllTransactions` reads
+                        // for as long as the app stayed open -- on a 1,255-transaction wallet each
+                        // one a 25 s read that parked a cooperative-pool thread in SQLite (field,
+                        // 2026-09-14). The list refreshes when the status BECOMES `.upToDate`, i.e.
+                        // the first synced state after a pass; a transaction that lands while the
+                        // status stays up to date arrives through `foundTransactions` /
+                        // `minedTransaction` above, and a pending row keeps the 30 s reconciliation
+                        // poller alive. `SyncStatus` is `Equatable`: `.syncing` with moving
+                        // progress and `.error` pass the dedup and map to `.noChangeInTransactions`
+                        // as before. The dedup state is per subscription, so every
+                        // `.observeTransactions` start (cold launch, `.retryStart`) sees the next
+                        // `.upToDate` as an edge. The dedup deliberately runs BEFORE the throttle:
+                        // a `latest: true` window holding `[.syncing, .upToDate]` emits only
+                        // `.upToDate`, which dedupping afterwards would collapse against the
+                        // PREVIOUS `.upToDate` and drop the edge entirely. Deduplicating first
+                        // leaves the throttle a stream of distinct statuses, where the worst a
+                        // window can do is coalesce consecutive identical ones -- never an edge
+                        // into its predecessor.
                         sdkSynchronizer.stateStream()
+                            .map(\.syncStatus)
+                            .removeDuplicates()
                             .throttle(for: .seconds(0.2), scheduler: mainQueue, latest: true)
-                            .map {
-                                if $0.syncStatus == .upToDate {
+                            .map { status in
+                                if status == .upToDate {
                                     return Root.Action.fetchTransactionsForTheSelectedAccount
                                 }
                                 return Root.Action.noChangeInTransactions
@@ -129,25 +152,31 @@ extension Root {
                     return .none
                 }
                 state.isTransactionsFetchInFlight = true
-                return .run { send in
-                    do {
-                        let transactions = try await sdkSynchronizer.getAllTransactions(accountUUID)
-                        await send(.fetchedTransactions(accountUUID, transactions))
-                    } catch {
-                        // A failed fetch must never be silent: a wallet whose every row failed to
-                        // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
-                        // rendered as an EMPTY transaction list with no trace anywhere, reading as
-                        // data loss. The list keeps its previous contents; the error goes to the
-                        // log where the next investigation can find it. No user-facing alert:
-                        // `.transactionsFetchFailed` (below) still clears any list left showing its
-                        // loading placeholder and re-arms the reconciliation poller from the KEPT
-                        // rows, so together with the pending-transactions poller and the next
-                        // synchronizer event, this fetch gets retried.
-                        LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
-                        await send(.transactionsFetchFailed(accountUUID: accountUUID))
+                // MOB-1954 (review follow-up): a fetch is starting, so a retry still waiting on the
+                // last failure is moot -- if this fetch fails too, its own failure schedules the
+                // next one from the streak counter.
+                return .concatenate(
+                    .cancel(id: state.CancelTransactionsFetchRetryId),
+                    .run { send in
+                        do {
+                            let transactions = try await sdkSynchronizer.getAllTransactions(accountUUID)
+                            await send(.fetchedTransactions(accountUUID, transactions))
+                        } catch {
+                            // A failed fetch must never be silent: a wallet whose every row failed to
+                            // decode (field, 2026-08-04 — NULL trust_status meeting a strict decode)
+                            // rendered as an EMPTY transaction list with no trace anywhere, reading as
+                            // data loss. The list keeps its previous contents; the error goes to the
+                            // log where the next investigation can find it. No user-facing alert:
+                            // `.transactionsFetchFailed` (below) still clears any list left showing its
+                            // loading placeholder and re-arms the reconciliation poller from the KEPT
+                            // rows, so together with the pending-transactions poller, the delayed retry
+                            // it schedules and the next synchronizer event, this fetch gets retried.
+                            LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
+                            await send(.transactionsFetchFailed(accountUUID: accountUUID))
+                        }
                     }
-                }
-                .cancellable(id: state.CancelTransactionsFetchId)
+                    .cancellable(id: state.CancelTransactionsFetchId)
+                )
 
             case .fetchedTransactions(let accountUUID, var transactions):
                 // MOB-1856: the coalescing gate's own completion signal -- the effect that set
@@ -173,6 +202,9 @@ extension Root {
                 guard accountUUID == state.selectedWalletAccount?.id else {
                     return coalescedFollowUp
                 }
+                // MOB-1954 (review follow-up): a read landed for the selected account, so the
+                // failure streak the delayed retry counts is over.
+                state.transactionsFetchRetryAttempt = 0
 
                 let mempoolHeight = sdkSynchronizer.latestState().latestBlockHeight + 1
 
@@ -342,6 +374,7 @@ extension Root {
                 // before the provenance guard below can return early, or a fetch coalesced during
                 // this run would stay parked forever.
                 state.isTransactionsFetchInFlight = false
+                let hadCoalescedRequest = state.isTransactionsFetchDirty
                 var coalescedFollowUp: Effect<Root.Action> = .none
                 if state.isTransactionsFetchDirty {
                     state.isTransactionsFetchDirty = false
@@ -382,6 +415,36 @@ extension Root {
                     // keep naming the foreign account whose rows are now gone.
                     state.transactionsAccountId = nil
                 }
+                // MOB-1954 (review follow-up): with the edge trigger, nothing else retries a failed
+                // read once the list is settled -- the next up-to-date tick used to, and a
+                // `foundTransactions` event never repeats. A coalesced follow-up is an immediate
+                // retry already; otherwise schedule one with a growing delay, up to the budget in
+                // `Root.State.transactionsFetchRetryDelaysInSeconds`. The retry re-enters through
+                // `.fetchTransactionsForTheSelectedAccount`, so it is coalesced like any dispatch,
+                // and its action re-checks the account so a late one can never fetch for an
+                // account the user has since left.
+                var delayedRetry: Effect<Root.Action> = .none
+                if !hadCoalescedRequest {
+                    let attempt = state.transactionsFetchRetryAttempt + 1
+                    let budget = Root.State.transactionsFetchRetryDelaysInSeconds.count
+                    if attempt <= budget {
+                        let delaySeconds = Root.State.transactionsFetchRetryDelaysInSeconds[attempt - 1]
+                        state.transactionsFetchRetryAttempt = attempt
+                        LoggerProxy.event("[RootTransactions] getAllTransactions retry \(attempt)/\(budget) scheduled in \(delaySeconds) s")
+                        delayedRetry = .run { send in
+                            try await mainQueue.sleep(for: .seconds(delaySeconds))
+                            await send(.retryFailedTransactionsFetch(accountUUID: accountUUID))
+                        }
+                        .cancellable(id: state.CancelTransactionsFetchRetryId, cancelInFlight: true)
+                    } else {
+                        LoggerProxy.event(
+                            """
+                            [RootTransactions] getAllTransactions retry budget spent; the next sync \
+                            edge, transaction event or foreground refreshes the list
+                            """
+                        )
+                    }
+                }
                 // The list keeps its previous contents (nothing to overwrite here at all), but
                 // either list may already be showing its loading placeholder -- clear it exactly
                 // like every other completed-fetch path, and keep the reconciliation poller alive
@@ -390,8 +453,18 @@ extension Root {
                     reconciliationPoller(for: state.transactions, state: state),
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
-                    coalescedFollowUp
+                    coalescedFollowUp,
+                    delayedRetry
                 )
+
+            case .retryFailedTransactionsFetch(let accountUUID):
+                // MOB-1954 (review follow-up): a delayed retry belongs to the account whose read
+                // failed. The account-switch and background paths cancel the effect that sends
+                // this, and this check closes the window in which such a cancel lands late.
+                guard accountUUID == state.selectedWalletAccount?.id else {
+                    return .none
+                }
+                return .send(.fetchTransactionsForTheSelectedAccount)
 
             default: return .none
             }
