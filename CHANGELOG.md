@@ -16,6 +16,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
 - [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
 - [MOB-1962] Coinholder polling picks up a mined vote sooner and no longer lets one slow vote server use the entire confirmation wait: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1964] Authorizing a wallet for coinholder polling connects to each private-information-retrieval server once instead of once per note bundle and step, so wallets with several bundles start faster.
 
 ### Fixed
 
