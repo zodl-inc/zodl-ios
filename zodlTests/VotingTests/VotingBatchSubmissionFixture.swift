@@ -21,6 +21,26 @@
 //
 //      deliver-cancelled:<proposal>    a gated delivery was cancelled rather than opened
 //
+//  A fixture built with `delegationProven: false` starts before authorization, so the
+//  delegation lane is exercised too. Its vocabulary, in the order one bundle produces it:
+//
+//      pczt:<bundle>                   `buildVotingPczt` stored the bundle's PCZT setup
+//      pir:<bundle>                    `precomputeDelegationPir` warmed the PIR cache
+//      specprove:<bundle>              the speculative (pre-Confirm) ZKP #1 started
+//      promote                         `promoteDelegationProving` raised the proving pool
+//      reset-promotion                 `resetDelegationProvingPromotion` cleared it again
+//      seed-export                     the wallet seed phrase left the keychain
+//      prove:<bundle>                  `buildAndProveDelegation` — the interactive ZKP #1
+//      sign:<bundle>                   `signDelegationRequest` signed the delegation
+//      registration:<bundle>           `getDelegationSubmission` assembled the payload
+//      deleg-submit:<bundle>           the registration was broadcast
+//      deleg-tx:<bundle>               the delegation TX hash was stored locally
+//      van:<bundle>                    the bundle's VAN position was stored
+//
+//  A bundle's `registration:` only assembles once a proof — speculative or interactive — has
+//  completed for it, and `sign:` only once its PCZT setup exists: that is what makes "the
+//  stored proof was reused" and "this bundle fell back to the interactive proof" observable.
+//
 //  Pauses are `ResumableGate`s and waits are `SignalledRecords`-backed (see TestSignals.swift):
 //  no polling inside a mock, no wall-clock deadline, so a starved runner slows a test down
 //  instead of failing it.
@@ -63,6 +83,14 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
     enum FixtureError: Error, Equatable {
         case deliveryRejected
         case proofFailed
+        /// A speculative delegation proof was asked to fail for its bundle.
+        case speculativeProofFailed
+        /// `signDelegationRequest` before this bundle's `buildVotingPczt` — the crate's
+        /// "no persisted setup" refusal.
+        case missingSetup
+        /// `getDelegationSubmission` before a proof for this bundle finished — the probe the
+        /// delegation pipeline uses to decide whether it still has to prove.
+        case missingProof
     }
 
     /// How a hooked `delegateShares` call fails.
@@ -99,6 +127,15 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         var commitGates: [BundleProposal: ResumableGate] = [:]
         var deliveryFailures: [UInt32: DeliveryFailure] = [:]
         var commitFailures: Set<BundleProposal> = []
+        var speculativeProofGates: [UInt32: ResumableGate] = [:]
+        var speculativeProofFinishGates: [UInt32: ResumableGate] = [:]
+        var speculativeProofFailures: Set<UInt32> = []
+        var delegationSubmitGates: [UInt32: ResumableGate] = [:]
+        /// Bundles whose `buildVotingPczt` has run, and whose proof has completed — the two
+        /// pieces of persisted state the delegation pipeline probes for.
+        var storedSetups: Set<UInt32> = []
+        var storedProofs: Set<UInt32> = []
+        var storedDelegationTxHashes: [UInt32: String] = [:]
     }
 
     static let roundId = String(repeating: "aa", count: 32)
@@ -110,12 +147,18 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
     let recorder = VotingBatchEventRecorder()
     let proposalCount: UInt32
     let bundleCount: UInt32
+    /// `true` (the default) starts the round with its authorization already on chain, i.e. at
+    /// the point `.authenticationSucceeded` hands straight to the vote loop. `false` starts it
+    /// one step earlier — nothing proved, nothing precomputed, the CTA idle — which is where
+    /// the Confirm tap and the background precompute both begin.
+    let delegationProven: Bool
 
     private let knobs = OSAllocatedUnfairLock(uncheckedState: Knobs())
 
-    init(proposalCount: UInt32 = 3, bundleCount: UInt32 = 1) {
+    init(proposalCount: UInt32 = 3, bundleCount: UInt32 = 1, delegationProven: Bool = true) {
         self.proposalCount = proposalCount
         self.bundleCount = bundleCount
+        self.delegationProven = delegationProven
     }
 
     // MARK: - Knobs
@@ -166,6 +209,21 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         }
     }
 
+    /// Registers (and so closes) the gate `submitDelegation` parks on for one bundle, after its
+    /// registration was assembled and before its `deleg-submit:` event. Pins the state the
+    /// Confirm screen shows while a reused proof waits on the chain.
+    @discardableResult
+    func delegationSubmitGate(forBundle bundleIndex: UInt32) -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.delegationSubmitGates[bundleIndex] {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.delegationSubmitGates[bundleIndex] = gate
+            return gate
+        }
+    }
+
     /// Makes `delegateShares` throw for `proposalId` — after it has recorded `deliver:<proposal>`
     /// and passed any gate, so the call is observably reached.
     func failDelivery(forProposal proposalId: UInt32, with failure: DeliveryFailure = .rejected) {
@@ -177,14 +235,54 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         knobs.withLockUnchecked { $0.commitFailures.insert(BundleProposal(bundle: bundleIndex, proposal: proposalId)) }
     }
 
+    /// Registers (and so closes) the gate the speculative proof for `bundleIndex` parks on
+    /// after it records `specprove:<bundle>` and before it reports any progress. Holding it
+    /// pins a Confirm tap to the middle of that bundle's proof.
+    @discardableResult
+    func speculativeProofGate(forBundle bundleIndex: UInt32) -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.speculativeProofGates[bundleIndex] {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.speculativeProofGates[bundleIndex] = gate
+            return gate
+        }
+    }
+
+    /// Registers (and so closes) the gate the speculative proof for `bundleIndex` parks on
+    /// after its progress event and before completing — the window in which a progress value
+    /// the precompute produced is observable on a screen that is waiting for it.
+    @discardableResult
+    func speculativeProofFinishGate(forBundle bundleIndex: UInt32) -> ResumableGate {
+        knobs.withLockUnchecked { state in
+            if let existing = state.speculativeProofFinishGates[bundleIndex] {
+                return existing
+            }
+            let gate = ResumableGate()
+            state.speculativeProofFinishGates[bundleIndex] = gate
+            return gate
+        }
+    }
+
+    /// Makes the speculative proof for `bundleIndex` fail — after it has recorded
+    /// `specprove:<bundle>` and passed any gate, so the attempt is observably reached, and
+    /// before it stores a proof, so the bundle falls back to the interactive lane.
+    func failSpeculativeProof(forBundle bundleIndex: UInt32) {
+        knobs.withLockUnchecked { _ = $0.speculativeProofFailures.insert(bundleIndex) }
+    }
+
     // MARK: - State
 
     var proposalIds: [UInt32] {
         Array(1...proposalCount)
     }
 
-    /// A software-wallet round whose delegation proof is already complete and whose drafts are
-    /// one `.option(0)` per proposal — the state `.authenticationSucceeded` starts the batch from.
+    /// A software-wallet round whose drafts are one `.option(0)` per proposal. With
+    /// `delegationProven` (the default) the authorization is already complete and the CTA is
+    /// `.requested` — the state `.authenticationSucceeded` starts the batch from. Without it
+    /// nothing is proved or precomputed and the CTA is `.idle`, so `.submitAllDraftsTapped`
+    /// and `.maybeStartDelegationPrecompute` both apply.
     func makeState() -> VotingCoordFlow.State {
         var session = RoundSession(roundId: Self.roundId)
         session.bundleCount = bundleCount
@@ -193,8 +291,9 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         session.votingWeight = 50_000_000
         session.eligibleVotingWeight = 50_000_000
         session.hotkeyAddress = "hotkey"
-        session.delegationProofStatus = .complete
-        session.batchSubmissionStatus = .requested
+        session.delegationProofStatus = delegationProven ? .complete : .notStarted
+        session.delegationPrecomputeStatus = .notStarted
+        session.batchSubmissionStatus = delegationProven ? .requested : .idle
         session.draftVotes = proposalIds.reduce(into: [UInt32: VoteChoice]()) { drafts, proposalId in
             drafts[proposalId] = .option(0)
         }
@@ -253,6 +352,12 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         values.walletStorage = .noOp
         values.walletStorage.exportVotingHotkey = { _ in
             StoredVotingHotkey(storedSecret: VotingHotkeySecret(Data(repeating: 0x11, count: 32)), version: 0)
+        }
+        values.walletStorage.exportWallet = { [self] in
+            // The one call in either lane that needs the wallet seed. A speculative proof that
+            // records this has read material it was never allowed to touch.
+            recorder.record("seed-export")
+            return .placeholder
         }
         values.localAuthentication.authenticate = { true }
         values.votingMetadata = Self.metadataClient(VotingMetadataStore())
@@ -330,6 +435,106 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
                 remainingServerURLs: serverURLs
             )
         }
+
+        delegationDependencies(&values)
+    }
+
+    /// The authorization (ZKP #1) lane: the background precompute, the promotion pair, the
+    /// interactive fallback, and the chain round-trip that ends in a stored VAN position.
+    /// Untouched by a `delegationProven` fixture — that state skips the whole lane.
+    // swiftlint:disable:next function_body_length
+    func delegationDependencies(_ values: inout DependencyValues) {
+        values.votingCrypto.getDelegationTxHash = { [self] _, bundleIndex in
+            storedDelegationTxHash(bundle: bundleIndex).map { VotingTxHashLookup.present($0) } ?? .notFound
+        }
+        values.votingCrypto.extractOrchardFvkFromUfvk = { _, _ in Data(repeating: 0x0E, count: 96) }
+        values.votingCrypto.buildVotingPczt = { [self] _, bundleIndex, _, _, _, _, _, _, _, _ in
+            knobs.withLockUnchecked { _ = $0.storedSetups.insert(bundleIndex) }
+            recorder.record("pczt:\(bundleIndex)")
+            return Self.makeVotingPcztResult(bundleIndex: bundleIndex)
+        }
+        values.votingCrypto.precomputeDelegationPir = { [self] _, bundleIndex, _, _, _, _, _, _, _, _ in
+            recorder.record("pir:\(bundleIndex)")
+            return DelegationPirPrecomputeResult(cachedCount: 1, fetchedCount: 2)
+        }
+        values.votingCrypto.precomputeDelegationProof = { [self] _, bundleIndex, _, _, _, _, _, _, _, _, _, _, _, _ in
+            AsyncThrowingStream { continuation in
+                let task = Task { await runSpeculativeProof(bundleIndex: bundleIndex, into: continuation) }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        values.votingCrypto.promoteDelegationProving = { [self] in recorder.record("promote") }
+        values.votingCrypto.resetDelegationProvingPromotion = { [self] in recorder.record("reset-promotion") }
+        values.votingCrypto.buildAndProveDelegation = { [self] _, bundleIndex, _, _, _, _, _, _, _, _, _, _, _, _ in
+            AsyncThrowingStream { continuation in
+                knobs.withLockUnchecked { _ = $0.storedProofs.insert(bundleIndex) }
+                recorder.record("prove:\(bundleIndex)")
+                continuation.yield(.progress(0.5))
+                continuation.yield(.completed(Self.proofBytes))
+                continuation.finish()
+            }
+        }
+        values.votingCrypto.signDelegationRequest = { [self] _, bundleIndex, _, _, _, _, _ in
+            guard hasStoredSetup(bundle: bundleIndex) else { throw FixtureError.missingSetup }
+            recorder.record("sign:\(bundleIndex)")
+            return (signature: Data(repeating: 0x5A, count: 64), sighash: Self.sighash(bundleIndex: bundleIndex))
+        }
+        values.votingCrypto.getDelegationSubmission = { [self] _, bundleIndex, _, _ in
+            guard hasStoredProof(bundle: bundleIndex) else { throw FixtureError.missingProof }
+            recorder.record("registration:\(bundleIndex)")
+            return Self.makeDelegationRegistration(bundleIndex: bundleIndex)
+        }
+        values.votingCrypto.storeDelegationTxHash = { [self] _, bundleIndex, txHash in
+            knobs.withLockUnchecked { $0.storedDelegationTxHashes[bundleIndex] = txHash }
+            recorder.record("deleg-tx:\(bundleIndex)")
+        }
+        values.votingCrypto.storeVanPosition = { [self] _, bundleIndex, _ in
+            recorder.record("van:\(bundleIndex)")
+        }
+        values.votingAPI.submitDelegation = { [self] registration in
+            let bundleIndex = UInt32(registration.sighash.first ?? 0)
+            if let gate = knobs.withLockUnchecked({ $0.delegationSubmitGates[bundleIndex] }) {
+                await gate.wait()
+            }
+            recorder.record("deleg-submit:\(bundleIndex)")
+            return TxResult(txHash: "\(Self.delegationTxPrefix)\(bundleIndex)", code: 0)
+        }
+        // Only a delegation TX carries the `delegate_vote` leaf index the pipeline needs; a
+        // vote's confirmation stays exactly what the pre-delegation suites already see.
+        values.votingAPI.fetchTxConfirmation = { txHash in
+            guard txHash.hasPrefix(Self.delegationTxPrefix) else {
+                return TxConfirmation(height: 100, code: 0)
+            }
+            return TxConfirmation(
+                height: 100,
+                code: 0,
+                events: [
+                    TxEvent(
+                        type: "delegate_vote",
+                        attributes: [TxEventAttribute(key: "leaf_index", value: "9")]
+                    )
+                ]
+            )
+        }
+    }
+
+    /// Body of the speculative proof stream: announce the attempt, honour the gates, then
+    /// either fail this bundle or store its proof and complete.
+    private func runSpeculativeProof(
+        bundleIndex: UInt32,
+        into continuation: AsyncThrowingStream<ProofEvent, Error>.Continuation
+    ) async {
+        recorder.record("specprove:\(bundleIndex)")
+        await speculativeProofGateIfRegistered(bundle: bundleIndex)?.wait()
+        if speculativeProofShouldFail(bundle: bundleIndex) {
+            continuation.finish(throwing: FixtureError.speculativeProofFailed)
+            return
+        }
+        continuation.yield(.progress(0.5))
+        await speculativeProofFinishGateIfRegistered(bundle: bundleIndex)?.wait()
+        knobs.withLockUnchecked { _ = $0.storedProofs.insert(bundleIndex) }
+        continuation.yield(.completed(Self.proofBytes))
+        continuation.finish()
     }
 
     // MARK: - Waits
@@ -372,7 +577,78 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         knobs.withLockUnchecked { $0.commitFailures.contains(BundleProposal(bundle: bundleIndex, proposal: proposalId)) }
     }
 
+    private func speculativeProofGateIfRegistered(bundle bundleIndex: UInt32) -> ResumableGate? {
+        knobs.withLockUnchecked { $0.speculativeProofGates[bundleIndex] }
+    }
+
+    private func speculativeProofFinishGateIfRegistered(bundle bundleIndex: UInt32) -> ResumableGate? {
+        knobs.withLockUnchecked { $0.speculativeProofFinishGates[bundleIndex] }
+    }
+
+    private func speculativeProofShouldFail(bundle bundleIndex: UInt32) -> Bool {
+        knobs.withLockUnchecked { $0.speculativeProofFailures.contains(bundleIndex) }
+    }
+
+    private func hasStoredSetup(bundle bundleIndex: UInt32) -> Bool {
+        knobs.withLockUnchecked { $0.storedSetups.contains(bundleIndex) }
+    }
+
+    private func hasStoredProof(bundle bundleIndex: UInt32) -> Bool {
+        knobs.withLockUnchecked { $0.storedProofs.contains(bundleIndex) }
+    }
+
+    private func storedDelegationTxHash(bundle bundleIndex: UInt32) -> String? {
+        knobs.withLockUnchecked { $0.storedDelegationTxHashes[bundleIndex] }
+    }
+
     // MARK: - Builders
+
+    /// Prefix that tells a delegation TX hash apart from a vote's, so one `fetchTxConfirmation`
+    /// fake can serve both.
+    static let delegationTxPrefix = "deleg-tx-"
+    static let proofBytes = Data([0x2A])
+
+    /// The bundle index, round-tripped through the one field that survives
+    /// `signDelegationRequest` → `getDelegationSubmission` → `submitDelegation` untouched.
+    static func sighash(bundleIndex: UInt32) -> Data {
+        Data([UInt8(truncatingIfNeeded: bundleIndex)])
+    }
+
+    static func makeDelegationRegistration(bundleIndex: UInt32) -> DelegationRegistration {
+        DelegationRegistration(
+            rk: Data(repeating: 0x01, count: 32),
+            spendAuthSig: Data(repeating: 0x02, count: 64),
+            tx1Effects: Data(repeating: 0x03, count: 64).base64EncodedString(),
+            signedNoteNullifier: Data(repeating: 0x04, count: 32).base64EncodedString(),
+            cmxNew: Data(repeating: 0x05, count: 32).base64EncodedString(),
+            vanCmx: Data(repeating: 0x06, count: 32).base64EncodedString(),
+            govNullifiers: [Data(repeating: 0x07, count: 32).base64EncodedString()],
+            proof: proofBytes.base64EncodedString(),
+            voteRoundId: Data(repeating: 0xAA, count: 32).base64EncodedString(),
+            sighash: sighash(bundleIndex: bundleIndex)
+        )
+    }
+
+    static func makeVotingPcztResult(bundleIndex: UInt32) -> VotingPcztResult {
+        VotingPcztResult(
+            pcztBytes: Data([0x01]),
+            pcztSighash: Data(repeating: UInt8(truncatingIfNeeded: bundleIndex &+ 0x20), count: 32),
+            rk: Data(repeating: 0x01, count: 32),
+            alpha: Data(repeating: 0x02, count: 32),
+            nfSigned: Data(repeating: 0x03, count: 32),
+            cmxNew: Data(repeating: 0x04, count: 32),
+            govNullifiers: [Data(repeating: 0x05, count: 32)],
+            van: Data(repeating: 0x06, count: 32),
+            vanCommRand: Data(repeating: 0x07, count: 32),
+            dummyNullifiers: [],
+            rhoSigned: Data(repeating: 0x08, count: 32),
+            paddedCmx: [],
+            rseedSigned: Data(repeating: 0x09, count: 32),
+            rseedOutput: Data(repeating: 0x0A, count: 32),
+            actionBytes: Data([0x0B]),
+            actionIndex: 0
+        )
+    }
 
     private static func makeBundle(proposalId: UInt32) -> VoteCommitmentBundle {
         VoteCommitmentBundle(

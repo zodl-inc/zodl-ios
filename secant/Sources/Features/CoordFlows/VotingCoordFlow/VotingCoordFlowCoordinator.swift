@@ -531,31 +531,43 @@ extension VotingCoordFlow {
             case let .maybeStartDelegationPrecompute(roundId):
                 return reduceMaybeStartDelegationPrecompute(&state, roundId: roundId)
 
+            case let .delegationPrecomputeProgress(roundId, progress):
+                return reduceDelegationPrecomputeProgress(&state, roundId: roundId, progress: progress)
+
             case let .delegationPrecomputeCompleted(roundId):
                 mutateSession(&state, roundId: roundId) { roundSession in
                     roundSession.delegationPrecomputeStatus = .ready
                     roundSession.isDelegationPrecomputeInFlight = false
+                    roundSession.delegationPrecomputeProgress = nil
+                }
+                // The run is over: disarm the shared promotion before anything resumes.
+                let disarm: Effect<Action> = .run { [votingCrypto] _ in
+                    votingCrypto.resetDelegationProvingPromotion()
                 }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
                     // Resume the pending submission. The ticket is consumed by
                     // `.authenticationSucceeded` itself; resetting the status
                     // here would flash `.idle` for one action-cycle.
-                    return .send(.authenticationSucceeded(roundId: roundId))
+                    return .concatenate(disarm, .send(.authenticationSucceeded(roundId: roundId)))
                 }
-                return .none
+                return disarm
 
             case let .delegationPrecomputeFailed(roundId, error):
                 let message = VotingErrorMapper.userFriendlyMessage(from: error)
                 mutateSession(&state, roundId: roundId) { roundSession in
                     roundSession.delegationPrecomputeStatus = .failed(message)
                     roundSession.isDelegationPrecomputeInFlight = false
+                    roundSession.delegationPrecomputeProgress = nil
+                }
+                let disarm: Effect<Action> = .run { [votingCrypto] _ in
+                    votingCrypto.resetDelegationProvingPromotion()
                 }
                 if state.pendingBatchSubmission && !state.isKeystoneUser {
                     // Same resume/no-reset rule as `.delegationPrecomputeCompleted`;
                     // the batch effect re-runs delegation inline from cold.
-                    return .send(.authenticationSucceeded(roundId: roundId))
+                    return .concatenate(disarm, .send(.authenticationSucceeded(roundId: roundId)))
                 }
-                return .none
+                return disarm
 
             case let .batchSubmissionProgress(roundId, currentIndex, totalCount, proposalId):
                 return reduceBatchSubmissionProgress(
@@ -1224,6 +1236,7 @@ extension VotingCoordFlow {
                     roundSession.delegationProofStatus = .notStarted
                     roundSession.isDelegationProofInFlight = false
                     roundSession.delegationPrecomputeStatus = .notStarted
+                    roundSession.delegationPrecomputeProgress = nil
                     roundSession.isDelegationPrecomputeInFlight = false
                     if state.isKeystoneUser {
                         roundSession.currentKeystoneBundleIndex =
@@ -1884,7 +1897,15 @@ extension VotingCoordFlow {
                 roundSession.voteSubmissionStep = .authorizingVote
                 roundSession.delegationProofStatus = .generating(progress: 0)
             }
-            return .none
+            // MOB-1929: the precompute is no longer only fetching PIR material — it is
+            // running the authorization proof itself, at speculative priority so it never
+            // competes with the UI. Someone is now waiting on it, so raise that proof (and
+            // every later bundle of this run) to the interactive proving pool instead of
+            // leaving the user behind a deliberately throttled one. The precompute effect
+            // disarms the promotion again when it finishes.
+            return .run { [votingCrypto] _ in
+                await votingCrypto.promoteDelegationProving()
+            }
         }
 
         // Finding #8 (CHP.md): a proposal whose vote landed on-chain but whose
@@ -2320,8 +2341,22 @@ extension VotingCoordFlow {
         let networkId: UInt32 = network.networkType.votingRustNetworkId
         let accountIndex = votingAccountIndex(for: state.selectedWalletAccount)
         let roundName = activeSession.title
+        // A Confirm may already be parked on this run (a restart after `.votingWeightLoaded`,
+        // for instance); it promoted a run that no longer exists, so this one promotes itself.
+        let confirmWaiting = state.pendingBatchSubmission && !state.isKeystoneUser
 
-        return .run { [votingCrypto, mnemonic, walletStorage, pirLayout] send in
+        return .run { [votingCrypto, walletStorage, pirLayout] send in
+            // MOB-1929: the promotion `.authenticationSucceeded` may arm lives on one object
+            // shared by the whole flow. Every run starts by disarming whatever the previous one
+            // left behind (a Confirm landing in its last instant can arm it after the fact), and
+            // the completion and failure reducers disarm it again at the end. A cancelled run
+            // deliberately resets nothing: its native proof may return long after a newer run
+            // has started, and a late reset would strip that run of a legitimate promotion.
+            votingCrypto.resetDelegationProvingPromotion()
+            if confirmWaiting {
+                await votingCrypto.promoteDelegationProving()
+            }
+
             let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
             let noteChunks = cachedNotes.smartBundles().bundles
             guard Int(bundleCount) <= noteChunks.count else {
@@ -2340,36 +2375,24 @@ extension VotingCoordFlow {
                 }
 
                 let bundleNotes = noteChunks[Int(bundleIndex)]
-                guard let firstNote = bundleNotes.first else { continue }
-                let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
-                    firstNote.ufvkStr,
-                    networkId
-                )
+                guard !bundleNotes.isEmpty else { continue }
 
-                _ = try await votingCrypto.buildVotingPczt(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    emptySenderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    orchardFvk,
-                    seedFingerprint
-                )
-
-                let result = try await votingCrypto.precomputeDelegationPir(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    pirEndpoints,
-                    expectedSnapshotHeight,
-                    networkId,
-                    pirLayout.pirDepth,
-                    pirLayout.tier0Layers,
-                    pirLayout.tier1Layers,
-                    polyLen
+                let result = try await Self.precomputeBundle(
+                    roundId: roundId,
+                    bundleIndex: bundleIndex,
+                    bundleCount: bundleCount,
+                    bundleNotes: bundleNotes,
+                    hotkeySeed: hotkeySeed,
+                    seedFingerprint: seedFingerprint,
+                    networkId: networkId,
+                    accountIndex: accountIndex,
+                    roundName: roundName,
+                    pirEndpoints: pirEndpoints,
+                    expectedSnapshotHeight: expectedSnapshotHeight,
+                    pirLayout: pirLayout,
+                    polyLen: polyLen,
+                    votingCrypto: votingCrypto,
+                    send: send
                 )
                 totalCached += result.cachedCount
                 totalFetched += result.fetchedCount
@@ -2380,13 +2403,123 @@ extension VotingCoordFlow {
             }
 
             LoggerProxy.info(
-                "Delegation PIR precompute complete: cached=\(totalCached) fetched=\(totalFetched)"
+                "Delegation precompute complete: cached=\(totalCached) fetched=\(totalFetched)"
             )
             await send(.delegationPrecomputeCompleted(roundId: roundId))
         } catch: { error, send in
             await send(.delegationPrecomputeFailed(roundId: roundId, error: error.localizedDescription))
         }
         .cancellable(id: cancelDelegationPrecomputeId, cancelInFlight: true)
+    }
+
+    /// One bundle's share of the background precompute: persist its PCZT setup, warm its PIR
+    /// material, then prove it speculatively.
+    ///
+    /// The proof reads only viewing material — the Orchard FVK, the stored hotkey secret and
+    /// the seed fingerprint — so the wallet seed stays in the keychain and nothing here signs
+    /// or broadcasts anything. Progress is reported as the run's overall fraction, which is
+    /// why `bundleCount` is a parameter and not derived from `bundleNotes`.
+    // swiftlint:disable:next function_parameter_count
+    static func precomputeBundle(
+        roundId: String,
+        bundleIndex: UInt32,
+        bundleCount: UInt32,
+        bundleNotes: [NoteInfo],
+        hotkeySeed: [UInt8],
+        seedFingerprint: Data,
+        networkId: UInt32,
+        accountIndex: UInt32,
+        roundName: String,
+        pirEndpoints: [String],
+        expectedSnapshotHeight: UInt64,
+        pirLayout: VotingServiceConfig.PirLayout,
+        polyLen: UInt32,
+        votingCrypto: VotingCryptoClient,
+        send: Send<Action>
+    ) async throws -> DelegationPirPrecomputeResult {
+        let orchardFvk = try votingCrypto.extractOrchardFvkFromUfvk(
+            bundleNotes[0].ufvkStr,
+            networkId
+        )
+
+        _ = try await votingCrypto.buildVotingPczt(
+            roundId,
+            bundleIndex,
+            bundleNotes,
+            emptySenderSeed,
+            hotkeySeed,
+            networkId,
+            accountIndex,
+            roundName,
+            orchardFvk,
+            seedFingerprint
+        )
+
+        let pirResult = try await votingCrypto.precomputeDelegationPir(
+            roundId,
+            bundleIndex,
+            bundleNotes,
+            pirEndpoints,
+            expectedSnapshotHeight,
+            networkId,
+            pirLayout.pirDepth,
+            pirLayout.tier0Layers,
+            pirLayout.tier1Layers,
+            polyLen
+        )
+
+        for try await event in votingCrypto.precomputeDelegationProof(
+            roundId,
+            bundleIndex,
+            bundleNotes,
+            orchardFvk,
+            hotkeySeed,
+            seedFingerprint,
+            accountIndex,
+            roundName,
+            pirEndpoints,
+            expectedSnapshotHeight,
+            pirLayout.pirDepth,
+            pirLayout.tier0Layers,
+            pirLayout.tier1Layers,
+            polyLen
+        ) {
+            switch event {
+            case let .progress(progress):
+                await send(.delegationPrecomputeProgress(
+                    roundId: roundId,
+                    progress: (Double(bundleIndex) + progress) / Double(bundleCount)
+                ))
+            case let .completed(proof):
+                LoggerProxy.info(
+                    "Speculative ZKP #1 bundle \(bundleIndex + 1)/\(bundleCount) COMPLETE — " +
+                        "proof size: \(proof.count) bytes"
+                )
+            }
+        }
+
+        return pirResult
+    }
+
+    /// `.delegationPrecomputeProgress` handler. The precompute's progress is its own
+    /// bookkeeping — it is not an authorization — so it only reaches `delegationProofStatus`
+    /// while a Confirm is parked on this very proof (`pendingBatchSubmission`), which is the
+    /// one moment the user is watching a progress bar that has nothing else to move it.
+    /// Keystone never runs this lane. `.complete` is never set from here: only the delegation
+    /// pipeline may say that, and only after the chain confirms.
+    func reduceDelegationPrecomputeProgress(
+        _ state: inout State,
+        roundId: String,
+        progress: Double
+    ) -> Effect<Action> {
+        let isConfirmWaiting = state.pendingBatchSubmission && !state.isKeystoneUser
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.delegationPrecomputeProgress = progress
+            if isConfirmWaiting {
+                roundSession.delegationProofStatus = .generating(progress: progress)
+            }
+        }
+        return .none
     }
 
     // MARK: - Share tracking
@@ -4294,6 +4427,13 @@ extension VotingCoordFlow {
             if let cachedRegistration {
                 LoggerProxy.debug("Delegation bundle \(bundleIndex + 1)/\(bundleCount) using cached submission")
                 registration = cachedRegistration
+                // The interactive prover would have driven the authorization progress here; a
+                // reused proof has none to report, so count the bundle as authorized instead of
+                // leaving the Confirm screen at zero through the chain confirmation below.
+                await send(.delegationProofProgress(
+                    roundId: roundId,
+                    progress: Double(bundleIndex + 1) / Double(bundleCount)
+                ))
             } else {
                 // Finding #10 (CHP.md): `zcash_voting` stores `pczt_sighash` write-once per
                 // (round, wallet, bundle) and every `buildVotingPczt` samples fresh randomness,
