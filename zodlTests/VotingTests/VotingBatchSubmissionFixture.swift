@@ -158,6 +158,9 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
     static let voteServerURLs = ["https://vote-a.example.com", "https://vote-b.example.com"]
 
     let recorder = VotingBatchEventRecorder()
+    /// Every confirmation poll the fakes answered, as `<txHash>:<preferred server or ->`. Kept
+    /// apart from the event recorder so exact event-list assertions stay untouched.
+    let polledServers = SignalledRecords<String>()
     let proposalCount: UInt32
     let bundleCount: UInt32
     /// `true` (the default) starts the round with its authorization already on chain, i.e. at
@@ -472,9 +475,10 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
             // admitted (here: past its gate) and before the POST is recorded.
             try await admission()
             recorder.record("submit:\(bundle.proposalId)")
-            return TxResult(txHash: "tx-\(bundle.proposalId)", code: 0)
+            return TxResult(txHash: "tx-\(bundle.proposalId)", code: 0, acceptedByServerURL: Self.voteServerURLs[0])
         }
-        values.votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+        // Replaced by the delegation-lane fake below, which records the polled server for every call.
+        values.votingAPI.fetchTxConfirmation = { _, _ in TxConfirmation(height: 100, code: 0) }
         values.votingAPI.delegateShares = { [self] payloads, proposalId, serverURLs in
             recorder.record("deliver:\(proposalId)")
             if let gate = gateIfRegistered(proposal: proposalId) {
@@ -571,7 +575,8 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         }
         // Only a delegation TX carries the `delegate_vote` leaf index the pipeline needs; a
         // vote's confirmation stays exactly what the pre-delegation suites already see.
-        values.votingAPI.fetchTxConfirmation = { txHash in
+        values.votingAPI.fetchTxConfirmation = { [self] txHash, preferredServerURL in
+            polledServers.record("\(txHash):\(preferredServerURL ?? "-")")
             guard txHash.hasPrefix(Self.delegationTxPrefix) else {
                 return TxConfirmation(height: 100, code: 0)
             }

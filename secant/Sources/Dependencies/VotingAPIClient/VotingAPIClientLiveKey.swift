@@ -1,6 +1,7 @@
 #if VOTING_ENABLED
 import ComposableArchitecture
 import Foundation
+import os
 
 // MARK: - API Configuration
 
@@ -204,10 +205,18 @@ private let fastHttpSession: URLSession = {
 /// why nothing may block user-visible work on these requests (MOB-1810).
 private let fastRequestTimeout: TimeInterval = 5
 
+/// Bound on one confirmation GET over Tor; matches the fast session's resource timeout.
+private let txConfirmationTorBound: Duration = .seconds(10)
+
+/// `torBound`, when given, caps how long the caller waits for a request over Tor: the Rust Tor
+/// client does not honour `URLRequest.timeoutInterval`, so without it one stalled circuit could
+/// hold a caller past its own budget. The bound releases the caller, not the circuit, which
+/// finishes on its own and whose late answer is dropped.
 @Sendable
 private func performVotingRequest(
     _ request: URLRequest,
-    fast: Bool = false
+    fast: Bool = false,
+    torBound: Duration? = nil
 ) async throws -> (Data, URLResponse) {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
@@ -218,11 +227,52 @@ private func performVotingRequest(
     }
 
     if swapAPIAccess == .protected {
+        let torRequest = request
+        if let torBound {
+            let (data, response) = try await withTorBound(torBound) {
+                try await sdkSynchronizer.httpRequestOverTor(torRequest)
+            }
+            return (data, response as URLResponse)
+        }
         let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
         return (data, response as URLResponse)
     }
     let session = fast ? fastHttpSession : httpSession
     return try await session.data(for: request)
+}
+
+/// Races `operation` against `bound` without waiting for it to finish. The Rust Tor request is a
+/// synchronous call that cannot be cancelled, so a structured task group would hold the caller
+/// until the circuit answered; here the request keeps running on its own task and an answer that
+/// arrives after the bound is dropped.
+private func withTorBound<T: Sendable>(
+    _ bound: Duration,
+    _ operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    let hasResumed = OSAllocatedUnfairLock(initialState: false)
+    return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+        let resumeOnce: @Sendable (Result<T, Error>) -> Void = { result in
+            let shouldResume = hasResumed.withLock { alreadyResumed -> Bool in
+                guard !alreadyResumed else { return false }
+                alreadyResumed = true
+                return true
+            }
+            if shouldResume {
+                continuation.resume(with: result)
+            }
+        }
+        Task.detached {
+            do {
+                resumeOnce(.success(try await operation()))
+            } catch {
+                resumeOnce(.failure(error))
+            }
+        }
+        Task {
+            try? await Task.sleep(for: bound)
+            resumeOnce(.failure(TransactionTimeoutError()))
+        }
+    }
 }
 
 private func shouldTryNextVoteServer(after error: Error) -> Bool {
@@ -299,13 +349,14 @@ private func getJSON(_ path: String, baseURL base: String) async throws -> [Stri
     return try SvAPIResponseParser.parseJSONObject(data, response: http, context: "GET \(path)")
 }
 
-private func postJSON(_ path: String, body: [String: Any]) async throws -> [String: Any] {
+/// POSTs to the first configured vote server that accepts the request and reports which one did.
+private func postJSONRecordingServer(_ path: String, body: [String: Any]) async throws -> (json: [String: Any], serverURL: String) {
     let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
     var lastError: Error?
 
     for base in serverURLs {
         do {
-            return try await postJSON(path, body: body, baseURL: base)
+            return (try await postJSON(path, body: body, baseURL: base), base)
         } catch {
             lastError = error
             guard shouldTryNextVoteServer(after: error) else {
@@ -316,6 +367,10 @@ private func postJSON(_ path: String, body: [String: Any]) async throws -> [Stri
     }
 
     throw lastError ?? SvAPIError.invalidResponse("no vote servers configured")
+}
+
+private func postJSON(_ path: String, body: [String: Any]) async throws -> [String: Any] {
+    try await postJSONRecordingServer(path, body: body).json
 }
 
 private func postJSON(_ path: String, body: [String: Any], baseURL base: String) async throws -> [String: Any] {
@@ -616,6 +671,74 @@ func resubmitSharePayload(
 /// Parse a broadcast TX response into TxResult, preserving deterministic rejections.
 private func parseTxResult(_ json: [String: Any]) throws -> TxResult {
     try SvAPIResponseParser.parseTxResult(json)
+}
+
+/// One server's answer about `txHash`. A 404 is "not indexed here yet"; a 200 or a 422 is parsed
+/// (the 422 carries the rejection code the caller needs); everything else, including a transport
+/// failure or the Tor bound firing, leaves the question unanswered.
+private func lookupTxConfirmation(base: String, txHash: String) async -> TxConfirmationLookup {
+    let urlString = "\(base)/shielded-vote/v1/tx/\(txHash)"
+    guard let url = URL(string: urlString) else {
+        LoggerProxy.error("fetchTxConfirmation: invalid URL: \(urlString)")
+        return .unavailable
+    }
+    let data: Data
+    let response: URLResponse
+    do {
+        (data, response) = try await performVotingRequest(URLRequest(url: url), fast: true, torBound: txConfirmationTorBound)
+    } catch {
+        LoggerProxy.debug("fetchTxConfirmation: \(base) unavailable: \(error.localizedDescription)")
+        return .unavailable
+    }
+    guard let http = response as? HTTPURLResponse else {
+        LoggerProxy.error("fetchTxConfirmation: not an HTTP response from \(base)")
+        return .unavailable
+    }
+    if http.statusCode == 404 {
+        LoggerProxy.debug("fetchTxConfirmation: 404 (not yet in block) on \(base) for \(txHash)")
+        return .notIndexed
+    }
+    guard http.statusCode == 200 || http.statusCode == 422 else {
+        let body = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
+        LoggerProxy.debug("fetchTxConfirmation: HTTP \(http.statusCode) on \(base) for \(txHash) — \(body)")
+        return .unavailable
+    }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let snippet = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
+        LoggerProxy.error("fetchTxConfirmation: JSON parse failed on \(base) — \(snippet)")
+        return .unavailable
+    }
+    return .confirmed(parseTxConfirmation(json))
+}
+
+private func parseTxConfirmation(_ json: [String: Any]) -> TxConfirmation {
+    let height = parseUInt64(json["height"])
+    let code = parseUInt32(json["code"])
+    let log = json["log"] as? String ?? ""
+
+    var parsedEvents: [TxEvent] = []
+    if let events = json["events"] as? [[String: Any]] {
+        for event in events {
+            guard let evType = event["type"] as? String,
+                  let attrs = event["attributes"] as? [[String: Any]]
+            else { continue }
+            let parsed = attrs.compactMap { attr -> TxEventAttribute? in
+                guard let key = attr["key"] as? String,
+                      let value = attr["value"] as? String
+                else { return nil }
+                return TxEventAttribute(key: key, value: value)
+            }
+            parsedEvents.append(TxEvent(type: evType, attributes: parsed))
+        }
+    }
+
+    let eventSummary = parsedEvents.map { ev in
+        let keys = ev.attributes.map(\.key).joined(separator: ",")
+        return "\(ev.type)[\(keys)]"
+    }.joined(separator: "; ")
+    LoggerProxy.debug("fetchTxConfirmation: height=\(height) code=\(code) events=\(eventSummary)")
+
+    return TxConfirmation(height: height, code: code, log: log, events: parsedEvents)
 }
 
 // MARK: - Broadcast Retry
@@ -1046,8 +1169,8 @@ extension VotingAPIClient: DependencyKey {
                 // those sleeps blocked sends and server switches while nothing was in flight.
                 return try await retryWithBackoff(isRetryable: isBroadcastRetryable) {
                     try await transactionGuard.withSubmission {
-                        let json = try await postJSON("/shielded-vote/v1/delegate-vote", body: body)
-                        return try parseTxResult(json)
+                        let posted = try await postJSONRecordingServer("/shielded-vote/v1/delegate-vote", body: body)
+                        return try parseTxResult(posted.json).accepted(by: posted.serverURL)
                     }
                 }
             },
@@ -1070,8 +1193,8 @@ extension VotingAPIClient: DependencyKey {
                 // admission check re-taken inside the guard right before each POST — see
                 // VotingBroadcastDispatch.
                 return try await VotingBroadcastDispatch.run(transactionGuard: transactionGuard, admission: admission) {
-                    let json = try await postJSON("/shielded-vote/v1/cast-vote", body: body)
-                    return try parseTxResult(json)
+                    let posted = try await postJSONRecordingServer("/shielded-vote/v1/cast-vote", body: body)
+                    return try parseTxResult(posted.json).accepted(by: posted.serverURL)
                 }
             },
             delegateShares: { payloads, proposalId, serverURLs in
@@ -1174,7 +1297,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 return TallyResult(entries: entries)
             },
-            fetchTxConfirmation: { txHash in
+            fetchTxConfirmation: { txHash, preferredServerURL in
                 let serverURLs: [String]
                 do {
                     serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
@@ -1182,83 +1305,9 @@ extension VotingAPIClient: DependencyKey {
                     LoggerProxy.error("fetchTxConfirmation: vote server URLs unavailable: \(error.localizedDescription)")
                     return nil
                 }
-
-                for base in serverURLs {
-                    let urlString = "\(base)/shielded-vote/v1/tx/\(txHash)"
-                    guard let url = URL(string: urlString) else {
-                        LoggerProxy.error("fetchTxConfirmation: invalid URL: \(urlString)")
-                        continue
-                    }
-
-                    let data: Data
-                    let response: URLResponse
-                    do {
-                        (data, response) = try await performVotingRequest(URLRequest(url: url))
-                    } catch {
-                        LoggerProxy.debug(
-                            "fetchTxConfirmation: network error on \(base): \(error.localizedDescription)"
-                        )
-                        continue
-                    }
-
-                    guard let http = response as? HTTPURLResponse else {
-                        LoggerProxy.error("fetchTxConfirmation: not an HTTP response from \(base)")
-                        continue
-                    }
-
-                    // 404 = TX not yet in a block (normal during polling).
-                    // Try the remaining configured servers before reporting pending.
-                    if http.statusCode == 404 {
-                        LoggerProxy.debug("fetchTxConfirmation: 404 (not yet in block) on \(base) for \(txHash)")
-                        continue
-                    }
-
-                    // 422 = TX included but execution failed (non-zero code).
-                    // Parse the response to extract the error code/log.
-                    guard http.statusCode == 200 || http.statusCode == 422 else {
-                        let body = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
-                        LoggerProxy.debug(
-                            "fetchTxConfirmation: HTTP \(http.statusCode) on \(base) for \(txHash) — \(body)"
-                        )
-                        continue
-                    }
-
-                    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        let snippet = String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>"
-                        LoggerProxy.error("fetchTxConfirmation: JSON parse failed on \(base) — \(snippet)")
-                        continue
-                    }
-
-                    let height = parseUInt64(json["height"])
-                    let code = parseUInt32(json["code"])
-                    let log = json["log"] as? String ?? ""
-
-                    var parsedEvents: [TxEvent] = []
-                    if let events = json["events"] as? [[String: Any]] {
-                        for event in events {
-                            guard let evType = event["type"] as? String,
-                                  let attrs = event["attributes"] as? [[String: Any]]
-                            else { continue }
-                            let parsed = attrs.compactMap { attr -> TxEventAttribute? in
-                                guard let key = attr["key"] as? String,
-                                      let value = attr["value"] as? String
-                                else { return nil }
-                                return TxEventAttribute(key: key, value: value)
-                            }
-                            parsedEvents.append(TxEvent(type: evType, attributes: parsed))
-                        }
-                    }
-
-                    let eventSummary = parsedEvents.map { ev in
-                        let keys = ev.attributes.map(\.key).joined(separator: ",")
-                        return "\(ev.type)[\(keys)]"
-                    }.joined(separator: "; ")
-                    LoggerProxy.debug("fetchTxConfirmation: height=\(height) code=\(code) events=\(eventSummary)")
-
-                    return TxConfirmation(height: height, code: code, log: log, events: parsedEvents)
+                return await VotingTxConfirmationWalk.run(servers: serverURLs, preferredServerURL: preferredServerURL) { base in
+                    await lookupTxConfirmation(base: base, txHash: txHash)
                 }
-
-                return nil
             },
             startHealthProbeSweep: {
                 await ServerHealthTracker.shared.startProbeSweep()
