@@ -4,6 +4,7 @@
 //  zodlTests
 //
 
+import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
@@ -59,6 +60,104 @@ struct VotingTxConfirmationTransportTests {
 
         #expect(result == .confirmed(TxConfirmation(height: 100, code: 0)))
         #expect(receivedBudgets.values == [.seconds(4)])
+    }
+
+    @Test func configurationDelayThatExhaustsTheBudgetStartsNoLookup() async throws {
+        let clock = TestClock()
+        let configurationStarted = SignalledRecords<Void>()
+        let releaseConfiguration = ResumableGate()
+        let receivedBudgets = SignalledRecords<Swift.Duration>()
+
+        let task = Task {
+            try await fetchTxConfirmationFromConfiguredServers(
+                preferredServerURL: nil,
+                remainingBudget: .seconds(5),
+                clock: clock,
+                configuredServerURLs: {
+                    configurationStarted.recordCall()
+                    await releaseConfiguration.wait()
+                    return ["https://vote.example"]
+                },
+                lookup: { _, remainingBudget in
+                    receivedBudgets.record(remainingBudget)
+                    return .confirmed(TxConfirmation(height: 100, code: 0))
+                }
+            )
+        }
+
+        await configurationStarted.countReached(1)
+        await clock.advance(by: .seconds(5))
+        releaseConfiguration.open()
+        let result = try await task.value
+
+        #expect(result == nil)
+        #expect(receivedBudgets.isEmpty)
+    }
+
+    @Test func configurationDelayIsDeductedFromTheFirstLookupBudget() async throws {
+        let clock = TestClock()
+        let configurationStarted = SignalledRecords<Void>()
+        let releaseConfiguration = ResumableGate()
+        let receivedBudgets = SignalledRecords<Swift.Duration>()
+        let confirmation = TxConfirmation(height: 100, code: 0)
+
+        let task = Task {
+            try await fetchTxConfirmationFromConfiguredServers(
+                preferredServerURL: nil,
+                remainingBudget: .seconds(10),
+                clock: clock,
+                configuredServerURLs: {
+                    configurationStarted.recordCall()
+                    await releaseConfiguration.wait()
+                    return ["https://vote.example"]
+                },
+                lookup: { _, remainingBudget in
+                    receivedBudgets.record(remainingBudget)
+                    return .confirmed(confirmation)
+                }
+            )
+        }
+
+        await configurationStarted.countReached(1)
+        await clock.advance(by: .seconds(4))
+        releaseConfiguration.open()
+        let result = try await task.value
+
+        #expect(result == confirmation)
+        #expect(receivedBudgets.values == [.seconds(6)])
+    }
+
+    @Test func configurationDelayDoesNotCreateABudgetForAOneShotLookup() async throws {
+        let clock = TestClock()
+        let configurationStarted = SignalledRecords<Void>()
+        let releaseConfiguration = ResumableGate()
+        let receivedBudgets = SignalledRecords<Swift.Duration>()
+        let confirmation = TxConfirmation(height: 100, code: 0)
+
+        let task = Task {
+            try await fetchTxConfirmationFromConfiguredServers(
+                preferredServerURL: nil,
+                remainingBudget: nil,
+                clock: clock,
+                configuredServerURLs: {
+                    configurationStarted.recordCall()
+                    await releaseConfiguration.wait()
+                    return ["https://vote.example"]
+                },
+                lookup: { _, remainingBudget in
+                    receivedBudgets.record(remainingBudget)
+                    return .confirmed(confirmation)
+                }
+            )
+        }
+
+        await configurationStarted.countReached(1)
+        await clock.advance(by: .seconds(100))
+        releaseConfiguration.open()
+        let result = try await task.value
+
+        #expect(result == confirmation)
+        #expect(receivedBudgets.values == [.seconds(10)])
     }
 }
 

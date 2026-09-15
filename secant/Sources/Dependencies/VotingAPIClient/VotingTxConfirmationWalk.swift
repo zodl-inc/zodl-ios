@@ -32,7 +32,22 @@ enum VotingTxConfirmationWalk {
         lookup: (String, Duration) async throws -> TxConfirmationLookup
     ) async throws -> TxConfirmation? where C.Duration == Duration {
         let deadline = remainingBudget.map { clock.now.advanced(by: $0) }
+        return try await run(
+            servers: servers,
+            preferredServerURL: preferredServerURL,
+            deadline: deadline,
+            clock: clock,
+            lookup: lookup
+        )
+    }
 
+    static func run<C: Clock>(
+        servers: [String],
+        preferredServerURL: String?,
+        deadline: C.Instant?,
+        clock: C,
+        lookup: (String, Duration) async throws -> TxConfirmationLookup
+    ) async throws -> TxConfirmation? where C.Duration == Duration {
         func lookupBudget() -> Duration? {
             guard let deadline else {
                 return .seconds(10)

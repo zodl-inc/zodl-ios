@@ -800,6 +800,32 @@ private func parseTxConfirmation(_ json: [String: Any]) -> TxConfirmation {
     return TxConfirmation(height: height, code: code, log: log, events: parsedEvents)
 }
 
+func fetchTxConfirmationFromConfiguredServers<C: Clock>(
+    preferredServerURL: String?,
+    remainingBudget: Duration?,
+    clock: C,
+    configuredServerURLs: @Sendable () async throws -> [String],
+    lookup: @Sendable (String, Duration) async throws -> TxConfirmationLookup
+) async throws -> TxConfirmation? where C.Duration == Duration {
+    let deadline = remainingBudget.map { clock.now.advanced(by: $0) }
+    let serverURLs: [String]
+    do {
+        serverURLs = try await configuredServerURLs()
+    } catch is CancellationError {
+        throw CancellationError()
+    } catch {
+        LoggerProxy.error("fetchTxConfirmation: vote server URLs unavailable: \(error.localizedDescription)")
+        return nil
+    }
+    return try await VotingTxConfirmationWalk.run(
+        servers: serverURLs,
+        preferredServerURL: preferredServerURL,
+        deadline: deadline,
+        clock: clock,
+        lookup: lookup
+    )
+}
+
 // MARK: - Broadcast Retry
 
 /// Whether a broadcast error is transient and worth retrying.
@@ -1357,21 +1383,17 @@ extension VotingAPIClient: DependencyKey {
                 return TallyResult(entries: entries)
             },
             fetchTxConfirmation: { txHash, preferredServerURL, remainingBudget in
-                let serverURLs: [String]
-                do {
-                    serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
-                } catch {
-                    LoggerProxy.error("fetchTxConfirmation: vote server URLs unavailable: \(error.localizedDescription)")
-                    return nil
-                }
-                return try await VotingTxConfirmationWalk.run(
-                    servers: serverURLs,
+                try await fetchTxConfirmationFromConfiguredServers(
                     preferredServerURL: preferredServerURL,
                     remainingBudget: remainingBudget,
-                    clock: ContinuousClock()
-                ) { base, requestBudget in
-                    try await lookupTxConfirmation(base: base, txHash: txHash, remainingBudget: requestBudget)
-                }
+                    clock: ContinuousClock(),
+                    configuredServerURLs: {
+                        try await SvAPIConfigStore.shared.configuredVoteServerURLs()
+                    },
+                    lookup: { base, requestBudget in
+                        try await lookupTxConfirmation(base: base, txHash: txHash, remainingBudget: requestBudget)
+                    }
+                )
             },
             startHealthProbeSweep: {
                 await ServerHealthTracker.shared.startProbeSweep()
