@@ -239,7 +239,7 @@ struct VotingSubmissionAttemptTests {
         let store = Store(initialState: fixture.makeState()) { VotingCoordFlow() } withDependencies: {
             fixture.dependencies(&$0)
             $0.votingSubmissionTiming = clock.client(lines, recordDetails: true)
-            $0.votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 1) }
+            $0.votingAPI.fetchTxConfirmation = { _, _, _ in TxConfirmation(height: 100, code: 1) }
         }
         await store.send(.authenticationSucceeded(roundId: roundId)).finish()
         #expect(store.state.roundCache[roundId]?.submissionAttempt?.snapshot().outcome == .failed)
