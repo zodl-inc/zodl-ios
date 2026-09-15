@@ -262,19 +262,247 @@ import Testing
         #expect(metadata.records[roundId]?.proposalCount == 2)
     }
 
+    @Test func batchSubmissionCompletedPersistsTrimMetadataForSoftwareWallet() {
+        let metadata = VotingMetadataBox()
+        var session = roundSession(
+            votingWeight: 995_000_000,
+            votes: [1: .option(0)]
+        )
+        session.eligibleVotingWeight = 1_000_000_000
+        session.bundleCount = 2
+        session.eligibleBundleCount = 3
+        var state = VotingCoordFlow.State()
+        state.roundCache[roundId] = session
+
+        let loadedRecord = withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+            return Voting.loadVoteRecord(roundId: roundId)
+        }
+
+        let record = tryUnwrap(metadata.records[roundId])
+        #expect(record.votingWeight == 995_000_000)
+        #expect(record.eligibleVotingWeight == 1_000_000_000)
+        #expect(record.submittedBundleCount == 2)
+        #expect(record.totalBundleCount == 3)
+        #expect(loadedRecord?.votingWeight == 995_000_000)
+        #expect(loadedRecord?.eligibleVotingWeight == 1_000_000_000)
+        #expect(loadedRecord?.submittedBundleCount == 2)
+        #expect(loadedRecord?.totalBundleCount == 3)
+    }
+
+    @Test func batchSubmissionCompletedPersistsUntrimmedSoftwareMetadata() {
+        let metadata = VotingMetadataBox()
+        var session = roundSession(
+            votingWeight: 1_000_000_000,
+            votes: [1: .option(0)]
+        )
+        session.eligibleVotingWeight = 1_000_000_000
+        session.bundleCount = 2
+        session.eligibleBundleCount = 2
+        var state = VotingCoordFlow.State()
+        state.roundCache[roundId] = session
+
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
+
+        let record = tryUnwrap(metadata.records[roundId])
+        #expect(record.votingWeight == 1_000_000_000)
+        #expect(record.eligibleVotingWeight == 1_000_000_000)
+        #expect(record.submittedBundleCount == 2)
+        #expect(record.totalBundleCount == 2)
+    }
+
+    @Test func batchSubmissionCompletedRetainsKeystoneTrimMetadata() {
+        let metadata = VotingMetadataBox()
+        var session = roundSession(
+            votingWeight: 750_000_000,
+            votes: [1: .option(0)]
+        )
+        session.eligibleVotingWeight = 1_000_000_000
+        session.bundleCount = 3
+        session.eligibleBundleCount = 4
+        var state = VotingCoordFlow.State()
+        state.isKeystoneUser = true
+        state.roundCache[roundId] = session
+
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
+
+        let record = tryUnwrap(metadata.records[roundId])
+        #expect(record.votingWeight == 750_000_000)
+        #expect(record.eligibleVotingWeight == 1_000_000_000)
+        #expect(record.submittedBundleCount == 3)
+        #expect(record.totalBundleCount == 4)
+    }
+
+    @Test func batchSubmissionCompletedPersistsMetadataFromRestoredTrimmedPrefix() async throws {
+        let unit = ballotDivisor
+        var notes: [NoteInfo] = []
+        for (bundleIndex, perNote) in [UInt64(1_800), 178, 12, 10].enumerated() {
+            for slot in 0..<5 {
+                notes.append(note(value: perNote * unit, position: UInt64(bundleIndex * 5 + slot)))
+            }
+        }
+        let trim = try await VotingCoordFlow.resolveFreshBundleSetup(
+            roundId: roundId,
+            notes: notes,
+            existingBundleCount: 3,
+            votingCrypto: VotingCryptoClient()
+        )
+        let metadata = VotingMetadataBox()
+        var session = roundSession(
+            votingWeight: trim.keptWeight,
+            votes: [1: .option(0)],
+            notes: notes
+        )
+        session.eligibleVotingWeight = 10_000 * unit
+        session.bundleCount = trim.keepCount
+        session.eligibleBundleCount = 4
+        var state = VotingCoordFlow.State()
+        state.roundCache[roundId] = session
+
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
+
+        let record = tryUnwrap(metadata.records[roundId])
+        #expect(record.votingWeight == trim.keptWeight)
+        #expect(record.eligibleVotingWeight == 10_000 * unit)
+        #expect(record.submittedBundleCount == 3)
+        #expect(record.totalBundleCount == 4)
+    }
+
+    @Test func batchSubmissionCompletedDoesNotOverwriteExistingRecord() {
+        let existing = Voting.VoteRecord(
+            votedAt: Date(timeIntervalSince1970: 1_000),
+            votingWeight: 500_000_000,
+            proposalCount: 1,
+            eligibleVotingWeight: nil,
+            submittedBundleCount: nil,
+            totalBundleCount: nil
+        )
+        let metadata = VotingMetadataBox()
+        metadata.records[roundId] = existing.persisted
+        var session = roundSession(
+            votingWeight: 1_000_000_000,
+            votes: [1: .option(0)]
+        )
+        session.eligibleVotingWeight = 1_000_000_000
+        session.bundleCount = 2
+        session.eligibleBundleCount = 2
+        session.voteRecord = existing
+        var state = VotingCoordFlow.State()
+        state.roundCache[roundId] = session
+        state.$selectedWalletAccount.withLock { $0 = zashiWalletAccount() }
+
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
+
+        #expect(metadata.records[roundId] == existing.persisted)
+        #expect(metadata.storeCallCount == 0)
+        #expect(state.voteRecords[roundId] == existing)
+    }
+
+    @Test func batchSubmissionCompletedRestoresMetadataWhenStoreFails() {
+        let previousRecord = PersistedVotingRecord(
+            votedAt: 1_000,
+            votingWeight: 250_000_000,
+            proposalCount: 1,
+            eligibleVotingWeight: nil,
+            submittedBundleCount: nil,
+            totalBundleCount: nil
+        )
+        let metadata = VotingMetadataBox()
+        metadata.drafts[roundId] = ["9": 2]
+        metadata.records[roundId] = previousRecord
+        metadata.storeError = TestError.votingMetadataStoreFailed
+        var session = roundSession(
+            votingWeight: 995_000_000,
+            votes: [1: .option(0)]
+        )
+        session.eligibleVotingWeight = 1_000_000_000
+        session.bundleCount = 2
+        session.eligibleBundleCount = 3
+        var state = VotingCoordFlow.State()
+        state.roundCache[roundId] = session
+        state.$selectedWalletAccount.withLock { $0 = zashiWalletAccount() }
+
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
+
+        let updated = tryUnwrap(state.roundCache[roundId])
+        #expect(metadata.storeCallCount == 1)
+        #expect(metadata.records[roundId] == previousRecord)
+        #expect(metadata.drafts[roundId] == ["9": 2])
+        #expect(updated.voteRecord == nil)
+        #expect(updated.draftVotes == [1: .option(0)])
+        #expect(state.voteRecords[roundId] == nil)
+    }
+
     @Test func batchSubmissionCompletedFailsWhenDraftsRemain() {
+        let metadata = VotingMetadataBox()
         var state = VotingCoordFlow.State()
         state.roundCache[roundId] = roundSession(
             drafts: [2: .option(1)],
             votes: [1: .option(0)]
         )
 
-        _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
-            &state,
-            roundId: roundId,
-            successCount: 1,
-            failCount: 0
-        )
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
 
         let session = tryUnwrap(state.roundCache[roundId])
         #expect(
@@ -285,20 +513,26 @@ import Testing
             )
         )
         #expect(session.voteRecord == nil)
+        #expect(metadata.records[roundId] == nil)
     }
 
     @Test func batchSubmissionCompletedFailsWhenVoteErrorsExist() {
+        let metadata = VotingMetadataBox()
         var session = roundSession(votes: [1: .option(0)])
         session.batchVoteErrors = [2: "server unavailable"]
         var state = VotingCoordFlow.State()
         state.roundCache[roundId] = session
 
-        _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
-            &state,
-            roundId: roundId,
-            successCount: 1,
-            failCount: 0
-        )
+        withDependencies {
+            $0.votingMetadata = votingMetadataClient(metadata)
+        } operation: {
+            _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                &state,
+                roundId: roundId,
+                successCount: 1,
+                failCount: 0
+            )
+        }
 
         let updated = tryUnwrap(state.roundCache[roundId])
         #expect(
@@ -309,6 +543,7 @@ import Testing
             )
         )
         #expect(updated.voteRecord == nil)
+        #expect(metadata.records[roundId] == nil)
     }
 
     @Test func batchSubmissionProgressClearsPreviousSubmissionStep() {
@@ -2867,7 +3102,12 @@ import Testing
     ) -> VotingMetadataProviderClient {
         var client = VotingMetadataProviderClient()
         client.load = { _ in }
-        client.store = { _ in }
+        client.store = { _ in
+            box.storeCallCount += 1
+            if let storeError = box.storeError {
+                throw storeError
+            }
+        }
         client.resetAccount = { _ in }
         client.reset = {}
         client.loadDrafts = { box.drafts[$0] ?? [:] }
@@ -3018,6 +3258,8 @@ private final class VotingMetadataBox: @unchecked Sendable {
     var drafts: [String: [String: UInt32]] = [:]
     var submittedVotes: [String: [String: UInt32]] = [:]
     var records: [String: PersistedVotingRecord] = [:]
+    var storeCallCount = 0
+    var storeError: Error?
 }
 
 private actor RecoveryOrderRecorder {
@@ -3070,6 +3312,7 @@ private enum TestError: LocalizedError {
     case delegationSetupMissing
     case delegationProofMissing
     case votingDatabaseReadFailed
+    case votingMetadataStoreFailed
 
     var errorDescription: String? {
         switch self {
@@ -3085,6 +3328,8 @@ private enum TestError: LocalizedError {
             return "simulated missing persisted delegation proof"
         case .votingDatabaseReadFailed:
             return "simulated voting database read failure"
+        case .votingMetadataStoreFailed:
+            return "simulated voting metadata store failure"
         }
     }
 }

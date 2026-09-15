@@ -2815,13 +2815,9 @@ extension VotingCoordFlow {
                 votedAt: Date(),
                 votingWeight: session.votingWeight,
                 proposalCount: submittedVoteCount,
-                eligibleVotingWeight: state.isKeystoneUser
-                    ? completedEligibleVotingWeight(session)
-                    : nil,
-                submittedBundleCount: state.isKeystoneUser ? session.bundleCount : nil,
-                totalBundleCount: state.isKeystoneUser
-                    ? completedEligibleBundleCount(session)
-                    : nil
+                eligibleVotingWeight: completedEligibleVotingWeight(session),
+                submittedBundleCount: session.bundleCount,
+                totalBundleCount: completedEligibleBundleCount(session)
             )
             do {
                 try Voting.persistCompletedRound(record, roundId: roundId, account: account)
