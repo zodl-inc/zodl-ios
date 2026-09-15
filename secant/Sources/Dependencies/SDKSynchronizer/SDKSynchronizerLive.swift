@@ -826,6 +826,11 @@ extension SDKSynchronizerClient {
 }
 
 extension SDKSynchronizerClient {
+    /// The rows of `accountUUID` mapped to `TransactionState`, with every row's outputs read in ONE
+    /// batched query (`Synchronizer.getTransactionOutputs(for transactions:)`) instead of one per
+    /// row. MOB-1955: the per-row loop cost transactions × notes on a long history -- 1,255
+    /// `v_tx_outputs` queries and 25 s per Activity refresh on a 1,255-transaction wallet (field,
+    /// 2026-09-14). MOB-1856 had halved it from two calls per row; this removes the shape.
     static func transactionStatesFromZcashTransactions(
         accountUUID: AccountUUID?,
         zcashTransactions: [ZcashTransaction.Overview],
@@ -835,22 +840,37 @@ extension SDKSynchronizerClient {
         guard let accountUUID else {
             return []
         }
-        
-        let clearedTransactions = zcashTransactions.compactMap { rawTransaction in
-            rawTransaction.accountUUID == accountUUID ? rawTransaction : nil
+        let clearedTransactions = zcashTransactions.filter { $0.accountUUID == accountUUID }
+        // Snapshot the chain tip once so TransactionState can fall back to an expiry-vs-tip
+        // check when the SDK's `expired_unmined` column hasn't caught up (post-hardfork case
+        // tracked in PRO-334). `latestBlockHeight == 0` means we haven't synced yet, so hand nil
+        // to the init in that case to disable the fallback.
+        let tipNow = synchronizer.latestState.latestBlockHeight
+        let outputsByTransaction = await synchronizer.getTransactionOutputs(for: clearedTransactions)
+        return transactionStates(
+            accountUUID: accountUUID,
+            zcashTransactions: clearedTransactions,
+            currentChainTip: tipNow > 0 ? tipNow : nil,
+            outputsByTransaction: outputsByTransaction
+        )
+    }
+
+    /// Pure: the mapping alone, so it can be pinned without a `Synchronizer` (which app tests
+    /// cannot conform to). Filters to `accountUUID` itself, so a caller may pass every row.
+    static func transactionStates(
+        accountUUID: AccountUUID?,
+        zcashTransactions: [ZcashTransaction.Overview],
+        currentChainTip: BlockHeight?,
+        outputsByTransaction: [Data: [ZcashTransaction.Output]]
+    ) -> IdentifiedArrayOf<TransactionState> {
+        guard let accountUUID else {
+            return []
         }
 
         var clearedTxs: [TransactionState] = []
-        // Snapshot the chain tip once so TransactionState can fall back to an expiry-vs-tip
-        // check when the SDK's `expired_unmined` column hasn't caught up (post-hardfork case
-        // tracked in PRO-334). `latestBlockHeight == 0` means we haven't synced yet, so
-        // hand nil to the init in that case to disable the fallback.
-        let tipNow = synchronizer.latestState.latestBlockHeight
-        let currentChainTip: BlockHeight? = tipNow > 0 ? tipNow : nil
-
-        for clearedTransaction in clearedTransactions {
+        for clearedTransaction in zcashTransactions where clearedTransaction.accountUUID == accountUUID {
+            let outputs = outputsByTransaction[clearedTransaction.rawID] ?? []
             var hasTransparentOutputs = false
-            let outputs = await synchronizer.getTransactionOutputs(for: clearedTransaction)
             for output in outputs {
                 if case .transaparent = output.pool {
                     hasTransparentOutputs = true
@@ -858,7 +878,7 @@ extension SDKSynchronizerClient {
                 }
             }
 
-            var transaction = TransactionState.init(
+            var transaction = TransactionState(
                 transaction: clearedTransaction,
                 memos: nil,
                 hasTransparentOutputs: hasTransparentOutputs,
@@ -866,8 +886,8 @@ extension SDKSynchronizerClient {
             )
 
             // MOB-1856: the SDK's `getRecipients(for:)` is itself just
-            // `getTransactionOutputs(for:).map { $0.recipient }` -- reuse the `outputs` already read
-            // above instead of a second call that re-reads the exact same rows from the database.
+            // `getTransactionOutputs(for:).map { $0.recipient }` -- derive the recipients from the
+            // outputs already in hand instead of a second read of the exact same rows.
             let recipients = outputs.map(\.recipient)
             let addresses = recipients.compactMap {
                 if case let .address(address) = $0 {
@@ -876,14 +896,14 @@ extension SDKSynchronizerClient {
                     return nil
                 }
             }
-            
+
             transaction.rawID = clearedTransaction.rawID
             transaction.zAddress = addresses.first?.stringEncoded
             if let someAddress = addresses.first,
                case .transparent = someAddress {
                 transaction.isTransparentRecipient = true
             }
-            
+
             clearedTxs.append(transaction)
         }
 
