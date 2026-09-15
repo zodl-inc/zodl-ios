@@ -268,7 +268,7 @@ struct VotingCryptoClient {
     /// Record a confirmed cast-vote transaction in one atomic step.
     ///
     /// `eventsJson` is the confirmation-events array the app's existing confirmation polling
-    /// already fetches (`VotingAPIClient.fetchTxConfirmation(_:_:).events`), serialized as JSON —
+    /// already fetches (`VotingAPIClient.fetchTxConfirmation(_:_:_:).events`), serialized as JSON —
     /// a list of `{"type": …, "attributes": [{"key": …, "value": …}]}` objects. Callers must
     /// not parse `leaf_index` themselves; that is exactly the duplicated state this entry point
     /// exists to delete (spec `CHP_DESIGN.md` §3/A2 step 4).

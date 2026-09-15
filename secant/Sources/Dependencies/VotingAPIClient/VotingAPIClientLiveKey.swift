@@ -206,7 +206,59 @@ private let fastHttpSession: URLSession = {
 private let fastRequestTimeout: TimeInterval = 5
 
 /// Bound on one confirmation GET over Tor; matches the fast session's resource timeout.
-private let txConfirmationTorBound: Duration = .seconds(10)
+private let txConfirmationRequestBound: Duration = .seconds(10)
+
+typealias TxConfirmationRequestPerformer = @Sendable (
+    _ request: URLRequest,
+    _ remainingBudget: Duration
+) async throws -> (Data, URLResponse)
+
+/// Direct confirmation transport seam. The caller supplies the poll budget so a later request
+/// cannot outlive the whole confirmation wait. A custom configuration is used only by the real
+/// URLProtocol transport fixture; production reuses `fastHttpSession` for the full bound.
+func performDirectTxConfirmationRequest(
+    _ request: URLRequest,
+    resourceTimeout: Duration,
+    configuration: URLSessionConfiguration? = nil
+) async throws -> (Data, URLResponse) {
+    let clippedResourceTimeout = min(txConfirmationRequestBound, resourceTimeout)
+    guard clippedResourceTimeout > .zero else {
+        throw URLError(URLError.Code.timedOut)
+    }
+    let resourceTimeoutInterval = durationTimeInterval(clippedResourceTimeout)
+    let inactivityTimeoutInterval = min(fastRequestTimeout, resourceTimeoutInterval)
+    var request = request
+    request.timeoutInterval = inactivityTimeoutInterval
+
+    if clippedResourceTimeout == txConfirmationRequestBound, configuration == nil {
+        return try await fastHttpSession.data(for: request)
+    }
+
+    let scopedConfiguration = configuration ?? URLSessionConfiguration.default
+    scopedConfiguration.timeoutIntervalForRequest = inactivityTimeoutInterval
+    scopedConfiguration.timeoutIntervalForResource = resourceTimeoutInterval
+    let session = URLSession(configuration: scopedConfiguration)
+    defer { session.finishTasksAndInvalidate() }
+    return try await session.data(for: request)
+}
+
+private func durationTimeInterval(_ duration: Duration) -> TimeInterval {
+    let components = duration.components
+    return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+}
+
+@Sendable
+private func performTxConfirmationRequest(
+    _ request: URLRequest,
+    remainingBudget: Duration
+) async throws -> (Data, URLResponse) {
+    @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
+    let requestBound = min(txConfirmationRequestBound, remainingBudget)
+    if swapAPIAccess == .protected {
+        return try await performVotingRequest(request, fast: true, torBound: requestBound)
+    }
+    return try await performDirectTxConfirmationRequest(request, resourceTimeout: requestBound)
+}
 
 /// `torBound`, when given, caps how long the caller waits for a request over Tor: the Rust Tor
 /// client does not honour `URLRequest.timeoutInterval`, so without it one stalled circuit could
@@ -676,7 +728,12 @@ private func parseTxResult(_ json: [String: Any]) throws -> TxResult {
 /// One server's answer about `txHash`. A 404 is "not indexed here yet"; a 200 or a 422 is parsed
 /// (the 422 carries the rejection code the caller needs); everything else, including a transport
 /// failure or the Tor bound firing, leaves the question unanswered.
-private func lookupTxConfirmation(base: String, txHash: String) async -> TxConfirmationLookup {
+func lookupTxConfirmation(
+    base: String,
+    txHash: String,
+    remainingBudget: Duration,
+    request: TxConfirmationRequestPerformer = performTxConfirmationRequest
+) async throws -> TxConfirmationLookup {
     let urlString = "\(base)/shielded-vote/v1/tx/\(txHash)"
     guard let url = URL(string: urlString) else {
         LoggerProxy.error("fetchTxConfirmation: invalid URL: \(urlString)")
@@ -685,7 +742,9 @@ private func lookupTxConfirmation(base: String, txHash: String) async -> TxConfi
     let data: Data
     let response: URLResponse
     do {
-        (data, response) = try await performVotingRequest(URLRequest(url: url), fast: true, torBound: txConfirmationTorBound)
+        (data, response) = try await request(URLRequest(url: url), remainingBudget)
+    } catch is CancellationError {
+        throw CancellationError()
     } catch {
         LoggerProxy.debug("fetchTxConfirmation: \(base) unavailable: \(error.localizedDescription)")
         return .unavailable
@@ -1297,7 +1356,7 @@ extension VotingAPIClient: DependencyKey {
                     }
                 return TallyResult(entries: entries)
             },
-            fetchTxConfirmation: { txHash, preferredServerURL in
+            fetchTxConfirmation: { txHash, preferredServerURL, remainingBudget in
                 let serverURLs: [String]
                 do {
                     serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
@@ -1305,8 +1364,13 @@ extension VotingAPIClient: DependencyKey {
                     LoggerProxy.error("fetchTxConfirmation: vote server URLs unavailable: \(error.localizedDescription)")
                     return nil
                 }
-                return await VotingTxConfirmationWalk.run(servers: serverURLs, preferredServerURL: preferredServerURL) { base in
-                    await lookupTxConfirmation(base: base, txHash: txHash)
+                return try await VotingTxConfirmationWalk.run(
+                    servers: serverURLs,
+                    preferredServerURL: preferredServerURL,
+                    remainingBudget: remainingBudget,
+                    clock: ContinuousClock()
+                ) { base, requestBudget in
+                    try await lookupTxConfirmation(base: base, txHash: txHash, remainingBudget: requestBudget)
                 }
             },
             startHealthProbeSweep: {

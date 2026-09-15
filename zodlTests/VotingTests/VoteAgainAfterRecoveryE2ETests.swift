@@ -71,7 +71,7 @@ struct VoteAgain {
                 submittedVotes.append(bundle)
                 return TxResult(txHash: String(repeating: "ee", count: 32), code: 0)
             }
-            client.fetchTxConfirmation = { _, _ in
+            client.fetchTxConfirmation = { _, _, _ in
                 TxConfirmation(height: 1, code: 0)
             }
             return client

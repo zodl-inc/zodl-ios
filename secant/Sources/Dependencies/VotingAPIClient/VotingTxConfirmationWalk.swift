@@ -24,13 +24,32 @@ enum TxConfirmationLookup: Equatable, Sendable {
 /// (recovery probes, which have only a hash from a previous run) the walk asks every server in
 /// order and takes the first confirmation.
 enum VotingTxConfirmationWalk {
-    static func run(
+    static func run<C: Clock>(
         servers: [String],
         preferredServerURL: String?,
-        lookup: (String) async -> TxConfirmationLookup
-    ) async -> TxConfirmation? {
+        remainingBudget: Duration?,
+        clock: C,
+        lookup: (String, Duration) async throws -> TxConfirmationLookup
+    ) async throws -> TxConfirmation? where C.Duration == Duration {
+        let deadline = remainingBudget.map { clock.now.advanced(by: $0) }
+
+        func lookupBudget() -> Duration? {
+            guard let deadline else {
+                return .seconds(10)
+            }
+            let remaining = clock.now.duration(to: deadline)
+            guard remaining > .zero else {
+                return nil
+            }
+            return min(.seconds(10), remaining)
+        }
+
         if let preferredServerURL {
-            switch await lookup(preferredServerURL) {
+            try Task.checkCancellation()
+            guard let budget = lookupBudget() else {
+                return nil
+            }
+            switch try await lookup(preferredServerURL, budget) {
             case .confirmed(let confirmation):
                 return confirmation
             case .notIndexed:
@@ -40,7 +59,11 @@ enum VotingTxConfirmationWalk {
             }
         }
         for server in servers where server != preferredServerURL {
-            if case .confirmed(let confirmation) = await lookup(server) {
+            try Task.checkCancellation()
+            guard let budget = lookupBudget() else {
+                return nil
+            }
+            if case .confirmed(let confirmation) = try await lookup(server, budget) {
                 return confirmation
             }
         }
@@ -48,23 +71,23 @@ enum VotingTxConfirmationWalk {
     }
 }
 
-/// Which server a confirmation poll attempt asks first. The accepting server answers alone for the
-/// first `authoritativeAttempts` (nine seconds at the 750 ms cadence); after that every
-/// `sweepEvery`-th attempt walks every server, so a server whose transaction indexer lags or is
-/// switched off cannot strand a mined transaction for the whole budget. A broadcast nobody accepted
-/// has no preference and walks every server on every attempt.
-enum TxConfirmationPollPlan {
-    static let authoritativeAttempts = 12
-    static let sweepEvery = 4
+/// Which server a confirmation poll attempt asks first. The accepting server answers alone until
+/// the first full sweep becomes due at nine elapsed seconds. Later sweeps become due three seconds
+/// after the previous sweep finishes, so time spent walking slow servers does not accidentally
+/// schedule another sweep immediately. A broadcast nobody accepted has no preference and walks
+/// every server on every attempt.
+struct TxConfirmationPollPlan {
+    private var nextSweepDue: Duration = .seconds(9)
 
-    static func preferredServer(acceptedBy server: String?, attempt: Int) -> String? {
+    func preferredServer(acceptedBy server: String?, elapsed: Duration) -> String? {
         guard let server else {
             return nil
         }
-        if attempt <= authoritativeAttempts {
-            return server
-        }
-        return attempt % sweepEvery == 0 ? nil : server
+        return elapsed >= nextSweepDue ? nil : server
+    }
+
+    mutating func fullSweepCompleted(at elapsed: Duration) {
+        nextSweepDue = elapsed + .seconds(3)
     }
 }
 #endif

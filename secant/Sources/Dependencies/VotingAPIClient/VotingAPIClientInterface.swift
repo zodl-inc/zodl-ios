@@ -95,8 +95,13 @@ struct VotingAPIClient {
     /// `preferredServerURL` is the server that accepted the broadcast: it is asked first, its 404
     /// means the transaction is not mined yet and ends the attempt, and only a server that cannot
     /// answer at all falls through to the remaining configured servers. Pass nil to walk every
-    /// server (recovery probes). Returns nil if the TX is not yet in a block.
-    var fetchTxConfirmation: @Sendable (_ txHash: String, _ preferredServerURL: String?) async throws -> TxConfirmation?
+    /// server (recovery probes). `remainingBudget` clips every direct request in a bounded poll;
+    /// pass nil for an explicit one-shot recovery walk. Returns nil if the TX is not yet in a block.
+    var fetchTxConfirmation: @Sendable (
+        _ txHash: String,
+        _ preferredServerURL: String?,
+        _ remainingBudget: Duration?
+    ) async throws -> TxConfirmation?
     /// Kick off a one-shot background health sweep of the configured vote
     /// servers. Returns as soon as the sweep is spawned; never waits for probe
     /// results. Submission effects fire this unconditionally as an advisory

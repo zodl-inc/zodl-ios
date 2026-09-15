@@ -478,7 +478,7 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
             return TxResult(txHash: "tx-\(bundle.proposalId)", code: 0, acceptedByServerURL: Self.voteServerURLs[0])
         }
         // Replaced by the delegation-lane fake below, which records the polled server for every call.
-        values.votingAPI.fetchTxConfirmation = { _, _ in TxConfirmation(height: 100, code: 0) }
+        values.votingAPI.fetchTxConfirmation = { _, _, _ in TxConfirmation(height: 100, code: 0) }
         values.votingAPI.delegateShares = { [self] payloads, proposalId, serverURLs in
             recorder.record("deliver:\(proposalId)")
             if let gate = gateIfRegistered(proposal: proposalId) {
@@ -575,7 +575,7 @@ final class VotingBatchSubmissionFixture: @unchecked Sendable {
         }
         // Only a delegation TX carries the `delegate_vote` leaf index the pipeline needs; a
         // vote's confirmation stays exactly what the pre-delegation suites already see.
-        values.votingAPI.fetchTxConfirmation = { [self] txHash, preferredServerURL in
+        values.votingAPI.fetchTxConfirmation = { [self] txHash, preferredServerURL, _ in
             polledServers.record("\(txHash):\(preferredServerURL ?? "-")")
             guard txHash.hasPrefix(Self.delegationTxPrefix) else {
                 return TxConfirmation(height: 100, code: 0)
