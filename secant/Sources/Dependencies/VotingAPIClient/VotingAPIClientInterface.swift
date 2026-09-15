@@ -67,7 +67,15 @@ struct VotingAPIClient {
     /// Returns an empty set if the endorser is not configured.
     var fetchZodlEndorsedRoundIds: @Sendable () async throws -> Set<String>
     var submitDelegation: @Sendable (_ registration: DelegationRegistration) async throws -> TxResult
-    var submitVoteCommitment: @Sendable (_ bundle: VoteCommitmentBundle, _ signature: CastVoteSignature) async throws -> TxResult
+    /// Broadcast one vote commitment. `admission` runs inside the transaction guard immediately
+    /// before the POST of every attempt: the guard is a queue and the helper pool can run dry while
+    /// a broadcast waits in it, so the caller's exhaustion check is re-taken at the last moment.
+    /// Throw from `admission` to refuse the broadcast; a refusal is never retried.
+    var submitVoteCommitment: @Sendable (
+        _ bundle: VoteCommitmentBundle,
+        _ signature: CastVoteSignature,
+        _ admission: @Sendable () async throws -> Void
+    ) async throws -> TxResult
     /// Distribute shares across the provided active-submission vote server set.
     /// The round id travels inside each payload's crate wire JSON (`vote_round_id`,
     /// carried by `VoteShareWire` since zcash_voting 3.0.0-rc.3), so no separate

@@ -12,6 +12,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1927] Coinholder polling supports rounds with up to 50 questions and works on vote chains upgraded to the new voting circuit. A round the app cannot read is hidden on its own instead of hiding every round.
 - [MOB-1928] Submitting a ballot no longer waits for each question's tally shares to reach the helper servers before starting the next question; a question is reported as submitted once its shares are accepted.
 - [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
+- [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
 
 ## [3.13.0] - 2026-09-10
 

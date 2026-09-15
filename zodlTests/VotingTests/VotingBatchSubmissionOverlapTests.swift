@@ -128,22 +128,36 @@ struct VotingBatchSubmissionOverlapTests {
 
     /// Once every helper server has proved unreachable there is nowhere left to send shares, so
     /// the batch stops instead of proving votes it cannot deliver.
+    ///
+    /// MOB-1930 moved the cost of learning that by one question. A bundle pipeline only sees the
+    /// emptied pool when a delivery it is waiting on settles, and the first thing it waits on is
+    /// the window admitting its *next* question's delivery — so question 2 is proved and broadcast
+    /// before the stop is observable, and question 3 is the first one the batch refuses. Question 2
+    /// is then reported failed on its own merits: its deliveries find the pool already empty.
     @Test func exhaustedServersStopTheBatch() async throws {
-        // Three bundles per question: the third delivery's admission is what makes the first
-        // delivery's outcome — and so the emptied server pool — visible before question 2 starts.
-        let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
+        // Three bundles: two pipelines walk the ballot while the third waits for a free lane.
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 3, bundleCount: 3)
         fixture.failDelivery(forProposal: 1, with: .serversExhausted)
+        // Held so the window is provably full before bundle 0 proves question 2: otherwise whether
+        // its delivery has to wait for a settling one — the only way the emptied pool becomes
+        // visible — would be down to which pipeline the scheduler favoured.
+        let secondQuestionOnBundleZero = fixture.commitGate(forBundle: 0, proposal: 2)
         let store = makeStore(fixture)
 
         store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.recorder.awaitEvent("commit:1:2")
+        secondQuestionOnBundleZero.open()
 
         await fixture.waitForStoreState(store) { state in
             state.roundCache[self.roundId]?.batchSubmissionStatus.isFailureState == true
         }
 
-        #expect(!fixture.recorder.events().contains("commit:0:2"))
+        // No bundle proved question 3: by then every pipeline had seen the empty pool.
+        #expect(!fixture.recorder.events().contains("commit:0:3"))
+        #expect(!fixture.recorder.events().contains("commit:1:3"))
         let session = try #require(store.state.roundCache[roundId])
-        #expect(Set(session.batchVoteErrors.keys) == [1])
+        #expect(Set(session.batchVoteErrors.keys) == [1, 2])
         #expect(session.votes.isEmpty)
     }
 
