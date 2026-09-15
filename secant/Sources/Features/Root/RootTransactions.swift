@@ -428,10 +428,10 @@ extension Root {
                     let attempt = state.transactionsFetchRetryAttempt + 1
                     let budget = Root.State.transactionsFetchRetryDelaysInSeconds.count
                     if attempt <= budget {
+                        let delaySeconds = Root.State.transactionsFetchRetryDelaysInSeconds[attempt - 1]
                         state.transactionsFetchRetryAttempt = attempt
-                        LoggerProxy.event("[RootTransactions] getAllTransactions retry \(attempt)/\(budget) scheduled")
+                        LoggerProxy.event("[RootTransactions] getAllTransactions retry \(attempt)/\(budget) scheduled in \(delaySeconds) s")
                         delayedRetry = .run { send in
-                            let delaySeconds = Root.State.transactionsFetchRetryDelaysInSeconds[attempt - 1]
                             try await mainQueue.sleep(for: .seconds(delaySeconds))
                             await send(.retryFailedTransactionsFetch(accountUUID: accountUUID))
                         }

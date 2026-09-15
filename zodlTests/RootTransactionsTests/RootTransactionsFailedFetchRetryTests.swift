@@ -271,6 +271,44 @@ import ComposableArchitecture
         #expect(harness.store.state.transactionsFetchRetryAttempt == 0)
     }
 
+    /// The start-cancel in `.fetchTransactionsForTheSelectedAccount` (`RootTransactions.swift`).
+    /// A retry is pending at t+2 when an unrelated trigger -- here a `foundTransactions` event --
+    /// starts and completes its own read at t+1. That read is the refresh the pending retry existed
+    /// to obtain, so the retry must be cancelled as the read starts rather than firing a redundant
+    /// second full-history read a second later. Deleting that `.cancel` leaves every other test in
+    /// this suite green and only this one red.
+    @Test func aFetchStartedBeforeTheRetryDelayCancelsThePendingRetry() async {
+        let accountA = Self.walletAccount(idByte: 80)
+        let accountB = Self.walletAccount(idByte: 81)
+        let rowsB = IdentifiedArrayOf<TransactionState>(uniqueElements: [Self.minedTx(id: "b-1")])
+        let harness = Harness(selected: accountA, accounts: [accountA, accountB])
+        await harness.startObservingAndSettleAtUpToDate()
+        let settledCount = harness.fetchCount
+
+        // B's first read throws, opening the retry lane; everything after it answers with B's rows.
+        harness.script(accountB, [Outcome.failure(FetchStubError())])
+        harness.answer(accountB, with: rowsB)
+        harness.switchTo(accountB)
+        await harness.settled(expectingFetches: settledCount + 1)
+        #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failed read must have scheduled a retry")
+
+        // t+1: still inside the first retry delay, so nothing has retried yet. An unrelated trigger
+        // now starts its own read, which succeeds.
+        await harness.scheduler.advance(by: .seconds(1))
+        await harness.giveAWrongFetchTimeToLand()
+        #expect(harness.fetchCount == settledCount + 1, "the retry delay has not elapsed yet")
+        harness.events.send(.foundTransactions([], nil))
+        await harness.scheduler.advance(by: .seconds(0.3))
+        await harness.settled(expectingFetches: settledCount + 2)
+        #expect(harness.store.state.transactions == rowsB, "the event-triggered read must deliver the account's rows")
+        #expect(harness.store.state.transactionsFetchRetryAttempt == 0, "a read that landed ends the failure streak")
+
+        // Past t+2 and far beyond: the retry the failure had scheduled must never fire.
+        await harness.scheduler.advance(by: .seconds(120))
+        await harness.giveAWrongFetchTimeToLand()
+        #expect(harness.fetchCount == settledCount + 2, "a fetch that started must cancel the retry still waiting on the last failure")
+    }
+
     // MARK: - (4) Repeated failures respect the budget and stay coalesced
 
     @Test func repeatedFailuresStopAfterTheRetryBudget() async {
@@ -285,6 +323,7 @@ import ComposableArchitecture
         harness.switchTo(accountB)
         await harness.settled(expectingFetches: settledCount + 1)
 
+        #expect(delays.allSatisfy { $0 >= 2 }, "the just-before probe below needs at least a one-second gap")
         for (index, delay) in delays.enumerated() {
             // Just short of the delay: nothing yet; then the delay itself: exactly one more read.
             await harness.scheduler.advance(by: .seconds(delay - 1))
