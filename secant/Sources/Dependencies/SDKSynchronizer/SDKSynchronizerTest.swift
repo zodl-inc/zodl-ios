@@ -86,6 +86,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         rescanFrom: unimplemented("\(Self.self).rescanFrom"),
         rewind: unimplemented("\(Self.self).rewind", placeholder: Fail(error: "Error").eraseToAnyPublisher()),
         getAllTransactions: unimplemented("\(Self.self).getAllTransactions", placeholder: []),
+        getMinedTransactionIds: unimplemented("\(Self.self).getMinedTransactionIds", placeholder: []),
         transactionStatesFromZcashTransactions: unimplemented("\(Self.self).transactionStatesFromZcashTransactions", placeholder: []),
         getMemos: unimplemented("\(Self.self).getMemos", placeholder: []),
         txIdExists: unimplemented("\(Self.self).txIdExists", placeholder: false),
@@ -187,6 +188,7 @@ extension SDKSynchronizerClient {
         rescanFrom: { _ in },
         rewind: { _ in Empty<Void, Error>().eraseToAnyPublisher() },
         getAllTransactions: { _ in [] },
+        getMinedTransactionIds: { _ in [] },
         transactionStatesFromZcashTransactions: { _, _ in [] },
         getMemos: { _ in [] },
         txIdExists: { _ in false },
@@ -359,6 +361,7 @@ extension SDKSynchronizerClient {
 
             return IdentifiedArrayOf<TransactionState>(uniqueElements: clearedTransactions)
         },
+        getMinedTransactionIds: @escaping @Sendable (AccountUUID) async throws -> Set<String> = { _ in [] },
         transactionStatesFromZcashTransactions: @escaping @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState> = { _, _ in IdentifiedArrayOf<TransactionState>(uniqueElements: []) },
         getMemos: @escaping @Sendable (_ rawID: Data) -> [Memo] = { _ in [] },
         txIdExists: @escaping @Sendable (String?) -> Bool = { _ in false },
@@ -470,6 +473,7 @@ extension SDKSynchronizerClient {
             rescanFrom: rescanFrom,
             rewind: rewind,
             getAllTransactions: getAllTransactions,
+            getMinedTransactionIds: getMinedTransactionIds,
             transactionStatesFromZcashTransactions: transactionStatesFromZcashTransactions,
             getMemos: getMemos,
             txIdExists: txIdExists,
