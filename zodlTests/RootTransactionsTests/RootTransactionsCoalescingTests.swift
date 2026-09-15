@@ -206,9 +206,17 @@ import ComposableArchitecture
         // and "settled".
         gate.open()
         await firstDispatch.finish()
+        // MOB-1954 (review follow-up): the coalesced follow-up fetch fails too, and a failed read
+        // that finds no further coalesced request now schedules its own delayed retry
+        // (`RootTransactions.swift`). `mainQueue` is `.immediate` in this file, so the whole backoff
+        // budget is spent inside `finish()` rather than over the ~minute it takes in production.
+        // The fold itself is still pinned exactly -- three dispatches become ONE follow-up, and
+        // every call after it is a budgeted retry, never a second follow-up. The retry's timing and
+        // its cancellation are driven on a controllable scheduler in
+        // `RootTransactionsFailedFetchRetryTests.swift`.
         #expect(
-            fetchCalls.count == 2,
-            "a failed fetch must still fold its coalesced dispatches into one follow-up fetch, with no third call chased afterward"
+            fetchCalls.count == 2 + Root.State.transactionsFetchRetryDelaysInSeconds.count,
+            "a failed fetch must still fold its coalesced dispatches into one follow-up fetch, chasing only its own budgeted retries after it"
         )
         #expect(!store.state.isTransactionsFetchInFlight, "a failed follow-up fetch must still clear the in-flight gate")
         #expect(!store.state.isTransactionsFetchDirty)
@@ -295,7 +303,9 @@ import ComposableArchitecture
 /// (`loadContacts`/`resolveMetadataEncryptionKeys`/`loadUserMetadata` all need real no-op
 /// dependencies, not just `sdkSynchronizer`'s). `mainQueue = .immediate`: none of the tests here
 /// exercise throttle windows or the reconciliation poller, so there is no need for a controllable
-/// test scheduler.
+/// test scheduler. The one timed effect that does reach these tests is the MOB-1954 delayed retry
+/// a failed read schedules -- `.immediate` collapses its backoff to zero, which the failure-path
+/// test below accounts for explicitly rather than by taking a scheduler it has no other use for.
 @MainActor
 private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.databaseFiles = .noOp

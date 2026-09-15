@@ -279,6 +279,8 @@ extension Root {
                 // MOB-1854: a pipeline whose finishing `send(.retryStartFinished)` was dropped by
                 // cancellation (store teardown) must never wedge the next foreground's retryStart.
                 state.isRetryStartInFlight = false
+                // MOB-1954 (review follow-up): the next foreground starts a fresh retry streak.
+                state.transactionsFetchRetryAttempt = 0
                 // MOB-1854 follow-up: bump the generation so a pre-background pipeline that is
                 // still somehow running (its `.run` effect carries no cancellable id of its own)
                 // cannot have its eventual `.retryStartFinished`/`.registerForSynchronizersUpdate`
@@ -296,6 +298,7 @@ extension Root {
                     .cancel(id: state.CancelEventId),
                     .cancel(id: state.CancelSyncStalledEventId),
                     .cancel(id: state.CancelPendingTxPollId),
+                    .cancel(id: state.CancelTransactionsFetchRetryId),
                     // MOB-1466: the tick loop is a FOREGROUND-only mechanism — the app cannot poll
                     // anything once backgrounded (there is no background lane), so its whole reason
                     // to exist stops the instant sync itself does, on the same boundary. The next
@@ -510,7 +513,8 @@ extension Root {
                         .cancel(id: state.CancelStateId),
                         .cancel(id: state.CancelTransactionsStateId),
                         .cancel(id: state.CancelEventId),
-                        .cancel(id: state.CancelPendingTxPollId)
+                        .cancel(id: state.CancelPendingTxPollId),
+                        .cancel(id: state.CancelTransactionsFetchRetryId)
                     )
                 }
 
