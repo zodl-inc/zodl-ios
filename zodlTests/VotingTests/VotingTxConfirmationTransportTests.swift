@@ -11,6 +11,253 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct VotingTxConfirmationTransportTests {
+    private struct BoundedCall: Equatable, Sendable {
+        let url: URL?
+        let retryLimit: UInt8
+        let timeoutMilliseconds: UInt64
+    }
+
+    @Test func aProtectedConfirmationUsesTheBoundedSDKWithTenSecondMaximumAndNoNativeRetry() async throws {
+        let calls = SignalledRecords<BoundedCall>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, timeoutMilliseconds in
+            try await SDKSynchronizerClient.performBoundedTorGET(
+                request,
+                timeoutMilliseconds: timeoutMilliseconds
+            ) { request, retryLimit, timeoutMilliseconds in
+                calls.record(BoundedCall(
+                    url: request.url,
+                    retryLimit: retryLimit,
+                    timeoutMilliseconds: timeoutMilliseconds
+                ))
+                return (Data(), Self.response(for: request, statusCode: 404))
+            }
+        }
+
+        _ = try await routeVotingRequest(
+            URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!),
+            fast: true,
+            torTimeout: .seconds(30),
+            access: .protected,
+            sdkSynchronizer: sdkSynchronizer,
+            directRequest: { _, _ in
+                Issue.record("protected confirmation escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+
+        #expect(calls.values == [BoundedCall(
+            url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc"),
+            retryLimit: 0,
+            timeoutMilliseconds: 10_000
+        )])
+    }
+
+    @Test func aProtectedConfirmationClipsTheBoundedSDKToItsRemainingBudget() async throws {
+        let timeouts = SignalledRecords<UInt64>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, timeoutMilliseconds in
+            timeouts.record(timeoutMilliseconds)
+            return (Data(), Self.response(for: request, statusCode: 404))
+        }
+
+        _ = try await routeVotingRequest(
+            URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!),
+            fast: true,
+            torTimeout: .milliseconds(2_500),
+            access: .protected,
+            sdkSynchronizer: sdkSynchronizer,
+            directRequest: { _, _ in (Data(), URLResponse()) }
+        )
+
+        #expect(timeouts.values == [2_500])
+    }
+
+    @Test func aZeroOrSubmillisecondBudgetStartsNoBoundedSDKRequest() async {
+        let calls = SignalledRecords<Void>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            calls.recordCall()
+            return (Data(), Self.response(for: request, statusCode: 404))
+        }
+        let configuredSDK = sdkSynchronizer
+        let request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!)
+
+        for timeout in [Duration.zero, .nanoseconds(999_999)] {
+            do {
+                _ = try await routeVotingRequest(
+                    request,
+                    fast: true,
+                    torTimeout: timeout,
+                    access: .protected,
+                    sdkSynchronizer: configuredSDK,
+                    directRequest: { _, _ in (Data(), URLResponse()) }
+                )
+                Issue.record("a non-positive native timeout was admitted")
+            } catch let error as URLError {
+                #expect(error.code == .timedOut)
+            } catch {
+                Issue.record("unexpected error: \(error)")
+            }
+        }
+
+        #expect(calls.isEmpty)
+    }
+
+    @Test func cancellationBeforeAdmissionStartsNoBoundedSDKRequest() async {
+        let enter = ResumableGate()
+        let calls = SignalledRecords<Void>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            calls.recordCall()
+            return (Data(), Self.response(for: request, statusCode: 404))
+        }
+        let configuredSDK = sdkSynchronizer
+        let request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!)
+
+        let task = Task {
+            await enter.wait()
+            return try await routeVotingRequest(
+                request,
+                fast: true,
+                torTimeout: .seconds(10),
+                access: .protected,
+                sdkSynchronizer: configuredSDK,
+                directRequest: { _, _ in (Data(), URLResponse()) }
+            )
+        }
+        task.cancel()
+        enter.open()
+
+        guard case .failure(let error) = await task.result else {
+            Issue.record("a cancelled confirmation request succeeded")
+            return
+        }
+        #expect(error is CancellationError)
+        #expect(calls.isEmpty)
+    }
+
+    @Test func activeCancellationWaitsForTheOwnedBoundedSDKRequestToReturn() async {
+        let started = ResumableGate()
+        let release = ResumableGate()
+        let completed = SignalledRecords<Void>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            started.open()
+            await release.wait()
+            return (Data(), Self.response(for: request, statusCode: 404))
+        }
+        let configuredSDK = sdkSynchronizer
+        let request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!)
+
+        let task = Task {
+            defer { completed.recordCall() }
+            return try await routeVotingRequest(
+                request,
+                fast: true,
+                torTimeout: .seconds(10),
+                access: .protected,
+                sdkSynchronizer: configuredSDK,
+                directRequest: { _, _ in (Data(), URLResponse()) }
+            )
+        }
+        await started.wait()
+        task.cancel()
+        #expect(completed.isEmpty)
+
+        release.open()
+        guard case .failure(let error) = await task.result else {
+            Issue.record("a cancelled active confirmation request succeeded")
+            return
+        }
+        #expect(error is CancellationError)
+        #expect(completed.count == 1)
+    }
+
+    @Test func aConfirmationFallbackStartsItsNextOwnedRequestOnlyAfterTheFirstReturns() async throws {
+        let calls = SignalledRecords<URL?>()
+        let firstStarted = ResumableGate()
+        let releaseFirst = ResumableGate()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            let ordinal = calls.record(request.url)
+            if ordinal == 1 {
+                firstStarted.open()
+                await releaseFirst.wait()
+                return (Data(), Self.response(for: request, statusCode: 500))
+            }
+            return (Data(), Self.response(for: request, statusCode: 404))
+        }
+        let configuredSDK = sdkSynchronizer
+
+        let task = Task {
+            try await VotingTxConfirmationWalk.run(
+                servers: ["https://vote-a.example", "https://vote-b.example"],
+                preferredServerURL: nil,
+                remainingBudget: .seconds(20),
+                clock: ContinuousClock()
+            ) { base, remainingBudget in
+                try await lookupTxConfirmation(
+                    base: base,
+                    txHash: "abc",
+                    remainingBudget: remainingBudget
+                ) { request, timeout in
+                    try await routeVotingRequest(
+                        request,
+                        fast: true,
+                        torTimeout: timeout,
+                        access: .protected,
+                        sdkSynchronizer: configuredSDK,
+                        directRequest: { _, _ in (Data(), URLResponse()) }
+                    )
+                }
+            }
+        }
+
+        await firstStarted.wait()
+        #expect(calls.count == 1)
+        releaseFirst.open()
+        await calls.countReached(2)
+        #expect(try await task.value == nil)
+        #expect(calls.values == [
+            URL(string: "https://vote-a.example/shielded-vote/v1/tx/abc"),
+            URL(string: "https://vote-b.example/shielded-vote/v1/tx/abc")
+        ])
+    }
+
+    @Test func aProtectedBroadcastKeepsTheLegacySDKTransportAndItsRetryPolicy() async throws {
+        let retries = SignalledRecords<UInt8>()
+        let boundedCalls = SignalledRecords<Void>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { request in
+            try await SDKSynchronizerClient.performLegacyTorRequest(request) { request, retryLimit in
+                retries.record(retryLimit)
+                return (Data(), Self.response(for: request, statusCode: 200))
+            }
+        }
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            boundedCalls.recordCall()
+            return (Data(), Self.response(for: request, statusCode: 200))
+        }
+        var request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/cast-vote")!)
+        request.httpMethod = "POST"
+
+        _ = try await routeVotingRequest(
+            request,
+            fast: false,
+            torTimeout: nil,
+            access: .protected,
+            sdkSynchronizer: sdkSynchronizer,
+            directRequest: { _, _ in
+                Issue.record("protected broadcast escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+
+        #expect(retries.values == [3])
+        #expect(boundedCalls.isEmpty)
+    }
+
     @Test func aStalledDirectResponseTimesOutAndStopsItsTransport() async {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StallingTxConfirmationURLProtocol.self]
@@ -158,6 +405,15 @@ struct VotingTxConfirmationTransportTests {
 
         #expect(result == confirmation)
         #expect(receivedBudgets.values == [.seconds(10)])
+    }
+
+    private static func response(for request: URLRequest, statusCode: Int) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: request.url!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )!
     }
 }
 

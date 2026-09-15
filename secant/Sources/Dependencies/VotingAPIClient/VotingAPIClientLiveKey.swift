@@ -199,10 +199,9 @@ private let fastHttpSession: URLSession = {
 /// configuration's `timeoutIntervalForRequest` (measured: a request-level
 /// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
 /// different: `TorClient.httpRequest` hands the URL, headers, and body to
-/// the Rust FFI and ignores `timeoutInterval` entirely, and the app-side
-/// `httpRequestOverTor` wrapper pins `retryLimit: 3` — so over Tor a dead
-/// server costs up to three of arti's internal connection timeouts. That is
-/// why nothing may block user-visible work on these requests (MOB-1810).
+/// the Rust FFI and ignores `timeoutInterval` entirely. Confirmation GETs use
+/// the SDK's bounded transport below; all other Tor requests retain the
+/// existing `httpRequestOverTor` retry policy.
 private let fastRequestTimeout: TimeInterval = 5
 
 /// Bound on one confirmation GET over Tor; matches the fast session's resource timeout.
@@ -247,6 +246,43 @@ private func durationTimeInterval(_ duration: Duration) -> TimeInterval {
     return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
 }
 
+typealias VotingDirectRequest = @Sendable (_ request: URLRequest, _ fast: Bool) async throws -> (Data, URLResponse)
+
+@Sendable
+func routeVotingRequest(
+    _ request: URLRequest,
+    fast: Bool,
+    torTimeout: Duration?,
+    access: WalletStorage.SwapAPIAccess,
+    sdkSynchronizer: SDKSynchronizerClient,
+    directRequest: @escaping VotingDirectRequest
+) async throws -> (Data, URLResponse) {
+    var request = request
+    if fast {
+        request.timeoutInterval = fastRequestTimeout
+    }
+
+    if access == .protected {
+        if let torTimeout {
+            try Task.checkCancellation()
+            let boundedTimeout = min(txConfirmationRequestBound, torTimeout)
+            guard boundedTimeout > .zero else {
+                throw URLError(URLError.Code.timedOut)
+            }
+            let timeoutMilliseconds = UInt64(durationTimeInterval(boundedTimeout) * 1_000)
+            guard timeoutMilliseconds > 0 else {
+                throw URLError(URLError.Code.timedOut)
+            }
+            let (data, response) = try await sdkSynchronizer.boundedTorGET(request, timeoutMilliseconds)
+            try Task.checkCancellation()
+            return (data, response as URLResponse)
+        }
+        let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
+        return (data, response as URLResponse)
+    }
+    return try await directRequest(request, fast)
+}
+
 @Sendable
 private func performTxConfirmationRequest(
     _ request: URLRequest,
@@ -255,76 +291,33 @@ private func performTxConfirmationRequest(
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
     let requestBound = min(txConfirmationRequestBound, remainingBudget)
     if swapAPIAccess == .protected {
-        return try await performVotingRequest(request, fast: true, torBound: requestBound)
+        return try await performVotingRequest(request, fast: true, torTimeout: requestBound)
     }
     return try await performDirectTxConfirmationRequest(request, resourceTimeout: requestBound)
 }
 
-/// `torBound`, when given, caps how long the caller waits for a request over Tor: the Rust Tor
-/// client does not honour `URLRequest.timeoutInterval`, so without it one stalled circuit could
-/// hold a caller past its own budget. The bound releases the caller, not the circuit, which
-/// finishes on its own and whose late answer is dropped.
+/// `torTimeout`, when given, selects the SDK's owned bounded GET. The SDK applies that timeout to
+/// queue wait and native execution, and drains an active request before returning cancellation.
 @Sendable
 private func performVotingRequest(
     _ request: URLRequest,
     fast: Bool = false,
-    torBound: Duration? = nil
+    torTimeout: Duration? = nil
 ) async throws -> (Data, URLResponse) {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
-    var request = request
-    if fast {
-        request.timeoutInterval = fastRequestTimeout
-    }
-
-    if swapAPIAccess == .protected {
-        let torRequest = request
-        if let torBound {
-            let (data, response) = try await withTorBound(torBound) {
-                try await sdkSynchronizer.httpRequestOverTor(torRequest)
-            }
-            return (data, response as URLResponse)
+    return try await routeVotingRequest(
+        request,
+        fast: fast,
+        torTimeout: torTimeout,
+        access: swapAPIAccess,
+        sdkSynchronizer: sdkSynchronizer,
+        directRequest: { request, fast in
+            let session = fast ? fastHttpSession : httpSession
+            return try await session.data(for: request)
         }
-        let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
-        return (data, response as URLResponse)
-    }
-    let session = fast ? fastHttpSession : httpSession
-    return try await session.data(for: request)
-}
-
-/// Races `operation` against `bound` without waiting for it to finish. The Rust Tor request is a
-/// synchronous call that cannot be cancelled, so a structured task group would hold the caller
-/// until the circuit answered; here the request keeps running on its own task and an answer that
-/// arrives after the bound is dropped.
-private func withTorBound<T: Sendable>(
-    _ bound: Duration,
-    _ operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    let hasResumed = OSAllocatedUnfairLock(initialState: false)
-    return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
-        let resumeOnce: @Sendable (Result<T, Error>) -> Void = { result in
-            let shouldResume = hasResumed.withLock { alreadyResumed -> Bool in
-                guard !alreadyResumed else { return false }
-                alreadyResumed = true
-                return true
-            }
-            if shouldResume {
-                continuation.resume(with: result)
-            }
-        }
-        Task.detached {
-            do {
-                resumeOnce(.success(try await operation()))
-            } catch {
-                resumeOnce(.failure(error))
-            }
-        }
-        Task {
-            try? await Task.sleep(for: bound)
-            resumeOnce(.failure(TransactionTimeoutError()))
-        }
-    }
+    )
 }
 
 private func shouldTryNextVoteServer(after error: Error) -> Bool {
