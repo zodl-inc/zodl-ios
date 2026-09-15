@@ -727,6 +727,95 @@ struct VotingTxConfirmationTransportTests {
         #expect(boundedCalls.isEmpty)
     }
 
+    @Test func aProtectedGeneralGETKeepsTheLegacyRetryPolicy() async throws {
+        let retries = SignalledRecords<UInt8>()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { request in
+            try await SDKSynchronizerClient.performLegacyTorRequest(request) { request, retryLimit in
+                retries.record(retryLimit)
+                return (Data(), Self.response(for: request, statusCode: 200))
+            }
+        }
+
+        _ = try await routeVotingRequest(
+            URLRequest(url: try #require(URL(string: "https://vote.example/rounds"))),
+            fast: true,
+            torTimeout: nil,
+            access: .protected,
+            sdkSynchronizer: sdkSynchronizer,
+            directRequest: { _, _ in
+                Issue.record("protected general GET escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+
+        #expect(retries.values == [3])
+    }
+
+    @Test func concurrentLegacyAndBoundedRequestsKeepTheirIndependentRetryPolicies() async throws {
+        let legacyRetries = SignalledRecords<UInt8>()
+        let boundedCalls = SignalledRecords<BoundedCall>()
+        let releaseRequests = ResumableGate()
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { request in
+            try await SDKSynchronizerClient.performLegacyTorRequest(request) { request, retryLimit in
+                legacyRetries.record(retryLimit)
+                await releaseRequests.wait()
+                return (Data(), Self.response(for: request, statusCode: 200))
+            }
+        }
+        sdkSynchronizer.boundedTorGET = { request, timeoutMilliseconds in
+            try await SDKSynchronizerClient.performBoundedTorGET(
+                request,
+                timeoutMilliseconds: timeoutMilliseconds
+            ) { request, retryLimit, timeoutMilliseconds in
+                boundedCalls.record(BoundedCall(
+                    url: request.url,
+                    retryLimit: retryLimit,
+                    timeoutMilliseconds: timeoutMilliseconds
+                ))
+                await releaseRequests.wait()
+                return (Data(), Self.response(for: request, statusCode: 404))
+            }
+        }
+        let configuredSDK = sdkSynchronizer
+
+        async let legacyResponse = routeVotingRequest(
+            URLRequest(url: try #require(URL(string: "https://vote.example/rounds"))),
+            fast: true,
+            torTimeout: nil,
+            access: .protected,
+            sdkSynchronizer: configuredSDK,
+            directRequest: { _, _ in
+                Issue.record("protected legacy request escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+        async let boundedResponse = routeVotingRequest(
+            URLRequest(url: try #require(URL(string: "https://vote.example/shielded-vote/v1/tx/abc"))),
+            fast: true,
+            torTimeout: .seconds(30),
+            access: .protected,
+            sdkSynchronizer: configuredSDK,
+            directRequest: { _, _ in
+                Issue.record("protected bounded request escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+
+        await legacyRetries.countReached(1)
+        await boundedCalls.countReached(1)
+        releaseRequests.open()
+        _ = try await (legacyResponse, boundedResponse)
+
+        #expect(legacyRetries.values == [3])
+        #expect(boundedCalls.values == [BoundedCall(
+            url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc"),
+            retryLimit: 0,
+            timeoutMilliseconds: 10_000
+        )])
+    }
+
     @Test func aStalledDirectResponseTimesOutAndStopsItsTransport() async {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StallingTxConfirmationURLProtocol.self]
