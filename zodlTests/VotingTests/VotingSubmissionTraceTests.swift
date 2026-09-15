@@ -87,7 +87,11 @@ struct VotingSubmissionTraceTests {
         )
 
         #expect(
-            summary == "Voting submission summary round=aabbccdd bundles=2 questions=3 totalMs=900 votesMs=250 sharesJoinMs=40 proveMs=500 witnessMs=0 syncMs=0 broadcastMs=0 confirmMs=0 recordMs=0 deliverMs=0"
+            summary == """
+            Voting submission work summary round=aabbccdd scope=votePipelines bundles=2 questions=3 \
+            pipelineWallMs=900 votesWallMs=250 sharesJoinWallMs=40 proveWorkMs=500 witnessWorkMs=0 \
+            syncWorkMs=0 broadcastWorkMs=0 confirmWorkMs=0 recordWorkMs=0 deliverWorkMs=0
+            """
         )
     }
 

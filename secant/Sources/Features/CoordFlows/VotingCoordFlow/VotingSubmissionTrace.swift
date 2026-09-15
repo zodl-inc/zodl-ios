@@ -77,7 +77,8 @@ enum VotingSubmissionTrace {
         }
     }
 
-    /// Format the production summary for one complete vote submission.
+    /// Detailed work for the vote pipelines only. Concurrent work sums may exceed elapsed
+    /// wall time. The separate automated-attempt summary includes preparation and delegation.
     static func submissionSummary(
         context: String,
         bundleCount: UInt32,
@@ -85,10 +86,12 @@ enum VotingSubmissionTrace {
         totalMilliseconds: Int64,
         totals: Totals
     ) async -> String {
-        let stepTotals = await totals.summary([
-            "votes", "sharesJoin", "prove", "witness", "sync", "broadcast", "confirm", "record", "deliver"
-        ])
-        return "Voting submission summary \(context) bundles=\(bundleCount) questions=\(questionCount) totalMs=\(totalMilliseconds) \(stepTotals)"
+        let phases = await totals.summary(["votes", "sharesJoin"], suffix: "WallMs")
+        let work = await totals.summary(["prove", "witness", "sync", "broadcast", "confirm", "record", "deliver"], suffix: "WorkMs")
+        return """
+        Voting submission work summary \(context) scope=votePipelines bundles=\(bundleCount) questions=\(questionCount) \
+        pipelineWallMs=\(totalMilliseconds) \(phases) \(work)
+        """
     }
 
     /// Per-step totals across the pipelines of one submission.
@@ -104,8 +107,8 @@ enum VotingSubmissionTrace {
         }
 
         /// `stepMs=<n>` pairs for `steps`, in that order, zero for steps that never ran.
-        func summary(_ steps: [String]) -> String {
-            steps.map { "\($0)Ms=\(milliseconds[$0] ?? 0)" }.joined(separator: " ")
+        func summary(_ steps: [String], suffix: String = "Ms") -> String {
+            steps.map { "\($0)\(suffix)=\(milliseconds[$0] ?? 0)" }.joined(separator: " ")
         }
     }
 }
