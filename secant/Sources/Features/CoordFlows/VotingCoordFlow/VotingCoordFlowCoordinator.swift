@@ -1125,6 +1125,7 @@ extension VotingCoordFlow {
                             guard try await Self.prepareFreshRound(
                                 roundId: roundId,
                                 existingState: existingState,
+                                existingBundleCount: existingBundleCount,
                                 session: session,
                                 snapshotHeight: snapshotHeight,
                                 walletDbPath: walletDbPath,
@@ -1141,6 +1142,7 @@ extension VotingCoordFlow {
                         guard try await Self.prepareFreshRound(
                             roundId: roundId,
                             existingState: existingState,
+                            existingBundleCount: existingBundleCount,
                             session: session,
                             snapshotHeight: snapshotHeight,
                             walletDbPath: walletDbPath,
@@ -2058,6 +2060,7 @@ extension VotingCoordFlow {
                     try await Self.runDelegationPipeline(
                         roundId: roundId,
                         cachedNotes: cachedNotes,
+                        bundleCount: bundleCount,
                         senderSeed: senderSeed,
                         hotkeySeed: hotkeySeed,
                         networkId: networkId,
@@ -2812,13 +2815,9 @@ extension VotingCoordFlow {
                 votedAt: Date(),
                 votingWeight: session.votingWeight,
                 proposalCount: submittedVoteCount,
-                eligibleVotingWeight: state.isKeystoneUser
-                    ? completedEligibleVotingWeight(session)
-                    : nil,
-                submittedBundleCount: state.isKeystoneUser ? session.bundleCount : nil,
-                totalBundleCount: state.isKeystoneUser
-                    ? completedEligibleBundleCount(session)
-                    : nil
+                eligibleVotingWeight: completedEligibleVotingWeight(session),
+                submittedBundleCount: session.bundleCount,
+                totalBundleCount: completedEligibleBundleCount(session)
             )
             do {
                 try Voting.persistCompletedRound(record, roundId: roundId, account: account)
@@ -3825,6 +3824,7 @@ extension VotingCoordFlow {
     private static func prepareFreshRound(
         roundId: String,
         existingState: RoundStateInfo?,
+        existingBundleCount: UInt32,
         session: VotingSession,
         snapshotHeight: UInt64,
         walletDbPath: String,
@@ -3848,9 +3848,12 @@ extension VotingCoordFlow {
         case .reusable:
             break
         case .parametersChanged:
-            // Reached only when the round has no bundles yet (a round with
-            // bundles takes the `shouldResumePersistedRound` path instead), so
-            // there is no `van_comm_rand` here to protect by hard-failing.
+            // A round with bundle rows can reach this classification too (a
+            // trimmed round abandoned before its first delegation broadcast
+            // comes back as a fresh round); its rows are adopted rather than
+            // rebuilt, and the delegation proof re-validates them against the
+            // current notes, so there is nothing here to protect by
+            // hard-failing.
             // Reuse the row rather than making the round permanently
             // unopenable: every value it feeds into a proof or submission is
             // re-verified independently downstream, so a stale row fails
@@ -3862,9 +3865,14 @@ extension VotingCoordFlow {
 
         try await votingCrypto.clearRecoveryState(roundId)
 
-        let setupResult = try await votingCrypto.setupBundles(roundId, notes)
-        let bundleCount = setupResult.bundleCount
-        let eligibleWeight = setupResult.eligibleWeight
+        let setup = try await resolveFreshBundleSetup(
+            roundId: roundId,
+            notes: notes,
+            existingBundleCount: existingBundleCount,
+            votingCrypto: votingCrypto
+        )
+        let bundleCount = setup.keepCount
+        let eligibleWeight = setup.keptWeight
         guard bundleCount > 0, eligibleWeight > 0 else {
             let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
             await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
@@ -3897,6 +3905,91 @@ extension VotingCoordFlow {
             delegationReady: false
         ))
         return true
+    }
+
+    /// The bundle setup a fresh round starts from. Rows that already exist belong to a round that
+    /// was set up, possibly trimmed, and then abandoned before its first delegation broadcast:
+    /// re-running `setupBundles` over them would fail, because the crate insists that the planned
+    /// and the stored bundle counts match, so the stored prefix is adopted as it is and the
+    /// delegation proof re-validates it against the current notes before anything is proved.
+    /// Without rows the bundles are created and the privacy trim runs. A result with no bundles
+    /// or no weight means the wallet is not eligible.
+    static func resolveFreshBundleSetup(
+        roundId: String,
+        notes: [NoteInfo],
+        existingBundleCount: UInt32,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> VotingBundleTrim {
+        if existingBundleCount > 0 {
+            return VotingBundleTrim(
+                keepCount: existingBundleCount,
+                keptWeight: votingWeight(for: notes, bundleCount: existingBundleCount),
+                trimmedBundleCount: 0,
+                trimmedWeight: 0
+            )
+        }
+        let setupResult = try await votingCrypto.setupBundles(roundId, notes)
+        guard setupResult.bundleCount > 0, setupResult.eligibleWeight > 0 else {
+            return VotingBundleTrim(keepCount: 0, keptWeight: 0, trimmedBundleCount: 0, trimmedWeight: 0)
+        }
+        return try await applyBundleTrim(
+            roundId: roundId,
+            notes: notes,
+            setupResult: setupResult,
+            votingCrypto: votingCrypto
+        )
+    }
+
+    /// Applies the privacy trim to a freshly built bundle setup: computes how many of the
+    /// value-descending bundles to keep, deletes the tail rows through the crate's skipped-suffix
+    /// path (the one the Keystone skip flow already uses, so the kept prefix keeps exactly the
+    /// composition it was built with) and returns what the session should record. Nothing is
+    /// trimmed when the app's bundling and the stored bundle count disagree: the raw weights would
+    /// then describe a different layout than the rows.
+    static func applyBundleTrim(
+        roundId: String,
+        notes: [NoteInfo],
+        setupResult: BundleSetupResult,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> VotingBundleTrim {
+        let untrimmed = VotingBundleTrim(
+            keepCount: setupResult.bundleCount,
+            keptWeight: setupResult.eligibleWeight,
+            trimmedBundleCount: 0,
+            trimmedWeight: 0
+        )
+        let rawWeights = notes.smartBundles().bundles.map { bundle in
+            bundle.reduce(UInt64(0)) { $0 + $1.value }
+        }
+        guard rawWeights.count == Int(setupResult.bundleCount) else {
+            LoggerProxy.warn(
+                """
+                Voting round \(roundId): the app bundles these notes into \(rawWeights.count) bundles but \
+                \(setupResult.bundleCount) rows are stored; skipping the privacy trim
+                """
+            )
+            return untrimmed
+        }
+        let keepCount = VotingBundleTrimPolicy.keepCount(rawWeights: rawWeights)
+        guard keepCount < rawWeights.count else {
+            return untrimmed
+        }
+
+        let keptWeight = rawWeights.prefix(keepCount).reduce(UInt64(0)) { $0 + quantizeWeight($1) }
+        let trimmedWeight = rawWeights.dropFirst(keepCount).reduce(UInt64(0)) { $0 + quantizeWeight($1) }
+        LoggerProxy.info(
+            """
+            Trimming voting round \(roundId) from \(rawWeights.count) to \(keepCount) bundles \
+            (\(trimmedWeight) zatoshi of voting weight dropped)
+            """
+        )
+        try await votingCrypto.deleteSkippedBundles(roundId, UInt32(keepCount))
+        return VotingBundleTrim(
+            keepCount: UInt32(keepCount),
+            keptWeight: keptWeight,
+            trimmedBundleCount: UInt32(rawWeights.count - keepCount),
+            trimmedWeight: trimmedWeight
+        )
     }
 
     /// Completes only deterministic tree-state and witness work for a persisted
@@ -4847,6 +4940,7 @@ extension VotingCoordFlow {
     static func runDelegationPipeline(
         roundId: String,
         cachedNotes: [NoteInfo],
+        bundleCount: UInt32,
         senderSeed: [UInt8],
         hotkeySeed: [UInt8],
         networkId: UInt32,
@@ -4867,7 +4961,12 @@ extension VotingCoordFlow {
         delegationConfirmationRetryDelay: Duration = .milliseconds(750)
     ) async throws {
         let noteChunks = cachedNotes.smartBundles().bundles
-        let bundleCount = UInt32(noteChunks.count)
+        guard Int(bundleCount) <= noteChunks.count else {
+            throw VotingFlowError.inconsistentBundleSetup(
+                bundleCount: bundleCount,
+                noteChunkCount: noteChunks.count
+            )
+        }
         var completedBundles = Set<UInt32>()
         let delegationStarted = ContinuousClock().now
         let trace = VotingSubmissionTrace.Totals()
@@ -5483,8 +5582,9 @@ enum DelegationRegistrationProbe: Equatable, Sendable {
 // MARK: - Round resume decision
 
 /// What an interrupted round's local delegation state is worth when the pipeline re-enters
-/// it. `.freshRound` is the only outcome that destroys local rows, and it is reached only
-/// when no probe found a registration and nothing local hints that one might exist.
+/// it. `.freshRound` is reached only when no probe found a registration and nothing local
+/// hints that one might exist; it clears the recovery state and adopts any bundle rows that
+/// already exist instead of rebuilding them.
 enum RoundResumeDecision: Equatable, Sendable {
     /// At least one bundle is confirmed registered on-chain — reuse exactly those.
     case reuseRecovered(recoveredIndices: Set<UInt32>)

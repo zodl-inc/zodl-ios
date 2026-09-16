@@ -30,10 +30,10 @@ struct RoundSession: Equatable {
     /// (wallet, round) pair until a new snapshot or wallet rescan.
     var votingWeight: UInt64 = 0
 
-    /// Original eligible power before any Keystone bundle skipping. For
-    /// Zashi and full Keystone submissions this matches `votingWeight`; when
-    /// Keystone users skip unsigned bundles, `votingWeight` is reduced and
-    /// this remains the pre-skip value for persisted transparency metadata.
+    /// Original eligible power before automatic trimming or Keystone bundle
+    /// skipping. For untrimmed submissions this matches `votingWeight`; when
+    /// bundles are omitted, `votingWeight` is reduced and this remains the
+    /// original value for persisted transparency metadata.
     var eligibleVotingWeight: UInt64 = 0
 
     /// Eligible notes at the round's snapshot height. Cached because the
@@ -49,8 +49,8 @@ struct RoundSession: Equatable {
     /// delegation proof loop and the per-bundle vote submission loop.
     var bundleCount: UInt32 = 0
 
-    /// Original eligible bundle count before any Keystone skip. Kept so a
-    /// completed vote record can explain reduced power later.
+    /// Original eligible bundle count before automatic trimming or a Keystone
+    /// skip. Kept so a completed vote record can explain reduced power later.
     var eligibleBundleCount: UInt32 = 0
 
     /// Per-round hotkey address derived deterministically from the per-
