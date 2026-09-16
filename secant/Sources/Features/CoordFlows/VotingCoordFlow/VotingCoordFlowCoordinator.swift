@@ -2109,7 +2109,7 @@ extension VotingCoordFlow {
             // themselves still serialize behind the SDK's handle lock; that is the intended memory
             // profile, not an accident of this shape.
             //
-            // MOB-1928: helper-share delivery does not block a pipeline either. Each bundle's
+            // MOB-1928: helper-share delivery does not block a lane either. Each bundle's
             // shares go into a window of two and the lane moves straight on to its next task
             // while they travel; the tracker below is what finally decides each question's
             // outcome, so a question is reported submitted only once every bundle has cast it and
@@ -2122,7 +2122,7 @@ extension VotingCoordFlow {
             let serverPool = VotingShareServerPool(urls: voteServerURLs)
 
             // The skip rule, read once for the whole ballot instead of once per question, because
-            // the pipelines that consume it now run at the same time.
+            // the lanes that consume it now run at the same time.
             let plan = Self.planVoteBundleWork(
                 drafts: drafts,
                 proposals: proposals,
@@ -2163,11 +2163,11 @@ extension VotingCoordFlow {
             do {
                 // MOB-1928: one handler covers the whole walk, not just the drain. The window owns
                 // unstructured tasks, so cancelling this effect never reaches them on its own, and
-                // nothing below would notice a cancellation either — the pipelines would keep
-                // proving and broadcasting votes for a flow the user has already left. `onCancel`
-                // cancels and joins the deliveries, each pipeline's per-question cancellation check
-                // ends its walk, and the `catch` awaits that same cancel so the effect can never
-                // return while a delivery is still writing share records.
+                // nothing below would notice a cancellation either — the lanes would keep proving
+                // and broadcasting votes for a flow the user has already left. `onCancel` cancels
+                // and joins the deliveries, each lane re-checks cancellation on every task it is
+                // handed and ends its walk, and the `catch` awaits that same cancel so the effect
+                // can never return while a delivery is still writing share records.
                 settlement = try await withTaskCancellationHandler {
                     try await VotingSubmissionTrace.measure("votes", traceContext, totals: context.trace, sink: timing.sink, now: timing.now) {
                         await Self.runVoteLanes(plan, context: context, send: send)
@@ -4242,10 +4242,10 @@ extension VotingCoordFlow {
         let proposalId: UInt32
         let choice: VoteChoice
         let identities: [VotingShareDeliveryIdentity]
-        /// MOB-1930: `false` when one of this question's bundles was abandoned because its pipeline
-        /// stopped. The deliveries the other bundles did enqueue still have to be attributed — an
-        /// on-chain vote whose shares went nowhere is exactly what the voter has to be told — but
-        /// the question was never fully cast, so it can never be reported submitted.
+        /// MOB-1930: `false` when one of this question's bundles was abandoned because the lanes
+        /// stopped before reaching it. The deliveries the other bundles did enqueue still have to
+        /// be attributed — an on-chain vote whose shares went nowhere is exactly what the voter has
+        /// to be told — but the question was never fully cast, so it can never be reported submitted.
         let isFullyCast: Bool
 
         init(
@@ -4626,8 +4626,10 @@ extension VotingCoordFlow {
     /// the flow was cancelled or the pool emptied: the scheduler releases a cancelled waiter from
     /// an unstructured task that races a sibling's `finish`, so a park can end with a real task in
     /// hand rather than `nil`. A check taken before the park would describe a world that is gone.
-    /// Whatever a check then decides, the task's bundle is freed first — `next()` marked it busy,
-    /// and the scheduler's contract is one `finish` per task handed out.
+    /// A cancellation frees the task's bundle right away — `next()` marked it busy, and the
+    /// scheduler's contract is one `finish` per task handed out. Exhaustion frees it only after
+    /// draining the queue: freeing first could wake a parked sibling into `next()` before the
+    /// drain removes what is left, handing it a task that is already doomed.
     static func runVoteLane(
         scheduler: VotingVoteTaskScheduler,
         context: VoteBatchContext,
@@ -4759,7 +4761,7 @@ extension VotingCoordFlow {
         // sibling's sync landing between this sync and this witness is not a rare interleaving but
         // the steady state — and nothing in the crate's contract says the witness is rooted at the
         // `anchorHeight` we passed rather than at whatever the tree holds when it runs. Rather than
-        // rely on a guarantee nobody has stated, the pair goes through a queue every pipeline
+        // rely on a guarantee nobody has stated, the pair goes through a queue every lane
         // shares. Plain actor isolation would not do it: an actor is reentrant at every `await`
         // inside the pair, which is exactly where the sibling would slip in. Both calls are cheap
         // next to proving and chain waits, so the design loses nothing.
@@ -5396,7 +5398,7 @@ struct ShareRecoveryPollResult: Equatable, Sendable {
 /// every task as it ends, and only the task that brings a question's count to zero resolves it:
 ///
 /// - any bundle failed it → the question failed. The failure itself is reported the moment a
-///   bundle hits it, by that pipeline, and only by the first one to do so;
+///   bundle hits it, by that lane, and only by the first one to do so;
 /// - no delivery is outstanding → it is submitted right away (every bundle was already done, or
 ///   it was a synthetic abstain);
 /// - otherwise it joins the list handed to `settleDeliveries`, which reports it once its shares

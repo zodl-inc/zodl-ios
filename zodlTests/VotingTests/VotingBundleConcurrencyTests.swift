@@ -59,8 +59,8 @@ struct VotingBundleConcurrencyTests {
         #expect(provedIndex < confirmedIndex)
     }
 
-    /// Bundle-major does not mean a question is done early: every bundle casts a vote for it, so
-    /// it is reported submitted only once the last of them has.
+    /// The question-major walk does not mean a question is done early: every bundle casts a vote
+    /// for it, so it is reported submitted only once the last of them has.
     @Test func aProposalCompletesOnlyAfterEveryBundleSubmittedIt() async throws {
         let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 2)
         let secondBundleConfirmation = fixture.confirmationGate(forBundle: 1, proposal: 1)
@@ -284,7 +284,7 @@ struct VotingBundleConcurrencyTests {
     /// vote for question 1 is cast before any bundle moves on to question 2, so a question is fully
     /// cast — and reported — while the ballot is still near its start, not when the last bundle
     /// finally gets a lane.
-    @Test func everyBundleCastsAQuestionBeforeAnyBundleStartsTheNext() async throws {
+    @Test func everyBundleCastsAQuestionBeforeAnyBundleStartsTheNext() async {
         let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
         // Parks bundle 1 on question 1, so the lane bundle 0 frees has exactly two candidates:
         // bundle 2's question 1 (question-major) or bundle 0's question 2 (bundle-major).

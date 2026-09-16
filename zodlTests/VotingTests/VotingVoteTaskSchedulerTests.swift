@@ -220,6 +220,25 @@ struct VotingVoteTaskSchedulerTests {
         #expect(Self.label(next) == "b0:q2")
     }
 
+    /// `next()` does not filter by cancellation. `takeEligibleTask()` runs first and returns
+    /// synchronously the moment there is a task to give; `Task.isCancelled` is only ever consulted
+    /// on the park path, once nothing eligible is left. So cancelling the caller before this call —
+    /// even before its first `yield`, which is why this test forces one — cannot change the
+    /// outcome: an eligible task still comes back. Noticing the cancellation and ending the walk is
+    /// `runVoteLane`'s post-`next()` check to make, not the scheduler's.
+    @Test func nextHandsOutAnEligibleTaskToAnAlreadyCancelledCaller() async {
+        let scheduler = VotingVoteTaskScheduler(tasks: Self.tasks(["b0:q1"]))
+
+        let lane = Task { () -> VotingCoordFlow.VoteTask? in
+            await Task.yield()
+            return await scheduler.next()
+        }
+        lane.cancel()
+
+        let handed = await lane.value
+        #expect(Self.label(handed) == "b0:q1")
+    }
+
     // MARK: - Helpers
 
     struct BundleProposal: Hashable {
