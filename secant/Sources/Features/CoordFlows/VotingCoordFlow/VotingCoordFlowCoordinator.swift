@@ -4621,9 +4621,13 @@ extension VotingCoordFlow {
     /// pool must stop the whole ballot: the task just handed out is abandoned along with every
     /// task still queued, so the questions the lanes did cast can still be resolved.
     ///
-    /// The pool check is taken on the task the scheduler handed out, not before the wait for one.
-    /// A lane with nothing eligible parks inside `next()` and can be woken long after the pool
-    /// emptied, so a check taken before the park would describe a world that is gone.
+    /// Both checks are taken again on the task the scheduler hands out, not only before the wait
+    /// for one. A lane with nothing eligible parks inside `next()`, and it can be woken long after
+    /// the flow was cancelled or the pool emptied: the scheduler releases a cancelled waiter from
+    /// an unstructured task that races a sibling's `finish`, so a park can end with a real task in
+    /// hand rather than `nil`. A check taken before the park would describe a world that is gone.
+    /// Whatever a check then decides, the task's bundle is freed first — `next()` marked it busy,
+    /// and the scheduler's contract is one `finish` per task handed out.
     static func runVoteLane(
         scheduler: VotingVoteTaskScheduler,
         context: VoteBatchContext,
@@ -4635,6 +4639,15 @@ extension VotingCoordFlow {
             }
             guard let task = await scheduler.next() else {
                 return Task.isCancelled ? .cancelled : .finished
+            }
+            // A parked lane is normally released with `nil` when its task is cancelled, but that
+            // release is an unstructured hop racing a sibling's `finish`, which wakes waiters
+            // synchronously. So a lane can come out of `next()` holding a real task for a flow
+            // the user has already left — `voteBundleWork` has no cancellation gate of its own,
+            // and the vote it would prove and broadcast could land with its shares stranded.
+            if Task.isCancelled {
+                await scheduler.finish(bundleIndex: task.bundleIndex)
+                return .cancelled
             }
             // Every helper server has proved unreachable — a delivery that ended in
             // `noReachableVoteServers` empties the pool — so there is nowhere left to send shares
