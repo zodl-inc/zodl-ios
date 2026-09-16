@@ -19,6 +19,9 @@ import Foundation
 struct RoundSession: Equatable {
     let roundId: String
 
+    /// Diagnostic state only, discarded with this account-scoped round cache.
+    var submissionAttempt: VotingSubmissionAttempt?
+
     // MARK: - Pipeline outputs (Phase 4b populates)
 
     /// Total voting power for this wallet at the round's snapshot height,
