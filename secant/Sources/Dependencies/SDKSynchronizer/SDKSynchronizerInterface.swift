@@ -357,6 +357,7 @@ struct SDKSynchronizerClient: Sendable {
     var exchangeRateEnabled: @Sendable (Bool) async throws -> Void
     var isTorSuccessfullyInitialized: @Sendable () async -> Bool?
     var httpRequestOverTor: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    var boundedTorGET: @Sendable (URLRequest, UInt64) async throws -> (Data, HTTPURLResponse)
     
     var debugDatabaseSql: @Sendable (String) -> String = { _ in "" }
     

@@ -7,6 +7,11 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Fixed
+
+- [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
+- [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
+
 ## [3.14.0] - 2026-09-15
 
 ### Changed
@@ -15,7 +20,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-1928] Submitting a ballot no longer waits for each question's tally shares to reach the helper servers before starting the next question; a question is reported as submitted once its shares are accepted.
 - [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
 - [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
-- [MOB-1962] Coinholder polling picks up a mined vote sooner and no longer lets one slow vote server use the entire confirmation wait: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1962] Coinholder polling picks up a mined vote sooner and reliably keeps checking over Tor: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1964] Authorizing a wallet for coinholder polling reuses private-information-retrieval server connections across matching note bundles and preparation steps, so wallets with several bundles start faster.
 
 ### Fixed
 

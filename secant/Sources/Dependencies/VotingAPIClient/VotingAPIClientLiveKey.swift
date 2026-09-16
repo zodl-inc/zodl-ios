@@ -2,41 +2,61 @@
 import ComposableArchitecture
 import Foundation
 import os
+@preconcurrency import ZcashLightClientKit
 
 // MARK: - API Configuration
 
 /// Mutable runtime configuration for the Shielded-Vote chain REST API and helper server.
 /// URLs are resolved from the CDN service config at startup.
 actor SvAPIConfigStore {
+    struct State: Equatable, Sendable {
+        var voteServerURLs: [String] = []
+        var pirServerURLs: [String] = []
+        var staticConfig: StaticVotingConfig?
+        var serviceConfig: VotingServiceConfig?
+    }
+
     static let shared = SvAPIConfigStore()
 
-    private var voteServerURLs: [String] = []
-    private var pirServerURLs: [String] = []
-    private var staticConfig: StaticVotingConfig?
-    private var serviceConfig: VotingServiceConfig?
+    private var state = State()
 
     func configure(from config: VotingServiceConfig) {
-        voteServerURLs = config.voteServers.map(\.url)
-        pirServerURLs = config.pirEndpoints.map(\.url)
+        var updatedState = state
+        updatedState.voteServerURLs = config.voteServers.map(\.url)
+        updatedState.pirServerURLs = config.pirEndpoints.map(\.url)
+        replaceState(with: updatedState)
     }
 
     func setConfiguration(staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig) {
-        self.staticConfig = staticConfig
-        self.serviceConfig = serviceConfig
+        var updatedState = state
+        updatedState.staticConfig = staticConfig
+        updatedState.serviceConfig = serviceConfig
+        replaceState(with: updatedState)
     }
 
     func getConfiguration() -> (staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig)? {
-        guard let staticConfig, let serviceConfig else { return nil }
+        guard let staticConfig = state.staticConfig,
+              let serviceConfig = state.serviceConfig
+        else {
+            return nil
+        }
         return (staticConfig, serviceConfig)
     }
 
-    func configuredVoteServerURLs() throws -> [String] {
-        guard !voteServerURLs.isEmpty else {
-            throw SvAPIError.invalidResponse("vote server URLs unavailable before dynamic config is loaded")
-        }
-        return voteServerURLs
+    func currentState() -> State {
+        state
     }
 
+    func replaceState(with state: State) {
+        self.state = state
+    }
+
+    func configuredVoteServerURLs() throws -> [String] {
+        guard !state.voteServerURLs.isEmpty else {
+            throw SvAPIError.invalidResponse("vote server URLs unavailable before dynamic config is loaded")
+        }
+        return state.voteServerURLs
+    }
 }
 
 // MARK: - Errors
@@ -199,10 +219,9 @@ private let fastHttpSession: URLSession = {
 /// configuration's `timeoutIntervalForRequest` (measured: a request-level
 /// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
 /// different: `TorClient.httpRequest` hands the URL, headers, and body to
-/// the Rust FFI and ignores `timeoutInterval` entirely, and the app-side
-/// `httpRequestOverTor` wrapper pins `retryLimit: 3` — so over Tor a dead
-/// server costs up to three of arti's internal connection timeouts. That is
-/// why nothing may block user-visible work on these requests (MOB-1810).
+/// the Rust FFI and ignores `timeoutInterval` entirely. Confirmation GETs use
+/// the SDK's bounded transport below; all other Tor requests retain the
+/// existing `httpRequestOverTor` retry policy.
 private let fastRequestTimeout: TimeInterval = 5
 
 /// Bound on one confirmation GET over Tor; matches the fast session's resource timeout.
@@ -247,6 +266,90 @@ private func durationTimeInterval(_ duration: Duration) -> TimeInterval {
     return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
 }
 
+typealias VotingDirectRequest = @Sendable (_ request: URLRequest, _ fast: Bool) async throws -> (Data, URLResponse)
+
+struct VotingPollLoadingBudget: Sendable {
+    private let deadline: ContinuousClock.Instant
+    private let now: @Sendable () -> ContinuousClock.Instant
+
+    init(now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }) {
+        self.now = now
+        deadline = now().advanced(by: .seconds(60))
+    }
+
+    func requestTimeoutMilliseconds() throws -> UInt64 {
+        try Task.checkCancellation()
+        let remaining = now().duration(to: deadline)
+        let bounded = min(Duration.seconds(15), remaining)
+        guard bounded >= .milliseconds(1) else {
+            throw URLError(URLError.Code.timedOut)
+        }
+        let components = bounded.components
+        let milliseconds = components.seconds * 1_000
+            + components.attoseconds / 1_000_000_000_000_000
+        return UInt64(milliseconds)
+    }
+}
+
+@Sendable
+func routePollLoadingRequest(
+    _ request: URLRequest,
+    budget: VotingPollLoadingBudget,
+    access: WalletStorage.SwapAPIAccess,
+    sdkSynchronizer: SDKSynchronizerClient,
+    directRequest: @escaping VotingDirectRequest
+) async throws -> (Data, URLResponse) {
+    try Task.checkCancellation()
+    if access == .protected {
+        let timeout = try budget.requestTimeoutMilliseconds()
+        let result: (Data, HTTPURLResponse)
+        do {
+            result = try await sdkSynchronizer.boundedTorGET(request, timeout)
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
+        try Task.checkCancellation()
+        return result
+    }
+    return try await directRequest(request, false)
+}
+
+@Sendable
+func routeVotingRequest(
+    _ request: URLRequest,
+    fast: Bool,
+    torTimeout: Duration?,
+    access: WalletStorage.SwapAPIAccess,
+    sdkSynchronizer: SDKSynchronizerClient,
+    directRequest: @escaping VotingDirectRequest
+) async throws -> (Data, URLResponse) {
+    var request = request
+    if fast {
+        request.timeoutInterval = fastRequestTimeout
+    }
+
+    if access == .protected {
+        if let torTimeout {
+            try Task.checkCancellation()
+            let boundedTimeout = min(txConfirmationRequestBound, torTimeout)
+            guard boundedTimeout > .zero else {
+                throw URLError(URLError.Code.timedOut)
+            }
+            let timeoutMilliseconds = UInt64(durationTimeInterval(boundedTimeout) * 1_000)
+            guard timeoutMilliseconds > 0 else {
+                throw URLError(URLError.Code.timedOut)
+            }
+            let (data, response) = try await sdkSynchronizer.boundedTorGET(request, timeoutMilliseconds)
+            try Task.checkCancellation()
+            return (data, response as URLResponse)
+        }
+        let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
+        return (data, response as URLResponse)
+    }
+    return try await directRequest(request, fast)
+}
+
 @Sendable
 private func performTxConfirmationRequest(
     _ request: URLRequest,
@@ -255,76 +358,52 @@ private func performTxConfirmationRequest(
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
     let requestBound = min(txConfirmationRequestBound, remainingBudget)
     if swapAPIAccess == .protected {
-        return try await performVotingRequest(request, fast: true, torBound: requestBound)
+        return try await performVotingRequest(request, fast: true, torTimeout: requestBound)
     }
     return try await performDirectTxConfirmationRequest(request, resourceTimeout: requestBound)
 }
 
-/// `torBound`, when given, caps how long the caller waits for a request over Tor: the Rust Tor
-/// client does not honour `URLRequest.timeoutInterval`, so without it one stalled circuit could
-/// hold a caller past its own budget. The bound releases the caller, not the circuit, which
-/// finishes on its own and whose late answer is dropped.
+/// `torTimeout`, when given, selects the SDK's owned bounded GET. The SDK applies that timeout to
+/// queue wait and native execution, and drains an active request before returning cancellation.
 @Sendable
 private func performVotingRequest(
     _ request: URLRequest,
     fast: Bool = false,
-    torBound: Duration? = nil
+    torTimeout: Duration? = nil
 ) async throws -> (Data, URLResponse) {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
-    var request = request
-    if fast {
-        request.timeoutInterval = fastRequestTimeout
-    }
-
-    if swapAPIAccess == .protected {
-        let torRequest = request
-        if let torBound {
-            let (data, response) = try await withTorBound(torBound) {
-                try await sdkSynchronizer.httpRequestOverTor(torRequest)
-            }
-            return (data, response as URLResponse)
+    return try await routeVotingRequest(
+        request,
+        fast: fast,
+        torTimeout: torTimeout,
+        access: swapAPIAccess,
+        sdkSynchronizer: sdkSynchronizer,
+        directRequest: { request, fast in
+            let session = fast ? fastHttpSession : httpSession
+            return try await session.data(for: request)
         }
-        let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
-        return (data, response as URLResponse)
-    }
-    let session = fast ? fastHttpSession : httpSession
-    return try await session.data(for: request)
+    )
 }
 
-/// Races `operation` against `bound` without waiting for it to finish. The Rust Tor request is a
-/// synchronous call that cannot be cancelled, so a structured task group would hold the caller
-/// until the circuit answered; here the request keeps running on its own task and an answer that
-/// arrives after the bound is dropped.
-private func withTorBound<T: Sendable>(
-    _ bound: Duration,
-    _ operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    let hasResumed = OSAllocatedUnfairLock(initialState: false)
-    return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
-        let resumeOnce: @Sendable (Result<T, Error>) -> Void = { result in
-            let shouldResume = hasResumed.withLock { alreadyResumed -> Bool in
-                guard !alreadyResumed else { return false }
-                alreadyResumed = true
-                return true
-            }
-            if shouldResume {
-                continuation.resume(with: result)
-            }
+@Sendable
+private func performPollLoadingRequest(
+    _ request: URLRequest,
+    budget: VotingPollLoadingBudget
+) async throws -> (Data, URLResponse) {
+    @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+    @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
+
+    return try await routePollLoadingRequest(
+        request,
+        budget: budget,
+        access: swapAPIAccess,
+        sdkSynchronizer: sdkSynchronizer,
+        directRequest: { request, _ in
+            try await httpSession.data(for: request)
         }
-        Task.detached {
-            do {
-                resumeOnce(.success(try await operation()))
-            } catch {
-                resumeOnce(.failure(error))
-            }
-        }
-        Task {
-            try? await Task.sleep(for: bound)
-            resumeOnce(.failure(TransactionTimeoutError()))
-        }
-    }
+    )
 }
 
 private func shouldTryNextVoteServer(after error: Error) -> Bool {
@@ -337,6 +416,12 @@ private func shouldTryNextVoteServer(after error: Error) -> Bool {
        case SvAPIError.invalidResponse = error {
         return true
     }
+    return false
+}
+
+private func shouldTryNextPollLoadingVoteServer(after error: Error) -> Bool {
+    if shouldTryNextVoteServer(after: error) { return true }
+    if case ZcashError.rustTorHttpRequest = error { return true }
     return false
 }
 
@@ -365,16 +450,27 @@ private func isFatalShareRejection(_ error: Error) -> Bool {
     return statusCode < 500
 }
 
-private func getJSON(_ path: String) async throws -> [String: Any] {
+private func getJSON(
+    _ path: String,
+    pollLoadingBudget: VotingPollLoadingBudget? = nil
+) async throws -> [String: Any] {
     let serverURLs = try await SvAPIConfigStore.shared.configuredVoteServerURLs()
     var lastError: Error?
 
     for base in serverURLs {
         do {
-            return try await getJSON(path, baseURL: base)
+            return try await getJSON(path, baseURL: base, pollLoadingBudget: pollLoadingBudget)
         } catch {
+            if pollLoadingBudget != nil {
+                try Task.checkCancellation()
+            }
             lastError = error
-            guard shouldTryNextVoteServer(after: error) else {
+            let shouldTryNext = if pollLoadingBudget == nil {
+                shouldTryNextVoteServer(after: error)
+            } else {
+                shouldTryNextPollLoadingVoteServer(after: error)
+            }
+            guard shouldTryNext else {
                 throw error
             }
             LoggerProxy.warn("GET \(path) failed on \(base); trying next vote server")
@@ -384,13 +480,22 @@ private func getJSON(_ path: String) async throws -> [String: Any] {
     throw lastError ?? SvAPIError.invalidResponse("no vote servers configured")
 }
 
-private func getJSON(_ path: String, baseURL base: String) async throws -> [String: Any] {
+private func getJSON(
+    _ path: String,
+    baseURL base: String,
+    pollLoadingBudget: VotingPollLoadingBudget? = nil
+) async throws -> [String: Any] {
     guard let url = URL(string: "\(base)\(path)") else {
         throw SvAPIError.invalidResponse("invalid URL: \(base)\(path)")
     }
     var request = URLRequest(url: url)
     request.setValue("application/json", forHTTPHeaderField: "Accept")
-    let (data, response) = try await performVotingRequest(request)
+    let (data, response): (Data, URLResponse)
+    if let pollLoadingBudget {
+        (data, response) = try await performPollLoadingRequest(request, budget: pollLoadingBudget)
+    } else {
+        (data, response) = try await performVotingRequest(request)
+    }
     guard let http = response as? HTTPURLResponse else {
         throw SvAPIError.invalidResponse("not an HTTP response")
     }
@@ -1102,46 +1207,61 @@ func serviceConfigRetainingRoundsWithValidSignatures(
     )
 }
 
+@Sendable
+func fetchVotingServiceConfig(
+    override: PinnedConfigSource?,
+    pollLoadingBudget: VotingPollLoadingBudget
+) async throws -> VotingServiceConfig {
+    let staticConfig = try await StaticVotingConfig.loadFromNetworkWithFailover(
+        sources: StaticVotingConfig.resolveConfigSources(override: override),
+        fetch: { request in
+            try await performPollLoadingRequest(request, budget: pollLoadingBudget)
+        }
+    )
+
+    // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
+    // or version-validation) surfaces as a VotingConfigError — no silent fallback.
+    let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(
+        urls: staticConfig.dynamicConfigURLs,
+        fetch: { request in
+            try await performPollLoadingRequest(request, budget: pollLoadingBudget)
+        }
+    )
+    let config: VotingServiceConfig
+    do {
+        config = try JSONDecoder().decode(VotingServiceConfig.self, from: data)
+    } catch {
+        throw VotingConfigError.decodeFailed("CDN decode failed: \(error.localizedDescription)")
+    }
+    try config.validate()
+    let authenticatedConfig = serviceConfigRetainingRoundsWithValidSignatures(
+        config,
+        trustedKeys: staticConfig.trustedKeys
+    )
+    let droppedRounds = config.rounds.count - authenticatedConfig.rounds.count
+    await SvAPIConfigStore.shared.setConfiguration(
+        staticConfig: staticConfig,
+        serviceConfig: authenticatedConfig
+    )
+    LoggerProxy.info(
+        """
+        Loaded config from \(origin.host ?? "<unknown origin>"): \(authenticatedConfig.voteServers.count) vote servers, \
+        \(authenticatedConfig.rounds.count) authenticated rounds, \(droppedRounds) dropped rounds
+        """
+    )
+    return authenticatedConfig
+}
+
 // MARK: - Live Implementation
 
 extension VotingAPIClient: DependencyKey {
     static var liveValue: Self {
         Self(
             fetchServiceConfig: { override in
-                let staticConfig = try await StaticVotingConfig.loadFromNetworkWithFailover(
-                    sources: StaticVotingConfig.resolveConfigSources(override: override),
-                    fetch: { request in try await performVotingRequest(request) }
+                try await fetchVotingServiceConfig(
+                    override: override,
+                    pollLoadingBudget: VotingPollLoadingBudget()
                 )
-
-                // Fetch and decode the CDN config. Any failure (transport, HTTP, decode,
-                // or version-validation) surfaces as a VotingConfigError — no silent fallback.
-                let (data, origin) = try await VotingConfigMirrorWalk.fetchDynamicConfig(
-                    urls: staticConfig.dynamicConfigURLs,
-                    fetch: { request in try await performVotingRequest(request) }
-                )
-                let config: VotingServiceConfig
-                do {
-                    config = try JSONDecoder().decode(VotingServiceConfig.self, from: data)
-                } catch {
-                    throw VotingConfigError.decodeFailed("CDN decode failed: \(error.localizedDescription)")
-                }
-                try config.validate()
-                let authenticatedConfig = serviceConfigRetainingRoundsWithValidSignatures(
-                    config,
-                    trustedKeys: staticConfig.trustedKeys
-                )
-                let droppedRounds = config.rounds.count - authenticatedConfig.rounds.count
-                await SvAPIConfigStore.shared.setConfiguration(
-                    staticConfig: staticConfig,
-                    serviceConfig: authenticatedConfig
-                )
-                LoggerProxy.info(
-                    """
-                    Loaded config from \(origin.host ?? "<unknown origin>"): \(authenticatedConfig.voteServers.count) vote servers, \
-                    \(authenticatedConfig.rounds.count) authenticated rounds, \(droppedRounds) dropped rounds
-                    """
-                )
-                return authenticatedConfig
             },
             configureURLs: { config in
                 await SvAPIConfigStore.shared.configure(from: config)
@@ -1177,7 +1297,10 @@ extension VotingAPIClient: DependencyKey {
                 return try await authenticateVotingSession(try parseVotingSession(from: round))
             },
             fetchAllRounds: {
-                let json = try await getJSON("/shielded-vote/v1/rounds")
+                let json = try await getJSON(
+                    "/shielded-vote/v1/rounds",
+                    pollLoadingBudget: VotingPollLoadingBudget()
+                )
                 guard let roundsArray = json["rounds"] as? [[String: Any]] else {
                     // No rounds — return empty
                     return []
@@ -1210,7 +1333,10 @@ extension VotingAPIClient: DependencyKey {
             },
             fetchZodlEndorsedRoundIds: {
                 do {
-                    let json = try await getJSON("/shielded-vote/v1/endorsed-rounds/zodl")
+                    let json = try await getJSON(
+                        "/shielded-vote/v1/endorsed-rounds/zodl",
+                        pollLoadingBudget: VotingPollLoadingBudget()
+                    )
                     guard let ids = json["vote_round_ids"] as? [String] else {
                         return []
                     }
