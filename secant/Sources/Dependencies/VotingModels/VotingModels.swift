@@ -628,11 +628,19 @@ struct TxResult: Equatable, Sendable {
     let txHash: String
     let code: UInt32
     let log: String
+    /// The vote server that accepted the broadcast, so its confirmation is polled there first.
+    /// Nil for results that did not come from a broadcast walk (tests, recovery probes).
+    let acceptedByServerURL: String?
 
-    init(txHash: String, code: UInt32, log: String = "") {
+    init(txHash: String, code: UInt32, log: String = "", acceptedByServerURL: String? = nil) {
         self.txHash = txHash
         self.code = code
         self.log = log
+        self.acceptedByServerURL = acceptedByServerURL
+    }
+
+    func accepted(by serverURL: String) -> TxResult {
+        TxResult(txHash: txHash, code: code, log: log, acceptedByServerURL: serverURL)
     }
 }
 

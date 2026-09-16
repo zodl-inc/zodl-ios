@@ -942,7 +942,7 @@ import Testing
     @Test func acceptedVotingTransactionDoesNotQueryRecovery() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return nil
         }
@@ -961,7 +961,7 @@ import Testing
     @Test func spentNullifierRecoversWhenExactTransactionIsConfirmed() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return TxConfirmation(height: 12, code: 0)
         }
@@ -984,7 +984,7 @@ import Testing
     @Test func spentNullifierFailsWhenExactTransactionIsNotConfirmed() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return nil
         }
@@ -1007,7 +1007,7 @@ import Testing
     @Test func spentNullifierFailsWhenExactTransactionHasNonzeroCode() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return TxConfirmation(height: 12, code: 7, log: "execution failed")
         }
@@ -1030,7 +1030,7 @@ import Testing
     @Test func spentNullifierWithoutHashDoesNotQueryRecovery() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return TxConfirmation(height: 12, code: 0)
         }
@@ -1049,7 +1049,7 @@ import Testing
     @Test func spentNullifierRetriesWhileExactTransactionIsBeingIndexed() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             let attempt = await recorder.recordAndCount("fetch:\(txHash)")
             return attempt == 2 ? TxConfirmation(height: 12, code: 0) : nil
         }
@@ -1068,7 +1068,7 @@ import Testing
     @Test func unrelatedTransactionRejectionDoesNotQueryRecovery() async throws {
         let recorder = RecoveryOrderRecorder()
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return TxConfirmation(height: 12, code: 0)
         }
@@ -1144,7 +1144,7 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return Self.makeDelegationConfirmation(position: 42)
         }
@@ -1200,7 +1200,7 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             if txHash == "cached-tx" {
                 return nil
@@ -1250,6 +1250,7 @@ import Testing
     // budget before resubmission can even start.
     @Test func delegationPipelineProbesCachedUnconfirmedTxOnce() async throws {
         let recorder = RecoveryOrderRecorder()
+        let budgets = SignalledRecords<(String, Swift.Duration?)>()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
         votingCrypto.buildVotingPczt = { _, _, _, _, _, _, _, _, _, _ in
@@ -1269,8 +1270,9 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, remainingBudget in
             await recorder.record("fetch:\(txHash)")
+            budgets.record((txHash, remainingBudget))
             if txHash == "cached-tx" {
                 return nil
             }
@@ -1304,6 +1306,10 @@ import Testing
         let events = await recorder.events()
         #expect(events.filter { $0 == "fetch:cached-tx" }.count == 1)
         #expect(events.last == "van:0:9")
+        #expect(budgets.values.first?.0 == "cached-tx")
+        #expect(budgets.values.first?.1 == nil)
+        #expect(budgets.values.last?.0 == "new-tx")
+        #expect((budgets.values.last?.1 ?? .zero) > .zero)
     }
 
     @Test func delegationPipelineFreshSubmissionWaitStillRetries() async throws {
@@ -1325,7 +1331,7 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             let fetches = await recorder.events().filter { $0 == "fetch:\(txHash)" }.count
             if fetches < 2 {
@@ -1410,7 +1416,7 @@ import Testing
             recorder.record("submit")
             return TxResult(txHash: "resumed-tx", code: 0)
         }
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             recorder.record("fetch:\(txHash)")
             return Self.makeDelegationConfirmation(position: 7)
         }
@@ -1494,7 +1500,7 @@ import Testing
             recorder.record("submit")
             return TxResult(txHash: "rebuilt-tx", code: 0)
         }
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             recorder.record("fetch:\(txHash)")
             return Self.makeDelegationConfirmation(position: 5)
         }
@@ -1570,7 +1576,7 @@ import Testing
             recorder.record("submit")
             return TxResult(txHash: "proof-complete-tx", code: 0)
         }
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             recorder.record("fetch:\(txHash)")
             return Self.makeDelegationConfirmation(position: 9)
         }
@@ -1639,7 +1645,7 @@ import Testing
 
         var votingAPI = VotingAPIClient()
         votingAPI.submitDelegation = { _ in TxResult(txHash: "poly-tx", code: 0) }
-        votingAPI.fetchTxConfirmation = { _ in Self.makeDelegationConfirmation(position: 3) }
+        votingAPI.fetchTxConfirmation = { _, _, _ in Self.makeDelegationConfirmation(position: 3) }
 
         try await VotingCoordFlow.runDelegationPipeline(
             roundId: "aabb",
@@ -1722,7 +1728,7 @@ import Testing
         votingCrypto.markVoteSubmitted = { _, _, _, _ in await recorder.record("mark") }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+        votingAPI.fetchTxConfirmation = { _, _, _ in TxConfirmation(height: 100, code: 0) }
         votingAPI.delegateShares = { _, _, serverURLs in
             ShareDelegationResult(
                 delegatedShares: [
@@ -1787,7 +1793,7 @@ import Testing
         votingCrypto.markVoteSubmitted = { _, _, _, _ in await recorder.record("mark") }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in TxConfirmation(height: 100, code: 0) }
+        votingAPI.fetchTxConfirmation = { _, _, _ in TxConfirmation(height: 100, code: 0) }
         votingAPI.delegateShares = { _, _, serverURLs in
             ShareDelegationResult(
                 delegatedShares: [
@@ -1831,7 +1837,7 @@ import Testing
         votingCrypto.getDelegationTxHash = { _, _ in .notFound }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { txHash in
+        votingAPI.fetchTxConfirmation = { txHash, _, _ in
             await recorder.record("fetch:\(txHash)")
             return Self.makeDelegationConfirmation(position: 1)
         }
@@ -1856,6 +1862,7 @@ import Testing
     // without retrying past the deadline.
     @Test func probeReturnsUnknownWhenConfirmationFetchThrows() async {
         let recorder = RecoveryOrderRecorder()
+        let budgets = SignalledRecords<Swift.Duration?>()
         var votingCrypto = VotingCryptoClient()
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
         votingCrypto.storeVanPosition = { _, bundleIndex, position in
@@ -1863,7 +1870,8 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in
+        votingAPI.fetchTxConfirmation = { _, _, remainingBudget in
+            budgets.record(remainingBudget)
             throw URLError(.notConnectedToInternet)
         }
 
@@ -1879,6 +1887,7 @@ import Testing
         #expect(result == .unknown)
         let events = await recorder.events()
         #expect(events.isEmpty)
+        #expect(budgets.values == [nil])
     }
 
     // The chain answered and said the TX failed (non-zero code) — that's conclusive
@@ -1888,7 +1897,7 @@ import Testing
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in
+        votingAPI.fetchTxConfirmation = { _, _, _ in
             TxConfirmation(height: 1, code: 5, log: "tx failed")
         }
 
@@ -1916,7 +1925,7 @@ import Testing
         }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in
+        votingAPI.fetchTxConfirmation = { _, _, _ in
             Self.makeDelegationConfirmation(position: 42)
         }
 
@@ -1942,7 +1951,7 @@ import Testing
         votingCrypto.getDelegationTxHash = { _, _ in .present("cached-tx") }
 
         var votingAPI = VotingAPIClient()
-        votingAPI.fetchTxConfirmation = { _ in
+        votingAPI.fetchTxConfirmation = { _, _, _ in
             TxConfirmation(height: 1, code: 0)
         }
 
@@ -2507,7 +2516,7 @@ import Testing
             recorder.record("submit:\(bundleIndex)")
             return TxResult(txHash: "bundle-\(bundleIndex)-tx", code: 0)
         }
-        dependencies.votingAPI.fetchTxConfirmation = { txHash in
+        dependencies.votingAPI.fetchTxConfirmation = { txHash, _, _ in
             recorder.record("fetch:\(txHash)")
             let position: UInt32 = txHash == "bundle-0-tx" ? 42 : 43
             return Self.makeDelegationConfirmation(position: position)
