@@ -9,6 +9,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
 - [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
 
 ## [3.14.0] - 2026-09-15

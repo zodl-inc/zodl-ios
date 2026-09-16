@@ -137,10 +137,21 @@ extension VotingCoordFlow {
                     let config = try await votingAPI.fetchServiceConfig(override)
                     await send(.serviceConfigLoaded(config))
                 } catch: { error, send in
+                    if error is CancellationError
+                        || (error as? URLError)?.code == URLError.Code.cancelled {
+                        return
+                    }
                     LoggerProxy.error("Service config unavailable: \(error)")
                     let message = (error as? LocalizedError)?.errorDescription
                         ?? error.localizedDescription
-                    await send(.configUnsupported(message))
+                    if case VotingConfigError.staticConfigFetchFailed = error {
+                        await send(.roundsLoadFailed)
+                    } else if let configError = error as? VotingConfigError,
+                              VotingConfigMirrorWalk.shouldTryNextDynamicMirror(configError) {
+                        await send(.roundsLoadFailed)
+                    } else {
+                        await send(.configUnsupported(message))
+                    }
                 }
 
             case .serviceConfigLoaded(let config):
@@ -165,6 +176,10 @@ extension VotingCoordFlow {
                     do {
                         let rounds = try await votingAPI.fetchAllRounds()
                         await send(.allRoundsLoaded(rounds))
+                    } catch is CancellationError {
+                        return
+                    } catch let error as URLError where error.code == .cancelled {
+                        return
                     } catch {
                         LoggerProxy.error("Failed to fetch rounds: \(error)")
                         await send(.roundsLoadFailed)
@@ -238,6 +253,10 @@ extension VotingCoordFlow {
                     do {
                         let ids = try await votingAPI.fetchZodlEndorsedRoundIds()
                         await send(.zodlEndorsementsLoaded(ids))
+                    } catch is CancellationError {
+                        return
+                    } catch let error as URLError where error.code == .cancelled {
+                        return
                     } catch {
                         LoggerProxy.error("Failed to fetch zodl endorsements: \(error)")
                         await send(.zodlEndorsementsFailed)
@@ -268,13 +287,12 @@ extension VotingCoordFlow {
                 return .none
 
             case .zodlEndorsementsFailed:
-                // The fetch failed; treat as empty endorsement set. If we're
-                // still waiting on the round-derived decision, fall through
-                // to noRounds rather than spinning on the loading skeleton.
-                // On custom config the decision was already made at
-                // `.allRoundsLoaded`, so this is a no-op there.
+                // A failed default-source endorsement request is part of poll
+                // discovery, so surface the same recoverable sheet as a round
+                // list failure while the initial loading screen is visible.
                 if state.rootScreen == .loading {
-                    state.rootScreen = visibleRoundCount(state: state) == 0 ? .noRounds : .pollsList
+                    state.pollsLoadError = true
+                    state.rootScreen = .pollsList
                 }
                 return .none
 

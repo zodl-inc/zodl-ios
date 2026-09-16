@@ -9,6 +9,201 @@ import Testing
 // and uses plain `Store`s for the async cases, so the suite is serialized to match XCTest's previous
 // serial execution and avoid cross-test races on that shared state.
 @Suite(.serialized) struct VotingCoordFlowCoordinatorTests {
+    @MainActor
+    @Test func endorsementFailureWhileLoadingShowsRecoverablePollsError() async {
+        var state = VotingCoordFlow.State()
+        state.rootScreen = .loading
+        let store = Store(initialState: state) { VotingCoordFlow() }
+
+        await store.send(.zodlEndorsementsFailed).finish()
+
+        #expect(store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func endorsementFailurePreservesAnAlreadyVisiblePollsList() async {
+        var state = VotingCoordFlow.State()
+        state.rootScreen = .pollsList
+        let store = Store(initialState: state) { VotingCoordFlow() }
+
+        await store.send(.zodlEndorsementsFailed).finish()
+
+        #expect(!store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func staticConfigTransportFailureShowsRecoverablePollsError() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in
+                throw VotingConfigError.staticConfigFetchFailed("offline")
+            }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.initialize).finish()
+
+        #expect(store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func retryableDynamicConfigFailureShowsRecoverablePollsError() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in
+                throw VotingConfigError.dynamicConfigFetchFailed("unavailable", statusCode: 503)
+            }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.initialize).finish()
+
+        #expect(store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func authoritativeDynamicConfigFailureKeepsConfigError() async {
+        let error = VotingConfigError.dynamicConfigFetchFailed("missing", statusCode: 404)
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in throw error }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.initialize).finish()
+
+        #expect(store.state.rootScreen == .configError(error.errorDescription ?? ""))
+        #expect(!store.state.pollsLoadError)
+    }
+
+    @MainActor
+    @Test func authoritativeConfigValidationFailureKeepsConfigError() async {
+        let error = VotingConfigError.decodeFailed("invalid publisher config")
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in throw error }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.initialize).finish()
+
+        #expect(store.state.rootScreen == .configError(error.errorDescription ?? ""))
+        #expect(!store.state.pollsLoadError)
+    }
+
+    @MainActor
+    @Test func configCancellationLeavesLoadingWithoutFailureUI() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in throw CancellationError() }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.initialize).finish()
+
+        #expect(store.state.rootScreen == .loading)
+        #expect(!store.state.pollsLoadError)
+    }
+
+    @MainActor
+    @Test func retryPollLoadingStartsInitialization() async {
+        let calls = SignalledRecords<Void>()
+        var state = VotingCoordFlow.State()
+        state.pollsLoadError = true
+        state.rootScreen = .pollsList
+        let store = Store(initialState: state) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchServiceConfig = { _ in
+                calls.recordCall()
+                throw CancellationError()
+            }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.retryLoadRounds).finish()
+
+        #expect(calls.count == 1)
+        #expect(store.state.rootScreen == .loading)
+    }
+
+    @MainActor
+    @Test func roundTransportFailureShowsRecoverablePollsError() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.configureURLs = { _ in }
+            $0.votingAPI.fetchAllRounds = { throw URLError(URLError.Code.timedOut) }
+            $0.votingCrypto.openDatabase = { _, _ in }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.serviceConfigLoaded(Self.makeServiceConfig())).finish()
+
+        #expect(store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func roundCancellationLeavesLoadingWithoutFailureUI() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.configureURLs = { _ in }
+            $0.votingAPI.fetchAllRounds = { throw CancellationError() }
+            $0.votingCrypto.openDatabase = { _, _ in }
+            $0.votingCrypto.setWalletId = { _ in }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.serviceConfigLoaded(Self.makeServiceConfig())).finish()
+
+        #expect(store.state.rootScreen == .loading)
+        #expect(!store.state.pollsLoadError)
+    }
+
+    @MainActor
+    @Test func endorsementTransportFailureShowsRecoverablePollsError() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchZodlEndorsedRoundIds = {
+                throw URLError(URLError.Code.cannotConnectToHost)
+            }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.allRoundsLoaded([])).finish()
+
+        #expect(store.state.pollsLoadError)
+        #expect(store.state.rootScreen == .pollsList)
+    }
+
+    @MainActor
+    @Test func endorsementCancellationLeavesLoadingWithoutFailureUI() async {
+        let store = Store(initialState: VotingCoordFlow.State()) {
+            VotingCoordFlow()
+        } withDependencies: {
+            $0.votingAPI.fetchZodlEndorsedRoundIds = { throw CancellationError() }
+            $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+        }
+
+        await store.send(.allRoundsLoaded([])).finish()
+
+        #expect(store.state.rootScreen == .loading)
+        #expect(!store.state.pollsLoadError)
+    }
+
     @Test func batchVoteSubmittedMovesDraftIntoSubmittedVotes() {
         let metadata = VotingMetadataBox()
         var state = VotingCoordFlow.State()
