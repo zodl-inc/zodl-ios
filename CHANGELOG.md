@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Fixed
+
+- [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
+
 ## [3.14.0] - 2026-09-15
 
 ### Changed
