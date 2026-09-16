@@ -9,35 +9,54 @@ import os
 /// Mutable runtime configuration for the Shielded-Vote chain REST API and helper server.
 /// URLs are resolved from the CDN service config at startup.
 actor SvAPIConfigStore {
+    struct State: Equatable, Sendable {
+        var voteServerURLs: [String] = []
+        var pirServerURLs: [String] = []
+        var staticConfig: StaticVotingConfig?
+        var serviceConfig: VotingServiceConfig?
+    }
+
     static let shared = SvAPIConfigStore()
 
-    private var voteServerURLs: [String] = []
-    private var pirServerURLs: [String] = []
-    private var staticConfig: StaticVotingConfig?
-    private var serviceConfig: VotingServiceConfig?
+    private var state = State()
 
     func configure(from config: VotingServiceConfig) {
-        voteServerURLs = config.voteServers.map(\.url)
-        pirServerURLs = config.pirEndpoints.map(\.url)
+        var updatedState = state
+        updatedState.voteServerURLs = config.voteServers.map(\.url)
+        updatedState.pirServerURLs = config.pirEndpoints.map(\.url)
+        replaceState(with: updatedState)
     }
 
     func setConfiguration(staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig) {
-        self.staticConfig = staticConfig
-        self.serviceConfig = serviceConfig
+        var updatedState = state
+        updatedState.staticConfig = staticConfig
+        updatedState.serviceConfig = serviceConfig
+        replaceState(with: updatedState)
     }
 
     func getConfiguration() -> (staticConfig: StaticVotingConfig, serviceConfig: VotingServiceConfig)? {
-        guard let staticConfig, let serviceConfig else { return nil }
+        guard let staticConfig = state.staticConfig,
+              let serviceConfig = state.serviceConfig
+        else {
+            return nil
+        }
         return (staticConfig, serviceConfig)
     }
 
-    func configuredVoteServerURLs() throws -> [String] {
-        guard !voteServerURLs.isEmpty else {
-            throw SvAPIError.invalidResponse("vote server URLs unavailable before dynamic config is loaded")
-        }
-        return voteServerURLs
+    func currentState() -> State {
+        state
     }
 
+    func replaceState(with state: State) {
+        self.state = state
+    }
+
+    func configuredVoteServerURLs() throws -> [String] {
+        guard !state.voteServerURLs.isEmpty else {
+            throw SvAPIError.invalidResponse("vote server URLs unavailable before dynamic config is loaded")
+        }
+        return state.voteServerURLs
+    }
 }
 
 // MARK: - Errors
@@ -436,6 +455,9 @@ private func getJSON(
         do {
             return try await getJSON(path, baseURL: base, pollLoadingBudget: pollLoadingBudget)
         } catch {
+            if pollLoadingBudget != nil {
+                try Task.checkCancellation()
+            }
             lastError = error
             let shouldTryNext = if pollLoadingBudget == nil {
                 shouldTryNextVoteServer(after: error)

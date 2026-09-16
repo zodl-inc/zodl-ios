@@ -28,8 +28,8 @@ struct VotingTxConfirmationTransportTests {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct
         let previousAccess = access
-        let previousVoteServerURLs = (try? await SvAPIConfigStore.shared.configuredVoteServerURLs()) ?? []
         $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
 
         let config = Self.serviceConfig(voteServerURLs: ["https://rounds.example"])
         let calls = OSAllocatedUnfairLock(initialState: [UInt64]())
@@ -47,27 +47,17 @@ struct VotingTxConfirmationTransportTests {
         }
         let configuredSDK = sdkSynchronizer
 
-        do {
-            let rounds = try await withDependencies {
+        let rounds = try await Self.withRestoredConfigStore {
+            try await withDependencies {
                 $0.sdkSynchronizer = configuredSDK
             } operation: {
                 await SvAPIConfigStore.shared.configure(from: config)
                 return try await VotingAPIClient.liveValue.fetchAllRounds()
             }
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-
-            #expect(rounds.isEmpty)
-            #expect(calls.withLock { $0 } == [15_000])
-        } catch {
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-            throw error
         }
+
+        #expect(rounds.isEmpty)
+        #expect(calls.withLock { $0 } == [15_000])
     }
 
     @Test func pollLoadingBudgetClipsEachRequestAndRejectsAnExhaustedStage() async throws {
@@ -119,8 +109,9 @@ struct VotingTxConfirmationTransportTests {
     @Test func directPollLoadingIgnoresTheTorBudget() async throws {
         let clock = ContinuousClock()
         let origin = clock.now
-        let now = OSAllocatedUnfairLock(initialState: origin.advanced(by: .seconds(30)))
+        let now = OSAllocatedUnfairLock(initialState: origin)
         let budget = VotingPollLoadingBudget(now: { now.withLock { $0 } })
+        now.withLock { $0 = origin.advanced(by: .seconds(60)) }
         let directCalls = OSAllocatedUnfairLock(initialState: 0)
         let boundedCalls = OSAllocatedUnfairLock(initialState: 0)
         var sdkSynchronizer = SDKSynchronizerClient.noOp
@@ -147,12 +138,49 @@ struct VotingTxConfirmationTransportTests {
         #expect(boundedCalls.withLock { $0 } == 0)
     }
 
+    @Test func submillisecondPollLoadingBudgetStartsNoBoundedRequest() async {
+        let clock = ContinuousClock()
+        let origin = clock.now
+        let now = OSAllocatedUnfairLock(initialState: origin)
+        let budget = VotingPollLoadingBudget(now: { now.withLock { $0 } })
+        now.withLock {
+            $0 = origin.advanced(by: Duration.seconds(60) - .nanoseconds(999_999))
+        }
+        let boundedCalls = OSAllocatedUnfairLock(initialState: 0)
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            boundedCalls.withLock { $0 += 1 }
+            return (Data(), Self.response(for: request, statusCode: 200))
+        }
+        let request = URLRequest(url: URL(string: "https://vote.example/rounds")!)
+
+        do {
+            _ = try await routePollLoadingRequest(
+                request,
+                budget: budget,
+                access: .protected,
+                sdkSynchronizer: sdkSynchronizer,
+                directRequest: { _, _ in
+                    Issue.record("protected poll loading used direct transport")
+                    return (Data(), URLResponse())
+                }
+            )
+            Issue.record("a sub-millisecond poll-loading timeout was admitted")
+        } catch let error as URLError {
+            #expect(error.code == .timedOut)
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+
+        #expect(boundedCalls.withLock { $0 } == 0)
+    }
+
     @Test func protectedRoundListFallsThroughAfterNativeTorTransportFailure() async throws {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct
         let previousAccess = access
-        let previousVoteServerURLs = (try? await SvAPIConfigStore.shared.configuredVoteServerURLs()) ?? []
         $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
         let calls = OSAllocatedUnfairLock(initialState: [URL]())
         var sdkSynchronizer = SDKSynchronizerClient.noOp
         sdkSynchronizer.httpRequestOverTor = { _ in
@@ -171,8 +199,8 @@ struct VotingTxConfirmationTransportTests {
         }
         let configuredSDK = sdkSynchronizer
 
-        do {
-            let rounds = try await withDependencies {
+        let rounds = try await Self.withRestoredConfigStore {
+            try await withDependencies {
                 $0.sdkSynchronizer = configuredSDK
             } operation: {
                 await SvAPIConfigStore.shared.configure(
@@ -182,28 +210,20 @@ struct VotingTxConfirmationTransportTests {
                 )
                 return try await VotingAPIClient.liveValue.fetchAllRounds()
             }
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-
-            #expect(rounds.isEmpty)
-            #expect(calls.withLock { $0.map(\.host) } == ["first.example", "second.example"])
-        } catch {
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-            throw error
         }
+
+        #expect(rounds.isEmpty)
+        #expect(calls.withLock { $0.map(\.host) } == ["first.example", "second.example"])
     }
 
     @Test func cancelledProtectedRoundListDoesNotTryAnotherServer() async throws {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct
         let previousAccess = access
-        let previousVoteServerURLs = (try? await SvAPIConfigStore.shared.configuredVoteServerURLs()) ?? []
         $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
+        let started = ResumableGate()
+        let release = ResumableGate()
         let calls = OSAllocatedUnfairLock(initialState: [URL]())
         var sdkSynchronizer = SDKSynchronizerClient.noOp
         sdkSynchronizer.httpRequestOverTor = { _ in
@@ -212,44 +232,43 @@ struct VotingTxConfirmationTransportTests {
         sdkSynchronizer.boundedTorGET = { request, _ in
             let url = try #require(request.url)
             calls.withLock { $0.append(url) }
-            throw CancellationError()
+            started.open()
+            await release.wait()
+            throw ZcashError.rustTorHttpRequest("offline")
         }
         let configuredSDK = sdkSynchronizer
 
-        do {
+        await Self.withRestoredConfigStore {
             let task = Task {
                 try await withDependencies {
                     $0.sdkSynchronizer = configuredSDK
                 } operation: {
                     await SvAPIConfigStore.shared.configure(
                         from: Self.serviceConfig(
-                            voteServerURLs: ["https://first.example", "https://second.example"]
+                            voteServerURLs: ["https://only.example"]
                         )
                     )
                     return try await VotingAPIClient.liveValue.fetchAllRounds()
                 }
             }
-            _ = try await task.value
-            Issue.record("a cancelled poll-loading request succeeded")
-        } catch is CancellationError {
-            // Expected: cancellation is authoritative and stops failover.
-        } catch {
-            Issue.record("expected cancellation, got \(error)")
+            await started.wait()
+            task.cancel()
+            release.open()
+            guard case .failure(let error) = await task.result else {
+                Issue.record("a cancelled poll-loading request succeeded")
+                return
+            }
+            #expect(error is CancellationError)
         }
-
-        await SvAPIConfigStore.shared.configure(
-            from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-        )
-        $access.withLock { $0 = previousAccess }
-        #expect(calls.withLock { $0.map(\.host) } == ["first.example"])
+        #expect(calls.withLock { $0.map(\.host) } == ["only.example"])
     }
 
     @Test func protectedConfigLoadingUsesOneBoundedStageForStaticAndDynamicFetches() async throws {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct
         let previousAccess = access
-        let previousVoteServerURLs = (try? await SvAPIConfigStore.shared.configuredVoteServerURLs()) ?? []
         $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
         let clock = ContinuousClock()
         let origin = clock.now
         let now = OSAllocatedUnfairLock(initialState: origin)
@@ -278,8 +297,8 @@ struct VotingTxConfirmationTransportTests {
         }
         let configuredSDK = sdkSynchronizer
 
-        do {
-            let config = try await withDependencies {
+        let config = try await Self.withRestoredConfigStore {
+            try await withDependencies {
                 $0.sdkSynchronizer = configuredSDK
             } operation: {
                 try await fetchVotingServiceConfig(
@@ -287,30 +306,20 @@ struct VotingTxConfirmationTransportTests {
                     pollLoadingBudget: budget
                 )
             }
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-
-            #expect(config.voteServers.map(\.url) == ["https://rounds.example"])
-            let observed = requests.withLock { $0 }
-            #expect(observed.map { $0.0?.host } == ["static.example", "dynamic.example"])
-            #expect(observed.map { $0.1 } == [15_000, 10_000])
-        } catch {
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-            throw error
         }
+
+        #expect(config.voteServers.map(\.url) == ["https://rounds.example"])
+        let observed = requests.withLock { $0 }
+        #expect(observed.map { $0.0?.host } == ["static.example", "dynamic.example"])
+        #expect(observed.map { $0.1 } == [15_000, 10_000])
     }
 
     @Test func protectedMissingEndorsementsRetainEmptyListSemantics() async throws {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct
         let previousAccess = access
-        let previousVoteServerURLs = (try? await SvAPIConfigStore.shared.configuredVoteServerURLs()) ?? []
         $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
         var sdkSynchronizer = SDKSynchronizerClient.noOp
         sdkSynchronizer.httpRequestOverTor = { _ in
             throw PollLoadingTestError.legacyTransportUsed
@@ -322,8 +331,8 @@ struct VotingTxConfirmationTransportTests {
         }
         let configuredSDK = sdkSynchronizer
 
-        do {
-            let ids = try await withDependencies {
+        let ids = try await Self.withRestoredConfigStore {
+            try await withDependencies {
                 $0.sdkSynchronizer = configuredSDK
             } operation: {
                 await SvAPIConfigStore.shared.configure(
@@ -331,19 +340,52 @@ struct VotingTxConfirmationTransportTests {
                 )
                 return try await VotingAPIClient.liveValue.fetchZodlEndorsedRoundIds()
             }
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-
-            #expect(ids.isEmpty)
-        } catch {
-            await SvAPIConfigStore.shared.configure(
-                from: Self.serviceConfig(voteServerURLs: previousVoteServerURLs)
-            )
-            $access.withLock { $0 = previousAccess }
-            throw error
         }
+
+        #expect(ids.isEmpty)
+    }
+
+    @Test func protectedEndorsementsParseAfterNativeTorFailover() async throws {
+        @Shared(.inMemory(.swapAPIAccess))
+        var access: WalletStorage.SwapAPIAccess = .direct
+        let previousAccess = access
+        $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
+        let expectedRoundId = String(repeating: "ab", count: 32)
+        let responseData = Data("{\"vote_round_ids\":[\"\(expectedRoundId)\"]}".utf8)
+        let calls = OSAllocatedUnfairLock(initialState: [(URL?, UInt64)]())
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { _ in
+            Issue.record("endorsement loading used legacy Tor transport")
+            throw PollLoadingTestError.legacyTransportUsed
+        }
+        sdkSynchronizer.boundedTorGET = { request, timeout in
+            #expect(request.url?.path == "/shielded-vote/v1/endorsed-rounds/zodl")
+            calls.withLock { $0.append((request.url, timeout)) }
+            if request.url?.host == "first.example" {
+                throw ZcashError.rustTorHttpRequest("offline")
+            }
+            return (responseData, Self.response(for: request, statusCode: 200))
+        }
+        let configuredSDK = sdkSynchronizer
+
+        let ids = try await Self.withRestoredConfigStore {
+            try await withDependencies {
+                $0.sdkSynchronizer = configuredSDK
+            } operation: {
+                await SvAPIConfigStore.shared.configure(
+                    from: Self.serviceConfig(
+                        voteServerURLs: ["https://first.example", "https://second.example"]
+                    )
+                )
+                return try await VotingAPIClient.liveValue.fetchZodlEndorsedRoundIds()
+            }
+        }
+
+        #expect(ids == Set([expectedRoundId]))
+        let observed = calls.withLock { $0 }
+        #expect(observed.map { $0.0?.host } == ["first.example", "second.example"])
+        #expect(observed.map { $0.1 } == [15_000, 15_000])
     }
 
     @Test func aProtectedConfirmationUsesTheBoundedSDKWithTenSecondMaximumAndNoNativeRetry() async throws {
@@ -734,6 +776,22 @@ struct VotingTxConfirmationTransportTests {
 
         #expect(result == confirmation)
         #expect(receivedBudgets.values == [.seconds(10)])
+    }
+
+    private static func withRestoredConfigStore<Result: Sendable>(
+        _ operation: () async throws -> Result
+    ) async rethrows -> Result {
+        let snapshot = await SvAPIConfigStore.shared.currentState()
+        do {
+            let result = try await operation()
+            await SvAPIConfigStore.shared.replaceState(with: snapshot)
+            #expect(await SvAPIConfigStore.shared.currentState() == snapshot)
+            return result
+        } catch {
+            await SvAPIConfigStore.shared.replaceState(with: snapshot)
+            #expect(await SvAPIConfigStore.shared.currentState() == snapshot)
+            throw error
+        }
     }
 
     private static func response(for request: URLRequest, statusCode: Int) -> HTTPURLResponse {
