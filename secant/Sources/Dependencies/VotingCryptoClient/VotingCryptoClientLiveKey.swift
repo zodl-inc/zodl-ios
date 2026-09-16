@@ -38,7 +38,7 @@ extension VotingCryptoClient: DependencyKey {
         /// Run one blocking `VotingRustBackend` call outside the calling task.
         ///
         /// MOB-1930: every voting FFI call serializes behind the backend's own lock, and the vote
-        /// pipeline now has up to `VotingCoordFlow.maxConcurrentVoteBundles` bundles issuing them at
+        /// lanes now have up to `VotingCoordFlow.maxConcurrentVoteLanes` bundles issuing them at
         /// once. What this buys is that the *caller* suspends instead of sitting inside the lock:
         /// the block moves off the caller's task, so an actor — or `@MainActor` — caller is not held
         /// hostage by it.

@@ -278,6 +278,55 @@ struct VotingBundleConcurrencyTests {
         #expect(fixture.polledServers.values.contains("tx-1:\(VotingBatchSubmissionFixture.voteServerURLs[0])"))
     }
 
+    /// The point of the question-major schedule: with more bundles than lanes, the third bundle's
+    /// vote for question 1 is cast before any bundle moves on to question 2, so a question is fully
+    /// cast — and reported — while the ballot is still near its start, not when the last bundle
+    /// finally gets a lane.
+    @Test func everyBundleCastsAQuestionBeforeAnyBundleStartsTheNext() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
+        // Parks bundle 1 on question 1, so the lane bundle 0 frees has exactly two candidates:
+        // bundle 2's question 1 (question-major) or bundle 0's question 2 (bundle-major).
+        let secondBundleConfirmation = fixture.confirmationGate(forBundle: 1, proposal: 1)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.recorder.awaitEvent("commit:2:1")
+        #expect(!fixture.recorder.events().contains("commit:0:2"))
+
+        secondBundleConfirmation.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
+
+        let events = fixture.recorder.events()
+        for bundleIndex in UInt32(0)...2 {
+            #expect(Self.committedProposals(in: events, bundle: bundleIndex) == [1, 2])
+        }
+    }
+
+    /// What the voter sees: question 1 is reported cast — the counter moves on to question 2 —
+    /// while question 2 is still being cast, instead of every question landing at the very end.
+    @Test func theCounterAdvancesAsSoonAsAQuestionIsFullyCast() async {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
+        // Parks the last task of the ballot, so the batch cannot complete behind the check below.
+        let lastConfirmation = fixture.confirmationGate(forBundle: 2, proposal: 2)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus
+                == .submitting(currentIndex: 1, totalCount: 2, currentProposalId: 1)
+        }
+        #expect(!fixture.recorder.events().contains("confirm:2:2"))
+
+        lastConfirmation.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeStore(_ fixture: VotingBatchSubmissionFixture) -> StoreOf<VotingCoordFlow> {

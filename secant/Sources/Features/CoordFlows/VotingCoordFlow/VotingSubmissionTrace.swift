@@ -10,7 +10,7 @@ import Foundation
 /// `Voting trace end <step> <context> ms=<n>`, or `Voting trace failed <step> <context> ms=<n>
 /// error=<description>` when it throws, at info level so the lines reach the exported logs. The
 /// format matches the Android app's trace so runs on the two platforms read alike. `Totals`
-/// accumulates per-step milliseconds across the concurrent bundle pipelines for the summary line
+/// accumulates per-step milliseconds across the concurrent vote lanes for the summary line
 /// at the end of a submission.
 enum VotingSubmissionTrace {
     typealias Sink = @Sendable (String) -> Void
