@@ -422,12 +422,9 @@ extension ConfirmSubmissionView {
 
             if excludedBundleCount > 0 {
                 detailsDivider()
-                let value = excludedBundleCount == 1
-                    ? String(localizable: .coinVoteConfirmSubmissionDetailNotIncludedValueSingle(excludedWeightString))
-                    : String(localizable: .coinVoteConfirmSubmissionDetailNotIncludedValue(excludedWeightString, excludedBundleCount))
                 detailRow(
                     label: String(localizable: .coinVoteConfirmSubmissionDetailNotIncluded),
-                    value: value
+                    value: String(localizable: .coinVoteConfirmSubmissionDetailNotIncludedValue(excludedWeightString))
                 )
             }
         }
