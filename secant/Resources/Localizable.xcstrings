@@ -20771,13 +20771,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if sent to a wrong address or wrong network."
+            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if the wrong asset is sent, or sent on the wrong network."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso si se envían a una dirección o red incorrecta."
+            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso si se envía el activo incorrecto o en la red incorrecta."
           }
         }
       }
@@ -21349,13 +21349,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for payments under $300. Please double-check all details before continuing."
+            "value" : "NEAR doesn’t refund mistakes like a wrong asset or wrong network for payments under $300. Please double-check all details before continuing."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en pagos de menos de $300. Verifica todos los detalles antes de continuar."
+            "value" : "NEAR no reembolsa errores como un activo o red incorrecta en pagos de menos de $300. Verifica todos los detalles antes de continuar."
           }
         }
       }
@@ -21366,13 +21366,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for swaps under $300. Please double-check all details before continuing."
+            "value" : "NEAR doesn’t refund mistakes like a wrong asset or wrong network for swaps under $300. Please double-check all details before continuing."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en swaps de menos de $300. Verifica todos los detalles antes de continuar."
+            "value" : "NEAR no reembolsa errores como un activo o red incorrecta en swaps de menos de $300. Verifica todos los detalles antes de continuar."
           }
         }
       }
