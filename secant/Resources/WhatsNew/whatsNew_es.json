@@ -1,6 +1,31 @@
 {
     "releases": [
         {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos soporte para coinholder polls con hasta 50 preguntas."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Hicimos más rápido el envío de tus votos en las coinholder polls."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual las billeteras con un historial de transacciones extenso podían tardar en abrirse, cargar lentamente la Actividad y la Configuración Avanzada, o dejar de responder."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.13.0",
             "date": "11-09-2026",
             "timestamp": 1789127082,
