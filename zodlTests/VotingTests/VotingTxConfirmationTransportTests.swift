@@ -314,6 +314,104 @@ struct VotingTxConfirmationTransportTests {
         #expect(observed.map { $0.1 } == [15_000, 10_000])
     }
 
+    @Test func cancelledFinalStaticConfigRequestPreservesCancellationAfterNativeFailure() async throws {
+        @Shared(.inMemory(.swapAPIAccess))
+        var access: WalletStorage.SwapAPIAccess = .direct
+        let previousAccess = access
+        $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
+        let staticData = Data(Self.staticConfigJSON(dynamicURL: "https://dynamic.example/config.json").utf8)
+        let digest = Data(SHA256.hash(data: staticData)).map { String(format: "%02x", $0) }.joined()
+        let source = try PinnedConfigSource.parse(
+            "https://static.example/config.json?checksum=sha256:\(digest)"
+        )
+        let started = ResumableGate()
+        let release = ResumableGate()
+        let requests = OSAllocatedUnfairLock(initialState: [URL]())
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { _ in
+            throw PollLoadingTestError.legacyTransportUsed
+        }
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            let url = try #require(request.url)
+            requests.withLock { $0.append(url) }
+            started.open()
+            await release.wait()
+            throw ZcashError.rustTorHttpRequest("offline")
+        }
+        let configuredSDK = sdkSynchronizer
+
+        await Self.withRestoredConfigStore {
+            let task = Task {
+                try await withDependencies {
+                    $0.sdkSynchronizer = configuredSDK
+                } operation: {
+                    try await VotingAPIClient.liveValue.fetchServiceConfig(source)
+                }
+            }
+            await started.wait()
+            task.cancel()
+            release.open()
+            guard case .failure(let error) = await task.result else {
+                Issue.record("a cancelled final static config request succeeded")
+                return
+            }
+            #expect(error is CancellationError)
+        }
+        #expect(requests.withLock { $0.map(\.host) } == ["static.example"])
+    }
+
+    @Test func cancelledFinalDynamicConfigRequestPreservesCancellationAfterNativeFailure() async throws {
+        @Shared(.inMemory(.swapAPIAccess))
+        var access: WalletStorage.SwapAPIAccess = .direct
+        let previousAccess = access
+        $access.withLock { $0 = .protected }
+        defer { $access.withLock { $0 = previousAccess } }
+        let dynamicURL = "https://dynamic.example/config.json"
+        let staticData = Data(Self.staticConfigJSON(dynamicURL: dynamicURL).utf8)
+        let digest = Data(SHA256.hash(data: staticData)).map { String(format: "%02x", $0) }.joined()
+        let source = try PinnedConfigSource.parse(
+            "https://static.example/config.json?checksum=sha256:\(digest)"
+        )
+        let dynamicStarted = ResumableGate()
+        let releaseDynamic = ResumableGate()
+        let requests = OSAllocatedUnfairLock(initialState: [URL]())
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.httpRequestOverTor = { _ in
+            throw PollLoadingTestError.legacyTransportUsed
+        }
+        sdkSynchronizer.boundedTorGET = { request, _ in
+            let url = try #require(request.url)
+            requests.withLock { $0.append(url) }
+            if url.host == "static.example" {
+                return (staticData, Self.response(for: request, statusCode: 200))
+            }
+            dynamicStarted.open()
+            await releaseDynamic.wait()
+            throw ZcashError.rustTorHttpRequest("offline")
+        }
+        let configuredSDK = sdkSynchronizer
+
+        await Self.withRestoredConfigStore {
+            let task = Task {
+                try await withDependencies {
+                    $0.sdkSynchronizer = configuredSDK
+                } operation: {
+                    try await VotingAPIClient.liveValue.fetchServiceConfig(source)
+                }
+            }
+            await dynamicStarted.wait()
+            task.cancel()
+            releaseDynamic.open()
+            guard case .failure(let error) = await task.result else {
+                Issue.record("a cancelled final dynamic config request succeeded")
+                return
+            }
+            #expect(error is CancellationError)
+        }
+        #expect(requests.withLock { $0.map(\.host) } == ["static.example", "dynamic.example"])
+    }
+
     @Test func protectedMissingEndorsementsRetainEmptyListSemantics() async throws {
         @Shared(.inMemory(.swapAPIAccess))
         var access: WalletStorage.SwapAPIAccess = .direct

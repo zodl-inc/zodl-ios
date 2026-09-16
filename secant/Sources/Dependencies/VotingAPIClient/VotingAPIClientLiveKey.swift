@@ -302,9 +302,15 @@ func routePollLoadingRequest(
     try Task.checkCancellation()
     if access == .protected {
         let timeout = try budget.requestTimeoutMilliseconds()
-        let (data, response) = try await sdkSynchronizer.boundedTorGET(request, timeout)
+        let result: (Data, HTTPURLResponse)
+        do {
+            result = try await sdkSynchronizer.boundedTorGET(request, timeout)
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
         try Task.checkCancellation()
-        return (data, response)
+        return result
     }
     return try await directRequest(request, false)
 }
