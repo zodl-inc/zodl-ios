@@ -8,12 +8,14 @@
 //  proof could not start until the first bundle's vote had been broadcast, confirmed on-chain and
 //  its shares handed over — minutes of chain latency with the CPU idle.
 //
-//  These tests pin the replacement. The batch is bundle-major: up to
-//  `VotingCoordFlow.maxConcurrentVoteBundles` bundle pipelines run at once, each walking the
-//  questions in order (the authority-note chain forces that order inside a bundle), so one
-//  bundle's confirmation and share delivery overlap the other bundle's proof. Proofs themselves
-//  stay serial — the SDK serializes FFI calls behind its handle lock — which is the intended
-//  memory profile, so nothing here asserts two proofs run at the same time.
+//  These tests pin the replacement. `VotingCoordFlow.maxConcurrentVoteLanes` lanes pull
+//  (bundle, question) tasks from a question-major scheduler: a bundle's own questions stay in
+//  order (the authority-note chain forces that order inside a bundle) and never overlap, while
+//  across bundles the lanes cast every bundle's vote for one question before moving to the next,
+//  so one bundle's confirmation and share delivery overlap another bundle's proof and each
+//  question is fully cast as the walk passes it. Proofs themselves stay serial — the SDK
+//  serializes FFI calls behind its handle lock — which is the intended memory profile, so nothing
+//  here asserts two proofs run at the same time.
 //
 //  A question is reported submitted only once *every* bundle has cast it, and a bundle that fails
 //  one question carries on with its next one.
@@ -57,8 +59,8 @@ struct VotingBundleConcurrencyTests {
         #expect(provedIndex < confirmedIndex)
     }
 
-    /// Bundle-major does not mean a question is done early: every bundle casts a vote for it, so
-    /// it is reported submitted only once the last of them has.
+    /// The question-major walk does not mean a question is done early: every bundle casts a vote
+    /// for it, so it is reported submitted only once the last of them has.
     @Test func aProposalCompletesOnlyAfterEveryBundleSubmittedIt() async throws {
         let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 2)
         let secondBundleConfirmation = fixture.confirmationGate(forBundle: 1, proposal: 1)
@@ -152,7 +154,7 @@ struct VotingBundleConcurrencyTests {
     /// The vote-tree sync and the VAN witness it anchors are one unit, whatever else is running.
     ///
     /// The SDK's lock serializes each of those FFI calls on its own but not the pair, so with two
-    /// pipelines a sibling's sync landing between one bundle's sync and its own witness would be
+    /// lanes a sibling's sync landing between one bundle's sync and its own witness would be
     /// the steady state — and nothing in the crate's contract says the witness is rooted at the
     /// anchor height that sync returned rather than at whatever the tree holds when it runs.
     @Test func theTreeSyncAndItsWitnessAreNotInterleavedAcrossBundles() async throws {
@@ -175,7 +177,7 @@ struct VotingBundleConcurrencyTests {
         }
 
         // Two complete pairs, one after the other — never `sync, sync, witness, witness`. Which
-        // bundle wins the queue is the scheduler's business (both pipelines are admitted together
+        // bundle wins the queue is the scheduler's business (both lanes start together
         // and the queue is FIFO on arrival), so the pairing is asserted, not the bundle order.
         let treeEvents = fixture.recorder.events().filter { $0 == "sync" || $0.hasPrefix("witness:") }
         #expect(treeEvents.count == 4)
@@ -219,7 +221,7 @@ struct VotingBundleConcurrencyTests {
         #expect(events.contains("commit:0:2"))
         // The proof was spent; the on-chain vote was not.
         #expect(!events.contains("submit:2"))
-        // And the pipeline stops there rather than proving question 3 as well.
+        // And the lane stops there rather than proving question 3 as well.
         #expect(!events.contains("commit:0:3"))
 
         let session = try #require(store.state.roundCache[roundId])
@@ -276,6 +278,55 @@ struct VotingBundleConcurrencyTests {
         }
 
         #expect(fixture.polledServers.values.contains("tx-1:\(VotingBatchSubmissionFixture.voteServerURLs[0])"))
+    }
+
+    /// The point of the question-major schedule: with more bundles than lanes, the third bundle's
+    /// vote for question 1 is cast before any bundle moves on to question 2, so a question is fully
+    /// cast — and reported — while the ballot is still near its start, not when the last bundle
+    /// finally gets a lane.
+    @Test func everyBundleCastsAQuestionBeforeAnyBundleStartsTheNext() async {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
+        // Parks bundle 1 on question 1, so the lane bundle 0 frees has exactly two candidates:
+        // bundle 2's question 1 (question-major) or bundle 0's question 2 (bundle-major).
+        let secondBundleConfirmation = fixture.confirmationGate(forBundle: 1, proposal: 1)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.recorder.awaitEvent("commit:2:1")
+        #expect(!fixture.recorder.events().contains("commit:0:2"))
+
+        secondBundleConfirmation.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
+
+        let events = fixture.recorder.events()
+        for bundleIndex in UInt32(0)...2 {
+            #expect(Self.committedProposals(in: events, bundle: bundleIndex) == [1, 2])
+        }
+    }
+
+    /// What the voter sees: question 1 is reported cast — the counter moves on to question 2 —
+    /// while question 2 is still being cast, instead of every question landing at the very end.
+    @Test func theCounterAdvancesAsSoonAsAQuestionIsFullyCast() async {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 2, bundleCount: 3)
+        // Parks the last task of the ballot, so the batch cannot complete behind the check below.
+        let lastConfirmation = fixture.confirmationGate(forBundle: 2, proposal: 2)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus
+                == .submitting(currentIndex: 1, totalCount: 2, currentProposalId: 1)
+        }
+        #expect(!fixture.recorder.events().contains("confirm:2:2"))
+
+        lastConfirmation.open()
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 2)
+        }
     }
 
     // MARK: - Helpers

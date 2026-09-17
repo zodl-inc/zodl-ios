@@ -129,33 +129,32 @@ struct VotingBatchSubmissionOverlapTests {
     /// Once every helper server has proved unreachable there is nowhere left to send shares, so
     /// the batch stops instead of proving votes it cannot deliver.
     ///
-    /// MOB-1930 moved the cost of learning that by one question. A bundle pipeline only sees the
-    /// emptied pool when a delivery it is waiting on settles, and the first thing it waits on is
-    /// the window admitting its *next* question's delivery — so question 2 is proved and broadcast
-    /// before the stop is observable, and question 3 is the first one the batch refuses. Question 2
-    /// is then reported failed on its own merits: its deliveries find the pool already empty.
+    /// The pool empties when the failed delivery gives up — `delegateSharesWithFallback` retries
+    /// an exhaustion twice, two seconds apart, before `deliverShares` prunes the pool — and a lane
+    /// only learns of it at a task boundary. Question-major, three bundles, two lanes: bundles 0
+    /// and 1 cast question 1 and park their deliveries in the window of two; the lanes then take
+    /// bundle 2's question 1 and bundle 0's question 2, and each of those ends by enqueueing a
+    /// delivery the full window admits only once the oldest one has settled — after it emptied
+    /// the pool. So both lanes reach their next boundary with the pool empty: the queue is
+    /// drained, question 3 is never proved and stays a draft, question 1 fails when its deliveries
+    /// are settled, and question 2 fails on its own merits — its proof was already under way,
+    /// and its shares find the pool empty.
     @Test func exhaustedServersStopTheBatch() async throws {
-        // Three bundles: two pipelines walk the ballot while the third waits for a free lane.
         let fixture = VotingBatchSubmissionFixture(proposalCount: 3, bundleCount: 3)
         fixture.failDelivery(forProposal: 1, with: .serversExhausted)
-        // Held so the window is provably full before bundle 0 proves question 2: otherwise whether
-        // its delivery has to wait for a settling one — the only way the emptied pool becomes
-        // visible — would be down to which pipeline the scheduler favoured.
-        let secondQuestionOnBundleZero = fixture.commitGate(forBundle: 0, proposal: 2)
         let store = makeStore(fixture)
 
         store.send(.authenticationSucceeded(roundId: roundId))
-
-        await fixture.recorder.awaitEvent("commit:1:2")
-        secondQuestionOnBundleZero.open()
 
         await fixture.waitForStoreState(store) { state in
             state.roundCache[self.roundId]?.batchSubmissionStatus.isFailureState == true
         }
 
-        // No bundle proved question 3: by then every pipeline had seen the empty pool.
-        #expect(!fixture.recorder.events().contains("commit:0:3"))
-        #expect(!fixture.recorder.events().contains("commit:1:3"))
+        // No bundle proved question 3: by then every lane had seen the empty pool.
+        let events = fixture.recorder.events()
+        for bundleIndex in UInt32(0)...2 {
+            #expect(!events.contains("commit:\(bundleIndex):3"))
+        }
         let session = try #require(store.state.roundCache[roundId])
         #expect(Set(session.batchVoteErrors.keys) == [1, 2])
         #expect(session.votes.isEmpty)
