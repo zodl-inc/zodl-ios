@@ -132,7 +132,10 @@ struct VotingServiceConfig: Codable, Equatable, Sendable {
 /// not what it aspires to — or the wallet will reject valid configs and lock users out.
 enum WalletCapabilities {
     static let voteServer: Set<String> = ["v1"]
-    static let voteProtocol: Set<String> = ["v0"]
+    /// v1 is accepted alongside v0 because `zcash_voting` 4.0 does the same: deployed configs
+    /// advertise v0 today and a config that moves to v1 must not strand a wallet whose wire
+    /// payloads the crate produces.
+    static let voteProtocol: Set<String> = ["v0", "v1"]
     static let tally: Set<String> = ["v0"]
     static let pir: Set<String> = ["v0"]
 }

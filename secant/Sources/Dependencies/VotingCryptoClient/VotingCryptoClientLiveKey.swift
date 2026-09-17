@@ -3,6 +3,7 @@
 import ComposableArchitecture
 import VotingRecovery
 import Foundation
+import os
 @preconcurrency import ZcashLightClientKit
 
 // MARK: - Live key
@@ -10,6 +11,7 @@ import Foundation
 extension VotingCryptoClient: DependencyKey {
     static var liveValue: Self {
         let dbActor = DatabaseActor()
+        let promotion = VotingProvingPromotion()
         let stateSubject = CurrentValueSubject<VotingDbState, Never>(.initial)
 
         /// Query rounds + votes tables and publish combined state.
@@ -31,6 +33,30 @@ extension VotingCryptoClient: DependencyKey {
                 bundleCount: bundleCount
             )
             stateSubject.send(dbState)
+        }
+
+        /// Run one blocking `VotingRustBackend` call outside the calling task.
+        ///
+        /// MOB-1930: every voting FFI call serializes behind the backend's own lock, and the vote
+        /// pipeline now has up to `VotingCoordFlow.maxConcurrentVoteBundles` bundles issuing them at
+        /// once. What this buys is that the *caller* suspends instead of sitting inside the lock:
+        /// the block moves off the caller's task, so an actor — or `@MainActor` — caller is not held
+        /// hostage by it.
+        ///
+        /// It does **not** remove the block. `Task.detached` schedules onto the same global
+        /// cooperative pool, so the number of cooperative threads parked inside the lock at any
+        /// moment is unchanged; the block is relocated, not eliminated. A hard guarantee that the
+        /// pool cannot be starved would take a dedicated non-cooperative executor, which this
+        /// is not.
+        ///
+        /// Two traps for anything added here later. A detached task inherits no task-locals, so an
+        /// `@Dependency` resolved *inside* `body` would silently read live values rather than the
+        /// caller's overrides — resolve outside and capture the value, as every call site here
+        /// does. And `await …value` is not cancellable, so these calls cannot be interrupted once
+        /// started; they could not be before either, so that is not a regression.
+        // @Sendable: captured by Task.detached; `VotingRustBackend` is `@unchecked Sendable`.
+        @Sendable func detachedBackendCall<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+            try await Task.detached(priority: .userInitiated) { try body() }.value
         }
 
         // VotingRecovery: the one place the module is handed the app's open
@@ -89,8 +115,9 @@ extension VotingCryptoClient: DependencyKey {
             },
             getVotes: { roundId in
                 let backend = try await dbActor.backend()
-                let votes = try backend.getVotes(roundId: roundId)
-                return votes.map { $0.toModel() }
+                return try await detachedBackendCall {
+                    try backend.getVotes(roundId: roundId).map { $0.toModel() }
+                }
             },
             listRounds: {
                 let backend = try await dbActor.backend()
@@ -370,6 +397,45 @@ extension VotingCryptoClient: DependencyKey {
                     return Data(result.proof)
                 }
             },
+            // swiftlint:disable:next line_length
+            precomputeDelegationProof: { roundId, bundleIndex, bundleNotes, orchardFvk, hotkeyStoredSecret, seedFingerprint, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
+                VotingCryptoClient.makeDelegationProofStream(priority: .utility) { progress in
+                    let backend = try await dbActor.backend()
+                    let keys = VotingDelegationKeyInputs(
+                        fvk: [UInt8](orchardFvk),
+                        hotkeyStoredSecret: hotkeyStoredSecret,
+                        seedFingerprint: [UInt8](seedFingerprint),
+                        accountIndex: accountIndex,
+                        roundName: roundName
+                    )
+                    let params = VotingDelegationProofParams(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        notes: bundleNotes.map { $0.toSDK() },
+                        keys: keys
+                    )
+                    // Re-check cancellation after the awaits above, same as the interactive path.
+                    try Task.checkCancellation()
+                    promotion.speculativeProofStarted()
+                    defer { promotion.speculativeProofEnded() }
+                    let result = try await backend.buildAndProveDelegation(
+                        params,
+                        pirEndpoints: pirEndpoints,
+                        expectedSnapshotHeight: expectedSnapshotHeight,
+                        pirLayout: VotingPirLayout(
+                            pirDepth: pirDepth,
+                            tier0Layers: tier0Layers,
+                            tier1Layers: tier1Layers,
+                            polyLen: polyLen
+                        ),
+                        intent: .speculative,
+                        progress: progress
+                    )
+                    return Data(result.proof)
+                }
+            },
+            promoteDelegationProving: { promotion.promote() },
+            resetDelegationProvingPromotion: { promotion.reset() },
             extractOrchardFvkFromUfvk: { ufvkStr, networkId in
                 Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
             },
@@ -477,20 +543,35 @@ extension VotingCryptoClient: DependencyKey {
             },
             syncVoteTree: { roundId, nodeUrl in
                 let backend = try await dbActor.backend()
-                return try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
+                return try await detachedBackendCall {
+                    try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
+                }
             },
             generateVanWitness: { roundId, bundleIndex, anchorHeight in
                 let backend = try await dbActor.backend()
-                let witness = try backend.generateVanWitness(roundId: roundId, bundleIndex: bundleIndex, anchorHeight: anchorHeight)
-                return VanWitness(
-                    authPath: witness.authPath.map { Data($0) },
-                    position: witness.position,
-                    anchorHeight: witness.anchorHeight
-                )
+                return try await detachedBackendCall {
+                    let witness = try backend.generateVanWitness(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        anchorHeight: anchorHeight
+                    )
+                    return VanWitness(
+                        authPath: witness.authPath.map { Data($0) },
+                        position: witness.position,
+                        anchorHeight: witness.anchorHeight
+                    )
+                }
             },
             markVoteSubmitted: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
-                try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
+                try await detachedBackendCall {
+                    try backend.markVoteSubmitted(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash
+                    )
+                }
                 publishState(backend: backend, roundId: roundId)
             },
             resetTreeClient: {
@@ -513,51 +594,74 @@ extension VotingCryptoClient: DependencyKey {
             },
             storeVoteTxHash: { roundId, bundleIndex, proposalId, txHash in
                 let backend = try await dbActor.backend()
-                try backend.storeVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
+                try await detachedBackendCall {
+                    try backend.storeVoteTxHash(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash
+                    )
+                }
             },
             getVoteTxHash: { roundId, bundleIndex, proposalId in
                 let backend = try await dbActor.backend()
-                if let txHash = try backend.getVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) {
+                let txHash = try await detachedBackendCall {
+                    try backend.getVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId)
+                }
+                if let txHash {
                     return .present(txHash)
                 }
                 return .notFound
             },
             confirmVoteSubmission: { roundId, bundleIndex, proposalId, txHash, eventsJson in
                 let backend = try await dbActor.backend()
-                let confirmation = try backend.confirmVoteSubmission(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    txHash: txHash,
-                    eventsJson: eventsJson
-                )
+                let info = try await detachedBackendCall {
+                    let confirmation = try backend.confirmVoteSubmission(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        txHash: txHash,
+                        eventsJson: eventsJson
+                    )
+                    return VoteConfirmationInfo(
+                        txHash: confirmation.txHash,
+                        vanLeafPosition: confirmation.vanLeafPosition,
+                        voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
+                    )
+                }
                 publishState(backend: backend, roundId: roundId)
-                return VoteConfirmationInfo(
-                    txHash: confirmation.txHash,
-                    vanLeafPosition: confirmation.vanLeafPosition,
-                    voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
-                )
+                return info
             },
             getCommitmentBundleJson: { roundId, bundleIndex, proposalId in
                 let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else {
-                    return nil
+                return try await detachedBackendCall { () -> (bundleJson: String, vcTreePosition: UInt64)? in
+                    guard let result = try backend.getCommitmentBundle(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId
+                    ) else {
+                        return nil
+                    }
+                    return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
                 }
-                return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
             },
             recoverWireJson: { commitmentBundleJson, proposalId, shareIndex, voteCommitmentTreePosition, submitAt in
-                try VotingRustBackend.recoverWireJson(
-                    commitmentBundleJson: commitmentBundleJson,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    voteCommitmentTreePosition: voteCommitmentTreePosition,
-                    submitAt: submitAt
-                )
+                try await detachedBackendCall {
+                    try VotingRustBackend.recoverWireJson(
+                        commitmentBundleJson: commitmentBundleJson,
+                        proposalId: proposalId,
+                        shareIndex: shareIndex,
+                        voteCommitmentTreePosition: voteCommitmentTreePosition,
+                        submitAt: submitAt
+                    )
+                }
             },
             recoverableShareIndices: { commitmentBundleJson in
-                try VotingRustBackend.recoverableShareIndices(
-                    commitmentBundleJson: commitmentBundleJson
-                )
+                try await detachedBackendCall {
+                    try VotingRustBackend.recoverableShareIndices(
+                        commitmentBundleJson: commitmentBundleJson
+                    )
+                }
             },
             storeKeystoneBundleSignature: { roundId, info in
                 let backend = try await dbActor.backend()
@@ -619,18 +723,22 @@ extension VotingCryptoClient: DependencyKey {
             },
             recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, submitAt in
                 let backend = try await dbActor.backend()
-                try backend.recordShareDelegation(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    sentToURLs: sentToURLs,
-                    submitAt: submitAt
-                )
+                try await detachedBackendCall {
+                    try backend.recordShareDelegation(
+                        roundId: roundId,
+                        bundleIndex: bundleIndex,
+                        proposalId: proposalId,
+                        shareIndex: shareIndex,
+                        sentToURLs: sentToURLs,
+                        submitAt: submitAt
+                    )
+                }
             },
             getShareDelegations: { roundId in
                 let backend = try await dbActor.backend()
-                return try backend.getShareDelegations(roundId: roundId)
+                return try await detachedBackendCall {
+                    try backend.getShareDelegations(roundId: roundId)
+                }
             },
             getUnconfirmedDelegations: { roundId in
                 let backend = try await dbActor.backend()
@@ -673,11 +781,17 @@ extension VotingCryptoClient {
     /// completed proof to a stream nobody is consuming anymore.
     /// Factored out of `liveValue` so a test can substitute a spy `prove` and drive the stream's
     /// cancellation behavior directly.
+    /// `priority` is the producer's own priority. The speculative precompute passes `.utility`: a
+    /// detached task defaults to `.medium`, and a task that awaits another task's handle escalates
+    /// that task to its own priority, so a medium producer would drag the SDK's utility proving
+    /// task up to medium the moment it awaited it. The interactive path keeps the default; its
+    /// proving priority comes from the SDK's interactive intent, not from the producer.
     static func makeDelegationProofStream(
+        priority: TaskPriority? = nil,
         prove: @escaping @Sendable (_ progress: @escaping @Sendable (Double) -> Void) async throws -> Data
     ) -> AsyncThrowingStream<ProofEvent, Error> {
         AsyncThrowingStream<ProofEvent, Error> { continuation in
-            let task = Task.detached {
+            let task = Task.detached(priority: priority) {
                 guard !Task.isCancelled else {
                     continuation.finish()
                     return
@@ -693,6 +807,157 @@ extension VotingCryptoClient {
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+// MARK: - Proving promotion
+
+/// Pairs the SDK's scoped interactive proving boost with the speculative proofs of one
+/// precompute run. `promote()` arms the promotion and, if a speculative proof is in flight,
+/// starts holding the boost; a speculative proof that starts while armed also holds it; the
+/// hold is released when the last in-flight proof ends or when the run is reset. The boost is
+/// held by a single task running `withInteractiveProvingBoost`, whose body waits on a
+/// continuation, so every begin is paired with its end by the helper itself.
+///
+/// Every event takes its decision and its state change in one critical section and performs the
+/// side effect (starting a hold task, resuming a continuation) outside the lock. That is what makes
+/// a proof ending and a replacement proof starting safe to overlap: the replacement either sees the
+/// count above zero, so no release happens, or sees the hold already gone and reserves its own.
+final class VotingProvingPromotion: Sendable {
+    typealias Boost = @Sendable (_ body: @Sendable () async -> Void) async -> Void
+
+    private struct State {
+        var inFlight = 0
+        var armed = false
+        var holdActive = false
+        var releaseRequested = false
+        var release: CheckedContinuation<Void, Never>?
+
+        /// Reserves a hold when the promotion is armed with a proof in flight and nothing holds
+        /// the boost yet. The caller starts the hold task outside the lock.
+        mutating func reserveHoldIfNeeded() -> Bool {
+            guard armed, inFlight > 0, !holdActive else { return false }
+            holdActive = true
+            releaseRequested = false
+            return true
+        }
+
+        /// Takes the current hold's continuation, if one is registered, for the caller to resume
+        /// outside the lock. Without a registered continuation — the early-release race — only
+        /// marks the release requested; `holdActive` stays true (still reserved by the in-flight
+        /// acquire) until `register(_:)` sees the request.
+        mutating func takeRelease() -> CheckedContinuation<Void, Never>? {
+            releaseRequested = true
+            guard let continuation = release else { return nil }
+            release = nil
+            holdActive = false
+            return continuation
+        }
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+    private let boost: Boost
+    /// Seams for tests, nil in production: `afterHoldRegistered` runs once the hold's continuation
+    /// is stored (from then on a release resumes it directly instead of taking the early-release
+    /// path); `afterReleaseDecision` runs after a critical section decided to end the hold and
+    /// before the resume.
+    private let afterHoldRegistered: (@Sendable () -> Void)?
+    private let afterReleaseDecision: (@Sendable () -> Void)?
+
+    init(
+        boost: @escaping Boost = { body in await VotingRustBackend.withInteractiveProvingBoost { await body() } },
+        afterHoldRegistered: (@Sendable () -> Void)? = nil,
+        afterReleaseDecision: (@Sendable () -> Void)? = nil
+    ) {
+        state = OSAllocatedUnfairLock(initialState: State())
+        self.boost = boost
+        self.afterHoldRegistered = afterHoldRegistered
+        self.afterReleaseDecision = afterReleaseDecision
+    }
+
+    /// A speculative proof started. If the promotion is armed and no hold is active yet, this
+    /// starts holding the boost.
+    func speculativeProofStarted() {
+        let shouldAcquire = state.withLock { state -> Bool in
+            state.inFlight += 1
+            return state.reserveHoldIfNeeded()
+        }
+        if shouldAcquire {
+            startHold()
+        }
+    }
+
+    /// A speculative proof ended. When it was the last one in flight, the release is decided and
+    /// taken in the same critical section as the decrement: a replacement starting after this
+    /// section finds no active hold and reserves its own; one starting before it keeps the count
+    /// above zero and nothing is released. Only the resume runs outside the lock.
+    func speculativeProofEnded() {
+        let decision = state.withLock { state -> (decided: Bool, continuation: CheckedContinuation<Void, Never>?) in
+            state.inFlight = max(0, state.inFlight - 1)
+            guard state.inFlight == 0 else { return (false, nil) }
+            return (true, state.takeRelease())
+        }
+        guard decision.decided else { return }
+        afterReleaseDecision?()
+        decision.continuation?.resume()
+    }
+
+    /// Arms the promotion. If a speculative proof is already in flight, starts holding the
+    /// boost immediately.
+    func promote() {
+        let shouldAcquire = state.withLock { state -> Bool in
+            state.armed = true
+            return state.reserveHoldIfNeeded()
+        }
+        if shouldAcquire {
+            startHold()
+        }
+    }
+
+    /// Disarms the promotion and releases the boost, so a promotion from a finished or failed
+    /// precompute run can never leak into the next one.
+    func reset() {
+        let continuation = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.armed = false
+            return state.takeRelease()
+        }
+        continuation?.resume()
+    }
+
+    /// Runs the boost on its own task. The boost's body parks on a continuation that
+    /// `register(_:)` stores and a later release resumes.
+    private func startHold() {
+        Task {
+            await self.boost {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.register(continuation)
+                }
+            }
+        }
+    }
+
+    /// Registers the continuation the held task is waiting on. If a release already ran before
+    /// this call reached it — the early-release race — resumes immediately instead of parking
+    /// it, and in the same critical section re-checks whether a proof that started during that
+    /// window still needs a hold: the reservation this call belonged to refused it.
+    private func register(_ continuation: CheckedContinuation<Void, Never>) {
+        let outcome = state.withLock { state -> (resumeNow: Bool, acquireAgain: Bool, registered: Bool) in
+            if state.releaseRequested {
+                state.holdActive = false
+                return (true, state.reserveHoldIfNeeded(), false)
+            }
+            state.release = continuation
+            return (false, false, true)
+        }
+        if outcome.resumeNow {
+            continuation.resume()
+        }
+        if outcome.acquireAgain {
+            startHold()
+        }
+        if outcome.registered {
+            afterHoldRegistered?()
         }
     }
 }

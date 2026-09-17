@@ -67,11 +67,11 @@ struct VoteAgain {
                 submittedDelegations.append(registration)
                 return delegationResult(bundleIndex: 0)
             }
-            client.submitVoteCommitment = { [self] bundle, _ in
+            client.submitVoteCommitment = { [self] bundle, _, _ in
                 submittedVotes.append(bundle)
                 return TxResult(txHash: String(repeating: "ee", count: 32), code: 0)
             }
-            client.fetchTxConfirmation = { _ in
+            client.fetchTxConfirmation = { _, _, _ in
                 TxConfirmation(height: 1, code: 0)
             }
             return client
@@ -424,7 +424,7 @@ struct VoteAgain {
                     sharesHash: Data(repeating: 0x03, count: 32)
                 ),
                 CastVoteSignature(voteAuthSig: Data(repeating: 0xAA, count: 64))
-            )
+            ) { }
         }
         #expect(server.submittedVotes.count == 2)
         let expectedVANs = try restored.map { entry in
@@ -501,7 +501,7 @@ struct VoteAgain {
                 let bundle = await commit(entry.bundleIndex)
                 _ = try await api.submitVoteCommitment(
                     bundle, CastVoteSignature(voteAuthSig: Data(repeating: 0xAA, count: 64))
-                )
+                ) { }
             }
 
             // The fake was actually reached -- without this the server could

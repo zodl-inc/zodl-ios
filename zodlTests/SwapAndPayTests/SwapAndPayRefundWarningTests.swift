@@ -279,4 +279,24 @@ import ComposableArchitecture
 
         #expect(!store.state.isRefundWarningPresented)
     }
+
+    // MARK: - Copy
+
+    /// Users mis-send the asset far more often than the address (Neal, MOB-1889), so the
+    /// sheet and the Swap explainer name a wrong asset, not a wrong address. Pinned to the
+    /// exact Figma copy so a stray "a refund a refund" cannot come back either.
+    @Test func warningCopyNamesTheWrongAssetNotTheAddress() {
+        #expect(
+            String(localizable: .swapAndPayRefundWarningSwapMessage)
+                == "NEAR doesn’t refund mistakes like a wrong asset or wrong network for swaps under $300. Please double-check all details before continuing."
+        )
+        #expect(
+            String(localizable: .swapAndPayRefundWarningPayMessage)
+                == "NEAR doesn’t refund mistakes like a wrong asset or wrong network for payments under $300. Please double-check all details before continuing."
+        )
+        #expect(
+            String(localizable: .swapAndPayHelpSwapDescThreshold)
+                == "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if the wrong asset is sent, or sent on the wrong network."
+        )
+    }
 }

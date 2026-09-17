@@ -19,6 +19,9 @@ import Foundation
 struct RoundSession: Equatable {
     let roundId: String
 
+    /// Diagnostic state only, discarded with this account-scoped round cache.
+    var submissionAttempt: VotingSubmissionAttempt?
+
     // MARK: - Pipeline outputs (Phase 4b populates)
 
     /// Total voting power for this wallet at the round's snapshot height,
@@ -27,10 +30,10 @@ struct RoundSession: Equatable {
     /// (wallet, round) pair until a new snapshot or wallet rescan.
     var votingWeight: UInt64 = 0
 
-    /// Original eligible power before any Keystone bundle skipping. For
-    /// Zashi and full Keystone submissions this matches `votingWeight`; when
-    /// Keystone users skip unsigned bundles, `votingWeight` is reduced and
-    /// this remains the pre-skip value for persisted transparency metadata.
+    /// Original eligible power before automatic trimming or Keystone bundle
+    /// skipping. For untrimmed submissions this matches `votingWeight`; when
+    /// bundles are omitted, `votingWeight` is reduced and this remains the
+    /// original value for persisted transparency metadata.
     var eligibleVotingWeight: UInt64 = 0
 
     /// Eligible notes at the round's snapshot height. Cached because the
@@ -46,8 +49,8 @@ struct RoundSession: Equatable {
     /// delegation proof loop and the per-bundle vote submission loop.
     var bundleCount: UInt32 = 0
 
-    /// Original eligible bundle count before any Keystone skip. Kept so a
-    /// completed vote record can explain reduced power later.
+    /// Original eligible bundle count before automatic trimming or a Keystone
+    /// skip. Kept so a completed vote record can explain reduced power later.
     var eligibleBundleCount: UInt32 = 0
 
     /// Per-round hotkey address derived deterministically from the per-
@@ -101,6 +104,15 @@ struct RoundSession: Equatable {
 
     /// True while the precompute task is in-flight (deduplication guard).
     var isDelegationPrecomputeInFlight: Bool = false
+
+    /// How far the background precompute has got through the speculative
+    /// authorization proof, 0...1 across every bundle. Cleared by both
+    /// `.delegationPrecomputeCompleted` and `.delegationPrecomputeFailed`; a
+    /// cancelled run leaves its last value behind, which is harmless because
+    /// the next run overwrites it on its first progress event. Distinct from
+    /// `delegationProofStatus`, which this only mirrors into while a Confirm
+    /// is waiting for the proof it started.
+    var delegationPrecomputeProgress: Double?
 
     /// Top-level state machine for the batch submission flow. Drives the
     /// Confirm Submission view (progress, authorization error sheet,

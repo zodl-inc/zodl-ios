@@ -182,6 +182,14 @@ import ComposableArchitecture
                     if ordinal == 1 {
                         await gate.wait()
                     }
+                    // MOB-1954 (review follow-up): the first two reads -- the in-flight one and the
+                    // single follow-up its coalesced dispatches fold into -- fail; from the third
+                    // on, reads succeed, so the retry lane that the second failure opens closes
+                    // again on its first attempt. That keeps this test's subject the FOLD, with a
+                    // call count that does not move when the retry budget does.
+                    if ordinal >= 3 {
+                        return []
+                    }
                     throw FetchStubError()
                 }
             )
@@ -206,12 +214,20 @@ import ComposableArchitecture
         // and "settled".
         gate.open()
         await firstDispatch.finish()
+        // Exactly three reads: the in-flight one fails, the two dispatches coalesced behind it fold
+        // into ONE follow-up which fails too, and that second failure -- finding nothing coalesced
+        // left to run -- opens the MOB-1954 retry lane, whose first attempt succeeds and ends the
+        // streak. No fourth read. `mainQueue` is `.immediate` in this file, so that retry's delay
+        // collapses to zero and the whole chain settles inside `finish()`; its real timing and its
+        // cancellation are driven on a controllable scheduler in
+        // `RootTransactionsFailedFetchRetryTests.swift`.
         #expect(
-            fetchCalls.count == 2,
-            "a failed fetch must still fold its coalesced dispatches into one follow-up fetch, with no third call chased afterward"
+            fetchCalls.count == 3,
+            "a failed fetch must still fold its coalesced dispatches into one follow-up fetch, chasing only the one retry that then succeeds"
         )
         #expect(!store.state.isTransactionsFetchInFlight, "a failed follow-up fetch must still clear the in-flight gate")
         #expect(!store.state.isTransactionsFetchDirty)
+        #expect(store.state.transactionsFetchRetryAttempt == 0, "the retry that succeeded must end the failure streak")
     }
 
     // MARK: - (2b) An account switch while a fetch is in flight starts the new account's fetch immediately
@@ -295,7 +311,9 @@ import ComposableArchitecture
 /// (`loadContacts`/`resolveMetadataEncryptionKeys`/`loadUserMetadata` all need real no-op
 /// dependencies, not just `sdkSynchronizer`'s). `mainQueue = .immediate`: none of the tests here
 /// exercise throttle windows or the reconciliation poller, so there is no need for a controllable
-/// test scheduler.
+/// test scheduler. The one timed effect that does reach these tests is the MOB-1954 delayed retry
+/// a failed read schedules -- `.immediate` collapses its backoff to zero, which the failure-path
+/// test below accounts for explicitly rather than by taking a scheduler it has no other use for.
 @MainActor
 private func baseNoOpDependencies(_ values: inout DependencyValues) {
     values.databaseFiles = .noOp

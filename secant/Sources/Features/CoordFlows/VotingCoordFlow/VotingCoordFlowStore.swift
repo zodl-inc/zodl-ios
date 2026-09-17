@@ -310,6 +310,10 @@ struct VotingCoordFlow {
         /// while the user is choosing votes so the actual ZKP doesn't
         /// start from cold.
         case maybeStartDelegationPrecompute(roundId: String)
+        /// Overall progress of the background (speculative) authorization
+        /// proof, 0...1 across every bundle. Mirrored onto
+        /// `delegationProofStatus` only while a Confirm is waiting on it.
+        case delegationPrecomputeProgress(roundId: String, progress: Double)
         case delegationPrecomputeCompleted(roundId: String)
         case delegationPrecomputeFailed(roundId: String, error: String)
 
@@ -320,6 +324,7 @@ struct VotingCoordFlow {
         case voteSubmissionStepUpdated(roundId: String, step: VoteSubmissionStep)
         case batchVoteSubmitted(roundId: String, proposalId: UInt32, choice: VoteChoice)
         case batchVoteFailed(roundId: String, proposalId: UInt32, error: String)
+        case submissionAttemptSettled(roundId: String, attemptId: UUID, successCount: Int)
         case batchSubmissionCompleted(roundId: String, successCount: Int, failCount: Int)
         case batchAuthorizationFailed(roundId: String, error: String)
         case batchSubmissionFailed(roundId: String, error: String, submittedCount: Int, totalCount: Int)
@@ -350,6 +355,8 @@ struct VotingCoordFlow {
         case delegationRejected(roundId: String)
     }
 
+    @Dependency(\.votingSubmissionTiming)
+    var votingSubmissionTiming
     @Dependency(\.backgroundTask) var backgroundTask
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.keystoneHandler) var keystoneHandler

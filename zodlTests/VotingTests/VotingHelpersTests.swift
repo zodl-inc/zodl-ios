@@ -206,6 +206,55 @@ import Testing
         #expect(metadata.drafts[roundId] == ["1": 0])
     }
 
+    @Test func votingMetadataRoundTripsTrimCompletionFields() throws {
+        let metadata = VotingMetadata(
+            records: [
+                "round-1": PersistedVotingRecord(
+                    votedAt: 1_700_000_000,
+                    votingWeight: 995_000_000,
+                    proposalCount: 2,
+                    eligibleVotingWeight: 1_000_000_000,
+                    submittedBundleCount: 2,
+                    totalBundleCount: 3
+                )
+            ]
+        )
+
+        let encoded = try JSONEncoder().encode(metadata)
+        let decoded = try JSONDecoder().decode(VotingMetadata.self, from: encoded)
+        let record = tryUnwrap(decoded.records["round-1"])
+
+        #expect(record.votingWeight == 995_000_000)
+        #expect(record.eligibleVotingWeight == 1_000_000_000)
+        #expect(record.submittedBundleCount == 2)
+        #expect(record.totalBundleCount == 3)
+    }
+
+    @Test func votingMetadataDecodesLegacyRecordWithoutTrimCompletionFields() throws {
+        let legacy = Data("""
+        {
+          "drafts": {},
+          "submittedVotes": {},
+          "records": {
+            "round-1": {
+              "votedAt": 1700000000,
+              "votingWeight": 500000000,
+              "proposalCount": 1
+            }
+          },
+          "schemaVersion": 1
+        }
+        """.utf8)
+
+        let decoded = try JSONDecoder().decode(VotingMetadata.self, from: legacy)
+        let record = tryUnwrap(decoded.records["round-1"])
+
+        #expect(record.votingWeight == 500_000_000)
+        #expect(record.eligibleVotingWeight == nil)
+        #expect(record.submittedBundleCount == nil)
+        #expect(record.totalBundleCount == nil)
+    }
+
     @Test func voteRecordReportsSkippedKeystoneBundles() {
         let skippedRecord = Voting.VoteRecord(
             votedAt: Date(timeIntervalSince1970: 1_000),
@@ -270,6 +319,13 @@ import Testing
         client.setRecord = { record, roundId in box.records[roundId] = record }
         client.clearRecord = { roundId in box.records.removeValue(forKey: roundId) }
         return client
+    }
+
+    private func tryUnwrap<T>(_ value: T?) -> T {
+        guard let value else {
+            fatalError("tryUnwrap: required value was unexpectedly nil")
+        }
+        return value
     }
 }
 

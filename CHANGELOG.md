@@ -7,6 +7,30 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Fixed
+
+- [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
+- [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
+- [MOB-1965] The coinholder polling confirmation screen now shows the omitted-weight disclosure in Spanish when the app uses Spanish.
+
+## [3.14.0] - 2026-09-15
+
+### Changed
+
+- [MOB-1927] Coinholder polling supports rounds with up to 50 questions and works on vote chains upgraded to the new voting circuit. A round the app cannot read is hidden on its own instead of hiding every round.
+- [MOB-1928] Submitting a ballot no longer waits for each question's tally shares to reach the helper servers before starting the next question; a question is reported as submitted once its shares are accepted.
+- [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
+- [MOB-1930] Wallets whose votes span several note bundles submit them in parallel, so one bundle's waiting for the chain no longer holds up the other.
+- [MOB-1962] Coinholder polling picks up a mined vote sooner and reliably keeps checking over Tor: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1964] Authorizing a wallet for coinholder polling reuses private-information-retrieval server connections across matching note bundles and preparation steps, so wallets with several bundles start faster.
+- [MOB-1965] Coinholder polling submits at most two note bundles when the rest carry under 1 % of the wallet's voting weight (and under 1,000 ZEC), so rounds with many small notes finish in minutes instead of hours. The confirmation screen shows the weight that was left out.
+
+### Fixed
+
+- [MOB-1955] The transaction list loads far faster on wallets with a long history: the app now reads the details of every transaction in one pass instead of one query per transaction.
+- [MOB-1861] Opening the app and visiting Advanced Settings are no longer slowed down by the migration checks re-reading the whole transaction history; on a wallet that never migrated, those checks no longer read it at all, so sync starts right away.
+- [MOB-1954] On a wallet with a long transaction history, the app no longer re-reads the whole history every two seconds once sync is up to date. The list refreshes when a sync pass completes, when a transaction arrives or is mined, and while a sent transaction is still pending. If reading the history fails, the app now retries on its own with increasing delays instead of waiting for the next change.
+
 ## [3.13.0] - 2026-09-10
 
 ### Changed

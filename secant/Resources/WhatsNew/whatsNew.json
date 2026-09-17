@@ -1,6 +1,31 @@
 {
     "releases": [
         {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added support for coinholder polls with up to 50 questions."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We made submitting your votes in coinholder polls faster."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where wallets with a long transaction history could be slow to open, slow to load Activity and Advanced Settings, or stop responding."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.13.0",
             "date": "11-09-2026",
             "timestamp": 1789127082,
