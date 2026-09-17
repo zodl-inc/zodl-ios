@@ -286,6 +286,11 @@ struct SDKSynchronizerClient: Sendable {
     let rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error>
     
     var getAllTransactions: @Sendable (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState>
+    /// [MOB-1861] The display-form hex ids (`TransactionState.id`, i.e. `rawID.toHexStringTxId()`)
+    /// of every MINED transaction of `accountUUID` -- the whole answer the migration manager's
+    /// wallet-confirmed set needs, from one `v_transactions` read and none of the per-row output
+    /// reads `getAllTransactions` performs on top of it.
+    var getMinedTransactionIds: @Sendable (AccountUUID) async throws -> Set<String>
     var transactionStatesFromZcashTransactions: @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState>
     var getMemos: @Sendable (Data) async throws -> [Memo]
     var txIdExists: @Sendable (String?) async throws -> Bool
@@ -352,6 +357,7 @@ struct SDKSynchronizerClient: Sendable {
     var exchangeRateEnabled: @Sendable (Bool) async throws -> Void
     var isTorSuccessfullyInitialized: @Sendable () async -> Bool?
     var httpRequestOverTor: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    var boundedTorGET: @Sendable (URLRequest, UInt64) async throws -> (Data, HTTPURLResponse)
     
     var debugDatabaseSql: @Sendable (String) -> String = { _ in "" }
     

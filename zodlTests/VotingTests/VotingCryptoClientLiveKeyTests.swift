@@ -15,7 +15,7 @@ import os
 /// voting screen mid-proof left that proof running at proving priority in the background while the
 /// next one started. These tests exercise the seam directly with a spy `prove`, standing in for the
 /// real backend call, instead of driving the whole coordinator + Rust FFI.
-@Suite struct VotingCryptoClientLiveKeyTests {
+@Suite(.timeLimit(.minutes(1))) struct VotingCryptoClientLiveKeyTests {
     @Test func uncancelledRunYieldsProgressThenCompletedInOrder() async throws {
         let spy = DelegationProofSpy(behavior: .succeedsImmediately(progress: [0.25, 0.75], proof: Data([1, 2, 3])))
 
@@ -80,6 +80,115 @@ import os
         #expect(!invoked || observedCancellation)
         #expect(events.values.isEmpty)
     }
+
+    /// The shape the live `precomputeDelegationProof` closure has: `speculativeProofStarted` at the
+    /// top of `prove`, `speculativeProofEnded` when it returns. A proof already inside native code
+    /// keeps running after its consumer is cancelled, so its end lands after the replacement run's
+    /// proof has started. The replacement must stay boosted for its whole life, and every begin
+    /// must get its end.
+    @Test func aPredecessorEndingAfterItsReplacementStartedLeavesTheReplacementBoosted() async throws {
+        let records = SignalledRecords<String>()
+        let lifecycle = SignalledRecords<String>()
+        let promotion = VotingProvingPromotion(boost: { body in
+            records.record("begin")
+            await body()
+            records.record("end")
+        })
+        let predecessor = ParkedProof()
+        let replacement = ParkedProof()
+
+        promotion.promote()
+
+        let firstConsumer = Task<Void, Error> {
+            for try await _ in VotingCryptoClient.makeDelegationProofStream(prove: { _ in
+                promotion.speculativeProofStarted()
+                let proof = try await predecessor.run()
+                promotion.speculativeProofEnded()
+                lifecycle.record("predecessor-ended")
+                return proof
+            }) { }
+        }
+        await predecessor.entered.wait()
+        await records.countReached(1)
+        // Leaving the flow cancels the consumer; the parked proof does not notice, exactly like the
+        // native call.
+        firstConsumer.cancel()
+        _ = await firstConsumer.result
+
+        let secondConsumer = Task<Void, Error> {
+            for try await _ in VotingCryptoClient.makeDelegationProofStream(prove: { _ in
+                promotion.speculativeProofStarted()
+                let proof = try await replacement.run()
+                promotion.speculativeProofEnded()
+                return proof
+            }) { }
+        }
+        await replacement.entered.wait()
+
+        // The predecessor finishes now: its end must not take the replacement's boost away.
+        predecessor.finish()
+        await lifecycle.recorded { $0.contains("predecessor-ended") }
+        #expect(records.values == ["begin"])
+
+        replacement.finish()
+        _ = await secondConsumer.result
+        await records.countReached(2)
+        #expect(records.values == ["begin", "end"])
+    }
+
+    /// The producer's own priority is what `prove` observes: the stream hands events over through a
+    /// continuation, not a task handle, so the consumer — the test's own high-priority task here —
+    /// cannot escalate it. A detached task without an explicit priority runs at `.medium`; the
+    /// speculative precompute asks for `.utility` so the proof it awaits is not dragged up.
+    @Test func theProducerRunsAtTheRequestedPriority() async throws {
+        for priority in [TaskPriority.utility, TaskPriority.userInitiated] {
+            let observed = SignalledRecords<TaskPriority>()
+            let stream = VotingCryptoClient.makeDelegationProofStream(priority: priority, prove: { _ in
+                observed.record(Task.currentPriority)
+                return Data()
+            })
+            for try await _ in stream { }
+            #expect(observed.values == [priority])
+        }
+    }
+
+    /// The shape the live speculative closure has once it reaches the SDK: the speculative intent
+    /// runs the proof on `Task.detached(priority: .utility)` and awaits its value. Awaiting a task
+    /// handle escalates the awaited task to the awaiting task's priority, so a medium producer drags
+    /// the proof up to medium the moment it awaits. A utility producer leaves it alone.
+    @available(iOS 26.0, *)
+    @Test func aUtilityProducerDoesNotEscalateTheProofItAwaits() async throws {
+        let escalations = SignalledRecords<TaskPriority>()
+        let observed = SignalledRecords<TaskPriority>()
+        let producer = SignalledRecords<String>()
+        let proofEntered = ResumableGate()
+        let proofRelease = ResumableGate()
+
+        let stream = VotingCryptoClient.makeDelegationProofStream(priority: .utility, prove: { _ in
+            let proof = Task.detached(priority: .utility) {
+                await withTaskPriorityEscalationHandler {
+                    proofEntered.open()
+                    await proofRelease.wait()
+                } onPriorityEscalated: { _, newPriority in
+                    escalations.record(newPriority)
+                }
+                observed.record(Task.currentPriority)
+                return Data()
+            }
+            producer.record("awaiting")
+            return await proof.value
+        })
+        let consumer = Task<Void, Error> {
+            for try await _ in stream { }
+        }
+        await proofEntered.wait()
+        await producer.recorded { $0.contains("awaiting") }
+        proofRelease.open()
+        try await consumer.value
+
+        #expect(escalations.values.isEmpty)
+        #expect(observed.values == [.utility])
+    }
 }
 
 /// Spy standing in for the delegation-proving backend call inside `makeDelegationProofStream`.
@@ -125,6 +234,23 @@ private final class DelegationProofSpy: @unchecked Sendable {
                 pending?.resume(throwing: CancellationError())
             }
         }
+    }
+}
+
+/// A proof that is "inside the FFI": opens `entered` when it starts, parks until `finish()`, and
+/// ignores cancellation the way the native call does (`ResumableGate.wait()` is not cancellable).
+private final class ParkedProof: @unchecked Sendable {
+    let entered = ResumableGate()
+    private let release = ResumableGate()
+
+    func run() async throws -> Data {
+        entered.open()
+        await release.wait()
+        return Data([0xAB])
+    }
+
+    func finish() {
+        release.open()
     }
 }
 

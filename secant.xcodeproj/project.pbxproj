@@ -7,11 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5A0BA5E000000000000000B3 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A3 /* VotingRecovery */; };
 		3464A8FC303C3A54005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FB303C3A54005A09AD /* ZcashLightClientKit */; };
-		5A0BA5E000000000000000B2 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A2 /* VotingRecovery */; };
 		3464A8FE303C3A5E005A09AD /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */; };
-		5A0BA5E000000000000000B1 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A1 /* VotingRecovery */; };
 		34982B6E3014A1C100FF9205 /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34982B6D3014A1C100FF9205 /* ZcashLightClientKit */; };
 		34AA77182F857DB300D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77172F857DB300D244E2 /* ComposableArchitecture */; };
 		34AA771A2F857DB800D244E2 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 34AA77192F857DB800D244E2 /* ComposableArchitecture */; };
@@ -53,6 +50,9 @@
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
 		34FB884B3010911000A2F01F /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34FB884A3010911000A2F01F /* ZcashLightClientKit */; };
+		5A0BA5E000000000000000B1 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A1 /* VotingRecovery */; };
+		5A0BA5E000000000000000B2 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A2 /* VotingRecovery */; };
+		5A0BA5E000000000000000B3 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A3 /* VotingRecovery */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -947,7 +947,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -960,7 +960,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -977,7 +977,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -989,7 +989,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1006,7 +1006,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1018,7 +1018,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.ecc.zashi-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1035,7 +1035,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -1048,7 +1048,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1075,7 +1075,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1087,7 +1087,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1194,7 +1194,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "secant-distrib.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1206,7 +1206,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-mainnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1233,7 +1233,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
@@ -1246,7 +1246,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1263,7 +1263,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1275,7 +1275,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1292,7 +1292,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "zashi-internal.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"secant/Preview Content\"";
 				DEVELOPMENT_TEAM = RLPRR8CPQG;
 				ENABLE_BITCODE = NO;
@@ -1304,7 +1304,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.13.0;
+				MARKETING_VERSION = 3.14.0;
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "co.electriccoin.secant-testnet";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1496,29 +1496,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		5A0BA5E000000000000000A3 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
-		};
 		3464A8FB303C3A54005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZcashLightClientKit;
-		};
-		5A0BA5E000000000000000A2 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
 		};
 		3464A8FD303C3A5E005A09AD /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */;
 			productName = ZcashLightClientKit;
-		};
-		5A0BA5E000000000000000A1 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
 		};
 		34982B6D3014A1C100FF9205 /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1737,6 +1722,21 @@
 		34FB884A3010911000A2F01F /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZcashLightClientKit;
+		};
+		5A0BA5E000000000000000A1 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
+		};
+		5A0BA5E000000000000000A2 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
+		};
+		5A0BA5E000000000000000A3 /* VotingRecovery */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
+			productName = VotingRecovery;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

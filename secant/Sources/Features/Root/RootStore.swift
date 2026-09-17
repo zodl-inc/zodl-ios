@@ -67,6 +67,10 @@ struct Root {
         /// what actually keeps a stale or wrong-account payload from corrupting `state.transactions`.
         var CancelTransactionsFetchId = UUID()
         var CancelPendingTxPollId = UUID()
+        /// The delayed retry effect `.transactionsFetchFailed` (`RootTransactions.swift`) starts.
+        /// Cancelled wherever a pending retry would be wrong: when any fetch actually starts, by
+        /// `accountSwitchedEffect`, at `.didEnterBackground`, and when a background task completes.
+        var CancelTransactionsFetchRetryId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()
@@ -224,6 +228,21 @@ struct Root {
         /// completion, which folds every dispatch coalesced during its run into exactly one
         /// follow-up fetch for whichever account is selected at that point.
         var isTransactionsFetchDirty = false
+        /// MOB-1954 (review follow-up): how many times a FAILED `getAllTransactions` read is
+        /// retried on its own, and the delay before each retry, in seconds. Before the edge trigger
+        /// in `RootTransactions.swift` the next 2 s up-to-date tick silently retried every failed
+        /// read; with the edge trigger nothing would, so a read that threw right after an account
+        /// switch -- or after a `foundTransactions` event on a fully mined history, when the
+        /// pending-row poller has nothing to poll for -- left the list empty or stale until an
+        /// unrelated trigger. Five attempts, about a minute in all; past that the ordinary
+        /// triggers (the next sync edge, a transaction event, the pending-row poller, a
+        /// foreground) are the way back, as they were for a read that kept failing tick after
+        /// tick before the edge trigger.
+        static let transactionsFetchRetryDelaysInSeconds: [Int] = [2, 4, 8, 16, 32]
+        /// Retries already scheduled for the selected account's current failure streak. Reset to
+        /// 0 by a successful fetch (`.fetchedTransactions`), by `accountSwitchedEffect`
+        /// (`RootCoordinator.swift`) and at `.didEnterBackground`.
+        var transactionsFetchRetryAttempt = 0
         /// Which account the shared `transactions` array currently holds rows for. Set by
         /// `.fetchedTransactions` (`RootTransactions.swift`) the moment it writes `$transactions`, so
         /// it always names the account whose fetch actually produced the array's current contents --
@@ -517,6 +536,9 @@ struct Root {
         /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
         /// `RootTransactions.swift`.
         case transactionsFetchFailed(accountUUID: AccountUUID)
+        /// MOB-1954 (review follow-up): sent by the delayed retry effect a failed history read
+        /// schedules; re-dispatches the fetch only if `accountUUID` is still the selected account.
+        case retryFailedTransactionsFetch(accountUUID: AccountUUID)
         case noChangeInTransactions
         
         // Address Book

@@ -2605,6 +2605,40 @@
         }
       }
     },
+    "coinVote.confirmSubmission.detailNotIncluded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluded from this vote"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluido de esta votación"
+          }
+        }
+      }
+    },
+    "coinVote.confirmSubmission.detailNotIncludedValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ZEC"
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.detailPoll" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5414,125 +5448,6 @@
         }
       }
     },
-    "coinVote.store.userError.http5" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting server is temporarily unavailable. Please try again shortly."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting server is temporarily unavailable. Please try again shortly."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.invalidAnchorHeight" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting state is out of sync. Please retry to use the latest data."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting state is out of sync. Please retry to use the latest data."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.invalidProof" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your proof was rejected by the network. Please try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your proof was rejected by the network. Please try again."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.lightwalletdUnavailable" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.noReachableVoteServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.noTreeState" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting commitment tree is not available yet. The voting round may not have started or the chain has not processed any commitments."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voting commitment tree is not available yet. The voting round may not have started or the chain has not processed any commitments."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.nullifierAlreadySpent" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This wallet has already been registered for this voting round. If you have this wallet on multiple devices, please use the device where you originally started the voting process."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This wallet has already been registered for this voting round. If you have this wallet on multiple devices, please use the device where you originally started the voting process."
-          }
-        }
-      }
-    },
     "coinVote.store.userError.delegationDiagnosis.alreadyBroadcast" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5648,6 +5563,125 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Voting data for this round is incomplete on this device. Please leave the poll and enter it again to rebuild it."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.http5" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting server is temporarily unavailable. Please try again shortly."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting server is temporarily unavailable. Please try again shortly."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.invalidAnchorHeight" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting state is out of sync. Please retry to use the latest data."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting state is out of sync. Please retry to use the latest data."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.invalidProof" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your proof was rejected by the network. Please try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your proof was rejected by the network. Please try again."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.lightwalletdUnavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.noReachableVoteServers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.noTreeState" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting commitment tree is not available yet. The voting round may not have started or the chain has not processed any commitments."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voting commitment tree is not available yet. The voting round may not have started or the chain has not processed any commitments."
+          }
+        }
+      }
+    },
+    "coinVote.store.userError.nullifierAlreadySpent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This wallet has already been registered for this voting round. If you have this wallet on multiple devices, please use the device where you originally started the voting process."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This wallet has already been registered for this voting round. If you have this wallet on multiple devices, please use the device where you originally started the voting process."
           }
         }
       }
@@ -20771,13 +20805,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if sent to a wrong address or wrong network."
+            "value" : "Refunds only apply to swaps of $300 or more. Swaps under $300 aren’t eligible for a refund if the wrong asset is sent, or sent on the wrong network."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso si se envían a una dirección o red incorrecta."
+            "value" : "Los reembolsos solo se aplican a swaps de $300 o más. Los swaps de menos de $300 no son elegibles para reembolso si se envía el activo incorrecto o en la red incorrecta."
           }
         }
       }
@@ -21349,13 +21383,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for payments under $300. Please double-check all details before continuing."
+            "value" : "NEAR doesn’t refund mistakes like a wrong asset or wrong network for payments under $300. Please double-check all details before continuing."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en pagos de menos de $300. Verifica todos los detalles antes de continuar."
+            "value" : "NEAR no reembolsa errores como un activo o red incorrecta en pagos de menos de $300. Verifica todos los detalles antes de continuar."
           }
         }
       }
@@ -21366,13 +21400,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "NEAR doesn’t refund mistakes like a wrong address or wrong network for swaps under $300. Please double-check all details before continuing."
+            "value" : "NEAR doesn’t refund mistakes like a wrong asset or wrong network for swaps under $300. Please double-check all details before continuing."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "NEAR no reembolsa errores como una dirección o red incorrecta en swaps de menos de $300. Verifica todos los detalles antes de continuar."
+            "value" : "NEAR no reembolsa errores como un activo o red incorrecta en swaps de menos de $300. Verifica todos los detalles antes de continuar."
           }
         }
       }
