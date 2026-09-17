@@ -264,6 +264,20 @@ struct VotingBundleConcurrencyTests {
         #expect(Set(session.votes.keys) == [1])
     }
 
+    /// The confirmation wait asks the server that accepted the broadcast first: it indexes the
+    /// transaction before any other, so its 404 is the authoritative "not mined yet".
+    @Test func theConfirmationWaitPrefersTheServerThatAcceptedTheBroadcast() async throws {
+        let fixture = VotingBatchSubmissionFixture(proposalCount: 1, bundleCount: 1)
+        let store = makeStore(fixture)
+
+        store.send(.authenticationSucceeded(roundId: roundId))
+        await fixture.waitForStoreState(store) { state in
+            state.roundCache[self.roundId]?.batchSubmissionStatus == .completed(successCount: 1)
+        }
+
+        #expect(fixture.polledServers.values.contains("tx-1:\(VotingBatchSubmissionFixture.voteServerURLs[0])"))
+    }
+
     // MARK: - Helpers
 
     private func makeStore(_ fixture: VotingBatchSubmissionFixture) -> StoreOf<VotingCoordFlow> {

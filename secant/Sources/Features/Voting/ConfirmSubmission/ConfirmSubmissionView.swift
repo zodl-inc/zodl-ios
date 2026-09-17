@@ -33,6 +33,11 @@ struct ConfirmSubmissionView: View {
             let weightString = Self.formatZec(session?.votingWeight ?? 0)
             let submittedVotes = session?.votes ?? [:]
             let bundleCount = session?.bundleCount ?? 0
+            let eligibleBundleCount = session?.eligibleBundleCount ?? 0
+            let excludedBundleCount = eligibleBundleCount > bundleCount ? Int(eligibleBundleCount - bundleCount) : 0
+            let eligibleWeight = session?.eligibleVotingWeight ?? 0
+            let votingWeight = session?.votingWeight ?? 0
+            let excludedWeightString = Self.formatZec(eligibleWeight > votingWeight ? eligibleWeight - votingWeight : 0)
             // Finding #8 (CHP.md): a bare `draftVotes.isEmpty` check would keep
             // the CTA disabled for a proposal that's already on-chain but whose
             // shares never reached the helper servers — see
@@ -49,7 +54,9 @@ struct ConfirmSubmissionView: View {
                             status: status,
                             pollTitle: pollTitle,
                             weightString: weightString,
-                            isKeystoneUser: isKeystoneUser
+                            isKeystoneUser: isKeystoneUser,
+                            excludedBundleCount: excludedBundleCount,
+                            excludedWeightString: excludedWeightString
                         )
                         .padding(.top, 24)
                     }
@@ -171,88 +178,6 @@ struct ConfirmSubmissionView: View {
         case .completed:
             return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleCompleted)
         }
-    }
-
-    // MARK: - Details Card
-
-    @ViewBuilder
-    private func detailsCard(
-        status: BatchSubmissionStatus,
-        pollTitle: String,
-        weightString: String,
-        isKeystoneUser: Bool
-    ) -> some View {
-        let isIdle: Bool = {
-            switch status {
-            case .idle, .requested: return true
-            default: return false
-            }
-        }()
-
-        VStack(spacing: 0) {
-            detailRow(
-                label: String(localizable: .coinVoteConfirmSubmissionDetailPoll),
-                value: pollTitle
-            )
-
-            if isIdle && isKeystoneUser {
-                EmptyView()
-            } else if isIdle {
-                detailsDivider()
-                memoRow(pollTitle: pollTitle, weightString: weightString)
-            } else {
-                detailsDivider()
-                detailRow(
-                    label: String(localizable: .coinVoteConfirmSubmissionDetailVotingPower),
-                    value: String(localizable: .coinVoteConfirmSubmissionDetailVotingPowerValue(weightString))
-                )
-            }
-        }
-        .background(Design.Surfaces.bgSecondary.color(colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: Design.Radius._2xl))
-    }
-
-    @ViewBuilder
-    private func detailRow(label: String, value: String) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(label)
-                .zFont(size: 14, style: Design.Text.tertiary)
-                .tracking(-0.224)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            Text(value)
-                .zFont(.medium, size: 14, style: Design.Text.primary)
-                .tracking(-0.224)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .multilineTextAlignment(.trailing)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-
-    @ViewBuilder
-    private func memoRow(pollTitle: String, weightString: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(localizable: .coinVoteConfirmSubmissionDetailMemo)
-                .zFont(size: 14, style: Design.Text.tertiary)
-                .tracking(-0.224)
-
-            Text(localizable: .coinVoteConfirmSubmissionMemoMessage(pollTitle, weightString))
-                .zFont(.medium, size: 12, style: Design.Text.primary)
-                .tracking(-0.072)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-
-    private func detailsDivider() -> some View {
-        Design.Surfaces.bgPrimary.color(colorScheme)
-            .frame(height: 1)
     }
 
     // MARK: - Progress
@@ -454,6 +379,100 @@ struct ConfirmSubmissionView: View {
         formatter.usesGroupingSeparator = true
         let value = Zatoshi(Int64(zatoshi)).decimalValue.roundedZec
         return formatter.string(from: value) ?? "0.000"
+    }
+}
+
+// MARK: - Details Card
+
+extension ConfirmSubmissionView {
+    @ViewBuilder
+    private func detailsCard( // swiftlint:disable:this function_parameter_count
+        status: BatchSubmissionStatus,
+        pollTitle: String,
+        weightString: String,
+        isKeystoneUser: Bool,
+        excludedBundleCount: Int,
+        excludedWeightString: String
+    ) -> some View {
+        let isIdle: Bool = {
+            switch status {
+            case .idle, .requested: return true
+            default: return false
+            }
+        }()
+
+        VStack(spacing: 0) {
+            detailRow(
+                label: String(localizable: .coinVoteConfirmSubmissionDetailPoll),
+                value: pollTitle
+            )
+
+            if isIdle && isKeystoneUser {
+                EmptyView()
+            } else if isIdle {
+                detailsDivider()
+                memoRow(pollTitle: pollTitle, weightString: weightString)
+            } else {
+                detailsDivider()
+                detailRow(
+                    label: String(localizable: .coinVoteConfirmSubmissionDetailVotingPower),
+                    value: String(localizable: .coinVoteConfirmSubmissionDetailVotingPowerValue(weightString))
+                )
+            }
+
+            if excludedBundleCount > 0 {
+                detailsDivider()
+                detailRow(
+                    label: String(localizable: .coinVoteConfirmSubmissionDetailNotIncluded),
+                    value: String(localizable: .coinVoteConfirmSubmissionDetailNotIncludedValue(excludedWeightString))
+                )
+            }
+        }
+        .background(Design.Surfaces.bgSecondary.color(colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: Design.Radius._2xl))
+    }
+
+    @ViewBuilder
+    private func detailRow(label: String, value: String) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(label)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .tracking(-0.224)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Text(value)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .tracking(-0.224)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func memoRow(pollTitle: String, weightString: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(localizable: .coinVoteConfirmSubmissionDetailMemo)
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .tracking(-0.224)
+
+            Text(localizable: .coinVoteConfirmSubmissionMemoMessage(pollTitle, weightString))
+                .zFont(.medium, size: 12, style: Design.Text.primary)
+                .tracking(-0.072)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    private func detailsDivider() -> some View {
+        Design.Surfaces.bgPrimary.color(colorScheme)
+            .frame(height: 1)
     }
 }
 
