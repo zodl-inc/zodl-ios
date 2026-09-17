@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Fixed
+
+- [MOB-1923] Swap and Pay now restore asset and network choices immediately while current prices load in the background.
+
 ## [3.13.0] - 2026-09-10
 
 ### Changed

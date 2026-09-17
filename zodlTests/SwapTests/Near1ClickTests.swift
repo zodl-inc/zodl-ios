@@ -8,6 +8,7 @@
 
 import Testing
 import Foundation
+import os
 @testable import zodl_internal
 
 @Suite struct Near1ClickTests {
@@ -140,11 +141,40 @@ import Foundation
         #expect(Near1Click.curated([]).isEmpty)
     }
 
+    @Test func persistentCacheKeepsMetadataButNotPrices() throws {
+        let userDefaults = UserDefaultsClient.ephemeralForSwapAssetTests()
+        let assets = [
+            swapAsset(assetId: Near1Click.Constants.nearZecAssetId, token: "ZEC", chain: "zec"),
+            swapAsset(assetId: "nep141:btc.omft.near", token: "BTC", chain: "btc")
+        ]
+
+        Near1Click.persistAssetMetadata(assets, userDefaults: userDefaults)
+        let restored = Near1Click.cachedAssets(userDefaults: userDefaults)
+        let rawData = try #require(userDefaults.objectForKey(Near1Click.Constants.assetMetadataCacheKey) as? Data)
+        let rawJson = try #require(String(data: rawData, encoding: .utf8))
+
+        #expect(restored.map(\.assetId) == assets.map(\.assetId))
+        #expect(restored.allSatisfy { $0.usdPrice == 0 })
+        #expect(restored.map(\.decimals) == assets.map(\.decimals))
+        #expect(!rawJson.contains("usdPrice"))
+    }
+
     private func asset(token: String = "ETH", decimals: Int = 18) -> SwapAsset {
         SwapAsset(provider: "near", chain: "eth", token: token, assetId: "x", usdPrice: 0, decimals: decimals)
     }
 
     private func swapAsset(assetId: String, token: String = "TKN", chain: String = "eth") -> SwapAsset {
         SwapAsset(provider: "near", chain: chain, token: token, assetId: assetId, usdPrice: 1, decimals: 6)
+    }
+}
+
+private extension UserDefaultsClient {
+    static func ephemeralForSwapAssetTests() -> UserDefaultsClient {
+        let storage = OSAllocatedUnfairLock<[String: Any]>(uncheckedState: [:])
+        return UserDefaultsClient(
+            objectForKey: { key in storage.withLockUnchecked { $0[key] } },
+            remove: { key in storage.withLockUnchecked { $0[key] = nil } },
+            setValue: { value, key in storage.withLockUnchecked { $0[key] = value } }
+        )
     }
 }

@@ -7,6 +7,7 @@
 //
 
 import Testing
+import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
@@ -90,6 +91,21 @@ import ComposableArchitecture
         #expect(store.state.selectedAsset?.chain.lowercased() == "eth")
     }
 
+    @MainActor @Test func freshCatalogReplacesSelectedCachedMetadataWithLivePrice() async {
+        let store = makeLoadStore(lastUsed: ["near.btc.btc"])
+        store.exhaustivity = .off
+        let cached: IdentifiedArrayOf<SwapAsset> = [swapAsset(chain: "btc", token: "BTC", price: 0)]
+        let refreshed: IdentifiedArrayOf<SwapAsset> = [swapAsset(chain: "btc", token: "BTC", price: 42_000)]
+
+        await store.send(.swapAssetsLoaded(cached))
+        await store.skipReceivedActions(strict: false)
+        #expect(store.state.selectedAsset?.usdPrice == 0)
+
+        await store.send(.swapAssetsLoaded(refreshed))
+        await store.skipReceivedActions(strict: false)
+        #expect(store.state.selectedAsset?.usdPrice == 42_000)
+    }
+
     @MainActor
     private func makeStore(assets: [SwapAsset], searchTerm: String) -> TestStoreOf<SwapAndPay> {
         var state = SwapAndPay.State.initial
@@ -121,7 +137,7 @@ import ComposableArchitecture
         SwapAsset(provider: "near", chain: chainToken, token: chainToken, assetId: "\(chainToken)-id", usdPrice: 0, decimals: 18)
     }
 
-    private func swapAsset(chain: String, token: String) -> SwapAsset {
-        SwapAsset(provider: "near", chain: chain, token: token, assetId: "\(chain).\(token)-id", usdPrice: 1, decimals: 6)
+    private func swapAsset(chain: String, token: String, price: Decimal = 1) -> SwapAsset {
+        SwapAsset(provider: "near", chain: chain, token: token, assetId: "\(chain).\(token)-id", usdPrice: price, decimals: 6)
     }
 }
