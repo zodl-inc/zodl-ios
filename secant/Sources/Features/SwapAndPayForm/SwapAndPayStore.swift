@@ -60,6 +60,7 @@ struct SwapAndPay {
         var isMaxRequestInFlight = false
         var isNotAddressInAddressBook = false
         var isQuoteRequestInFlight = false
+        var isSwapAssetsRefreshInFlight = false
         var isQuotePresented = false
         var isQuoteToZecPresented = false
         var isQuoteUnavailablePresented = false
@@ -184,6 +185,7 @@ struct SwapAndPay {
 
         var isValidForm: Bool {
             selectedAsset != nil
+            && hasLivePrices
             && !address.isEmpty
             && amount > 0
             && !isInsufficientFunds
@@ -204,6 +206,8 @@ struct SwapAndPay {
             guard let zecAsset else {
                 return false
             }
+
+            guard hasLivePrices else { return false }
 
             // A masked spendable value arrives as zero, so every typed amount would exceed it and
             // the form would accuse the user of insufficient funds over a figure the SDK has
@@ -239,6 +243,8 @@ struct SwapAndPay {
                 return false
             }
 
+            guard hasLivePrices else { return false }
+
             // Same gate as `isInsufficientFunds` above: a masked spendable value reads as zero,
             // and the Pay screen renders this verdict directly (red field border, "You'll pay"
             // label), so it must wait for the value instead of judging on a figure the SDK has
@@ -257,6 +263,11 @@ struct SwapAndPay {
 
         var spendability: Spendability {
             walletBalancesState.spendability
+        }
+
+        var hasLivePrices: Bool {
+            guard let zecAsset, let selectedAsset else { return false }
+            return zecAsset.usdPrice > 0 && selectedAsset.usdPrice > 0
         }
 
         /// Max chip on the Swap (ZEC -> token) screen. There must be a spendable balance
@@ -360,6 +371,7 @@ struct SwapAndPay {
         case slippageSetConfirmTapped
         case slippageTapped
         case swapAssetsFailedWithRetry(Bool)
+        case swapAssetsRefreshFinished
         case swapAssetsLoaded(IdentifiedArrayOf<SwapAsset>)
         case swapQuoteLoaded(SwapQuote)
         case switchInputTapped
@@ -483,6 +495,7 @@ struct SwapAndPay {
             case .onDisappear:
                 // __LD2 TESTing
                 state.isMaxRequestInFlight = false
+                state.isSwapAssetsRefreshInFlight = false
                 return .merge(
                     .cancel(id: state.SwapAssetsCancelId),
                     .cancel(id: state.ABCancelId),
@@ -669,22 +682,37 @@ struct SwapAndPay {
                 return .none
 
             case .refreshSwapAssets:
-                if !state.swapAssets.isEmpty {
-                    return .send(.swapAssetsLoaded(state.swapAssets))
-                }
+                guard !state.isSwapAssetsRefreshInFlight else { return .none }
+                state.isSwapAssetsRefreshInFlight = true
+                let shouldLoadCache = state.swapAssets.isEmpty
                 return .run { send in
+                    if shouldLoadCache {
+                        let cachedAssets = swapAndPay.cachedSwapAssets()
+                        if !cachedAssets.isEmpty {
+                            await send(.swapAssetsLoaded(cachedAssets))
+                        }
+                    }
                     do {
                         let swapAssets = try await swapAndPay.swapAssets()
                         await send(.swapAssetsLoaded(swapAssets))
+                        await send(.swapAssetsRefreshFinished)
                     } catch let error as NetworkError {
                         await send(.swapAssetsFailedWithRetry(error.allowsRetry))
-                    } catch { }
-                    try? await mainQueue.sleep(for: .seconds(30))
-                    await send(.refreshSwapAssets)
+                    } catch {
+                        await send(.swapAssetsFailedWithRetry(false))
+                    }
                 }
                 .cancellable(id: state.SwapAssetsCancelId, cancelInFlight: true)
+
+            case .swapAssetsRefreshFinished:
+                state.isSwapAssetsRefreshInFlight = false
+                return .none
                 
             case .swapAssetsFailedWithRetry(let retry):
+                state.isSwapAssetsRefreshInFlight = false
+                if state.swapAssets.contains(where: { $0.usdPrice > 0 }) {
+                    return .none
+                }
                 if state.swapAssetFailedCounter < 3 {
                     state.swapAssetFailedCounter += 1
                     return .run { send in
@@ -703,14 +731,16 @@ struct SwapAndPay {
                 state.isSwapExperienceEnabled.toggle()
                 if !state.isInputInUsd {
                     if state.isSwapExperienceEnabled {
-                        if let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset, !state.amountText.isEmpty {
+                        if let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset,
+                            zecAsset.usdPrice > 0, selectedAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInToken = (state.amount * selectedAsset.usdPrice) / zecAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInToken.simplified)) {
                                 state.amountText = value
                             }
                         }
                     } else {
-                        if let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset, !state.amountText.isEmpty {
+                        if let zecAsset = state.zecAsset, let selectedAsset = state.selectedAsset,
+                            zecAsset.usdPrice > 0, selectedAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInToken = (state.amount * zecAsset.usdPrice) / selectedAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInToken.simplified)) {
                                 state.amountText = value
@@ -799,7 +829,7 @@ struct SwapAndPay {
             case .assetTapped(let asset):
                 state.selectedAsset = asset
                 state.assetSelectBinding = false
-                if !state.isSwapExperienceEnabled && !state.amountAssetText.isEmpty {
+                if !state.isSwapExperienceEnabled && state.hasLivePrices && !state.amountAssetText.isEmpty {
                     // when the asset changes, the values must recompute, triggering the recompute
                     let helper = state.amountAssetText
                     state.amountAssetText = ""
@@ -814,14 +844,14 @@ struct SwapAndPay {
                 state.isInputInUsd.toggle()
                 if state.isSwapExperienceEnabled {
                     if state.isInputInUsd {
-                        if let zecAsset = state.zecAsset, !state.amountText.isEmpty {
+                        if let zecAsset = state.zecAsset, zecAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInUsd = state.amount * zecAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd.simplified)) {
                                 state.amountText = value
                             }
                         }
                     } else {
-                        if let zecAsset = state.zecAsset, !state.amountText.isEmpty {
+                        if let zecAsset = state.zecAsset, zecAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInUsd = state.amount / zecAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd.simplified)) {
                                 state.amountText = value
@@ -830,14 +860,14 @@ struct SwapAndPay {
                     }
                 } else {
                     if state.isInputInUsd {
-                        if let selectedAsset = state.selectedAsset, !state.amountText.isEmpty {
+                        if let selectedAsset = state.selectedAsset, selectedAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInUsd = state.amount * selectedAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd.simplified)) {
                                 state.amountText = value
                             }
                         }
                     } else {
-                        if let selectedAsset = state.selectedAsset, !state.amountText.isEmpty {
+                        if let selectedAsset = state.selectedAsset, selectedAsset.usdPrice > 0, !state.amountText.isEmpty {
                             let amountInUsd = state.amount / selectedAsset.usdPrice
                             if let value = state.conversionFormatter.string(from: NSDecimalNumber(decimal: amountInUsd.simplified)) {
                                 state.amountText = value
@@ -974,6 +1004,9 @@ struct SwapAndPay {
                 return .none
 
             case .getQuote:
+                guard state.hasLivePrices else {
+                    return .none
+                }
                 guard let zecAsset = state.zecAsset else {
                     return .none
                 }
@@ -1119,7 +1152,11 @@ struct SwapAndPay {
             case .swapAssetsLoaded(let swapAssets):
                 state.swapAssetFailedWithRetry = nil
                 state.swapAssetFailedCounter = 0
-                state.zecAsset = swapAssets.first { $0.idWithoutProvider == Constants.zecAsset }
+                state.zecAsset = swapAssets.first { $0.idWithoutProvider == Constants.zecAsset } ?? state.zecAsset
+                if let selectedAssetId = state.selectedAsset?.id,
+                    let refreshedAsset = swapAssets[id: selectedAssetId] {
+                    state.selectedAsset = refreshedAsset
+                }
                 if state.selectedAsset == nil && state.selectedContact == nil {
                     if let lastUsedAssetId = userMetadataProvider.lastUsedAssetHistory().first {
                         state.selectedAsset = swapAssets.first { $0.id == lastUsedAssetId }
@@ -1493,6 +1530,8 @@ extension SwapAndPay.State {
             return conversionFormatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
         }
 
+        guard hasLivePrices else { return zeroPlaceholder }
+
         switch (isSwapExperienceEnabled, isInputInUsd) {
         case (true, false):
             return amountText
@@ -1514,6 +1553,8 @@ extension SwapAndPay.State {
         guard let selectedAsset else {
             return conversionFormatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
         }
+
+        guard hasLivePrices else { return zeroPlaceholder }
 
         switch (isSwapExperienceEnabled, isInputInUsd) {
         case (true, false):
@@ -1540,6 +1581,8 @@ extension SwapAndPay.State {
             return formatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
         }
 
+        guard hasLivePrices else { return zeroPlaceholder }
+
         switch (isSwapExperienceEnabled, isInputInUsd) {
         case (true, false):
             let amountInToken = (amount * zecAsset.usdPrice) / selectedAsset.usdPrice
@@ -1561,6 +1604,8 @@ extension SwapAndPay.State {
         guard let selectedAsset else {
             return conversionFormatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
         }
+
+        guard hasLivePrices else { return zeroPlaceholder }
 
         switch (isSwapExperienceEnabled, isInputInUsd) {
         case (true, false):
@@ -1586,7 +1631,7 @@ extension SwapAndPay.State {
         let amountInUsd: Decimal
         
         if isInputInUsd {
-            guard let zecAsset else {
+            guard let zecAsset, zecAsset.usdPrice > 0 else {
                 return conversionFormatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
             }
             
@@ -1615,6 +1660,8 @@ extension SwapAndPay.State {
         guard let selectedAsset else {
             return conversionFormatter.string(from: NSNumber(value: 0.0)) ?? "0.00"
         }
+
+        guard hasLivePrices else { return zeroPlaceholder }
         
         switch (isSwapExperienceEnabled, isInputInUsd) {
         case (true, false):
@@ -1897,12 +1944,14 @@ extension SwapAndPay.State {
             return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"
         }
 
+        guard hasLivePrices else { return "0" }
+
         let amountInToken = (assetAmount * selectedAsset.usdPrice) / zecAsset.usdPrice
         return conversionCrossPayFormatter.string(from: NSDecimalNumber(decimal: amountInToken.simplified)) ?? "\(amountInToken.simplified)"
     }
     
     var payAssetLabel: String {
-        guard let selectedAsset else {
+        guard let selectedAsset, selectedAsset.usdPrice > 0 else {
             return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"
         }
 
@@ -1957,6 +2006,8 @@ extension SwapAndPay.State {
             return nil
         }
 
+        guard hasLivePrices else { return nil }
+
         var amountInUsd: Decimal = 0
         
         switch (isSwapExperienceEnabled, isInputInUsd) {
@@ -1998,6 +2049,8 @@ extension SwapAndPay.State {
         guard let zecAsset else {
             return nil
         }
+
+        guard hasLivePrices else { return nil }
         
         let division = zecAsset.usdPrice / selectedAsset.usdPrice
         return conversionFormatter.string(from: NSDecimalNumber(decimal: division.simplified))

@@ -10,6 +10,24 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct Near1Click {
+    private struct CachedSwapAsset: Codable {
+        let chain: String
+        let token: String
+        let assetId: String
+        let decimals: Int
+
+        var swapAsset: SwapAsset {
+            SwapAsset(
+                provider: String(localizable: .swapNearProvider),
+                chain: chain,
+                token: token,
+                assetId: assetId,
+                usdPrice: 0,
+                decimals: decimals
+            )
+        }
+    }
+
     enum Constants {
         static let referral = "zodl"
         
@@ -51,6 +69,7 @@ struct Near1Click {
         static let timestamp = "timestamp"
         static let refundTo = "refundTo"
         static let depositedAmountFormatted = "depositedAmountFormatted"
+        static let assetMetadataCacheKey = "swap_asset_metadata_cache_v1"
 
         // params
         static let exactInput = "EXACT_INPUT"
@@ -106,6 +125,7 @@ struct Near1Click {
     }
     
     let submitDepositTxId: @Sendable (String, String) async throws -> Void
+    let cachedSwapAssets: @Sendable () -> IdentifiedArrayOf<SwapAsset>
     /// The curated offering — only the supported assets a user can select/swap.
     let swapAssets: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
     /// The full provider catalog — every asset, uncurated. For resolving/rendering
@@ -277,12 +297,35 @@ struct Near1Click {
 
         return chainAssets.removingDuplicates()
     }
+
+    static func cachedAssets(userDefaults: UserDefaultsClient) -> [SwapAsset] {
+        guard
+            let data = userDefaults.objectForKey(Constants.assetMetadataCacheKey) as? Data,
+            let assets = try? JSONDecoder().decode([CachedSwapAsset].self, from: data)
+        else {
+            return []
+        }
+        return assets.map(\.swapAsset)
+    }
+
+    static func persistAssetMetadata(_ assets: [SwapAsset], userDefaults: UserDefaultsClient) {
+        let metadata = assets.map {
+            CachedSwapAsset(
+                chain: $0.chain,
+                token: $0.token,
+                assetId: $0.assetId,
+                decimals: $0.decimals
+            )
+        }
+        guard let data = try? JSONEncoder().encode(metadata) else { return }
+        userDefaults.setValue(data, Constants.assetMetadataCacheKey)
+    }
 }
 
 extension Near1Click {
     static let liveValue = Self.live()
 
-    static func live() -> Self {
+    static func live(userDefaults: UserDefaultsClient = .live()) -> Self {
         Self(
             submitDepositTxId: { txId, depositAddress in
             let requestData = SwapSubmitHash(
@@ -304,11 +347,18 @@ extension Near1Click {
                 throw SwapAndPayClient.EndpointError.message("Submit deposit id: Cannot parse response")
             }
         },
+        cachedSwapAssets: {
+            IdentifiedArrayOf(uniqueElements: Near1Click.curated(Near1Click.cachedAssets(userDefaults: userDefaults)))
+        },
         swapAssets: {
-            IdentifiedArrayOf(uniqueElements: Near1Click.curated(try await Near1Click.fetchAllAssets()))
+            let assets = try await Near1Click.fetchAllAssets()
+            Near1Click.persistAssetMetadata(assets, userDefaults: userDefaults)
+            return IdentifiedArrayOf(uniqueElements: Near1Click.curated(assets))
         },
         swapAssetsCatalog: {
-            IdentifiedArrayOf(uniqueElements: try await Near1Click.fetchAllAssets())
+            let assets = try await Near1Click.fetchAllAssets()
+            Near1Click.persistAssetMetadata(assets, userDefaults: userDefaults)
+            return IdentifiedArrayOf(uniqueElements: assets)
         },
         quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
             // Deadline in ISO 8601 UTC format
