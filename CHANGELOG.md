@@ -7,6 +7,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.14.1] - 2026-09-17
+
 ### Changed
 - [MOB-1930] Wallets whose votes span several note bundles submit them in parallel and question by question, so one bundle's waiting for the chain no longer holds up the other, and the progress counter advances as each answer is fully cast instead of staying on the first answer until the end.
 
