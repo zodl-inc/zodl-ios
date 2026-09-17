@@ -14,6 +14,23 @@ import os
 
 private let slipstreamLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "co.ecc.zashi", category: "slipstream")
 
+extension SDKSynchronizerClient {
+    static func performLegacyTorRequest(
+        _ request: URLRequest,
+        _ requestOverTor: @escaping @Sendable (URLRequest, UInt8) async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+        try await requestOverTor(request, 3)
+    }
+
+    static func performBoundedTorGET(
+        _ request: URLRequest,
+        timeoutMilliseconds: UInt64,
+        _ requestOverTor: @escaping @Sendable (URLRequest, UInt8, UInt64) async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+        try await requestOverTor(request, 0, timeoutMilliseconds)
+    }
+}
+
 extension SDKSynchronizerClient: DependencyKey {
     static let liveValue: SDKSynchronizerClient = Self.live()
     
@@ -492,9 +509,23 @@ extension SDKSynchronizerClient: DependencyKey {
                 await synchronizer.isTorSuccessfullyInitialized()
             },
             httpRequestOverTor: { request in
-                // [#1755] slipstream: retryLimit passed explicitly — protocol default arguments aren't
-                // callable through the `any Synchronizer` existential.
-                try await synchronizer.httpRequestOverTor(for: request, retryLimit: 3)
+                // [#1755] Keep the established broadcast/general HTTP policy. Protocol default
+                // arguments are not callable through the `any Synchronizer` existential.
+                try await SDKSynchronizerClient.performLegacyTorRequest(request) { request, retryLimit in
+                    try await synchronizer.httpRequestOverTor(for: request, retryLimit: retryLimit)
+                }
+            },
+            boundedTorGET: { request, timeoutMilliseconds in
+                try await SDKSynchronizerClient.performBoundedTorGET(
+                    request,
+                    timeoutMilliseconds: timeoutMilliseconds
+                ) { request, retryLimit, timeoutMilliseconds in
+                    try await synchronizer.httpGetOverTor(
+                        for: request,
+                        retryLimit: retryLimit,
+                        timeoutMilliseconds: timeoutMilliseconds
+                    )
+                }
             },
             debugDatabaseSql: { query in
                 synchronizer.debugDatabase(sql: query)

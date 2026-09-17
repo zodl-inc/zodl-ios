@@ -324,6 +324,7 @@ struct VotingCoordFlow {
         case voteSubmissionStepUpdated(roundId: String, step: VoteSubmissionStep)
         case batchVoteSubmitted(roundId: String, proposalId: UInt32, choice: VoteChoice)
         case batchVoteFailed(roundId: String, proposalId: UInt32, error: String)
+        case submissionAttemptSettled(roundId: String, attemptId: UUID, successCount: Int)
         case batchSubmissionCompleted(roundId: String, successCount: Int, failCount: Int)
         case batchAuthorizationFailed(roundId: String, error: String)
         case batchSubmissionFailed(roundId: String, error: String, submittedCount: Int, totalCount: Int)
@@ -354,6 +355,8 @@ struct VotingCoordFlow {
         case delegationRejected(roundId: String)
     }
 
+    @Dependency(\.votingSubmissionTiming)
+    var votingSubmissionTiming
     @Dependency(\.backgroundTask) var backgroundTask
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.keystoneHandler) var keystoneHandler

@@ -91,9 +91,17 @@ struct VotingAPIClient {
     /// Returns the list of server URLs that accepted the share (empty if all failed).
     var resubmitShare: @Sendable (_ payload: SharePayload, _ excludeURLs: [String]) async throws -> [String]
     var fetchProposalTally: @Sendable (_ roundId: Data, _ proposalId: UInt32) async throws -> TallyResult
-    /// Query the Cosmos SDK TX endpoint for a confirmed transaction and its ABCI events.
-    /// Returns nil if the TX is not yet in a block (404 or network error).
-    var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?
+    /// Query a vote server's TX endpoint for a confirmed transaction and its ABCI events.
+    /// `preferredServerURL` is the server that accepted the broadcast: it is asked first, its 404
+    /// means the transaction is not mined yet and ends the attempt, and only a server that cannot
+    /// answer at all falls through to the remaining configured servers. Pass nil to walk every
+    /// server (recovery probes). `remainingBudget` clips every direct request in a bounded poll;
+    /// pass nil for an explicit one-shot recovery walk. Returns nil if the TX is not yet in a block.
+    var fetchTxConfirmation: @Sendable (
+        _ txHash: String,
+        _ preferredServerURL: String?,
+        _ remainingBudget: Duration?
+    ) async throws -> TxConfirmation?
     /// Kick off a one-shot background health sweep of the configured vote
     /// servers. Returns as soon as the sweep is spawned; never waits for probe
     /// results. Submission effects fire this unconditionally as an advisory

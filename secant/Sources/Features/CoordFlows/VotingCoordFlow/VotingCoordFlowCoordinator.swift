@@ -42,6 +42,7 @@ extension VotingCoordFlow {
                     state.path.removeLast()
                 }
                 state.allRounds = []
+                cancelSubmissionAttempts(state)
                 state.roundCache.removeAll()
                 state.voteRecords.removeAll()
                 state.zodlEndorsedRoundIds = []
@@ -136,10 +137,21 @@ extension VotingCoordFlow {
                     let config = try await votingAPI.fetchServiceConfig(override)
                     await send(.serviceConfigLoaded(config))
                 } catch: { error, send in
+                    if error is CancellationError
+                        || (error as? URLError)?.code == URLError.Code.cancelled {
+                        return
+                    }
                     LoggerProxy.error("Service config unavailable: \(error)")
                     let message = (error as? LocalizedError)?.errorDescription
                         ?? error.localizedDescription
-                    await send(.configUnsupported(message))
+                    if case VotingConfigError.staticConfigFetchFailed = error {
+                        await send(.roundsLoadFailed)
+                    } else if let configError = error as? VotingConfigError,
+                              VotingConfigMirrorWalk.shouldTryNextDynamicMirror(configError) {
+                        await send(.roundsLoadFailed)
+                    } else {
+                        await send(.configUnsupported(message))
+                    }
                 }
 
             case .serviceConfigLoaded(let config):
@@ -164,6 +176,10 @@ extension VotingCoordFlow {
                     do {
                         let rounds = try await votingAPI.fetchAllRounds()
                         await send(.allRoundsLoaded(rounds))
+                    } catch is CancellationError {
+                        return
+                    } catch let error as URLError where error.code == .cancelled {
+                        return
                     } catch {
                         LoggerProxy.error("Failed to fetch rounds: \(error)")
                         await send(.roundsLoadFailed)
@@ -237,6 +253,10 @@ extension VotingCoordFlow {
                     do {
                         let ids = try await votingAPI.fetchZodlEndorsedRoundIds()
                         await send(.zodlEndorsementsLoaded(ids))
+                    } catch is CancellationError {
+                        return
+                    } catch let error as URLError where error.code == .cancelled {
+                        return
                     } catch {
                         LoggerProxy.error("Failed to fetch zodl endorsements: \(error)")
                         await send(.zodlEndorsementsFailed)
@@ -267,13 +287,12 @@ extension VotingCoordFlow {
                 return .none
 
             case .zodlEndorsementsFailed:
-                // The fetch failed; treat as empty endorsement set. If we're
-                // still waiting on the round-derived decision, fall through
-                // to noRounds rather than spinning on the loading skeleton.
-                // On custom config the decision was already made at
-                // `.allRoundsLoaded`, so this is a no-op there.
+                // A failed default-source endorsement request is part of poll
+                // discovery, so surface the same recoverable sheet as a round
+                // list failure while the initial loading screen is visible.
                 if state.rootScreen == .loading {
-                    state.rootScreen = visibleRoundCount(state: state) == 0 ? .noRounds : .pollsList
+                    state.pollsLoadError = true
+                    state.rootScreen = .pollsList
                 }
                 return .none
 
@@ -296,6 +315,7 @@ extension VotingCoordFlow {
                 // MARK: - User actions
 
             case .dismissFlow:
+                cancelSubmissionAttempts(state)
                 state.roundCache.removeAll()
                 state.path.removeAll()
                 state.pendingBatchSubmission = false
@@ -589,6 +609,20 @@ extension VotingCoordFlow {
 
             case let .batchVoteFailed(roundId, proposalId, error):
                 return reduceBatchVoteFailed(&state, roundId: roundId, proposalId: proposalId, error: error)
+
+            case let .submissionAttemptSettled(roundId, attemptId, successCount):
+                guard let session = state.roundCache[roundId],
+                      let attempt = session.submissionAttempt, attempt.id == attemptId
+                else { return .none }
+                switch session.batchSubmissionStatus {
+                case .completed:
+                    attempt.finish(.completed)
+                case .submissionFailed:
+                    attempt.finish(successCount > 0 ? .partial : .failed)
+                default:
+                    attempt.finish(.failed)
+                }
+                return .none
 
             case let .batchSubmissionCompleted(roundId, successCount, failCount):
                 return reduceBatchSubmissionCompleted(
@@ -1091,6 +1125,7 @@ extension VotingCoordFlow {
                             guard try await Self.prepareFreshRound(
                                 roundId: roundId,
                                 existingState: existingState,
+                                existingBundleCount: existingBundleCount,
                                 session: session,
                                 snapshotHeight: snapshotHeight,
                                 walletDbPath: walletDbPath,
@@ -1107,6 +1142,7 @@ extension VotingCoordFlow {
                         guard try await Self.prepareFreshRound(
                             roundId: roundId,
                             existingState: existingState,
+                            existingBundleCount: existingBundleCount,
                             session: session,
                             snapshotHeight: snapshotHeight,
                             walletDbPath: walletDbPath,
@@ -1672,6 +1708,7 @@ extension VotingCoordFlow {
 
     private func resetAccountScopedVotingState(_ state: inout State) {
         state.path.removeAll()
+        cancelSubmissionAttempts(state)
         state.roundCache.removeAll()
         state.voteRecords.removeAll()
         state.allRounds.removeAll()
@@ -1868,7 +1905,10 @@ extension VotingCoordFlow {
             || (isResume && isBatchSubmitting(session))
         else { return .none }
         state.pendingBatchSubmission = false
-        guard let activeSession = activeSession(in: state, roundId: roundId) else { return .none }
+        guard let activeSession = activeSession(in: state, roundId: roundId) else {
+            session.submissionAttempt?.finish(.failed)
+            return .none
+        }
         // Partial ballots are intentional — see `reduceSubmitAllDraftsTapped`.
 
         // Keystone: route into the per-bundle QR signing screen first.
@@ -1886,11 +1926,16 @@ extension VotingCoordFlow {
             return .send(.startDelegationProof(roundId: roundId))
         }
 
+        let attemptPath: VotingSubmissionAttempt.Path = state.isKeystoneUser ? .keystone : .software
+        let attempt = beginSubmissionAttempt(&state, roundId: roundId, path: attemptPath)
+        let timing = votingSubmissionTiming
+
         // Zashi only: if a precompute is in flight, mark submission as
         // pending and let `.delegationPrecomputeCompleted` resume.
         if !state.isKeystoneUser
             && !isDelegationReady(session)
             && session.isDelegationPrecomputeInFlight {
+            attempt.enter(.delegation)
             state.pendingBatchSubmission = true
             mutateSession(&state, roundId: roundId) { roundSession in
                 roundSession.batchSubmissionStatus = .authorizing
@@ -1925,7 +1970,10 @@ extension VotingCoordFlow {
                 session.votes[proposalId].map { (key: proposalId, value: $0) }
             }
         let drafts = session.draftVotes.sorted { $0.key < $1.key } + recoveryDrafts
-        guard !drafts.isEmpty else { return .none }
+        guard !drafts.isEmpty else {
+            attempt.finish(.failed)
+            return .none
+        }
         let totalCount = drafts.count
         let delegationDone = isDelegationReady(session)
         let delegationPrepared = session.delegationPrecomputeStatus == .ready
@@ -1952,6 +2000,7 @@ extension VotingCoordFlow {
             let pirLayout = state.serviceConfig?.pirLayout,
             let accountId = state.selectedWalletAccount?.id
         else {
+            attempt.finish(.failed)
             LoggerProxy.error("serviceConfig/activeSession/selectedAccount unexpectedly nil during vote submission; aborting")
             return .none
         }
@@ -1972,6 +2021,7 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingAPI, votingCrypto, mnemonic, walletStorage, pirLayout] send in
+            defer { attempt.finishIfCancelled() }
             // MOB-1810: refresh operator health in the background so the
             // share-resubmission walk's ordering reflects the present rather
             // than poll entry. Fire-and-forget — it overlaps the delegation
@@ -1997,6 +2047,7 @@ extension VotingCoordFlow {
 
             // --- Delegation (ZKP #1) — run inline if not already done ---
             if !delegationDone {
+                attempt.enter(.delegation)
                 do {
                     // Fail closed before any FFI call when the dynamic config predates
                     // `pir_layout.poly_len` (see `missingPolyLenConfigError`). Votes on an
@@ -2009,6 +2060,7 @@ extension VotingCoordFlow {
                     try await Self.runDelegationPipeline(
                         roundId: roundId,
                         cachedNotes: cachedNotes,
+                        bundleCount: bundleCount,
                         senderSeed: senderSeed,
                         hotkeySeed: hotkeySeed,
                         networkId: networkId,
@@ -2027,6 +2079,7 @@ extension VotingCoordFlow {
                         send: send
                     )
                 } catch {
+                    attempt.finish(error: error)
                     LoggerProxy.error("Delegation pipeline failed (raw): \(error.localizedDescription)")
                     await send(.batchAuthorizationFailed(
                         roundId: roundId,
@@ -2035,6 +2088,8 @@ extension VotingCoordFlow {
                     return
                 }
             }
+
+            attempt.enter(.votes)
 
             // Transition from .authorizing to .submitting now that delegation is done.
             await send(.batchSubmissionProgress(
@@ -2059,6 +2114,8 @@ extension VotingCoordFlow {
             // all of those bundles' shares were accepted. The pool is the live helper-server set
             // those deliveries share: one delivery pruning a dead server spares every later one
             // from retrying it.
+            let submissionStarted = timing.now()
+            let traceContext = "\(VotingSubmissionTrace.context(roundId: roundId)) attempt=\(attempt.id.uuidString)"
             let deliveryWindow = VotingHelperDeliveryWindow<ShareDelegationResult>()
             let serverPool = VotingShareServerPool(urls: voteServerURLs)
 
@@ -2084,6 +2141,8 @@ extension VotingCoordFlow {
                 deliveryWindow: deliveryWindow,
                 tracker: tracker,
                 treeQueue: VotingSerialQueue(),
+                trace: VotingSubmissionTrace.Totals(),
+                timing: timing,
                 votingCrypto: votingCrypto,
                 votingAPI: votingAPI
             )
@@ -2108,19 +2167,30 @@ extension VotingCoordFlow {
                 // ends its walk, and the `catch` awaits that same cancel so the effect can never
                 // return while a delivery is still writing share records.
                 settlement = try await withTaskCancellationHandler {
-                    await Self.runBundlePipelines(plan.workByBundle, context: context, send: send)
+                    try await VotingSubmissionTrace.measure("votes", traceContext, totals: context.trace, sink: timing.sink, now: timing.now) {
+                        await Self.runBundlePipelines(plan.workByBundle, context: context, send: send)
+                    }
                     // A pipeline reports a cancellation back rather than throwing it, so that one
                     // bundle stopping never tears the group down while another sits between a
                     // broadcast and its confirmation. The effect's own cancellation is raised here
                     // instead, once: a cancelled batch must not mark its remaining questions failed
                     // and must not report itself complete.
                     try Task.checkCancellation()
-                    return try await Self.settleDeliveries(
-                        roundId: roundId,
-                        awaiting: await tracker.awaitingDeliveries(),
-                        deliveryWindow: deliveryWindow,
-                        send: send
-                    )
+                    attempt.enter(.sharesJoin)
+                    return try await VotingSubmissionTrace.measure(
+                        "sharesJoin",
+                        traceContext,
+                        totals: context.trace,
+                        sink: timing.sink,
+                        now: timing.now
+                    ) {
+                        try await Self.settleDeliveries(
+                            roundId: roundId,
+                            awaiting: await tracker.awaitingDeliveries(),
+                            deliveryWindow: deliveryWindow,
+                            send: send
+                        )
+                    }
                 } onCancel: {
                     Task { await deliveryWindow.cancelAndDrain() }
                 }
@@ -2129,13 +2199,26 @@ extension VotingCoordFlow {
                 throw error
             }
 
+            let summary = await VotingSubmissionTrace.submissionSummary(
+                context: traceContext,
+                bundleCount: bundleCount,
+                questionCount: totalCount,
+                totalMilliseconds: VotingSubmissionTrace.milliseconds(since: submissionStarted, until: timing.now()),
+                totals: context.trace
+            )
+            timing.sink(summary)
             let walk = await tracker.tallies()
             await send(.batchSubmissionCompleted(
                 roundId: roundId,
                 successCount: walk.successCount + settlement.successCount,
                 failCount: walk.failCount + settlement.failCount
             ))
+            // Resolve the diagnostic outcome after the reducer's persistence/completion guards.
+            await send(.submissionAttemptSettled(
+                roundId: roundId, attemptId: attempt.id, successCount: walk.successCount + settlement.successCount
+            ))
         } catch: { error, send in
+            attempt.finish(error: error)
             LoggerProxy.error("Batch submission failed at top level: \(error)")
             await send(.batchSubmissionFailed(
                 roundId: roundId,
@@ -2145,6 +2228,26 @@ extension VotingCoordFlow {
             ))
         }
         .cancellable(id: cancelSubmissionId, cancelInFlight: true)
+    }
+
+    private func beginSubmissionAttempt(
+        _ state: inout State,
+        roundId: String,
+        path: VotingSubmissionAttempt.Path,
+        scope: VotingSubmissionAttempt.Scope = .submission
+    ) -> VotingSubmissionAttempt {
+        if let existing = state.roundCache[roundId]?.submissionAttempt, !existing.isFinished { return existing }
+        let session = state.roundCache[roundId]
+        let prepared = session?.delegationProofStatus == .complete || session?.delegationPrecomputeStatus == .ready
+        let attempt = VotingSubmissionAttempt(roundId: roundId, path: path, scope: scope, prepared: prepared, client: votingSubmissionTiming)
+        state.roundCache[roundId]?.submissionAttempt = attempt
+        return attempt
+    }
+
+    private func cancelSubmissionAttempts(_ state: State) {
+        for session in state.roundCache.values {
+            session.submissionAttempt?.finish(.cancelled)
+        }
     }
 
     // MARK: - Delegation precompute
@@ -2292,60 +2395,67 @@ extension VotingCoordFlow {
             bundleNotes[0].ufvkStr,
             networkId
         )
+        let traceContext = VotingSubmissionTrace.context(roundId: roundId, bundleIndex: bundleIndex)
 
-        _ = try await votingCrypto.buildVotingPczt(
-            roundId,
-            bundleIndex,
-            bundleNotes,
-            emptySenderSeed,
-            hotkeySeed,
-            networkId,
-            accountIndex,
-            roundName,
-            orchardFvk,
-            seedFingerprint
-        )
+        try await VotingSubmissionTrace.measure("pczt", traceContext) {
+            _ = try await votingCrypto.buildVotingPczt(
+                roundId,
+                bundleIndex,
+                bundleNotes,
+                emptySenderSeed,
+                hotkeySeed,
+                networkId,
+                accountIndex,
+                roundName,
+                orchardFvk,
+                seedFingerprint
+            )
+        }
 
-        let pirResult = try await votingCrypto.precomputeDelegationPir(
-            roundId,
-            bundleIndex,
-            bundleNotes,
-            pirEndpoints,
-            expectedSnapshotHeight,
-            networkId,
-            pirLayout.pirDepth,
-            pirLayout.tier0Layers,
-            pirLayout.tier1Layers,
-            polyLen
-        )
+        let pirResult = try await VotingSubmissionTrace.measure("pir", traceContext) {
+            try await votingCrypto.precomputeDelegationPir(
+                roundId,
+                bundleIndex,
+                bundleNotes,
+                pirEndpoints,
+                expectedSnapshotHeight,
+                networkId,
+                pirLayout.pirDepth,
+                pirLayout.tier0Layers,
+                pirLayout.tier1Layers,
+                polyLen
+            )
+        }
 
-        for try await event in votingCrypto.precomputeDelegationProof(
-            roundId,
-            bundleIndex,
-            bundleNotes,
-            orchardFvk,
-            hotkeySeed,
-            seedFingerprint,
-            accountIndex,
-            roundName,
-            pirEndpoints,
-            expectedSnapshotHeight,
-            pirLayout.pirDepth,
-            pirLayout.tier0Layers,
-            pirLayout.tier1Layers,
-            polyLen
-        ) {
-            switch event {
-            case let .progress(progress):
-                await send(.delegationPrecomputeProgress(
-                    roundId: roundId,
-                    progress: (Double(bundleIndex) + progress) / Double(bundleCount)
-                ))
-            case let .completed(proof):
-                LoggerProxy.info(
-                    "Speculative ZKP #1 bundle \(bundleIndex + 1)/\(bundleCount) COMPLETE — " +
-                        "proof size: \(proof.count) bytes"
-                )
+        try await VotingSubmissionTrace.measure("specprove", traceContext) {
+            for try await event in votingCrypto.precomputeDelegationProof(
+                roundId,
+                bundleIndex,
+                bundleNotes,
+                orchardFvk,
+                hotkeySeed,
+                seedFingerprint,
+                accountIndex,
+                roundName,
+                pirEndpoints,
+                expectedSnapshotHeight,
+                pirLayout.pirDepth,
+                pirLayout.tier0Layers,
+                pirLayout.tier1Layers,
+                polyLen
+            ) {
+                switch event {
+                case let .progress(progress):
+                    await send(.delegationPrecomputeProgress(
+                        roundId: roundId,
+                        progress: (Double(bundleIndex) + progress) / Double(bundleCount)
+                    ))
+                case let .completed(proof):
+                    LoggerProxy.info(
+                        "Speculative ZKP #1 bundle \(bundleIndex + 1)/\(bundleCount) COMPLETE — " +
+                            "proof size: \(proof.count) bytes"
+                    )
+                }
             }
         }
 
@@ -2705,13 +2815,9 @@ extension VotingCoordFlow {
                 votedAt: Date(),
                 votingWeight: session.votingWeight,
                 proposalCount: submittedVoteCount,
-                eligibleVotingWeight: state.isKeystoneUser
-                    ? completedEligibleVotingWeight(session)
-                    : nil,
-                submittedBundleCount: state.isKeystoneUser ? session.bundleCount : nil,
-                totalBundleCount: state.isKeystoneUser
-                    ? completedEligibleBundleCount(session)
-                    : nil
+                eligibleVotingWeight: completedEligibleVotingWeight(session),
+                submittedBundleCount: session.bundleCount,
+                totalBundleCount: completedEligibleBundleCount(session)
             )
             do {
                 try Voting.persistCompletedRound(record, roundId: roundId, account: account)
@@ -2783,6 +2889,8 @@ extension VotingCoordFlow {
     }
 
     func reduceRetryBatchSubmission(_ state: inout State, roundId: String) -> Effect<Action> {
+        state.roundCache[roundId]?.submissionAttempt?.finish(.cancelled)
+        state.roundCache[roundId]?.submissionAttempt = nil
         // "Try again" on both the authorizationFailed and submissionFailed
         // votingSheets (ConfirmSubmissionView) sends .retryBatchSubmission, which lands here.
         mutateSession(&state, roundId: roundId) { roundSession in
@@ -3040,7 +3148,12 @@ extension VotingCoordFlow {
     // swiftlint:disable:next function_body_length
     func reduceKeystoneAllBundlesSigned(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
+        // The signed-input event can be delivered twice. It must not restart automated work.
+        guard session.submissionAttempt?.isFinished != false else { return .none }
+        let attemptScope: VotingSubmissionAttempt.Scope = state.pendingBatchSubmission ? .submission : .delegation
+        let attempt = beginSubmissionAttempt(&state, roundId: roundId, path: .keystone, scope: attemptScope)
         guard let activeSession = state.allRounds.first(where: { $0.id == roundId })?.session else {
+            attempt.finish(.failed)
             return .send(.delegationProofFailed(
                 roundId: roundId,
                 error: VotingFlowError.missingActiveSession.localizedDescription
@@ -3060,6 +3173,7 @@ extension VotingCoordFlow {
             let pirLayout = state.serviceConfig?.pirLayout,
             let accountId = state.selectedWalletAccount?.id
         else {
+            attempt.finish(.failed)
             LoggerProxy.error("serviceConfig/selectedAccount unexpectedly nil during Keystone delegation proof")
             return .none
         }
@@ -3067,6 +3181,7 @@ extension VotingCoordFlow {
         // `pir_layout.poly_len` (see `missingPolyLenConfigError`).
         guard let polyLen = pirLayout.polyLen else {
             LoggerProxy.error("Keystone delegation proof refused: dynamic config lacks pir_layout.poly_len")
+            attempt.finish(.failed)
             return .send(.delegationProofFailed(
                 roundId: roundId,
                 error: VotingErrorMapper.userFriendlyMessage(from: Self.missingPolyLenConfigError.localizedDescription)
@@ -3080,6 +3195,7 @@ extension VotingCoordFlow {
         guard bundleCount > 0,
               Int(bundleCount) <= noteChunks.count
         else {
+            attempt.finish(.failed)
             return .send(.delegationProofFailed(
                 roundId: roundId,
                 error: "Keystone signature state is inconsistent."
@@ -3087,11 +3203,13 @@ extension VotingCoordFlow {
         }
 
         return .run { [backgroundTask, votingCrypto, votingAPI, mnemonic, walletStorage, pirLayout] send in
+            defer { attempt.finishIfCancelled() }
             let bgTaskId = await backgroundTask.beginTask("Keystone delegation proof")
             do {
                 let senderPhrase = try walletStorage.exportWallet().seedPhrase.value()
                 let senderSeed = try mnemonic.toSeed(senderPhrase)
                 let hotkeySeed = try [UInt8](walletStorage.exportVotingHotkey(accountId).storedSecret.value())
+                attempt.enter(.delegation)
                 let normalizedInitialCompletedBundles = initiallyCompletedBundles.filter { $0 < bundleCount }
                 var completedBundles = normalizedInitialCompletedBundles
                 for idx: UInt32 in 0..<bundleCount {
@@ -3175,6 +3293,7 @@ extension VotingCoordFlow {
                     try await votingCrypto.storeDelegationTxHash(roundId, bundleIdx, delegTxResult.txHash)
                     let vanPosition = try await Self.requireKeystoneDelegationVanPosition(
                         txHash: delegTxResult.txHash,
+                        preferredServerURL: delegTxResult.code == 0 ? delegTxResult.acceptedByServerURL : nil,
                         votingAPI: votingAPI
                     )
                     try await votingCrypto.storeVanPosition(roundId, bundleIdx, vanPosition)
@@ -3185,12 +3304,14 @@ extension VotingCoordFlow {
                     ))
                 }
                 await send(.delegationProofCompleted(roundId: roundId))
+                attempt.finishStandaloneDelegation()
             } catch {
                 await backgroundTask.endTask(bgTaskId)
                 throw error
             }
             await backgroundTask.endTask(bgTaskId)
         } catch: { error, send in
+            attempt.finish(error: error)
             await send(.delegationProofFailed(
                 roundId: roundId,
                 error: VotingErrorMapper.userFriendlyMessage(from: error.localizedDescription)
@@ -3395,7 +3516,7 @@ extension VotingCoordFlow {
         guard case let .present(txHash) = try? await votingCrypto.getDelegationTxHash(roundId, bundleIndex) else {
             return nil
         }
-        if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash),
+        if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash, nil, nil),
             let vanPosition = delegationVanPosition(from: confirmation) {
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             return vanPosition
@@ -3405,24 +3526,26 @@ extension VotingCoordFlow {
 
     static func requireKeystoneDelegationVanPosition(
         txHash: String,
+        preferredServerURL: String?,
         votingAPI: VotingAPIClient
     ) async throws -> UInt32 {
-        let deadline = Date().addingTimeInterval(90)
-        repeat {
-            if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash) {
-                guard confirmation.code == 0 else {
-                    throw VotingFlowError.delegationTxFailed(code: confirmation.code, log: confirmation.log)
-                }
-                guard let vanPosition = delegationVanPosition(from: confirmation) else {
-                    throw VotingFlowError.delegationTxFailed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
-                }
-                return vanPosition
-            }
-            guard Date() < deadline else {
-                throw VotingFlowError.delegationTxFailed(code: 0, log: "")
-            }
-            try await Task.sleep(for: .seconds(2))
-        } while true
+        let pollResult = try await VotingTxConfirmationPoller.wait(
+            preferredServerURL: preferredServerURL,
+            timeout: .seconds(90),
+            clock: ContinuousClock()
+        ) { preferredServer, remainingBudget in
+            try await votingAPI.fetchTxConfirmation(txHash, preferredServer, remainingBudget)
+        }
+        guard let confirmation = pollResult.confirmation else {
+            throw VotingFlowError.delegationTxFailed(code: 0, log: "")
+        }
+        guard confirmation.code == 0 else {
+            throw VotingFlowError.delegationTxFailed(code: confirmation.code, log: confirmation.log)
+        }
+        guard let vanPosition = delegationVanPosition(from: confirmation) else {
+            throw VotingFlowError.delegationTxFailed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
+        }
+        return vanPosition
     }
 
     func reduceDelegationProofProgress(
@@ -3701,6 +3824,7 @@ extension VotingCoordFlow {
     private static func prepareFreshRound(
         roundId: String,
         existingState: RoundStateInfo?,
+        existingBundleCount: UInt32,
         session: VotingSession,
         snapshotHeight: UInt64,
         walletDbPath: String,
@@ -3724,9 +3848,12 @@ extension VotingCoordFlow {
         case .reusable:
             break
         case .parametersChanged:
-            // Reached only when the round has no bundles yet (a round with
-            // bundles takes the `shouldResumePersistedRound` path instead), so
-            // there is no `van_comm_rand` here to protect by hard-failing.
+            // A round with bundle rows can reach this classification too (a
+            // trimmed round abandoned before its first delegation broadcast
+            // comes back as a fresh round); its rows are adopted rather than
+            // rebuilt, and the delegation proof re-validates them against the
+            // current notes, so there is nothing here to protect by
+            // hard-failing.
             // Reuse the row rather than making the round permanently
             // unopenable: every value it feeds into a proof or submission is
             // re-verified independently downstream, so a stale row fails
@@ -3738,9 +3865,14 @@ extension VotingCoordFlow {
 
         try await votingCrypto.clearRecoveryState(roundId)
 
-        let setupResult = try await votingCrypto.setupBundles(roundId, notes)
-        let bundleCount = setupResult.bundleCount
-        let eligibleWeight = setupResult.eligibleWeight
+        let setup = try await resolveFreshBundleSetup(
+            roundId: roundId,
+            notes: notes,
+            existingBundleCount: existingBundleCount,
+            votingCrypto: votingCrypto
+        )
+        let bundleCount = setup.keepCount
+        let eligibleWeight = setup.keptWeight
         guard bundleCount > 0, eligibleWeight > 0 else {
             let heldZatoshi = notes.reduce(UInt64(0)) { $0 + $1.value }
             await send(.ineligibleForRound(roundId: roundId, heldZatoshi: heldZatoshi))
@@ -3773,6 +3905,91 @@ extension VotingCoordFlow {
             delegationReady: false
         ))
         return true
+    }
+
+    /// The bundle setup a fresh round starts from. Rows that already exist belong to a round that
+    /// was set up, possibly trimmed, and then abandoned before its first delegation broadcast:
+    /// re-running `setupBundles` over them would fail, because the crate insists that the planned
+    /// and the stored bundle counts match, so the stored prefix is adopted as it is and the
+    /// delegation proof re-validates it against the current notes before anything is proved.
+    /// Without rows the bundles are created and the privacy trim runs. A result with no bundles
+    /// or no weight means the wallet is not eligible.
+    static func resolveFreshBundleSetup(
+        roundId: String,
+        notes: [NoteInfo],
+        existingBundleCount: UInt32,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> VotingBundleTrim {
+        if existingBundleCount > 0 {
+            return VotingBundleTrim(
+                keepCount: existingBundleCount,
+                keptWeight: votingWeight(for: notes, bundleCount: existingBundleCount),
+                trimmedBundleCount: 0,
+                trimmedWeight: 0
+            )
+        }
+        let setupResult = try await votingCrypto.setupBundles(roundId, notes)
+        guard setupResult.bundleCount > 0, setupResult.eligibleWeight > 0 else {
+            return VotingBundleTrim(keepCount: 0, keptWeight: 0, trimmedBundleCount: 0, trimmedWeight: 0)
+        }
+        return try await applyBundleTrim(
+            roundId: roundId,
+            notes: notes,
+            setupResult: setupResult,
+            votingCrypto: votingCrypto
+        )
+    }
+
+    /// Applies the privacy trim to a freshly built bundle setup: computes how many of the
+    /// value-descending bundles to keep, deletes the tail rows through the crate's skipped-suffix
+    /// path (the one the Keystone skip flow already uses, so the kept prefix keeps exactly the
+    /// composition it was built with) and returns what the session should record. Nothing is
+    /// trimmed when the app's bundling and the stored bundle count disagree: the raw weights would
+    /// then describe a different layout than the rows.
+    static func applyBundleTrim(
+        roundId: String,
+        notes: [NoteInfo],
+        setupResult: BundleSetupResult,
+        votingCrypto: VotingCryptoClient
+    ) async throws -> VotingBundleTrim {
+        let untrimmed = VotingBundleTrim(
+            keepCount: setupResult.bundleCount,
+            keptWeight: setupResult.eligibleWeight,
+            trimmedBundleCount: 0,
+            trimmedWeight: 0
+        )
+        let rawWeights = notes.smartBundles().bundles.map { bundle in
+            bundle.reduce(UInt64(0)) { $0 + $1.value }
+        }
+        guard rawWeights.count == Int(setupResult.bundleCount) else {
+            LoggerProxy.warn(
+                """
+                Voting round \(roundId): the app bundles these notes into \(rawWeights.count) bundles but \
+                \(setupResult.bundleCount) rows are stored; skipping the privacy trim
+                """
+            )
+            return untrimmed
+        }
+        let keepCount = VotingBundleTrimPolicy.keepCount(rawWeights: rawWeights)
+        guard keepCount < rawWeights.count else {
+            return untrimmed
+        }
+
+        let keptWeight = rawWeights.prefix(keepCount).reduce(UInt64(0)) { $0 + quantizeWeight($1) }
+        let trimmedWeight = rawWeights.dropFirst(keepCount).reduce(UInt64(0)) { $0 + quantizeWeight($1) }
+        LoggerProxy.info(
+            """
+            Trimming voting round \(roundId) from \(rawWeights.count) to \(keepCount) bundles \
+            (\(trimmedWeight) zatoshi of voting weight dropped)
+            """
+        )
+        try await votingCrypto.deleteSkippedBundles(roundId, UInt32(keepCount))
+        return VotingBundleTrim(
+            keepCount: UInt32(keepCount),
+            keptWeight: keptWeight,
+            trimmedBundleCount: UInt32(rawWeights.count - keepCount),
+            trimmedWeight: trimmedWeight
+        )
     }
 
     /// Completes only deterministic tree-state and witness work for a persisted
@@ -3907,7 +4124,7 @@ extension VotingCoordFlow {
         }
 
         for attempt in 0..<maxRecoveryAttempts {
-            if let confirmation = try await votingAPI.fetchTxConfirmation(txHash) {
+            if let confirmation = try await votingAPI.fetchTxConfirmation(txHash, nil, nil) {
                 return confirmation.code == 0
             }
             if attempt + 1 < maxRecoveryAttempts {
@@ -3935,12 +4152,14 @@ extension VotingCoordFlow {
         votingCrypto: VotingCryptoClient,
         votingAPI: VotingAPIClient,
         send: Send<Action>,
-        roundIdAction: () -> String
+        roundIdAction: () -> String,
+        trace: VotingSubmissionTrace.Totals? = nil,
+        timing: VotingSubmissionTimingClient = .liveValue
     ) async throws -> VotingShareDeliveryIdentity? {
         guard case let .present(cachedTxHash)? = try? await votingCrypto.getVoteTxHash(roundId, bundleIndex, proposalId) else {
             return nil
         }
-        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash),
+        guard let confirmation = try? await votingAPI.fetchTxConfirmation(cachedTxHash, nil, nil),
               confirmation.code == 0 else {
             return nil
         }
@@ -4006,7 +4225,9 @@ extension VotingCoordFlow {
             submitAtDeadline: submitAtDeadline,
             serverPool: serverPool,
             votingCrypto: votingCrypto,
-            votingAPI: votingAPI
+            votingAPI: votingAPI,
+            trace: trace,
+            timing: timing
         )
         return identity
     }
@@ -4136,21 +4357,28 @@ extension VotingCoordFlow {
         submitAtDeadline: Double?,
         serverPool: VotingShareServerPool,
         votingCrypto: VotingCryptoClient,
-        votingAPI: VotingAPIClient
+        votingAPI: VotingAPIClient,
+        trace: VotingSubmissionTrace.Totals? = nil,
+        timing: VotingSubmissionTimingClient = .liveValue
     ) async throws {
+        let traceContext = VotingSubmissionTrace.context(
+            roundId: identity.roundId, bundleIndex: identity.bundleIndex, proposalId: identity.proposalId
+        )
         try await deliveryWindow.enqueue(identity: identity) {
-            try await Self.deliverShares(
-                roundId: identity.roundId,
-                bundleIndex: identity.bundleIndex,
-                proposalId: identity.proposalId,
-                bundleJson: bundleJson,
-                shareIndices: shareIndices,
-                voteCommitmentTreePosition: voteCommitmentTreePosition,
-                submitAtDeadline: submitAtDeadline,
-                serverPool: serverPool,
-                votingCrypto: votingCrypto,
-                votingAPI: votingAPI
-            )
+            try await VotingSubmissionTrace.measure("deliver", traceContext, totals: trace, sink: timing.sink, now: timing.now) {
+                try await Self.deliverShares(
+                    roundId: identity.roundId,
+                    bundleIndex: identity.bundleIndex,
+                    proposalId: identity.proposalId,
+                    bundleJson: bundleJson,
+                    shareIndices: shareIndices,
+                    voteCommitmentTreePosition: voteCommitmentTreePosition,
+                    submitAtDeadline: submitAtDeadline,
+                    serverPool: serverPool,
+                    votingCrypto: votingCrypto,
+                    votingAPI: votingAPI
+                )
+            }
         }
     }
 
@@ -4260,6 +4488,9 @@ extension VotingCoordFlow {
         /// Serializes each pipeline's vote-tree sync together with the witness it anchors. See
         /// `voteBundleWork`.
         let treeQueue: VotingSerialQueue
+        /// Per-step totals across the bundle pipelines, for the summary line at the end of the batch.
+        let trace: VotingSubmissionTrace.Totals
+        let timing: VotingSubmissionTimingClient
         let votingCrypto: VotingCryptoClient
         let votingAPI: VotingAPIClient
     }
@@ -4465,6 +4696,8 @@ extension VotingCoordFlow {
         let proposalId = work.proposalId
         let votingCrypto = context.votingCrypto
         let votingAPI = context.votingAPI
+        let trace = context.trace
+        let traceContext = VotingSubmissionTrace.context(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId)
 
         await send(.voteSubmissionBundleStarted(roundId: roundId, bundleIndex: bundleIndex))
         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .preparingProof))
@@ -4482,7 +4715,9 @@ extension VotingCoordFlow {
             votingCrypto: votingCrypto,
             votingAPI: votingAPI,
             send: send,
-            roundIdAction: { roundId }
+            roundIdAction: { roundId },
+            trace: trace,
+            timing: context.timing
         ) {
             return recoveredDelivery
         }
@@ -4497,14 +4732,18 @@ extension VotingCoordFlow {
         // inside the pair, which is exactly where the sibling would slip in. Both calls are cheap
         // next to proving and chain waits, so the design loses nothing.
         let vanWitness = try await context.treeQueue.run {
-            let anchorHeight = try await Self.syncVoteTree(
-                roundId: roundId,
-                chainNodeUrl: context.chainNodeUrl,
-                hotkeyStoredSecret: Data(context.hotkeySeed),
-                networkId: context.networkId,
-                votingCrypto: votingCrypto
-            )
-            return try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
+            let anchorHeight = try await VotingSubmissionTrace.measure("sync", traceContext, totals: trace) {
+                try await Self.syncVoteTree(
+                    roundId: roundId,
+                    chainNodeUrl: context.chainNodeUrl,
+                    hotkeyStoredSecret: Data(context.hotkeySeed),
+                    networkId: context.networkId,
+                    votingCrypto: votingCrypto
+                )
+            }
+            return try await VotingSubmissionTrace.measure("witness", traceContext, totals: trace) {
+                try await votingCrypto.generateVanWitness(roundId, bundleIndex, anchorHeight)
+            }
         }
 
         // The serialized region ends at the witness on purpose. `commitVote` takes the witness by
@@ -4515,11 +4754,13 @@ extension VotingCoordFlow {
         // touch the shared tree client, so a sibling's sync landing between this witness and this
         // commit cannot change what gets committed. Keeping the commit outside the queue lets the
         // sibling pipeline sync and take its own witness while this one signs.
-        let (builtBundle, castVoteSig) = try await votingCrypto.commitVote(
-            roundId, bundleIndex, context.hotkeySeed, proposalId, work.choice,
-            work.numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight,
-            context.singleShare
-        )
+        let (builtBundle, castVoteSig) = try await VotingSubmissionTrace.measure("prove", traceContext, totals: trace) {
+            try await votingCrypto.commitVote(
+                roundId, bundleIndex, context.hotkeySeed, proposalId, work.choice,
+                work.numOptions, 0, vanWitness.authPath, vanWitness.position, vanWitness.anchorHeight,
+                context.singleShare
+            )
+        }
 
         // The pool can only be seen empty at a question boundary, so this question's proof was
         // unavoidable once the walk was past that check — the broadcast is not. A vote confirmed on
@@ -4536,9 +4777,11 @@ extension VotingCoordFlow {
         // delivery for seconds, and that delivery may be the one that empties the pool. The API
         // runs this closure inside the guard right before each POST attempt.
         let serverPool = context.serverPool
-        let txResult = try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig) {
-            if await serverPool.isExhausted {
-                throw ShareDelegationError.noReachableVoteServers
+        let txResult = try await VotingSubmissionTrace.measure("broadcast", traceContext, totals: trace) {
+            try await votingAPI.submitVoteCommitment(builtBundle, castVoteSig) {
+                if await serverPool.isExhausted {
+                    throw ShareDelegationError.noReachableVoteServers
+                }
             }
         }
         guard try await Self.isAcceptedVotingTransaction(txResult, votingAPI: votingAPI) else {
@@ -4546,22 +4789,37 @@ extension VotingCoordFlow {
         }
         try await votingCrypto.storeVoteTxHash(roundId, bundleIndex, proposalId, txResult.txHash)
 
-        let voteDeadline = Date().addingTimeInterval(90)
-        var voteConfirmation: TxConfirmation?
-        repeat {
-            voteConfirmation = try? await votingAPI.fetchTxConfirmation(txResult.txHash)
-            if voteConfirmation != nil { break }
-            try await Task.sleep(for: .seconds(2))
-        } while Date() < voteDeadline
-
-        guard let voteConfirmation, voteConfirmation.code == 0 else {
-            throw VotingFlowError.voteCommitmentTxFailed(
-                code: voteConfirmation?.code ?? 0,
-                log: voteConfirmation?.log ?? ""
-            )
+        let acceptingServer = txResult.code == 0 ? txResult.acceptedByServerURL : nil
+        let confirmStarted = context.timing.now()
+        let voteConfirmation: TxConfirmation
+        do {
+            let pollResult = try await VotingTxConfirmationPoller.wait(
+                preferredServerURL: acceptingServer,
+                timeout: .seconds(90),
+                clock: ContinuousClock()
+            ) { preferredServer, remainingBudget in
+                try await votingAPI.fetchTxConfirmation(txResult.txHash, preferredServer, remainingBudget)
+            }
+            let candidate = pollResult.confirmation
+            guard let candidate, candidate.code == 0 else {
+                throw VotingFlowError.voteCommitmentTxFailed(code: candidate?.code ?? 0, log: candidate?.log ?? "")
+            }
+            voteConfirmation = candidate
+            let confirmMs = VotingSubmissionTrace.milliseconds(since: confirmStarted, until: context.timing.now())
+            context.timing.sink(VotingSubmissionTrace.endLine(
+                step: "confirm", context: traceContext, milliseconds: confirmMs, detail: "attempts=\(pollResult.attempts)"
+            ))
+            await trace.add("confirm", confirmMs)
+        } catch {
+            let confirmMs = VotingSubmissionTrace.milliseconds(since: confirmStarted, until: context.timing.now())
+            context.timing.sink(VotingSubmissionTrace.failedLine(step: "confirm", context: traceContext, milliseconds: confirmMs, error: error))
+            await trace.add("confirm", confirmMs)
+            throw error
         }
 
-        try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
+        try await VotingSubmissionTrace.measure("record", traceContext, totals: trace) {
+            try await votingCrypto.markVoteSubmitted(roundId, bundleIndex, proposalId, txResult.txHash)
+        }
 
         let eventsPayload: [[String: Any]] = voteConfirmation.events.map { event in
             [
@@ -4574,9 +4832,11 @@ extension VotingCoordFlow {
         let eventsData = try JSONSerialization.data(withJSONObject: eventsPayload)
         let eventsJson = String(decoding: eventsData, as: UTF8.self)
 
-        let confirmation = try await votingCrypto.confirmVoteSubmission(
-            roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
-        )
+        let confirmation = try await VotingSubmissionTrace.measure("record", traceContext, totals: trace) {
+            try await votingCrypto.confirmVoteSubmission(
+                roundId, bundleIndex, proposalId, txResult.txHash, eventsJson
+            )
+        }
 
         await send(.voteSubmissionStepUpdated(roundId: roundId, step: .sendingShares))
         guard let stored = try await votingCrypto.getCommitmentBundleJson(roundId, bundleIndex, proposalId) else {
@@ -4603,7 +4863,9 @@ extension VotingCoordFlow {
             submitAtDeadline: context.submitAtDeadline,
             serverPool: context.serverPool,
             votingCrypto: votingCrypto,
-            votingAPI: votingAPI
+            votingAPI: votingAPI,
+            trace: trace,
+            timing: context.timing
         )
         return identity
     }
@@ -4678,6 +4940,7 @@ extension VotingCoordFlow {
     static func runDelegationPipeline(
         roundId: String,
         cachedNotes: [NoteInfo],
+        bundleCount: UInt32,
         senderSeed: [UInt8],
         hotkeySeed: [UInt8],
         networkId: UInt32,
@@ -4695,11 +4958,18 @@ extension VotingCoordFlow {
         votingAPI: VotingAPIClient,
         send: Send<Action>,
         delegationConfirmationTimeout: TimeInterval = 90,
-        delegationConfirmationRetryDelay: Duration = .seconds(2)
+        delegationConfirmationRetryDelay: Duration = .milliseconds(750)
     ) async throws {
         let noteChunks = cachedNotes.smartBundles().bundles
-        let bundleCount = UInt32(noteChunks.count)
+        guard Int(bundleCount) <= noteChunks.count else {
+            throw VotingFlowError.inconsistentBundleSetup(
+                bundleCount: bundleCount,
+                noteChunkCount: noteChunks.count
+            )
+        }
         var completedBundles = Set<UInt32>()
+        let delegationStarted = ContinuousClock().now
+        let trace = VotingSubmissionTrace.Totals()
         for idx: UInt32 in 0..<bundleCount {
             // Single probe (timeout 0): a cached hash that never propagated —
             // an earlier attempt died before confirmation — must fall through
@@ -4726,6 +4996,7 @@ extension VotingCoordFlow {
             }
             let bundleNotes = noteChunks[Int(bundleIndex)]
             LoggerProxy.info("Delegation bundle \(bundleIndex + 1)/\(bundleCount) (\(bundleNotes.count) notes)")
+            let traceContext = VotingSubmissionTrace.context(roundId: roundId, bundleIndex: bundleIndex)
 
             let registration: DelegationRegistration
             // The cache probe is now two calls: signing succeeds once the bundle's PCZT setup
@@ -4770,47 +5041,57 @@ extension VotingCoordFlow {
                     let orchardFvk = try seedFingerprint.map { _ in
                         try votingCrypto.extractOrchardFvkFromUfvk(bundleNotes[0].ufvkStr, networkId)
                     }
-                    _ = try await votingCrypto.buildVotingPczt(
-                        roundId, bundleIndex, bundleNotes,
-                        senderSeed, hotkeySeed, networkId, accountIndex, roundName,
-                        orchardFvk, seedFingerprint
-                    )
-                }
-
-                for try await event in votingCrypto.buildAndProveDelegation(
-                    roundId,
-                    bundleIndex,
-                    bundleNotes,
-                    senderSeed,
-                    hotkeySeed,
-                    networkId,
-                    accountIndex,
-                    roundName,
-                    pirEndpoints,
-                    expectedSnapshotHeight,
-                    pirDepth,
-                    tier0Layers,
-                    tier1Layers,
-                    polyLen
-                ) {
-                    switch event {
-                    case .progress(let progress):
-                        let overallProgress = (Double(bundleIndex) + progress) / Double(bundleCount)
-                        LoggerProxy.debug("ZKP #1 bundle \(bundleIndex) progress: \(Int(progress * 100))%")
-                        await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
-                    case .completed(let proof):
-                        LoggerProxy.info("ZKP #1 bundle \(bundleIndex) COMPLETE — proof size: \(proof.count) bytes")
+                    try await VotingSubmissionTrace.measure("pczt", traceContext, totals: trace) {
+                        _ = try await votingCrypto.buildVotingPczt(
+                            roundId, bundleIndex, bundleNotes,
+                            senderSeed, hotkeySeed, networkId, accountIndex, roundName,
+                            orchardFvk, seedFingerprint
+                        )
                     }
                 }
 
-                let signed = try await votingCrypto.signDelegationRequest(
-                    roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
-                )
-                registration = try await votingCrypto.getDelegationSubmission(
-                    roundId, bundleIndex, signed.signature, signed.sighash
-                )
+                try await VotingSubmissionTrace.measure("prove", traceContext, totals: trace) {
+                    for try await event in votingCrypto.buildAndProveDelegation(
+                        roundId,
+                        bundleIndex,
+                        bundleNotes,
+                        senderSeed,
+                        hotkeySeed,
+                        networkId,
+                        accountIndex,
+                        roundName,
+                        pirEndpoints,
+                        expectedSnapshotHeight,
+                        pirDepth,
+                        tier0Layers,
+                        tier1Layers,
+                        polyLen
+                    ) {
+                        switch event {
+                        case .progress(let progress):
+                            let overallProgress = (Double(bundleIndex) + progress) / Double(bundleCount)
+                            LoggerProxy.debug("ZKP #1 bundle \(bundleIndex) progress: \(Int(progress * 100))%")
+                            await send(.delegationProofProgress(roundId: roundId, progress: overallProgress))
+                        case .completed(let proof):
+                            LoggerProxy.info("ZKP #1 bundle \(bundleIndex) COMPLETE — proof size: \(proof.count) bytes")
+                        }
+                    }
+                }
+
+                let signed = try await VotingSubmissionTrace.measure("sign", traceContext, totals: trace) {
+                    try await votingCrypto.signDelegationRequest(
+                        roundId, bundleIndex, senderSeed, hotkeySeed, networkId, accountIndex, roundName
+                    )
+                }
+                registration = try await VotingSubmissionTrace.measure("assemble", traceContext, totals: trace) {
+                    try await votingCrypto.getDelegationSubmission(
+                        roundId, bundleIndex, signed.signature, signed.sighash
+                    )
+                }
             }
-            let delegTxResult = try await votingAPI.submitDelegation(registration)
+            let delegTxResult = try await VotingSubmissionTrace.measure("broadcast", traceContext, totals: trace) {
+                try await votingAPI.submitDelegation(registration)
+            }
             guard try await isAcceptedVotingTransaction(delegTxResult, votingAPI: votingAPI) else {
                 throw VotingFlowError.delegationTxFailed(code: delegTxResult.code, log: delegTxResult.log)
             }
@@ -4818,16 +5099,27 @@ extension VotingCoordFlow {
 
             try await votingCrypto.storeDelegationTxHash(roundId, bundleIndex, delegTxResult.txHash)
 
-            let vanPosition = try await requireDelegationVanPosition(
-                txHash: delegTxResult.txHash,
-                votingAPI: votingAPI,
-                confirmationTimeout: delegationConfirmationTimeout,
-                retryDelay: delegationConfirmationRetryDelay
-            )
+            let vanPosition = try await VotingSubmissionTrace.measure("confirm", traceContext, totals: trace) {
+                try await requireDelegationVanPosition(
+                    txHash: delegTxResult.txHash,
+                    preferredServerURL: delegTxResult.code == 0 ? delegTxResult.acceptedByServerURL : nil,
+                    votingAPI: votingAPI,
+                    confirmationTimeout: delegationConfirmationTimeout,
+                    retryDelay: delegationConfirmationRetryDelay
+                )
+            }
             try await votingCrypto.storeVanPosition(roundId, bundleIndex, vanPosition)
             LoggerProxy.debug("VAN position stored for bundle \(bundleIndex): \(vanPosition)")
         }
 
+        let stepTotals = await trace.summary(["pczt", "prove", "sign", "assemble", "broadcast", "confirm"], suffix: "WorkMs")
+        VotingSubmissionTrace.info(
+            """
+            Voting delegation work summary \(VotingSubmissionTrace.context(roundId: roundId)) scope=delegationPipeline \
+            bundles=\(bundleCount) delegationWallMs=\(VotingSubmissionTrace.milliseconds(since: delegationStarted)) \
+            \(stepTotals)
+            """
+        )
         await send(.delegationProofCompleted(roundId: roundId))
     }
 
@@ -4948,12 +5240,14 @@ extension VotingCoordFlow {
 
     private static func requireDelegationVanPosition(
         txHash: String,
+        preferredServerURL: String? = nil,
         votingAPI: VotingAPIClient,
         confirmationTimeout: TimeInterval = 90,
-        retryDelay: Duration = .seconds(2)
+        retryDelay: Duration = .milliseconds(750)
     ) async throws -> UInt32 {
         switch try await delegationTxConfirmationStatus(
             txHash: txHash,
+            preferredServerURL: preferredServerURL,
             votingAPI: votingAPI,
             confirmationTimeout: confirmationTimeout,
             retryDelay: retryDelay
@@ -4971,29 +5265,42 @@ extension VotingCoordFlow {
 
     private static func delegationTxConfirmationStatus(
         txHash: String,
+        preferredServerURL: String? = nil,
         votingAPI: VotingAPIClient,
         confirmationTimeout: TimeInterval = 90,
-        retryDelay: Duration = .seconds(2)
+        retryDelay: Duration = .milliseconds(750)
     ) async throws -> DelegationTxConfirmationStatus {
-        let deadline = Date().addingTimeInterval(confirmationTimeout)
-
-        repeat {
-            if let confirmation = try? await votingAPI.fetchTxConfirmation(txHash) {
-                guard confirmation.code == 0 else {
-                    return .failed(code: confirmation.code, log: confirmation.log)
-                }
-                guard let vanPosition = delegationVanPosition(from: confirmation) else {
-                    return .failed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
-                }
-                return .confirmed(vanPosition: vanPosition)
+        let confirmation: TxConfirmation?
+        if confirmationTimeout <= 0 {
+            do {
+                confirmation = try await votingAPI.fetchTxConfirmation(txHash, preferredServerURL, nil)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                confirmation = nil
             }
-
-            guard Date() < deadline else {
-                return .notFound
+        } else {
+            let pollResult = try await VotingTxConfirmationPoller.wait(
+                preferredServerURL: preferredServerURL,
+                timeout: .seconds(confirmationTimeout),
+                retryDelay: retryDelay,
+                clock: ContinuousClock()
+            ) { preferredServer, remainingBudget in
+                try await votingAPI.fetchTxConfirmation(txHash, preferredServer, remainingBudget)
             }
+            confirmation = pollResult.confirmation
+        }
 
-            try await Task.sleep(for: retryDelay)
-        } while true
+        guard let confirmation else {
+            return .notFound
+        }
+        guard confirmation.code == 0 else {
+            return .failed(code: confirmation.code, log: confirmation.log)
+        }
+        guard let vanPosition = delegationVanPosition(from: confirmation) else {
+            return .failed(code: 0, log: "missing or unrecoverable delegate_vote leaf_index")
+        }
+        return .confirmed(vanPosition: vanPosition)
     }
 }
 
@@ -5275,8 +5582,9 @@ enum DelegationRegistrationProbe: Equatable, Sendable {
 // MARK: - Round resume decision
 
 /// What an interrupted round's local delegation state is worth when the pipeline re-enters
-/// it. `.freshRound` is the only outcome that destroys local rows, and it is reached only
-/// when no probe found a registration and nothing local hints that one might exist.
+/// it. `.freshRound` is reached only when no probe found a registration and nothing local
+/// hints that one might exist; it clears the recovery state and adopts any bundle rows that
+/// already exist instead of rebuilding them.
 enum RoundResumeDecision: Equatable, Sendable {
     /// At least one bundle is confirmed registered on-chain — reuse exactly those.
     case reuseRecovered(recoveredIndices: Set<UInt32>)
