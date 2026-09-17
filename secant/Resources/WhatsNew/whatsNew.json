@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.14.1",
+            "date": "17-09-2026",
+            "timestamp": 1789643406,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved vote submission progress in coinholder polls."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.14.0",
             "date": "16-09-2026",
             "timestamp": 1789562143,
