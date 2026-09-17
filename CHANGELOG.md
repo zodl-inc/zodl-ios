@@ -7,13 +7,13 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-09-15
+
 ### Fixed
 
 - [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
 - [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
 - [MOB-1965] The coinholder polling confirmation screen now shows the omitted-weight disclosure in Spanish when the app uses Spanish.
-
-## [3.14.0] - 2026-09-15
 
 ### Changed
 
