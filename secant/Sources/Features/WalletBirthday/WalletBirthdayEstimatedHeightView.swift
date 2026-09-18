@@ -33,15 +33,10 @@ struct WalletBirthdayEstimatedHeightView: View {
                     .padding(.bottom, 8)
 
                 if store.isResyncFlow {
-                    if let attrText = try? AttributedString(
-                        markdown: String(localizable: .resyncEstimatedBlockHeightInfo(store.selectedDateString, store.estimatedHeightString)),
-                        including: \.zashiApp
-                    ) {
-                        ZashiText(withAttributedString: attrText, colorScheme: colorScheme)
-                            .zFont(size: 14, style: Design.Text.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 56)
-                    }
+                    ZashiText(markdown: String(localizable: .resyncEstimatedBlockHeightInfo(store.selectedDateString, store.estimatedHeightString)), colorScheme: colorScheme)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 56)
                 } else {
                     Text(localizable: .restoreWalletBirthdayEstimatedInfo)
                         .zFont(size: 14, style: Design.Text.primary)
