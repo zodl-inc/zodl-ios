@@ -1145,7 +1145,15 @@ extension VotingCoordFlow {
                     .cancel(id: cancelPipelineId),
                     .run { [votingCrypto] send in
                         await votingCrypto.closeRoundSession(roundId)
-                        await send(.pendingShareRoundsLoaded(try await votingCrypto.pendingShareRounds()))
+                        // This round only. The sidecar answers for every round
+                        // that still owes helper work, and the rest of them are
+                        // none of this tap's business: one whose session an
+                        // earlier route change closed would be reopened here
+                        // for tracking only, with no hotkey bound, and the next
+                        // tap on it would take the cache-hit path and drive a
+                        // round on a session that cannot sign.
+                        let pending = try await votingCrypto.pendingShareRounds()
+                        await send(.pendingShareRoundsLoaded(pending.filter { $0.roundId == roundId }))
                     } catch: { error, _ in
                         LoggerProxy.warn("Reading the rounds that still owe helper shares failed: \(error)")
                     }
@@ -2711,8 +2719,10 @@ extension VotingCoordFlow {
     /// `applyBundleTotals` fills in. The two dropped values are the raw value
     /// of those notes, not their bundle-quantized voting weight; they are
     /// summed with `eligibleWeight` as the crate reports all three,
-    /// unconverted. A round with neither leaves the eligible pair equal to the
-    /// live one, which is every first setup.
+    /// unconverted. A layout with neither writes no eligible pair of its own,
+    /// so the round keeps whatever it already had -- for a session that has
+    /// never carried one, the kept-only default, which is what says nothing
+    /// was left out.
     func applyBundleLayout(_ state: inout State, roundId: String, layout: VotingBundleLayout) {
         applyBundleTotals(&state, roundId: roundId, weight: layout.eligibleWeight, bundleCount: layout.bundleCount)
         guard layout.privacyTrimDroppedBundles > 0 || layout.skippedSuffixBundles > 0 else { return }

@@ -60,13 +60,18 @@ extension VotingTestSuite {
 
     // MARK: - Rounds and service config
 
+    /// A second round id, for the cases where one round's behaviour has to be
+    /// told apart from every other round's.
+    var otherRoundId: String { String(repeating: "bb", count: 32) }
+
     func votingSession(
         status: SessionStatus = .active,
         proposalCount: Int = 1,
-        voteEndsIn: TimeInterval = 60
+        voteEndsIn: TimeInterval = 60,
+        roundIdByte: UInt8 = 0xAA
     ) -> VotingSession {
         VotingSession(
-            voteRoundId: Data(repeating: 0xAA, count: 32),
+            voteRoundId: Data(repeating: roundIdByte, count: 32),
             snapshotHeight: 123,
             snapshotBlockhash: Data(repeating: 0x01, count: 32),
             proposalsHash: Data(repeating: 0x02, count: 32),

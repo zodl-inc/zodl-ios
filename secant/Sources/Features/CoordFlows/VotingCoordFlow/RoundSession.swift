@@ -216,9 +216,9 @@ struct RoundSession: Equatable {
     var castBallotIntents: [VotingBallotIntent] = []
 
     /// Whether this entry into the round has already asked the session to
-    /// persist its bundle plan. One attempt per entry: a plan that still says
-    /// `needsBundleSetup` after a setup answered is a disagreement to surface,
-    /// not a loop to run.
+    /// persist its bundle plan. One attempt per entry: a plan that still
+    /// reports no bundle rows after a setup answered is a disagreement to
+    /// surface, not a loop to run.
     var didAttemptBundleSetup: Bool = false
 
     /// How many times a run has been re-scheduled for this round after stopping

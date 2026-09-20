@@ -828,6 +828,10 @@ extension VotingSharedStateSuites {
 
             let session = store.state.roundCache[self.activeRoundId]
             #expect(recorder.events().filter { $0 == "setupBundles" }.count == 1)
+            // One plan read: the restore applies the layout and stops. Re-planning
+            // here would open the round a second time, which is what keeps the
+            // restore a different action from the first setup.
+            #expect(recorder.events().filter { $0 == "sessionPlan" }.count == 1)
             // The live pair stays what this round delegates...
             #expect(session?.bundleCount == 2)
             #expect(session?.votingWeight == 50_000_000)
@@ -1247,11 +1251,22 @@ extension VotingSharedStateSuites {
             let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
             var initialState = sessionFlowState()
             initialState.walletId = Self.pendingWalletId
+            // A second round the sidecar also says owes helper work, listed and
+            // configured exactly like the tapped one, so the only thing that can
+            // keep it out of this tap's sweep is the tap deciding it is not its
+            // business.
+            initialState.allRounds.append(
+                RoundListItem(
+                    roundNumber: 2,
+                    session: votingSession(proposalCount: 2, voteEndsIn: 60, roundIdByte: 0xBB)
+                )
+            )
             initialState.serviceConfig = Self.makeServiceConfig(
                 voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
-                rounds: [self.activeRoundId: Self.roundEntry()]
+                rounds: [self.activeRoundId: Self.roundEntry(), self.otherRoundId: Self.roundEntry()]
             )
             let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let otherPending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: otherRoundId)
             let store = Store(initialState: initialState) {
                 VotingCoordFlow()
             } withDependencies: {
@@ -1264,7 +1279,7 @@ extension VotingSharedStateSuites {
                 // which is what the sweep the gate asks for reads.
                 $0.votingCrypto.pendingShareRounds = {
                     recorder.record("pendingShareRounds")
-                    return [pending]
+                    return [pending, otherPending]
                 }
                 $0.votingCrypto.trackShares = { _, _ in
                     recorder.record("trackShares")
@@ -1284,7 +1299,11 @@ extension VotingSharedStateSuites {
             #expect(events.drop { $0 != "closeRoundSession" }.contains("pendingShareRounds"))
             // Two opens: the entry the gate closed, and the tracking-only session
             // the sweep put back. A round left on the open list would short-
-            // circuit the sweep instead of reopening anything.
+            // circuit the sweep instead of reopening anything. A third open
+            // would be the other round, which this tap must leave alone: a
+            // tracking-only session binds no hotkey, and the next tap on that
+            // round would take the cache-hit path onto a session that cannot
+            // sign.
             #expect(events.filter { $0 == "openRoundSession" }.count == 2)
             #expect(store.state.openRoundSessionIds == [self.activeRoundId])
             // The reopened session is tracking-only: no plan is read on it, so it
