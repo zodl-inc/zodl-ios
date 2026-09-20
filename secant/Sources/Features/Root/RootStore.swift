@@ -967,9 +967,14 @@ extension Root {
         // history, vote records, and stored TX hashes from the
         // previous wallet don't leak across the reset boundary. The
         // file is recreated empty on the next voting flow entry.
-        let votingDbURL = databaseFiles.documentsDirectory()
-            .appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
+        let documents = databaseFiles.documentsDirectory()
+        let votingDbURL = documents.appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
         try? FileManager.default.removeItem(at: votingDbURL)
+        // And the copies of that database that builds 3.10.2 to 3.14.1 kept
+        // beside it, and the delegation secrets 3.12.0 to 3.14.1 kept with
+        // them. Nothing writes either now and nothing else removes them, so
+        // they would otherwise outlive the wallet they belong to.
+        VotingCoordFlow.removePreservedVotingRecoveryFiles(inDocuments: documents)
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which
         // resetAccount() below removes. This sweep catches any stale

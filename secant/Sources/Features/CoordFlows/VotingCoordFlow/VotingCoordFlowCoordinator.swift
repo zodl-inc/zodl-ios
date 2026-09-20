@@ -1719,6 +1719,36 @@ extension VotingCoordFlow {
     /// The voting sidecar database, beside the wallet's own databases.
     static let votingSidecarFileName = "voting.sqlite3"
 
+    /// A directory of preserved copies of the voting database, written in
+    /// Documents by builds 3.10.2 to 3.14.1.
+    static let preservedVotingDatabaseDirectoryName = "voting_recovery"
+
+    /// A file of delegation blinding factors and transaction hashes, written
+    /// in Documents beside the sidecar by builds 3.12.0 to 3.14.1.
+    static let preservedDelegationSecretsFileName = "voting-delegation-escrow.json"
+
+    /// Removes what those builds preserved.
+    ///
+    /// They kept a copy of the voting database and the delegation secrets that
+    /// open a submission left in flight, so a wiped round could be recovered.
+    /// Nothing writes either any more, but what was written is still on disk,
+    /// and it is a wallet's own database contents and secrets: a reset that
+    /// left it behind would hand the next wallet on the device the previous
+    /// one's. Deliberately only on a reset -- until then those bytes are the
+    /// one remaining record of a submission an older build never saw
+    /// confirmed. The whole directory goes, because the write-ahead log and
+    /// shared-memory sidecars and the capture marker live inside it. A wallet
+    /// that never ran one of those builds has neither, which is not an error.
+    static func removePreservedVotingRecoveryFiles(inDocuments documents: URL) {
+        let preservedDatabases = documents.appendingPathComponent(
+            preservedVotingDatabaseDirectoryName,
+            isDirectory: true
+        )
+        try? FileManager.default.removeItem(at: preservedDatabases)
+        let preservedSecrets = documents.appendingPathComponent(preservedDelegationSecretsFileName)
+        try? FileManager.default.removeItem(at: preservedSecrets)
+    }
+
     /// `.startActiveRoundPipeline` handler. Opens the round's session and asks
     /// it what the round owes.
     ///

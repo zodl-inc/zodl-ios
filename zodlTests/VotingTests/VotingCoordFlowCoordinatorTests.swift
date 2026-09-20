@@ -1946,6 +1946,60 @@ extension VotingSharedStateSuites {
             #expect(FileManager.default.fileExists(atPath: sidecar.path))
         }
 
+        /// Older builds kept a copy of the voting database and an escrow of the
+        /// delegation secrets in Documents, and the released notes promised both
+        /// are removed when the wallet is reset. Nothing writes them any more, but
+        /// what those builds wrote is still on disk -- a wallet's database copies,
+        /// blinding factors and transaction hashes -- and this reset is the only
+        /// thing that removes it, so it still has to.
+        @MainActor
+        @Test func aWalletResetRemovesWhatOlderBuildsPreservedForRecovery() async throws {
+            let documents = try Self.temporaryDocumentsDirectory()
+            defer { try? FileManager.default.removeItem(at: documents) }
+            let preserved = documents.appendingPathComponent("voting_recovery", isDirectory: true)
+            try FileManager.default.createDirectory(at: preserved, withIntermediateDirectories: true)
+            // The whole preserved set, sidecars and capture marker included: it is
+            // the directory that goes, not one file inside it.
+            try Data([0x01]).write(to: preserved.appendingPathComponent("voting.sqlite3"))
+            try Data([0x02]).write(to: preserved.appendingPathComponent("voting.sqlite3-wal"))
+            try Data([0x03]).write(to: preserved.appendingPathComponent("captured-20260101-000000.txt"))
+            let escrow = documents.appendingPathComponent("voting-delegation-escrow.json")
+            try Data(#"{"version":1,"entries":[]}"#.utf8).write(to: escrow)
+
+            await Self.runDeviceScopedWalletClear(documents: documents, gate: VotingTeardown())
+
+            #expect(!FileManager.default.fileExists(atPath: preserved.path))
+            #expect(!FileManager.default.fileExists(atPath: escrow.path))
+
+            // A wallet that never ran one of those builds has neither, and a reset
+            // must not fail because there was nothing to remove.
+            await Self.runDeviceScopedWalletClear(documents: documents, gate: VotingTeardown())
+
+            #expect(!FileManager.default.fileExists(atPath: preserved.path))
+            #expect(!FileManager.default.fileExists(atPath: escrow.path))
+        }
+
+        /// Root's own side of a wallet reset, pointed at a Documents directory of
+        /// this test's own. `closeVotingDatabase` is a no-op here: what is under
+        /// test is what the clear deletes, not the drain that precedes it.
+        private static func runDeviceScopedWalletClear(documents: URL, gate: VotingTeardown) async {
+            var userStoredPreferences = UserPreferencesStorageClient()
+            userStoredPreferences.removeAll = { }
+            await withDependencies {
+                $0.votingCrypto.beginWalletTeardown = { gate.begin() }
+                $0.votingCrypto.endWalletTeardown = { gate.end() }
+                $0.databaseFiles.documentsDirectory = { documents }
+            } operation: {
+                await Root.clearDeviceScopedWalletState(
+                    userDefaults: .noOp,
+                    flexaHandler: .noOp,
+                    userStoredPreferences: userStoredPreferences,
+                    readTransactionsStorage: .noOp,
+                    closeVotingDatabase: { }
+                )
+            }
+        }
+
         /// A teardown that reaches a flow which is still alive does not wait to be refused:
         /// the flow gives back the sessions it is holding, so the reset's own close has
         /// nothing left to wait on and no event from them can write back afterwards.
