@@ -4341,6 +4341,40 @@
         }
       }
     },
+    "coinVote.pollsList.legacyRoundMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An earlier version of the app sent a vote for this poll, and it was still being confirmed when the app was updated. To avoid sending it twice, this version only shows the poll. Votes that were already confirmed still count."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una versión anterior de la aplicación envió un voto para esta votación y aún se estaba confirmando cuando se actualizó la aplicación. Para evitar enviarlo dos veces, esta versión solo muestra la votación. Los votos que ya se confirmaron siguen contando."
+          }
+        }
+      }
+    },
+    "coinVote.pollsList.legacyRoundTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll can't be continued here"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta votación no se puede continuar aquí"
+          }
+        }
+      }
+    },
     "coinVote.pollsList.loadErrorMessage" : {
       "extractionState" : "manual",
       "localizations" : {

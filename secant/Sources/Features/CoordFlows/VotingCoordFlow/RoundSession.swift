@@ -167,6 +167,21 @@ struct RoundSession: Equatable {
     /// work here.
     var roundPlan: VotingRoundPlan?
 
+    /// Latched `true` the moment a plan for this round ever reported
+    /// `hasLegacyInFlightSubmission` -- an older build dispatched a delegation
+    /// or vote for this round and never saw it confirmed, so it is shown and
+    /// never driven. Set once, by the gate in `reduceRoundSessionOpened`, and
+    /// never cleared for the life of this cached round session.
+    ///
+    /// A dedicated flag rather than re-reading `roundPlan?.hasLegacyInFlightSubmission`:
+    /// `roundPlan` is also overwritten by plans embedded in drive events and
+    /// run reports, which the SDK never stamps with this flag (they decode it
+    /// as `false` even for a legacy-in-flight round -- see `MIGRATING.md`).
+    /// Those writers currently sit behind the gate this flag protects, so the
+    /// difference is latent, but every guard reads the latch rather than
+    /// depend on that staying true.
+    var isLegacyInFlight: Bool = false
+
     /// What the current (or last) run has done so far, folded from the
     /// session's event stream.
     var progress = VotingRoundProgressSnapshot()

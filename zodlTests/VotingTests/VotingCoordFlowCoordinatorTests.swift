@@ -714,6 +714,172 @@ extension VotingSharedStateSuites {
             #expect(store.state.ineligibleSheet?.minimumZatoshi == ballotDivisor)
         }
 
+        /// A round an older build dispatched a delegation or vote for, and never saw
+        /// confirmed, is not this flow's to drive: the 5.x chain lifecycle owns only
+        /// submissions it reserved itself, and re-running the round would re-dispatch
+        /// the same transaction with no promised outcome. The round is shown and
+        /// never driven — no bundle setup, no precompute, no run — and the session
+        /// opened to read the plan is given back immediately.
+        @MainActor
+        @Test func aRoundAnOlderBuildLeftMidSubmissionIsShownButNeverDriven() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                // `needsBundleSetup: true` and a bundle needing delegation work make
+                // the "never fires" assertions below discriminate: without the gate
+                // this plan would drive both `setupBundles` and (once a refreshed,
+                // non-`needsBundleSetup` plan comes back from `reduceBundlesSetUp`)
+                // `precomputeDelegationProof`. `call == 1` mirrors that refresh; the
+                // gate returns before the session is ever read a second time, so a
+                // gated run only ever sees `call == 1`.
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(
+                        needsBundleSetup: call == 1,
+                        openProposals: [1, 2],
+                        delegationBundlesNeedingWork: [0],
+                        legacyInFlight: true
+                    )
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            // `closeRoundSession` is part of the same wait, not a follow-up assertion:
+            // it fires from a `.run` effect `.legacyInFlightRound`'s handler returns
+            // alongside the synchronous state change, and nothing else orders that
+            // effect's completion against the state becoming visible here.
+            await waitForStore {
+                store.state.legacyRoundSheetRoundId == self.activeRoundId
+                    && recorder.events().contains("closeRoundSession")
+            }
+
+            #expect(recorder.events().contains("setupBundles") == false)
+            #expect(recorder.events().contains("runRound") == false)
+            #expect(recorder.events().contains("precomputeDelegationProof") == false)
+            #expect(recorder.events().contains("closeRoundSession"))
+            #expect(store.state.pendingPipelineRoundId == nil)
+            // The session opened only to read the plan is given back completely:
+            // the round must not linger on the open list, or every share-tracking
+            // route would go on reading a session the registry has already closed.
+            #expect(store.state.openRoundSessionIds.contains(self.activeRoundId) == false)
+        }
+
+        /// "Got it" on the legacy-round sheet only clears the sheet: the round stays
+        /// display-only, and nothing about that reopens or re-evaluates it.
+        @Test func dismissLegacyRoundSheetClearsTheSheet() {
+            var state = sessionFlowState()
+            state.legacyRoundSheetRoundId = activeRoundId
+
+            _ = VotingCoordFlow().coordinatorReduce().reduce(
+                into: &state,
+                action: .dismissLegacyRoundSheet
+            )
+
+            #expect(state.legacyRoundSheetRoundId == nil)
+        }
+
+        /// The gate deregisters the round the same moment it closes its session, so
+        /// the next pending-share sweep -- which opens a tracking-only session and
+        /// never asks for a plan, so it never reaches the gate -- can still resume
+        /// confirming shares an older build already delivered for this round.
+        @MainActor
+        @Test func aFlaggedRoundStillGetsItsSharesTrackedOnTheNextPendingShareSweep() async throws {
+            let recorder = EventRecorder()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            var initialState = sessionFlowState()
+            initialState.walletId = Self.pendingWalletId
+            initialState.serviceConfig = Self.makeServiceConfig(
+                voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+                rounds: [self.activeRoundId: Self.roundEntry()]
+            )
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    recorder.record("sessionPlan")
+                    return try self.plan(needsBundleSetup: false, openProposals: [1, 2], legacyInFlight: true)
+                }
+                $0.votingCrypto.trackShares = { _, _ in
+                    recorder.record("trackShares")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            // The voter opens the round; its plan is legacy-in-flight, so the gate
+            // fires and gives the session back.
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { store.state.legacyRoundSheetRoundId == self.activeRoundId }
+            #expect(store.state.openRoundSessionIds.contains(self.activeRoundId) == false)
+
+            // The sidecar still names this round as owing helper-share work --
+            // exactly what the next pending-share sweep (normally driven by
+            // `.initialize`) reads and acts on.
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            // A stubbed `trackShares` succeeds no matter what it is called on, so on
+            // its own `.contains("trackShares")` would not tell a fresh tracking
+            // session apart from `reducePendingShareRoundsLoaded`'s "already open"
+            // short-circuit quietly firing on the stale entry the bug leaves behind
+            // (that branch also ends by sending `.pollShareStatus`, which also calls
+            // `trackShares`). Two `openRoundSession` calls is what proves a real
+            // second open happened: one for the entry the gate closed, one for this
+            // sweep's fresh tracking-only session.
+            #expect(recorder.events().filter { $0 == "openRoundSession" }.count == 2)
+            #expect(recorder.events().contains("trackShares"))
+            #expect(recorder.events().contains("setupBundles") == false)
+            #expect(recorder.events().contains("precomputeDelegationProof") == false)
+            #expect(recorder.events().contains("runRound") == false)
+        }
+
+        /// Defence in depth: if the proposal list were ever reached for a flagged
+        /// round (it shouldn't be -- the round-entry gate keeps it off that path),
+        /// tapping Submit must not write a ballot or ask for authentication. It
+        /// routes the voter back through the same sheet the gate shows, rather than
+        /// leaving the Confirm CTA spinning with no way forward.
+        @MainActor
+        @Test func submittingAFlaggedRoundIsRoutedToTheSheetInsteadOfWritingABallot() async {
+            let recorder = EventRecorder()
+            var initialState = sessionFlowState(drafts: [1: .option(0), 2: .option(1)])
+            initialState.roundCache[activeRoundId]?.isLegacyInFlight = true
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.setBallotIntents = { _, _ in
+                    recorder.record("setBallotIntents")
+                    return try self.plan(allDecided: true)
+                }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+            }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            // See the display-only test above: `closeRoundSession` belongs in the
+            // wait, not asserted right after it, since it comes from a `.run` effect
+            // with nothing ordering it against the state change becoming visible.
+            await waitForStore {
+                store.state.legacyRoundSheetRoundId == self.activeRoundId
+                    && recorder.events().contains("closeRoundSession")
+            }
+
+            #expect(recorder.events().contains("setBallotIntents") == false)
+            #expect(recorder.events().contains("authenticate") == false)
+        }
+
         /// The precompute runs once for the bundle that owes delegation work, and
         /// Confirm does not run it again: the run reuses the proof the crate has
         /// already persisted, so the only proving the voter waits for is the one

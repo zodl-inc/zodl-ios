@@ -174,8 +174,16 @@ extension VotingTestSuite {
         dependencies.votingMetadata = votingMetadataClient(VotingMetadataBox())
         dependencies.continuousClock = ImmediateClock()
         dependencies.votingCrypto.openRoundSession = { _, _, _, _ in recorder.record("openRoundSession") }
-        dependencies.votingCrypto.closeRoundSession = { _ in }
+        dependencies.votingCrypto.closeRoundSession = { _ in recorder.record("closeRoundSession") }
         dependencies.votingCrypto.cancelRoundSession = { _ in }
+        dependencies.votingCrypto.runRound = { _, _, _ in
+            recorder.record("runRound")
+            return AsyncThrowingStream { $0.finish() }
+        }
+        dependencies.votingCrypto.precomputeDelegationProof = { _, _ in
+            recorder.record("precomputeDelegationProof")
+            return AsyncThrowingStream { $0.finish() }
+        }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
         dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
     }
@@ -251,7 +259,8 @@ extension VotingTestSuite {
         delegationBundlesNeedingWork: [UInt32] = [],
         delegationBundlesNeedingSigning: [UInt32] = [],
         completedChoices: [(UInt32, UInt32?)]? = nil,
-        bundlePhases: [String]? = nil
+        bundlePhases: [String]? = nil,
+        legacyInFlight: Bool = false
     ) throws -> VotingRoundPlan {
         let payload = planPayload(
             needsBundleSetup: needsBundleSetup,
@@ -260,7 +269,8 @@ extension VotingTestSuite {
             delegationBundlesNeedingWork: delegationBundlesNeedingWork,
             delegationBundlesNeedingSigning: delegationBundlesNeedingSigning,
             completedChoices: completedChoices,
-            bundlePhases: bundlePhases
+            bundlePhases: bundlePhases,
+            legacyInFlight: legacyInFlight
         )
         return try JSONDecoder().decode(VotingRoundPlan.self, from: JSONSerialization.data(withJSONObject: payload))
     }
@@ -278,7 +288,8 @@ extension VotingTestSuite {
         delegationBundlesNeedingWork: [UInt32] = [],
         delegationBundlesNeedingSigning: [UInt32] = [],
         completedChoices: [(UInt32, UInt32?)]? = nil,
-        bundlePhases: [String]? = nil
+        bundlePhases: [String]? = nil,
+        legacyInFlight: Bool = false
     ) -> [String: Any] {
         let noIntents: [Int] = []
         let delegationStatuses = (bundlePhases ?? ["prepared"]).enumerated().map { index, phase in
@@ -314,6 +325,9 @@ extension VotingTestSuite {
                     ["proposal_id": Int(choice.0), "choice": choice.1.map { Int($0) } as Any]
                 }
             ]
+        }
+        if legacyInFlight {
+            payload["has_legacy_in_flight_submission"] = true
         }
         return payload
     }

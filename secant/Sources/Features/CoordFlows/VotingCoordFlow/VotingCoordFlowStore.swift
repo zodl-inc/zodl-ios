@@ -109,6 +109,13 @@ struct VotingCoordFlow {
         /// on the polls list and can pick a different round.
         var ineligibleSheet: IneligibleSheetData?
 
+        /// Round id behind the "can't be continued here" sheet on the Polls List.
+        /// Set when a round's plan reports `hasLegacyInFlightSubmission` -- an
+        /// older build dispatched a delegation or vote for it and never saw it
+        /// confirmed, so this build shows the round and never drives it: no
+        /// bundle setup, no precompute, no run. Share tracking is unaffected.
+        var legacyRoundSheetRoundId: String?
+
         /// Round id whose eligibility check is currently in flight, set when
         /// the user taps Enter Poll on an uncached active round. Drives the
         /// in-button spinner on the Polls List so navigation only happens
@@ -295,6 +302,12 @@ struct VotingCoordFlow {
         case ineligibleForRound(roundId: String, reason: IneligibleReason)
         case earlyEligibilityConfirmed(roundId: String)
         case dismissIneligibleSheet
+        /// The round's plan reports `hasLegacyInFlightSubmission`: an older
+        /// build dispatched a delegation or vote for it and never saw it
+        /// confirmed. The SDK does not adopt the submission and upstream does
+        /// not support resuming it, so the round is shown and never driven.
+        case legacyInFlightRound(roundId: String)
+        case dismissLegacyRoundSheet
         case dismissWalletSyncingSheet
         case dismissProposalDetailStack
         case openReviewDraftsScreen(roundId: String)

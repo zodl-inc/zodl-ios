@@ -479,6 +479,7 @@ extension VotingCoordFlow {
                 state.pendingBatchSubmission = false
                 state.pollClosedSheet = nil
                 state.ineligibleSheet = nil
+                state.legacyRoundSheetRoundId = nil
                 state.checkingEligibilityRoundId = nil
                 state.walletSyncingSheetRoundId = nil
                 state.skippedQuestionsSheet = nil
@@ -573,9 +574,17 @@ extension VotingCoordFlow {
                     // and Confirm would answer `notOpen`. Re-tapping the round
                     // is the one recovery path the voter has, so it has to open
                     // a session rather than skip past the open.
+                    //
+                    // A round latched `isLegacyInFlight` is excluded from the hit even
+                    // when the other three conditions hold — some other path
+                    // (share-tracking resume, say) can reopen its session without
+                    // going through `reduceRoundSessionOpened`, and that gate must
+                    // hold here too. Falling through re-drives the round through the
+                    // full pipeline below, which reaches the gate.
                     if let cached = state.roundCache[roundId],
                        cached.hotkeyAddress != nil,
                        cached.bundleCount > 0,
+                       !cached.isLegacyInFlight,
                        state.openRoundSessionIds.contains(roundId) {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
@@ -1087,6 +1096,44 @@ extension VotingCoordFlow {
                 )
                 return .cancel(id: cancelPipelineId)
 
+            case let .legacyInFlightRound(roundId):
+                // An older build dispatched a delegation or vote for this round
+                // and never saw it confirmed. The SDK does not adopt it and
+                // upstream does not support resuming it, so the round is shown
+                // and never driven: no bundle setup, no precompute, no run. With
+                // the deferred-navigation flow we typically never pushed the
+                // proposal list -- but pop defensively, the same as
+                // `.ineligibleForRound`, in case the pipeline landed here from
+                // the wallet-sync resume path which does push proactively.
+                //
+                // The session opened only to read this plan is given back, and
+                // the round leaves `openRoundSessionIds` in the same stroke --
+                // the registry's own close cancels and removes the session, so
+                // leaving the round's id on this list would have every
+                // share-tracking path (`shareTrackingForOpenRounds`,
+                // `reducePollShareStatus`) read a session that no longer
+                // exists and fail. Removing it here is what lets the next
+                // pending-share sweep (`reducePendingShareRoundsLoaded`, which
+                // never asks for a plan and so never reaches this gate) open a
+                // fresh tracking-only session for the round: share tracking is
+                // separate from this gate and stays working, just not on the
+                // session this handler is closing.
+                state.checkingEligibilityRoundId = nil
+                state.pendingPipelineRoundId = nil
+                if case .proposalList = state.path.last {
+                    _ = state.path.popLast()
+                }
+                state.legacyRoundSheetRoundId = roundId
+                state.openRoundSessionIds.removeAll { $0 == roundId }
+                return .merge(
+                    .cancel(id: cancelPipelineId),
+                    .run { [votingCrypto] _ in await votingCrypto.closeRoundSession(roundId) }
+                )
+
+            case .dismissLegacyRoundSheet:
+                state.legacyRoundSheetRoundId = nil
+                return .none
+
             case let .startRoundStatusPolling(roundId):
                 guard let item = state.allRounds.first(where: { $0.id == roundId }),
                       item.session.status == .active
@@ -1427,6 +1474,7 @@ extension VotingCoordFlow {
         state.serviceConfig = nil
         state.walletScannedHeight = 0
         state.ineligibleSheet = nil
+        state.legacyRoundSheetRoundId = nil
         state.checkingEligibilityRoundId = nil
         state.walletSyncingSheetRoundId = nil
         state.skippedQuestionsSheet = nil
@@ -1738,6 +1786,7 @@ extension VotingCoordFlow {
         state.roundCache[roundId] = roundSession
         state.pendingPipelineRoundId = roundId
         state.ineligibleSheet = nil
+        state.legacyRoundSheetRoundId = nil
         state.walletSyncingSheetRoundId = nil
         // The round counts as open from here, and a refused open does not take it
         // off again: the list is what a fence closes, and closing a round the
@@ -1964,6 +2013,34 @@ extension VotingCoordFlow {
                 await votingCrypto.cancelRoundSession(roundId)
                 await votingCrypto.closeRoundSession(roundId)
             }
+        }
+
+        // An older build dispatched a delegation or vote for this round and
+        // never saw it confirmed. The 5.x chain lifecycle owns only
+        // submissions it reserved itself, and upstream does not support
+        // resuming this one: running the round would re-dispatch the same
+        // transaction with no promised outcome. Checked before anything else
+        // acts on the plan -- no bundle setup, no precompute, no run -- and
+        // ahead of the second call this function gets after bundle setup, so
+        // neither entry point can act on a legacy-in-flight plan. Latched on
+        // the cached session (never cleared) rather than left to a re-read of
+        // this plan, so the guards elsewhere (`startRoundRun`,
+        // `reduceMaybeStartDelegationPrecompute`, `reduceSubmitAllDraftsTapped`,
+        // and the Polls List cache-hit re-entry) hold even once `roundPlan` is
+        // later overwritten by a plan embedded in a drive event or a run
+        // report -- the SDK never stamps either with this flag. `roundCache`
+        // should already hold an entry here (`reduceStartActiveRoundPipeline`
+        // creates one before every open), but `mutateSession` is a no-op on a
+        // miss, so one is created first regardless.
+        if plan.hasLegacyInFlightSubmission {
+            if state.roundCache[roundId] == nil {
+                state.roundCache[roundId] = RoundSession(roundId: roundId)
+            }
+            mutateSession(&state, roundId: roundId) {
+                $0.roundPlan = plan
+                $0.isLegacyInFlight = true
+            }
+            return .send(.legacyInFlightRound(roundId: roundId))
         }
 
         if state.pendingPipelineRoundId == roundId {
@@ -2627,6 +2704,16 @@ extension VotingCoordFlow {
     /// sheet followed by a failure.
     func reduceSubmitAllDraftsTapped(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
+        // The round-entry gate (`reduceRoundSessionOpened`) already keeps a
+        // legacy-in-flight round off the path that reaches Confirm, but this is
+        // the one starter that writes to the database (`setBallotIntents`) and
+        // the one whose CTA would otherwise be left stuck mid-spinner with no
+        // error if the proposal list were ever reached for such a round. Route
+        // back through the same sheet the gate shows rather than write a ballot
+        // or ask for authentication.
+        guard !session.isLegacyInFlight else {
+            return .send(.legacyInFlightRound(roundId: roundId))
+        }
         guard canStartSubmission(session) else { return .none }
         guard let activeSession = activeSession(in: state, roundId: roundId) else { return .none }
 
@@ -2737,6 +2824,11 @@ extension VotingCoordFlow {
     /// either way, and only the signer differs.
     private func startRoundRun(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
+        // An older build's unconfirmed submission makes this round display-only;
+        // see `reduceRoundSessionOpened`. Belt-and-suspenders: the round's own
+        // gate already keeps a legacy-in-flight round off every path that could
+        // reach here, but a run never starts on one regardless of how it did.
+        guard !session.isLegacyInFlight else { return .none }
         let epoch = session.sessionEpoch
         let pendingCount = max(session.draftVotes.count, 1)
         let keystoneStored = state.isKeystoneUser
@@ -2838,6 +2930,11 @@ extension VotingCoordFlow {
         // to warm ahead of that.
         guard !state.isKeystoneUser else { return .none }
         guard let session = state.roundCache[roundId], let plan = session.roundPlan else { return .none }
+        // An older build's unconfirmed submission makes this round display-only;
+        // see `reduceRoundSessionOpened`. Belt-and-suspenders, the same as
+        // `startRoundRun`: precompute never warms a proof for a legacy-in-flight
+        // round regardless of how this got called.
+        guard !session.isLegacyInFlight else { return .none }
         guard session.delegationPrecomputeStatus == .notStarted else { return .none }
         guard !session.isDelegationPrecomputeInFlight, !isBatchSubmitting(session) else { return .none }
         guard activeSession(in: state, roundId: roundId)?.status == .active else { return .none }

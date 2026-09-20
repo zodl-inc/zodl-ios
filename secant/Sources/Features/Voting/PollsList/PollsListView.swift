@@ -86,6 +86,15 @@ struct PollsListView: View {
                 secondary: nil
             )
             .votingSheet(
+                isPresented: legacyRoundSheetBinding,
+                title: String(localizable: .coinVotePollsListLegacyRoundTitle),
+                message: String(localizable: .coinVotePollsListLegacyRoundMessage),
+                primary: VotingSheetContent.ButtonConfig(title: String(localizable: .coinVoteCommonGotIt), style: .primary) {
+                    store.send(.dismissLegacyRoundSheet)
+                },
+                secondary: nil
+            )
+            .votingSheet(
                 isPresented: walletSyncingSheetBinding,
                 title: String(localizable: .coinVoteWalletSyncingTitle),
                 message: String(localizable: .coinVoteWalletSyncingSubtitle),
@@ -128,6 +137,17 @@ struct PollsListView: View {
             set: { newValue in
                 if !newValue {
                     store.send(.dismissIneligibleSheet)
+                }
+            }
+        )
+    }
+
+    private var legacyRoundSheetBinding: Binding<Bool> {
+        Binding(
+            get: { store.legacyRoundSheetRoundId != nil },
+            set: { newValue in
+                if !newValue {
+                    store.send(.dismissLegacyRoundSheet)
                 }
             }
         )
