@@ -2099,17 +2099,19 @@ extension VotingCoordFlow {
                 proposalId: drafts[0].key
             ))
 
-            // MOB-1930: the ballot is walked bundle-major. Each note bundle gets its own pipeline
-            // that casts every question in ballot order — a bundle's authority note chains one of
-            // its votes to the next, so that order is not ours to choose — and up to
-            // `maxConcurrentVoteBundles` pipelines run at once, so one bundle's wait for the chain
-            // and its share delivery overlap another bundle's proof. The proofs themselves still
-            // serialize behind the SDK's handle lock; that is the intended memory profile, not an
-            // accident of this shape.
+            // MOB-1930: the ballot is walked question-major by `maxConcurrentVoteLanes` lanes. A
+            // bundle's authority note chains one of its votes to the next, so a bundle's own
+            // questions go in ballot order and never overlap; across bundles there is no such
+            // constraint, so the lanes cast every bundle's vote for one question before moving
+            // to the next. One bundle's wait for the chain and its share delivery overlap another
+            // bundle's proof, and each question is fully cast — and reported — as the walk passes
+            // it, instead of all of them landing when the last bundle finishes. The proofs
+            // themselves still serialize behind the SDK's handle lock; that is the intended memory
+            // profile, not an accident of this shape.
             //
-            // MOB-1928: helper-share delivery does not block a pipeline either. Each bundle's
-            // shares go into a window of two and the pipeline moves straight on to its next
-            // question while they travel; the tracker below is what finally decides each question's
+            // MOB-1928: helper-share delivery does not block a lane either. Each bundle's
+            // shares go into a window of two and the lane moves straight on to its next task
+            // while they travel; the tracker below is what finally decides each question's
             // outcome, so a question is reported submitted only once every bundle has cast it and
             // all of those bundles' shares were accepted. The pool is the live helper-server set
             // those deliveries share: one delivery pruning a dead server spares every later one
@@ -2120,7 +2122,7 @@ extension VotingCoordFlow {
             let serverPool = VotingShareServerPool(urls: voteServerURLs)
 
             // The skip rule, read once for the whole ballot instead of once per question, because
-            // the pipelines that consume it now run at the same time.
+            // the lanes that consume it now run at the same time.
             let plan = Self.planVoteBundleWork(
                 drafts: drafts,
                 proposals: proposals,
@@ -2161,17 +2163,17 @@ extension VotingCoordFlow {
             do {
                 // MOB-1928: one handler covers the whole walk, not just the drain. The window owns
                 // unstructured tasks, so cancelling this effect never reaches them on its own, and
-                // nothing below would notice a cancellation either — the pipelines would keep
-                // proving and broadcasting votes for a flow the user has already left. `onCancel`
-                // cancels and joins the deliveries, each pipeline's per-question cancellation check
-                // ends its walk, and the `catch` awaits that same cancel so the effect can never
-                // return while a delivery is still writing share records.
+                // nothing below would notice a cancellation either — the lanes would keep proving
+                // and broadcasting votes for a flow the user has already left. `onCancel` cancels
+                // and joins the deliveries, each lane re-checks cancellation on every task it is
+                // handed and ends its walk, and the `catch` awaits that same cancel so the effect
+                // can never return while a delivery is still writing share records.
                 settlement = try await withTaskCancellationHandler {
                     try await VotingSubmissionTrace.measure("votes", traceContext, totals: context.trace, sink: timing.sink, now: timing.now) {
-                        await Self.runBundlePipelines(plan.workByBundle, context: context, send: send)
+                        await Self.runVoteLanes(plan, context: context, send: send)
                     }
-                    // A pipeline reports a cancellation back rather than throwing it, so that one
-                    // bundle stopping never tears the group down while another sits between a
+                    // A lane reports a cancellation back rather than throwing it, so that one
+                    // lane stopping never tears the group down while another sits between a
                     // broadcast and its confirmation. The effect's own cancellation is raised here
                     // instead, once: a cancelled batch must not mark its remaining questions failed
                     // and must not report itself complete.
@@ -4240,10 +4242,10 @@ extension VotingCoordFlow {
         let proposalId: UInt32
         let choice: VoteChoice
         let identities: [VotingShareDeliveryIdentity]
-        /// MOB-1930: `false` when one of this question's bundles was abandoned because its pipeline
-        /// stopped. The deliveries the other bundles did enqueue still have to be attributed — an
-        /// on-chain vote whose shares went nowhere is exactly what the voter has to be told — but
-        /// the question was never fully cast, so it can never be reported submitted.
+        /// MOB-1930: `false` when one of this question's bundles was abandoned because the lanes
+        /// stopped before reaching it. The deliveries the other bundles did enqueue still have to
+        /// be attributed — an on-chain vote whose shares went nowhere is exactly what the voter has
+        /// to be told — but the question was never fully cast, so it can never be reported submitted.
         let isFullyCast: Bool
 
         init(
@@ -4440,14 +4442,14 @@ extension VotingCoordFlow {
         return ShareDeliverySettlement(successCount: successCount, failCount: failCount)
     }
 
-    // MARK: - Bundle-major vote submission (MOB-1930)
+    // MARK: - Question-major vote submission (MOB-1930)
 
-    /// How many note bundles may have a vote pipeline in flight at once (design D6).
+    /// How many vote lanes run at once (design D6).
     ///
     /// The proofs themselves still serialize behind the SDK's handle lock, so this does not buy
     /// parallel proving — it buys the overlap of one bundle's chain wait and share delivery with
     /// another bundle's proof. Raising it raises peak memory for no extra throughput.
-    static let maxConcurrentVoteBundles = 2
+    static let maxConcurrentVoteLanes = 2
 
     /// One question's work for one bundle.
     struct VoteBundleWork: Sendable {
@@ -4465,7 +4467,7 @@ extension VotingCoordFlow {
         let bundleTaskCount: Int
     }
 
-    /// The ballot, split the way the bundle pipelines consume it.
+    /// The ballot, split the way the vote lanes consume it.
     struct VoteBundlePlan: Sendable {
         /// Per bundle, the questions that bundle still has to cast, in ballot order.
         let workByBundle: [UInt32: [VoteBundleWork]]
@@ -4473,7 +4475,7 @@ extension VotingCoordFlow {
         let proposals: [VoteProposalPlan]
     }
 
-    /// Everything a bundle pipeline needs that is the same for every bundle.
+    /// Everything a vote lane needs that is the same for every task.
     struct VoteBatchContext: Sendable {
         let roundId: String
         let totalCount: Int
@@ -4485,24 +4487,30 @@ extension VotingCoordFlow {
         let serverPool: VotingShareServerPool
         let deliveryWindow: VotingHelperDeliveryWindow<ShareDelegationResult>
         let tracker: VotingProposalCompletionTracker
-        /// Serializes each pipeline's vote-tree sync together with the witness it anchors. See
+        /// Serializes each lane's vote-tree sync together with the witness it anchors. See
         /// `voteBundleWork`.
         let treeQueue: VotingSerialQueue
-        /// Per-step totals across the bundle pipelines, for the summary line at the end of the batch.
+        /// Per-step totals across the vote lanes, for the summary line at the end of the batch.
         let trace: VotingSubmissionTrace.Totals
         let timing: VotingSubmissionTimingClient
         let votingCrypto: VotingCryptoClient
         let votingAPI: VotingAPIClient
     }
 
-    /// Why a bundle pipeline stopped.
-    enum BundlePipelineOutcome: Sendable {
-        /// It reached the end of its work list. Individual questions may still have failed.
+    /// Why a vote lane stopped.
+    enum VoteLaneOutcome: Sendable {
+        /// The scheduler had nothing left to hand out. Individual questions may still have failed.
         case finished
         /// No helper server is reachable any more, so it stopped rather than prove votes whose
         /// shares would have nowhere to go.
         case exhausted
         /// The batch effect was cancelled.
+        case cancelled
+    }
+
+    /// What one task came to, for the lane loop.
+    private enum VoteTaskOutcome: Sendable {
+        case completed
         case cancelled
     }
 
@@ -4570,115 +4578,141 @@ extension VotingCoordFlow {
         return VoteBundlePlan(workByBundle: workByBundle, proposals: proposalPlans)
     }
 
-    /// Run the bundle pipelines, at most `maxConcurrentVoteBundles` at a time: start that many and
-    /// admit the next bundle whenever one finishes.
+    /// Run the vote lanes over the ballot, question-major.
     ///
-    /// A pipeline never throws — it reports why it stopped — so one bundle running out of helper
-    /// servers, or the effect being cancelled, cannot tear the group down while another bundle is
+    /// `orderedVoteTasks` lays the ballot out by question, then bundle, and the scheduler hands
+    /// those tasks to `maxConcurrentVoteLanes` lanes, never two tasks of one bundle at once. With
+    /// three or more bundles the lanes interleave bundles inside a question — so every question is
+    /// fully cast roughly one bundle-count of tasks after it was started, and the progress the
+    /// voter sees advances question by question — while a bundle's own votes stay in ballot order,
+    /// which its authority-note chain requires. With one or two bundles each lane effectively owns
+    /// a bundle, which is the walk this replaces.
+    ///
+    /// A lane never throws — it reports why it stopped — so one lane running out of helper
+    /// servers, or the effect being cancelled, cannot tear the group down while another lane is
     /// sitting between an on-chain broadcast and its confirmation.
-    static func runBundlePipelines(
-        _ workByBundle: [UInt32: [VoteBundleWork]],
+    static func runVoteLanes(
+        _ plan: VoteBundlePlan,
         context: VoteBatchContext,
         send: Send<Action>
     ) async {
-        let bundles = workByBundle.keys.sorted()
-        guard !bundles.isEmpty else { return }
+        let tasks = Self.orderedVoteTasks(from: plan)
+        guard !tasks.isEmpty else { return }
+        let scheduler = VotingVoteTaskScheduler(tasks: tasks)
+        let laneCount = min(Self.maxConcurrentVoteLanes, plan.workByBundle.count)
 
-        await withTaskGroup(of: BundlePipelineOutcome.self) { group in
-            var next = min(Self.maxConcurrentVoteBundles, bundles.count)
-            for index in 0..<next {
-                let bundleIndex = bundles[index]
-                let work = workByBundle[bundleIndex] ?? []
+        await withTaskGroup(of: VoteLaneOutcome.self) { group in
+            for _ in 0..<laneCount {
                 group.addTask {
-                    await Self.runBundlePipeline(
-                        bundleIndex: bundleIndex,
-                        work: work,
-                        context: context,
-                        send: send
-                    )
+                    await Self.runVoteLane(scheduler: scheduler, context: context, send: send)
                 }
             }
-            while await group.next() != nil {
-                guard next < bundles.count else { continue }
-                let bundleIndex = bundles[next]
-                let work = workByBundle[bundleIndex] ?? []
-                next += 1
-                group.addTask {
-                    await Self.runBundlePipeline(
-                        bundleIndex: bundleIndex,
-                        work: work,
-                        context: context,
-                        send: send
-                    )
-                }
+            for await _ in group {}
+        }
+    }
+
+    /// One lane's walk: take the next eligible task, cast it, free its bundle, repeat.
+    ///
+    /// The cancellation and helper-pool checks sit at the task boundary, outside the per-task
+    /// `do`, on purpose. A cancelled batch must end the walk rather than mark a question failed
+    /// and go on proving the next one — by the time it fires the flow is already gone
+    /// (`.dismissFlow`, an account switch, or a retry's `cancelInFlight`), so another proof and
+    /// another on-chain broadcast would be work for a screen the user has left. And an emptied
+    /// pool must stop the whole ballot: the task just handed out is abandoned along with every
+    /// task still queued, so the questions the lanes did cast can still be resolved.
+    ///
+    /// Both checks are taken again on the task the scheduler hands out, not only before the wait
+    /// for one. A lane with nothing eligible parks inside `next()`, and it can be woken long after
+    /// the flow was cancelled or the pool emptied: the scheduler releases a cancelled waiter from
+    /// an unstructured task that races a sibling's `finish`, so a park can end with a real task in
+    /// hand rather than `nil`. A check taken before the park would describe a world that is gone.
+    /// A cancellation frees the task's bundle right away — `next()` marked it busy, and the
+    /// scheduler's contract is one `finish` per task handed out. Exhaustion frees it only after
+    /// draining the queue: freeing first could wake a parked sibling into `next()` before the
+    /// drain removes what is left, handing it a task that is already doomed.
+    static func runVoteLane(
+        scheduler: VotingVoteTaskScheduler,
+        context: VoteBatchContext,
+        send: Send<Action>
+    ) async -> VoteLaneOutcome {
+        while true {
+            if Task.isCancelled {
+                return .cancelled
+            }
+            guard let task = await scheduler.next() else {
+                return Task.isCancelled ? .cancelled : .finished
+            }
+            // A parked lane is normally released with `nil` when its task is cancelled, but that
+            // release is an unstructured hop racing a sibling's `finish`, which wakes waiters
+            // synchronously. So a lane can come out of `next()` holding a real task for a flow
+            // the user has already left — `voteBundleWork` has no cancellation gate of its own,
+            // and the vote it would prove and broadcast could land with its shares stranded.
+            if Task.isCancelled {
+                await scheduler.finish(bundleIndex: task.bundleIndex)
+                return .cancelled
+            }
+            // Every helper server has proved unreachable — a delivery that ended in
+            // `noReachableVoteServers` empties the pool — so there is nowhere left to send shares
+            // and proving further votes would only strand them. The check runs on the task just
+            // handed out rather than before the wait for it: a lane parked in `next()` can be
+            // woken long after the pool emptied, and a check taken before the park would describe
+            // a world that is gone.
+            if await context.serverPool.isExhausted {
+                let remaining = await scheduler.drainRemaining()
+                await scheduler.finish(bundleIndex: task.bundleIndex)
+                await Self.abandonRemainingWork([task] + remaining, context: context, send: send)
+                return .exhausted
+            }
+            let outcome = await Self.runVoteTask(task, context: context, send: send)
+            await scheduler.finish(bundleIndex: task.bundleIndex)
+            if outcome == .cancelled {
+                return .cancelled
             }
         }
     }
 
-    /// One note bundle's walk through the ballot.
+    /// One `(bundle, question)` task, reported to the tracker whatever happens to it.
     ///
-    /// The questions are cast in ballot order because the bundle's authority note chains each of
-    /// its votes to the next; that is the ordering constraint the whole design is built around.
-    /// A question this bundle cannot cast fails that question — once, however many bundles hit it —
-    /// and the walk carries on with the bundle's next question, which is the per-proposal
+    /// A question this bundle cannot cast fails that question — once, however many bundles hit
+    /// it — and the lane carries on with the next eligible task, which is the per-proposal
     /// `continue` the serial loop had.
-    static func runBundlePipeline(
-        bundleIndex: UInt32,
-        work: [VoteBundleWork],
+    private static func runVoteTask(
+        _ task: VoteTask,
         context: VoteBatchContext,
         send: Send<Action>
-    ) async -> BundlePipelineOutcome {
-        for (index, item) in work.enumerated() {
-            // Outside the per-question `do` on purpose: a cancelled batch must end this walk, not
-            // mark the question failed and go on proving the next one. By the time this fires the
-            // flow is already gone (`.dismissFlow`, an account switch, or a retry's
-            // `cancelInFlight`), so another proof — and another on-chain broadcast — would be work
-            // for a screen the user has left.
-            if Task.isCancelled {
-                return .cancelled
-            }
-
-            // Every helper server has proved unreachable — a delivery that ended in
-            // `noReachableVoteServers` empties the pool — so there is nowhere left to send shares
-            // and proving further votes would only strand them. The questions this bundle will now
-            // never cast are released, or the questions it already walked could never be reported.
-            if await context.serverPool.isExhausted {
-                await Self.abandonRemainingWork(work[index...], context: context, send: send)
-                return .exhausted
-            }
-
-            do {
-                let identity = try await Self.voteBundleWork(
-                    bundleIndex: bundleIndex,
-                    work: item,
-                    context: context,
-                    send: send
-                )
-                let resolution = await context.tracker.finishBundleTask(
+    ) async -> VoteTaskOutcome {
+        let item = task.work
+        do {
+            let identity = try await Self.voteBundleWork(
+                bundleIndex: task.bundleIndex,
+                work: item,
+                context: context,
+                send: send
+            )
+            let resolution = await context.tracker.finishBundleTask(
+                proposalId: item.proposalId,
+                identity: identity
+            )
+            await Self.announceProposalResolution(resolution, context: context, send: send)
+        } catch is CancellationError {
+            // Not a failed vote, and not this lane's to report: the walk just ends.
+            return .cancelled
+        } catch {
+            LoggerProxy.error("Batch vote failed for proposal \(item.proposalId) in bundle \(task.bundleIndex): \(error)")
+            if await context.tracker.markFailed(proposalId: item.proposalId) {
+                await send(.batchVoteFailed(
+                    roundId: context.roundId,
                     proposalId: item.proposalId,
-                    identity: identity
-                )
-                await Self.announceProposalResolution(resolution, context: context, send: send)
-            } catch is CancellationError {
-                // Not a failed vote, and not this pipeline's to report: the walk just ends.
-                return .cancelled
-            } catch {
-                LoggerProxy.error("Batch vote failed for proposal \(item.proposalId) in bundle \(bundleIndex): \(error)")
-                if await context.tracker.markFailed(proposalId: item.proposalId) {
-                    await send(.batchVoteFailed(
-                        roundId: context.roundId,
-                        proposalId: item.proposalId,
-                        error: VotingErrorMapper.userFriendlyMessage(from: error)
-                    ))
-                }
-                let resolution = await context.tracker.finishBundleTask(
-                    proposalId: item.proposalId,
-                    identity: nil
-                )
-                await Self.announceProposalResolution(resolution, context: context, send: send)
+                    error: VotingErrorMapper.userFriendlyMessage(from: error)
+                ))
             }
+            let resolution = await context.tracker.finishBundleTask(
+                proposalId: item.proposalId,
+                identity: nil
+            )
+            await Self.announceProposalResolution(resolution, context: context, send: send)
         }
-        return .finished
+        return .completed
     }
 
     /// One `(bundle, question)` vote, end to end: prove it, broadcast it, wait for the chain to
@@ -4723,11 +4757,11 @@ extension VotingCoordFlow {
         }
 
         // MOB-1930: the tree sync and the witness it anchors are one unit. The SDK's lock
-        // serializes each of those FFI calls on its own but not the pair, so with two pipelines a
+        // serializes each of those FFI calls on its own but not the pair, so with two lanes a
         // sibling's sync landing between this sync and this witness is not a rare interleaving but
         // the steady state — and nothing in the crate's contract says the witness is rooted at the
         // `anchorHeight` we passed rather than at whatever the tree holds when it runs. Rather than
-        // rely on a guarantee nobody has stated, the pair goes through a queue every pipeline
+        // rely on a guarantee nobody has stated, the pair goes through a queue every lane
         // shares. Plain actor isolation would not do it: an actor is reentrant at every `await`
         // inside the pair, which is exactly where the sibling would slip in. Both calls are cheap
         // next to proving and chain waits, so the design loses nothing.
@@ -4753,7 +4787,7 @@ extension VotingCoordFlow {
         // witness entry points in `rust/src/voting/tree.rs` and the two session-reset entry points
         // touch the shared tree client, so a sibling's sync landing between this witness and this
         // commit cannot change what gets committed. Keeping the commit outside the queue lets the
-        // sibling pipeline sync and take its own witness while this one signs.
+        // sibling lane sync and take its own witness while this one signs.
         let (builtBundle, castVoteSig) = try await VotingSubmissionTrace.measure("prove", traceContext, totals: trace) {
             try await votingCrypto.commitVote(
                 roundId, bundleIndex, context.hotkeySeed, proposalId, work.choice,
@@ -4870,19 +4904,19 @@ extension VotingCoordFlow {
         return identity
     }
 
-    /// Release the questions a stopping pipeline will never cast, so that the questions it *did*
-    /// walk can still be resolved.
+    /// Release the tasks the lanes will never run, so that the questions they *did* cast can
+    /// still be resolved.
     ///
     /// A question left half-cast this way is deliberately not reported at all: it stays an
     /// outstanding draft, which is what makes a batch that stopped early end in
     /// `.submissionFailed` rather than claiming a ballot it never finished.
     private static func abandonRemainingWork(
-        _ work: ArraySlice<VoteBundleWork>,
+        _ tasks: [VoteTask],
         context: VoteBatchContext,
         send: Send<Action>
     ) async {
-        for item in work {
-            let resolution = await context.tracker.abandonBundleTask(proposalId: item.proposalId)
+        for task in tasks {
+            let resolution = await context.tracker.abandonBundleTask(proposalId: task.work.proposalId)
             await Self.announceProposalResolution(resolution, context: context, send: send)
         }
     }
@@ -5320,10 +5354,10 @@ extension VotingCoordFlow {
 ///
 /// The wait is not cancellable. A caller cancelled while it is queued still waits for the
 /// operations ahead of it and then for its own before it can notice the cancellation at its next
-/// check, so with two pipelines the extra wait is at most one sibling's sync and witness; raising
-/// `maxConcurrentVoteBundles` raises it accordingly. That is also what keeps a queued operation
+/// check, so with two lanes the extra wait is at most one sibling's sync and witness; raising
+/// `maxConcurrentVoteLanes` raises it accordingly. That is also what keeps a queued operation
 /// from outliving the batch effect: every caller awaits its own operation to completion, and the
-/// effect awaits every pipeline.
+/// effect awaits every lane.
 actor VotingSerialQueue {
     private var last: Task<Void, Never>?
 
@@ -5358,18 +5392,18 @@ struct ShareRecoveryPollResult: Equatable, Sendable {
 // MARK: - Ballot completion tracking (MOB-1930)
 
 /// Decides when a question of the ballot is done, now that its bundles are cast by concurrent
-/// pipelines rather than one after another.
+/// lanes rather than one after another.
 ///
-/// Each question starts owing one task per bundle that still has to cast it. A pipeline reports
+/// Each question starts owing one task per bundle that still has to cast it. A lane reports
 /// every task as it ends, and only the task that brings a question's count to zero resolves it:
 ///
 /// - any bundle failed it → the question failed. The failure itself is reported the moment a
-///   bundle hits it, by that pipeline, and only by the first one to do so;
+///   bundle hits it, by that lane, and only by the first one to do so;
 /// - no delivery is outstanding → it is submitted right away (every bundle was already done, or
 ///   it was a synthetic abstain);
 /// - otherwise it joins the list handed to `settleDeliveries`, which reports it once its shares
 ///   are accepted — the MOB-1928 rule, unchanged;
-/// - a bundle abandoned it, because that bundle's pipeline stopped → nothing is reported. It stays
+/// - a bundle abandoned it, because the lanes stopped before reaching it → nothing is reported. It stays
 ///   an outstanding draft, so a batch that stopped early ends in `.submissionFailed` rather than
 ///   claiming a ballot it never finished.
 actor VotingProposalCompletionTracker {
@@ -5447,7 +5481,7 @@ actor VotingProposalCompletionTracker {
         return resolve(proposalId)
     }
 
-    /// One bundle task will never run, because its pipeline stopped before reaching it.
+    /// One bundle task will never run, because the lanes stopped before reaching it.
     func abandonBundleTask(proposalId: UInt32) -> Resolution? {
         guard var entry = entries[proposalId] else { return nil }
         entry.wasAbandoned = true
