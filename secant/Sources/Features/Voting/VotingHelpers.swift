@@ -287,25 +287,6 @@ enum Voting {
     }
 }
 
-func submittedVotesByProposal(
-    _ records: [VoteRecord],
-    bundleCount: UInt32
-) -> [UInt32: VoteChoice] {
-    var recordsByProposal: [UInt32: [VoteRecord]] = [:]
-    for record in records {
-        recordsByProposal[record.proposalId, default: []].append(record)
-    }
-
-    return recordsByProposal.reduce(into: [UInt32: VoteChoice]()) { result, entry in
-        let records = entry.value
-        let allSubmitted = records.allSatisfy(\.submitted)
-        let hasAllBundles = bundleCount == 0 || UInt32(records.count) >= bundleCount
-        if allSubmitted && hasAllBundles, let choice = records.first?.choice {
-            result[entry.key] = choice
-        }
-    }
-}
-
 // MARK: - Pipeline errors (used by VotingCoordFlow)
 
 enum VotingFlowError: LocalizedError {
@@ -473,7 +454,7 @@ enum VotingErrorMapper {
     }
 }
 
-// MARK: - Note bundling (Swift mirror of zcash_voting::chunk_notes)
+// MARK: - Voting weight formatting
 
 func votingRawZecString(_ zatoshi: UInt64) -> String {
     let whole = zatoshi / 100_000_000
@@ -489,63 +470,6 @@ func votingAuthorizationMemo(pollTitle: String, rawWeight: UInt64) -> String {
             votingRawZecString(rawWeight)
         )
     )
-}
-
-struct BundleResult {
-    let bundles: [[NoteInfo]]
-    let eligibleWeight: UInt64
-    let droppedCount: Int
-}
-
-extension Array where Element == NoteInfo {
-    /// See the legacy comment on the original definition for rationale; this
-    /// is a 1:1 move out of `VotingStore+Helpers.swift`.
-    func smartBundles() -> BundleResult {
-        guard !isEmpty else {
-            return BundleResult(bundles: [], eligibleWeight: 0, droppedCount: 0)
-        }
-
-        let sorted = self.sorted { lhs, rhs in
-            if lhs.value != rhs.value { return lhs.value > rhs.value }
-            return lhs.position < rhs.position
-        }
-
-        var bundleNotes: [[NoteInfo]] = []
-        var bundleTotals: [UInt64] = []
-
-        for note in sorted {
-            if bundleNotes.isEmpty || (bundleNotes.last?.count ?? 0) >= 5 {
-                bundleNotes.append([])
-                bundleTotals.append(0)
-            }
-            let last = bundleNotes.count - 1
-            bundleTotals[last] += note.value
-            bundleNotes[last].append(note)
-        }
-
-        let numBundles = bundleNotes.count
-        var surviving: [(total: UInt64, notes: [NoteInfo])] = []
-        var eligibleWeight: UInt64 = 0
-        var survivingNoteCount = 0
-
-        for i in 0..<numBundles where bundleTotals[i] >= ballotDivisor {
-            surviving.append((bundleTotals[i], bundleNotes[i]))
-            eligibleWeight += quantizeWeight(bundleTotals[i])
-            survivingNoteCount += bundleNotes[i].count
-        }
-        let droppedCount = count - survivingNoteCount
-
-        for i in 0..<surviving.count {
-            surviving[i].notes.sort { $0.position < $1.position }
-        }
-
-        surviving.sort { lhs, rhs in
-            if lhs.total != rhs.total { return lhs.total > rhs.total }
-            return (lhs.notes.first?.position ?? .max) < (rhs.notes.first?.position ?? .max)
-        }
-
-        return BundleResult(bundles: surviving.map(\.notes), eligibleWeight: eligibleWeight, droppedCount: droppedCount)
-    }
 }
 
 // MARK: - libzcashlc `network_id` (mirror of `parse_network` in the SDK Rust)

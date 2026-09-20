@@ -4,13 +4,9 @@ import Foundation
 // MARK: - Ballot Constants
 
 /// Ballot divisor in zatoshi (0.125 ZEC). Must match `zcash_voting::governance::BALLOT_DIVISOR`.
-/// One ballot = this many zatoshi. Used for quantizing note bundle weights and tally display.
+/// One ballot = this many zatoshi. Used for tally display; the crate quantizes the bundle weights
+/// it reports.
 let ballotDivisor: UInt64 = 12_500_000
-
-/// Quantizes a zatoshi amount down to the nearest ballot boundary.
-func quantizeWeight(_ zatoshi: UInt64) -> UInt64 {
-    (zatoshi / ballotDivisor) * ballotDivisor
-}
 
 // MARK: - Last-Moment Buffer Constants
 
@@ -267,42 +263,6 @@ struct TallyResult: Equatable, Sendable {
 
     init(entries: [Entry]) {
         self.entries = entries
-    }
-}
-
-// MARK: - Notes
-
-struct NoteInfo: Equatable, Sendable {
-    let commitment: Data
-    let nullifier: Data
-    let value: UInt64
-    let position: UInt64
-    let diversifier: Data
-    let rho: Data
-    let rseed: Data
-    let scope: UInt32
-    let ufvkStr: String
-
-    init(
-        commitment: Data,
-        nullifier: Data,
-        value: UInt64,
-        position: UInt64,
-        diversifier: Data,
-        rho: Data,
-        rseed: Data,
-        scope: UInt32,
-        ufvkStr: String
-    ) {
-        self.commitment = commitment
-        self.nullifier = nullifier
-        self.value = value
-        self.position = position
-        self.diversifier = diversifier
-        self.rho = rho
-        self.rseed = rseed
-        self.scope = scope
-        self.ufvkStr = ufvkStr
     }
 }
 
