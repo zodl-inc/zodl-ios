@@ -14,6 +14,14 @@ import Testing
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct VotingPollLoadingTransportTests {
+    /// One call the SDK's bounded transport made down to the native Tor request, as
+    /// `SDKSynchronizerClient.performBoundedTorGET` hands it over.
+    private struct BoundedCall: Equatable, Sendable {
+        let url: URL?
+        let retryLimit: UInt8
+        let timeoutMilliseconds: UInt64
+    }
+
     private enum PollLoadingTestError: Error {
         case legacyTransportUsed
     }
@@ -98,6 +106,57 @@ struct VotingPollLoadingTransportTests {
         }
 
         #expect(timeouts.withLock { $0 } == [15_000, 10_000])
+    }
+
+    /// Every other case here stubs `boundedTorGET` and so stops at the client boundary. This one
+    /// runs the real closure the live synchronizer installs behind it,
+    /// `SDKSynchronizerClient.performBoundedTorGET`, and only fakes the native Tor call underneath
+    /// it, so the two things that implementation fixes stay pinned: a bounded GET is issued with a
+    /// retry limit of zero — retrying inside the SDK is what would let one request outlive the
+    /// stage's deadline — and the millisecond budget the route computed is passed straight through.
+    /// The budget is advanced to 52 s of its 60 s window first, so the asserted 8 s is the value
+    /// clipping produced and not the 15 s per-request ceiling, which would survive a broken clip.
+    @Test func theBoundedTorGETIssuesOneUnretriedNativeCallAtTheBudgetsTimeout() async throws {
+        let clock = ContinuousClock()
+        let origin = clock.now
+        let now = OSAllocatedUnfairLock(initialState: origin)
+        let budget = VotingPollLoadingBudget(now: { now.withLock { $0 } })
+        now.withLock { $0 = origin.advanced(by: .seconds(52)) }
+        let nativeCalls = OSAllocatedUnfairLock(initialState: [BoundedCall]())
+        var sdkSynchronizer = SDKSynchronizerClient.noOp
+        sdkSynchronizer.boundedTorGET = { request, timeoutMilliseconds in
+            try await SDKSynchronizerClient.performBoundedTorGET(
+                request,
+                timeoutMilliseconds: timeoutMilliseconds
+            ) { request, retryLimit, timeoutMilliseconds in
+                nativeCalls.withLock {
+                    $0.append(BoundedCall(
+                        url: request.url,
+                        retryLimit: retryLimit,
+                        timeoutMilliseconds: timeoutMilliseconds
+                    ))
+                }
+                return (Data(), Self.response(for: request, statusCode: 200))
+            }
+        }
+        let request = URLRequest(url: try #require(URL(string: "https://vote.example/rounds")))
+
+        _ = try await routePollLoadingRequest(
+            request,
+            budget: budget,
+            access: .protected,
+            sdkSynchronizer: sdkSynchronizer,
+            directRequest: { _, _ in
+                Issue.record("a protected poll-loading request escaped to the direct transport")
+                return (Data(), URLResponse())
+            }
+        )
+
+        #expect(nativeCalls.withLock { $0 } == [BoundedCall(
+            url: URL(string: "https://vote.example/rounds"),
+            retryLimit: 0,
+            timeoutMilliseconds: 8_000
+        )])
     }
 
     @Test func directPollLoadingIgnoresTheTorBudget() async throws {
