@@ -155,8 +155,11 @@ private let httpSession: URLSession = {
     return URLSession(configuration: config)
 }()
 
-/// Fast URLSession for share POSTs and health probes (5s timeout).
-/// Share delivery should fail fast so we can failover to another server.
+/// The short-timeout URLSession the `fast` flag picks on the direct transport: 5 s per
+/// request, 10 s per resource, two connections per host. Nothing in this client asks for
+/// `fast` any more — the callers that wanted to fail over quickly went with the app-side
+/// submission path — so today it is reached only through `routeVotingRequest`'s `fast`
+/// parameter, which the transport tests still exercise.
 private let fastHttpSession: URLSession = {
     let config = URLSessionConfiguration.default
     config.timeoutIntervalForRequest = 5
@@ -169,8 +172,8 @@ private let fastHttpSession: URLSession = {
 /// (`swapAPIAccess == .protected`), otherwise through the standard or fast
 /// URLSession. Returning `URLResponse` keeps every call site uniform.
 ///
-/// The "fast" policy maps to a 5 s timeout for health probes and share
-/// POSTs — on the non-Tor transports only. A per-request
+/// The "fast" policy is this 5 s request timeout, and it applies on the
+/// non-Tor transports only. A per-request
 /// `URLRequest.timeoutInterval` takes precedence over the session
 /// configuration's `timeoutIntervalForRequest` (measured: a request-level
 /// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
