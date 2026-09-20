@@ -3960,7 +3960,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your wallet held shielded funds at snapshot block height #%1$@, but less than the %2$@ ZEC minimum this voting round required."
+            "value" : "Tu billetera tenía fondos protegidos en la altura de bloque de la instantánea #%1$@, pero menos del mínimo de %2$@ ZEC que requería esta ronda de votación."
           }
         }
       }
@@ -4347,13 +4347,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "An earlier version of the app sent a vote for this poll, and it was still being confirmed when the app was updated. To avoid sending it twice, this version only shows the poll. Votes that were already confirmed still count."
+            "value" : "An earlier version of the app had started submitting your vote for this poll, and it was still being confirmed when the app was updated. To avoid sending anything twice, this version only shows the poll. Anything already confirmed still counts."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Una versión anterior de la aplicación envió un voto para esta votación y aún se estaba confirmando cuando se actualizó la aplicación. Para evitar enviarlo dos veces, esta versión solo muestra la votación. Los votos que ya se confirmaron siguen contando."
+            "value" : "Una versión anterior de la aplicación había empezado a enviar tu voto para esta votación y aún se estaba confirmando cuando se actualizó la aplicación. Para no enviar nada dos veces, esta versión solo muestra la votación. Lo que ya se confirmó sigue contando."
           }
         }
       }
@@ -5919,7 +5919,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ (%2$@ bundles skipped)"
+            "value" : "%1$@ (%2$@ paquetes omitidos)"
           }
         }
       }
@@ -5936,7 +5936,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ (1 bundle skipped)"
+            "value" : "%1$@ (1 paquete omitido)"
           }
         }
       }
