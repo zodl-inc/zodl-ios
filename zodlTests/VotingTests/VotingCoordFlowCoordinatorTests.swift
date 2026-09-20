@@ -11,6 +11,184 @@ extension VotingSharedStateSuites {
     // serialized to match XCTest's previous serial execution — and nested under a serialized
     // parent so the parity suite, which writes the same shared values, cannot interleave with it.
     @Suite(.serialized) struct VotingCoordFlowCoordinatorTests: VotingTestSuite {
+        // MARK: - Bounded, cancellable poll loading
+
+        /// A cancelled config fetch is the voter leaving the flow, not a service that
+        /// is down: the load simply stops, with no error surface behind it.
+        @MainActor
+        @Test func configCancellationLeavesLoadingWithoutFailureUI() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in
+                    recorder.record("fetchServiceConfig")
+                    throw CancellationError()
+                }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.initialize).finish()
+
+            #expect(recorder.events().contains("fetchServiceConfig"), "the fetch under test must have run")
+            #expect(store.state.rootScreen == .loading)
+            #expect(!store.state.pollsLoadError)
+        }
+
+        /// A static config the transport could not fetch is an availability answer, so
+        /// it belongs on the retryable polls-list sheet rather than the blocking
+        /// config-error screen.
+        @MainActor
+        @Test func staticConfigTransportFailureShowsRecoverablePollsError() async {
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in
+                    throw VotingConfigError.staticConfigFetchFailed("offline")
+                }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.initialize).finish()
+
+            #expect(store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
+        }
+
+        /// A 5xx from a dynamic mirror is the same kind of answer: the mirror walk
+        /// would try the next one, so the voter gets the retryable sheet.
+        @MainActor
+        @Test func retryableDynamicConfigFailureShowsRecoverablePollsError() async {
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in
+                    throw VotingConfigError.dynamicConfigFetchFailed("unavailable", statusCode: 503)
+                }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.initialize).finish()
+
+            #expect(store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
+        }
+
+        /// A plain 4xx is the publisher's own answer, not an availability one, so it
+        /// stays on the blocking config-error screen the voter cannot retry past.
+        @MainActor
+        @Test func authoritativeDynamicConfigFailureKeepsConfigError() async {
+            let error = VotingConfigError.dynamicConfigFetchFailed("missing", statusCode: 404)
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in throw error }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.initialize).finish()
+
+            #expect(store.state.rootScreen == .configError(error.errorDescription ?? ""))
+            #expect(!store.state.pollsLoadError)
+        }
+
+        /// Config bytes that arrived and then failed to decode are authoritative too:
+        /// retrying the same mirror would decode the same bytes again.
+        @MainActor
+        @Test func authoritativeConfigValidationFailureKeepsConfigError() async {
+            let error = VotingConfigError.decodeFailed("invalid publisher config")
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in throw error }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.initialize).finish()
+
+            #expect(store.state.rootScreen == .configError(error.errorDescription ?? ""))
+            #expect(!store.state.pollsLoadError)
+        }
+
+        /// A cancelled rounds fetch stops the load where it stands; only a real
+        /// transport failure raises the recoverable sheet.
+        @MainActor
+        @Test func roundCancellationLeavesLoadingWithoutFailureUI() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.configureURLs = { _ in }
+                $0.votingAPI.fetchAllRounds = {
+                    recorder.record("fetchAllRounds")
+                    throw CancellationError()
+                }
+                $0.databaseFiles = .noOp
+                $0.votingCrypto.openDatabase = { _, _ in }
+                $0.votingCrypto.setWalletId = { _ in }
+                $0.votingCrypto.configureProving = { _ in }
+                $0.votingCrypto.warmProvingCaches = { }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.serviceConfigLoaded(Self.makeServiceConfig())).finish()
+
+            #expect(recorder.events().contains("fetchAllRounds"), "the fetch under test must have run")
+            #expect(store.state.rootScreen == .loading)
+            #expect(!store.state.pollsLoadError)
+        }
+
+        /// The endorsement fetch is bounded the same way, and a cancelled one is not
+        /// a failed poll load either.
+        @MainActor
+        @Test func endorsementCancellationLeavesLoadingWithoutFailureUI() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchZodlEndorsedRoundIds = {
+                    recorder.record("fetchZodlEndorsedRoundIds")
+                    throw CancellationError()
+                }
+                $0.votingCrypto.pendingShareRounds = { [] }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.allRoundsLoaded([])).finish()
+
+            #expect(recorder.events().contains("fetchZodlEndorsedRoundIds"), "the fetch under test must have run")
+            #expect(!store.state.pollsLoadError)
+        }
+
+        /// A failed default-source endorsement request is part of poll discovery, so
+        /// while the loading screen is up it surfaces the same recoverable sheet a
+        /// failed rounds list does -- not a silent drop onto an empty list.
+        @MainActor
+        @Test func endorsementFailureWhileLoadingShowsRecoverablePollsError() async {
+            var state = VotingCoordFlow.State()
+            state.rootScreen = .loading
+            let store = Store(initialState: state) { VotingCoordFlow() }
+
+            await store.send(.zodlEndorsementsFailed).finish()
+
+            #expect(store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
+        }
+
+        /// An endorsement failure that arrives after the list is already on screen
+        /// leaves it alone: the rounds the voter can see did load.
+        @MainActor
+        @Test func endorsementFailurePreservesAnAlreadyVisiblePollsList() async {
+            var state = VotingCoordFlow.State()
+            state.rootScreen = .pollsList
+            let store = Store(initialState: state) { VotingCoordFlow() }
+
+            await store.send(.zodlEndorsementsFailed).finish()
+
+            #expect(!store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
+        }
+
         @Test func batchSubmissionCompletedAcceptsPartialBallotWhenDraftsAreDrained() {
             let metadata = VotingMetadataBox()
             var state = VotingCoordFlow.State()

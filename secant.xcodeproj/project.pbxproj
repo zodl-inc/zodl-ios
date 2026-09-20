@@ -50,9 +50,6 @@
 		34B967672F8CC48B00823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967662F8CC48B00823B20 /* Atomics */; };
 		34B967692F8CC49100823B20 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = 34B967682F8CC49100823B20 /* Atomics */; };
 		34FB884B3010911000A2F01F /* ZcashLightClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34FB884A3010911000A2F01F /* ZcashLightClientKit */; };
-		5A0BA5E000000000000000B1 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A1 /* VotingRecovery */; };
-		5A0BA5E000000000000000B2 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A2 /* VotingRecovery */; };
-		5A0BA5E000000000000000B3 /* VotingRecovery in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0BA5E000000000000000A3 /* VotingRecovery */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1711,21 +1708,6 @@
 		34FB884A3010911000A2F01F /* ZcashLightClientKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZcashLightClientKit;
-		};
-		5A0BA5E000000000000000A1 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
-		};
-		5A0BA5E000000000000000A2 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
-		};
-		5A0BA5E000000000000000A3 /* VotingRecovery */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5A0BA5E000000000000000A0 /* XCLocalSwiftPackageReference "Packages/VotingRecovery" */;
-			productName = VotingRecovery;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

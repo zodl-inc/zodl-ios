@@ -19,9 +19,6 @@ import Foundation
 struct RoundSession: Equatable {
     let roundId: String
 
-    /// Diagnostic state only, discarded with this account-scoped round cache.
-    var submissionAttempt: VotingSubmissionAttempt?
-
     // MARK: - Pipeline outputs (Phase 4b populates)
 
     /// Total voting power for this wallet at the round's snapshot height,
@@ -95,15 +92,6 @@ struct RoundSession: Equatable {
 
     /// True while the precompute task is in-flight (deduplication guard).
     var isDelegationPrecomputeInFlight: Bool = false
-
-    /// How far the background precompute has got through the speculative
-    /// authorization proof, 0...1 across every bundle. Cleared by both
-    /// `.delegationPrecomputeCompleted` and `.delegationPrecomputeFailed`; a
-    /// cancelled run leaves its last value behind, which is harmless because
-    /// the next run overwrites it on its first progress event. Distinct from
-    /// `delegationProofStatus`, which this only mirrors into while a Confirm
-    /// is waiting for the proof it started.
-    var delegationPrecomputeProgress: Double?
 
     /// Top-level state machine for the batch submission flow. Drives the
     /// Confirm Submission view (progress, authorization error sheet,
