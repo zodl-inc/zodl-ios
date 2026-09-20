@@ -492,6 +492,45 @@ extension VotingSharedStateSuites {
             #expect(updated.currentKeystoneBundleIndex == 1)
         }
 
+        /// What the skip alert and the signing screen say a voter is giving up is
+        /// measured against the bundles this round actually delegates. A trimmed
+        /// round's eligible weight also carries the value the crate's privacy trim
+        /// left out, and that value was never on any bundle the device could sign,
+        /// so counting it would tell the voter they are forfeiting money the round
+        /// never asked them for.
+        @Test func keystoneWeightSplitMeasuresPendingAgainstTheKeptBundlesOnly() {
+            var session = roundSession(votingWeight: 100_000_000)
+            // The trim left 50_000_000 out of the delegation entirely: two kept
+            // bundles worth 100_000_000, three dropped ones worth 50_000_000.
+            session.eligibleVotingWeight = 150_000_000
+            session.bundleCount = 2
+            session.eligibleBundleCount = 5
+            session.keystoneSignedBundles = [0]
+            session.keystoneBundleWeights = [0: 60_000_000, 1: 40_000_000]
+
+            let split = VotingCoordFlow.keystoneWeightSplit(session)
+
+            #expect(split.signed == 60_000_000)
+            #expect(split.pending == 40_000_000)
+        }
+
+        /// The untrimmed round is the one the split was written for, and it must
+        /// read exactly as it always did: the eligible pair equals the live pair,
+        /// so there is no dropped value to leave out.
+        @Test func keystoneWeightSplitIsUnchangedForAnUntrimmedRound() {
+            var session = roundSession(votingWeight: 100_000_000)
+            session.eligibleVotingWeight = 100_000_000
+            session.bundleCount = 2
+            session.eligibleBundleCount = 2
+            session.keystoneSignedBundles = [0]
+            session.keystoneBundleWeights = [0: 60_000_000, 1: 40_000_000]
+
+            let split = VotingCoordFlow.keystoneWeightSplit(session)
+
+            #expect(split.signed == 60_000_000)
+            #expect(split.pending == 40_000_000)
+        }
+
         @Test func delegationRejectedResetsKeystoneLoopButPreservesVotes() {
             var session = roundSession(
                 drafts: [2: .option(1)],

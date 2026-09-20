@@ -3982,8 +3982,16 @@ extension VotingCoordFlow {
     /// round never requested has no figure, and its weight stays on the pending
     /// side rather than being counted as locked in. Erring that way keeps the
     /// skip alert from telling a voter they are giving up less than they are.
+    ///
+    /// The total is the live pair -- what this round actually delegates -- and
+    /// not the eligible one. On a trimmed round the eligible weight also
+    /// carries the value the crate's privacy trim left out of the delegation,
+    /// and no bundle the device can sign ever held it, so counting it would
+    /// quote the voter a forfeit the round never asked of them.
+    /// `eligibleVotingWeight` is the fallback for the entry that reaches here
+    /// before a layout has named the live weight.
     static func keystoneWeightSplit(_ session: RoundSession) -> (signed: UInt64, pending: UInt64) {
-        let total = session.eligibleVotingWeight > 0 ? session.eligibleVotingWeight : session.votingWeight
+        let total = session.votingWeight > 0 ? session.votingWeight : session.eligibleVotingWeight
         let signed = session.keystoneWeight(ofFirst: session.resolvedKeystonePrefixCount) ?? 0
         return (signed, total > signed ? total - signed : 0)
     }
