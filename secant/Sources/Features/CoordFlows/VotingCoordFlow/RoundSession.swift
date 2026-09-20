@@ -259,7 +259,7 @@ enum BatchSubmissionStatus: Equatable {
 /// progress indicator on the Confirm Submission view.
 enum VoteSubmissionStep: Equatable {
     case authorizingVote    // delegation proof (ZKP #1)
-    case preparingProof     // syncVoteTree + generateVanWitness + buildVoteCommitment + signCastVote + submitVoteCommitment
+    case preparingProof     // vote-tree sync + generateVanWitness + buildVoteCommitment + signCastVote + submitVoteCommitment
     case confirming         // fetchTxConfirmation poll
     case sendingShares      // buildSharePayloads + delegateShares
 

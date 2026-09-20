@@ -96,10 +96,6 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 return try backend.pendingShareRounds()
             },
-            syncVoteTree: { roundId, nodeUrl in
-                let backend = try await dbActor.backend()
-                return try await backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
-            },
             resetVoteTree: { roundId in
                 let backend = try await dbActor.backend()
                 try backend.resetVoteTree(roundId: roundId)

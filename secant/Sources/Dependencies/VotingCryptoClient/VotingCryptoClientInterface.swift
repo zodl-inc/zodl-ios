@@ -82,9 +82,6 @@ struct VotingCryptoClient {
     var roundPlan: @Sendable (_ roundId: String, _ proposalIds: [UInt32]) async throws -> VotingRoundPlan
     /// The rounds of every wallet that still owe helper-share work.
     var pendingShareRounds: @Sendable () async throws -> [VotingPendingShareRound]
-    /// Bring the round's local vote-commitment tree up to the node's, answering
-    /// with the height it reached.
-    var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
     /// Drop the round's cached vote tree so the next sync starts from scratch.
     var resetVoteTree: @Sendable (_ roundId: String) async throws -> Void
     /// Clear per-session state for a round, leaving signed and registered
@@ -110,14 +107,10 @@ struct VotingCryptoClient {
     /// a session that cannot have the Tor route is refused rather than opened
     /// over a direct connection.
     ///
-    /// The route governs the session's **chain and helper traffic only**. PIR
-    /// queries and vote-tree reads always take the crate's own direct
-    /// transport, whatever this route says, and the app points
-    /// `voteTreeNodeUrls` at the same hosts as `chainEndpoints` — so a voter on
-    /// Tor still reaches those operators over a plain connection and reveals
-    /// their IP to them. Nothing here can change that; it is a property of the
-    /// crate's transport split, and it is stated so no call site reads `.tor`
-    /// as "the whole round is over Tor".
+    /// The route governs every service the session touches: chain and
+    /// helper traffic, PIR queries and vote-tree sync. On `.tor` all of it
+    /// rides Tor and fails closed; nothing falls back to a direct
+    /// connection.
     var openRoundSession: @Sendable (
         _ inputs: VotingSessionInputs,
         _ binding: VotingSessionBinding,
