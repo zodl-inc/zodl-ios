@@ -177,6 +177,7 @@ extension VotingTestSuite {
         dependencies.votingCrypto.closeRoundSession = { _ in }
         dependencies.votingCrypto.cancelRoundSession = { _ in }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
+        dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
     }
 
     /// Everything a Keystone round touches outside the per-test signature and

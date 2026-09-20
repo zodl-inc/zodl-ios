@@ -189,6 +189,19 @@ actor VotingSessionRegistry {
         sessions[VotingSessionRegistry.key(roundId)]?.setOperationEpoch(epoch)
     }
 
+    /// Push a refreshed service configuration into every open session. A
+    /// session that closed meanwhile refuses it, which is fine: the next open
+    /// builds its inputs from the refreshed configuration anyway.
+    func updateHostConfiguration(_ overrides: VotingHostOverrides) {
+        for session in sessions.values {
+            do {
+                try session.updateHostConfiguration(overrides)
+            } catch {
+                LoggerProxy.debug("Voting: a round session refused a host configuration update: \(error)")
+            }
+        }
+    }
+
     /// Fence everything started against the sessions held so far.
     func invalidate() {
         generation &+= 1

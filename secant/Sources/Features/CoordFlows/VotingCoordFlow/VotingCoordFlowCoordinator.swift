@@ -251,7 +251,26 @@ extension VotingCoordFlow {
                     // 1. Configure API client URLs from the loaded config.
                     await votingAPI.configureURLs(config)
 
-                    // 2. Open the voting DB and scope it to this wallet.
+                    // 2. Push the refreshed helper fleet and vote-tree nodes into
+                    //    every round session already open, so a session opened
+                    //    before this load and one opened after cannot disagree
+                    //    about where to reach them. Independent of the teardown
+                    //    gate below -- a session already open has nothing to do
+                    //    with whether a *fresh* database open is allowed -- and
+                    //    safe with nothing open: the registry's loop is then
+                    //    empty. Round timing is per round, not per service, so it
+                    //    is never pushed here. A config this build cannot open a
+                    //    session on (no vote servers, no PIR endpoints or layout)
+                    //    has nothing valid to push, so it is skipped rather than
+                    //    blanking a session's existing configuration.
+                    if let transport = VotingSessionTransport(serviceConfig: config) {
+                        let hostURLs = Self.sessionHostURLs(transport: transport)
+                        await votingCrypto.updateHostConfiguration(
+                            VotingHostOverrides(helperUrls: hostURLs.helperUrls, voteTreeNodeUrls: hostURLs.voteTreeNodeUrls)
+                        )
+                    }
+
+                    // 3. Open the voting DB and scope it to this wallet.
                     // Asked again here rather than only at the top, because the
                     // config fetch above suspends for as long as the network takes
                     // and a reset can begin in that time. Last possible moment
@@ -265,7 +284,7 @@ extension VotingCoordFlow {
                     try await votingCrypto.openDatabase(dbPath, networkId)
                     try await votingCrypto.setWalletId(walletId)
 
-                    // 3. Fix the proving policy, then warm the caches -- in that
+                    // 4. Fix the proving policy, then warm the caches -- in that
                     //    order, and never the other way round. One heavy job at a
                     //    time is what keeps a phone from being killed for memory
                     //    mid-proof; `cpuWorkerCount: nil` leaves the worker count
@@ -285,7 +304,7 @@ extension VotingCoordFlow {
                     }
                     await send(.warmProvingCaches)
 
-                    // 4. Fetch rounds. Network failures surface as a
+                    // 5. Fetch rounds. Network failures surface as a
                     //    recoverable sheet on the polls list rather than the
                     //    blocking error screen.
                     do {
@@ -1876,11 +1895,21 @@ extension VotingCoordFlow {
         }
     }
 
-    /// The inputs a round session lives on.
+    /// The helper fleet and vote-tree node URLs a round session's drivers
+    /// read, derived once from the session's transport so a fresh open
+    /// (``sessionInputs(votingSession:transport:accountUUID:walletDbPath:anchorTreeState:)``)
+    /// and a live host-configuration refresh
+    /// (`.serviceConfigLoaded`) cannot derive them differently.
     ///
     /// Chain and vote-tree traffic go to the first few configured servers
     /// because the crate polls each of them; helper traffic goes to all of
     /// them, since a share may be delivered anywhere.
+    static func sessionHostURLs(transport: VotingSessionTransport) -> (helperUrls: [String], voteTreeNodeUrls: [String]) {
+        let voteTreeNodeUrls = Array(transport.voteServerURLs.prefix(Self.maxSessionChainEndpoints))
+        return (helperUrls: transport.voteServerURLs, voteTreeNodeUrls: voteTreeNodeUrls)
+    }
+
+    /// The inputs a round session lives on.
     static func sessionInputs(
         votingSession: VotingSession,
         transport: VotingSessionTransport,
@@ -1888,7 +1917,7 @@ extension VotingCoordFlow {
         walletDbPath: String,
         anchorTreeState: Data
     ) -> VotingSessionInputs {
-        let chainEndpoints = Array(transport.voteServerURLs.prefix(Self.maxSessionChainEndpoints))
+        let hostURLs = Self.sessionHostURLs(transport: transport)
         return VotingSessionInputs(
             accountUUID: accountUUID,
             walletDbPath: walletDbPath,
@@ -1901,9 +1930,9 @@ extension VotingCoordFlow {
             ),
             roundName: votingSession.title,
             anchorTreeState: anchorTreeState,
-            chainEndpoints: chainEndpoints,
-            voteTreeNodeUrls: chainEndpoints,
-            helperUrls: transport.voteServerURLs,
+            chainEndpoints: hostURLs.voteTreeNodeUrls,
+            voteTreeNodeUrls: hostURLs.voteTreeNodeUrls,
+            helperUrls: hostURLs.helperUrls,
             pirEndpoints: transport.pirEndpointURLs,
             pirLayout: transport.pirLayout,
             ceremonyStartSeconds: Self.authenticatedSeconds(votingSession.ceremonyStart),

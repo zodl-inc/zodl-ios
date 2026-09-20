@@ -139,6 +139,9 @@ extension VotingCryptoClient: DependencyKey {
             setOperationEpoch: { roundId, epoch in
                 await registry.setEpoch(roundId, epoch)
             },
+            updateHostConfiguration: { overrides in
+                await registry.updateHostConfiguration(overrides)
+            },
             sessionPlan: { roundId in
                 try await registry.session(for: roundId).plan()
             },

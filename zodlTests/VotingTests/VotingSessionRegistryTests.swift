@@ -62,6 +62,29 @@ import Testing
         #expect(await registry.generation == before + 1)
     }
 
+    /// A refreshed service configuration is pushed into whatever the registry
+    /// actually has open. Every factory in this suite refuses -- a
+    /// ``VotingRoundSession`` can only be made by the SDK, see the file
+    /// comment -- so an attempted open never lands a session here, the same
+    /// "nothing open" shape as a registry nothing was ever opened on. Either
+    /// way the push must be silent: it must not throw, and it must not touch
+    /// `openRoundIds`, which is the registry's bookkeeping, not the session's.
+    @Test func updateHostConfigurationWithNoOpenSessionIsANoOp() async {
+        let registry = makeRegistry()
+
+        _ = try? await registry.open(
+            inputs: VotingSessionRegistryTests.inputs(roundId: roundId),
+            binding: VotingSessionBinding(roster: []),
+            route: .direct,
+            epoch: 0
+        )
+        #expect(await registry.openRoundIds.isEmpty)
+
+        await registry.updateHostConfiguration(VotingHostOverrides(helperUrls: ["https://h.example/"]))
+
+        #expect(await registry.openRoundIds.isEmpty)
+    }
+
     /// Staged rather than timed. The overlap this is about is the window
     /// between an open registering its attempt and its session arriving, and
     /// the factory holds that window open until the second caller is on its way

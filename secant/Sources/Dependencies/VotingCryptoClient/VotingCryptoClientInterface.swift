@@ -125,6 +125,12 @@ struct VotingCryptoClient {
     /// Move the round's submission epoch, invalidating passes that captured an
     /// older one.
     var setOperationEpoch: @Sendable (_ roundId: String, _ epoch: UInt64) async -> Void
+    /// Push a refreshed service configuration -- the helper fleet and the
+    /// vote-tree nodes -- into every round session already open. Round timing
+    /// is per round, not per service, and is never carried here. A round with
+    /// no open session is untouched; a session that closed in the meantime
+    /// simply keeps whatever it already had.
+    var updateHostConfiguration: @Sendable (_ overrides: VotingHostOverrides) async -> Void = { _ in }
 
     // MARK: - Round session work
 

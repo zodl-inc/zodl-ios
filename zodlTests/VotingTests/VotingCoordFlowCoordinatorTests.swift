@@ -138,6 +138,60 @@ extension VotingSharedStateSuites {
             #expect(!store.state.pollsLoadError)
         }
 
+        /// A freshly loaded service configuration is not just handed to the API
+        /// client: it is pushed into every round session already open, so a
+        /// session opened before this load and one opened after cannot disagree
+        /// about where to reach the helper fleet or the vote-tree nodes.
+        /// `sessionInputs` derives the very same two lists from the very same
+        /// config, so this asserts against its actual output rather than a value
+        /// hand-picked to match it.
+        @MainActor
+        @Test func serviceConfigLoadedPushesHostConfigurationToOpenSessions() async throws {
+            let recorder = EventRecorder()
+            let pushedOverrides = LockIsolated<VotingHostOverrides?>(nil)
+            let config = Self.makeServiceConfig(
+                voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")]
+            )
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.configureURLs = { _ in }
+                $0.votingAPI.fetchAllRounds = {
+                    recorder.record("fetchAllRounds")
+                    throw CancellationError()
+                }
+                $0.databaseFiles = .noOp
+                $0.votingCrypto.openDatabase = { _, _ in }
+                $0.votingCrypto.setWalletId = { _ in }
+                $0.votingCrypto.configureProving = { _ in }
+                $0.votingCrypto.warmProvingCaches = { }
+                $0.votingCrypto.updateHostConfiguration = { overrides in
+                    recorder.record("updateHostConfiguration")
+                    pushedOverrides.withValue { $0 = overrides }
+                }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.serviceConfigLoaded(config)).finish()
+
+            let transport = try #require(VotingSessionTransport(serviceConfig: config))
+            let expectedInputs = VotingCoordFlow.sessionInputs(
+                votingSession: self.votingSession(),
+                transport: transport,
+                accountUUID: "11111111-1111-1111-1111-111111111111",
+                walletDbPath: "/dev/null",
+                anchorTreeState: Data()
+            )
+
+            #expect(recorder.events().filter { $0 == "updateHostConfiguration" }.count == 1)
+            #expect(
+                pushedOverrides.value == VotingHostOverrides(
+                    helperUrls: expectedInputs.helperUrls,
+                    voteTreeNodeUrls: expectedInputs.voteTreeNodeUrls
+                )
+            )
+        }
+
         /// The endorsement fetch is bounded the same way, and a cancelled one is not
         /// a failed poll load either.
         @MainActor
