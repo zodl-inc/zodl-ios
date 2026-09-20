@@ -219,6 +219,39 @@ extension VotingSharedStateSuites {
             #expect(metadata.records[roundId]?.proposalCount == 2)
         }
 
+        /// A software wallet's bundle setup can be trimmed by the crate too, so
+        /// the completed-round record must carry the same trim figures a
+        /// Keystone wallet's does, not just log and drop them.
+        @Test func batchSubmissionCompletedPersistsTrimMetadataForSoftwareWallet() {
+            let metadata = VotingMetadataBox()
+            var session = roundSession(
+                votingWeight: 50_000_000,
+                votes: [1: .option(0)]
+            )
+            session.eligibleVotingWeight = 50_400_000
+            session.bundleCount = 2
+            session.eligibleBundleCount = 5
+            var state = VotingCoordFlow.State()
+            state.roundCache[roundId] = session
+
+            withDependencies {
+                $0.votingMetadata = votingMetadataClient(metadata)
+            } operation: {
+                _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                    &state,
+                    roundId: roundId,
+                    successCount: 1,
+                    failCount: 0
+                )
+            }
+
+            let record = tryUnwrap(metadata.records[roundId])
+            #expect(record.votingWeight == 50_000_000)
+            #expect(record.eligibleVotingWeight == 50_400_000)
+            #expect(record.submittedBundleCount == 2)
+            #expect(record.totalBundleCount == 5)
+        }
+
         @Test func batchSubmissionCompletedFailsWhenDraftsRemain() {
             var state = VotingCoordFlow.State()
             state.roundCache[roundId] = roundSession(
