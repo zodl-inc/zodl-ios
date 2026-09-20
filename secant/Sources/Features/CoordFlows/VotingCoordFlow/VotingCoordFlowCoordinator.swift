@@ -765,6 +765,13 @@ extension VotingCoordFlow {
             case let .bundleSetupFailed(roundId, error):
                 return reduceBundleSetupFailed(&state, roundId: roundId, error: error)
 
+            case let .bundleLayoutRestored(roundId, layout):
+                // Only what the round is worth. The open effect that asked for
+                // this layout goes on to send `.roundSessionOpened` itself, so
+                // re-planning here would open the round twice.
+                applyBundleLayout(&state, roundId: roundId, layout: layout)
+                return .none
+
             case let .precomputeProofEvent(roundId, bundleIndex, event):
                 return reducePrecomputeProofEvent(
                     &state,
@@ -1878,10 +1885,35 @@ extension VotingCoordFlow {
 
             let plan = try await votingCrypto.sessionPlan(roundId)
             if !plan.needsBundleSetup {
-                // The bundles already exist, so no layout will answer with
-                // their weight. Ask for it directly rather than showing the
-                // voter a round worth nothing.
-                if let report = try? await votingCrypto.eligibility(roundId) {
+                // The bundles already exist, so no first setup will answer with
+                // their weight. Setting them up again is how it is asked for:
+                // on a round whose rows are persisted the crate validates the
+                // stored prefix and hands back the same layout it built them
+                // from, including what its privacy trim dropped and what a skip
+                // deleted. Nothing on this side can reconstruct those -- the
+                // read-only report names no dropped-bundle count, and the count
+                // is persisted -- so without this an entry that found the
+                // round's cache evicted (leaving the flow, saving a config
+                // source, switching accounts, restarting the app) would show no
+                // "not included" row and finish with a record saying the whole
+                // wallet voted.
+                var didRestoreLayout = false
+                // Never for a round an older build left mid-submission: that
+                // round is display-only and this call writes. Its weight comes
+                // from the read-only report, as it always did.
+                if !plan.hasLegacyInFlightSubmission {
+                    do {
+                        let layout = try await votingCrypto.setupBundles(roundId)
+                        await send(.bundleLayoutRestored(roundId: roundId, layout: layout))
+                        didRestoreLayout = true
+                    } catch {
+                        LoggerProxy.warn("Restoring the bundle layout of \(roundId) failed: \(error)")
+                    }
+                }
+                // The fallback, and the only path a flagged round takes: worth
+                // less than the layout -- it cannot name what was left out --
+                // but better than showing the voter a round worth nothing.
+                if !didRestoreLayout, let report = try? await votingCrypto.eligibility(roundId) {
                     await send(.votingWeightLoaded(
                         roundId: roundId,
                         weight: report.eligibleWeight,
@@ -2112,24 +2144,12 @@ extension VotingCoordFlow {
     /// `.bundlesSetUp` handler. The layout is the round's voting power; the
     /// refreshed plan is what it owes now that the rows exist.
     func reduceBundlesSetUp(_ state: inout State, roundId: String, layout: VotingBundleLayout) -> Effect<Action> {
-        applyBundleTotals(&state, roundId: roundId, weight: layout.eligibleWeight, bundleCount: layout.bundleCount)
         if layout.privacyTrimDroppedBundles > 0 {
             let bundles = layout.privacyTrimDroppedBundles
             let notes = layout.privacyTrimDroppedNotes
             LoggerProxy.info("Round \(roundId): privacy trim dropped \(bundles) bundles, \(notes) notes")
-            // The crate left these bundles out of the delegation. The eligible
-            // pair is what the Confirm screen and the completed-round record
-            // compare the live pair against, so it carries the full figure --
-            // kept plus dropped, overriding the kept-only default
-            // `applyBundleTotals` just filled in above.
-            // `privacyTrimDroppedValueZatoshi` is the dropped notes' raw
-            // value, not their bundle-quantized voting weight; it is summed
-            // with `eligibleWeight` as the crate reports both, unconverted.
-            mutateSession(&state, roundId: roundId) { roundSession in
-                roundSession.eligibleBundleCount = layout.bundleCount + layout.privacyTrimDroppedBundles
-                roundSession.eligibleVotingWeight = layout.eligibleWeight + layout.privacyTrimDroppedValueZatoshi
-            }
         }
+        applyBundleLayout(&state, roundId: roundId, layout: layout)
         return .merge(
             // Eligibility is proven the moment bundles exist, so hand
             // navigation off now rather than holding the polls list.
@@ -2608,6 +2628,34 @@ extension VotingCoordFlow {
             // weights of the bundles it still has.
             roundSession.keystoneSignedBundles = roundSession.keystoneSignedBundles.filter { $0 < bundleCount }
             roundSession.keystoneBundleWeights = roundSession.keystoneBundleWeights.filter { $0.key < bundleCount }
+        }
+    }
+
+    /// Writes a round's bundle layout onto its cached session: the live pair
+    /// from the bundles the round delegates, the eligible pair from everything
+    /// the wallet brought to it.
+    ///
+    /// One helper for both the entry that creates the rows (`.bundlesSetUp`)
+    /// and the one that finds them already there (`.bundleLayoutRestored`), so
+    /// a round cannot be worth one thing on first entry and another on the
+    /// next. Two things can sit outside the delegation: the bundles the
+    /// crate's privacy trim dropped, and the trailing ones "use signed bundles
+    /// only" deleted. The eligible pair carries both, because it is what the
+    /// Confirm screen's "not included" row and the completed-round record
+    /// compare the live pair against -- overriding the kept-only default
+    /// `applyBundleTotals` fills in. The two dropped values are the raw value
+    /// of those notes, not their bundle-quantized voting weight; they are
+    /// summed with `eligibleWeight` as the crate reports all three,
+    /// unconverted. A round with neither leaves the eligible pair equal to the
+    /// live one, which is every first setup.
+    func applyBundleLayout(_ state: inout State, roundId: String, layout: VotingBundleLayout) {
+        applyBundleTotals(&state, roundId: roundId, weight: layout.eligibleWeight, bundleCount: layout.bundleCount)
+        guard layout.privacyTrimDroppedBundles > 0 || layout.skippedSuffixBundles > 0 else { return }
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.eligibleBundleCount =
+                layout.bundleCount + layout.privacyTrimDroppedBundles + layout.skippedSuffixBundles
+            roundSession.eligibleVotingWeight =
+                layout.eligibleWeight + layout.privacyTrimDroppedValueZatoshi + layout.skippedSuffixValueZatoshi
         }
     }
 

@@ -186,6 +186,16 @@ extension VotingTestSuite {
         }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
         dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
+        // Re-entering a round whose rows already exist asks the crate to
+        // re-derive the layout, so every session open can reach this. The
+        // default answers the untrimmed single-bundle round the rest of these
+        // fixtures describe -- the same figures `eligibilityReport()` and a
+        // default `plan()` give -- so a suite that is not about the layout
+        // cannot tell the restore apart from the read-only path it replaces.
+        dependencies.votingCrypto.pendingShareRounds = { [] }
+        dependencies.votingCrypto.setupBundles = { _ in
+            try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+        }
     }
 
     /// Everything a Keystone round touches outside the per-test signature and
@@ -336,7 +346,9 @@ extension VotingTestSuite {
         bundleCount: UInt32,
         eligibleWeight: UInt64,
         privacyTrimDroppedBundles: UInt32 = 0,
-        privacyTrimDroppedValueZatoshi: UInt64 = 0
+        privacyTrimDroppedValueZatoshi: UInt64 = 0,
+        skippedSuffixBundles: UInt32 = 0,
+        skippedSuffixValueZatoshi: UInt64 = 0
     ) throws -> VotingBundleLayout {
         let payload: [String: Any] = [
             "bundle_count": Int(bundleCount),
@@ -344,7 +356,10 @@ extension VotingTestSuite {
             "dropped_count": 0,
             "privacy_trim_dropped_bundles": Int(privacyTrimDroppedBundles),
             "privacy_trim_dropped_notes": 0,
-            "privacy_trim_dropped_value_zatoshi": Int(privacyTrimDroppedValueZatoshi)
+            "privacy_trim_dropped_value_zatoshi": Int(privacyTrimDroppedValueZatoshi),
+            "skipped_suffix_bundles": Int(skippedSuffixBundles),
+            "skipped_suffix_notes": 0,
+            "skipped_suffix_value_zatoshi": Int(skippedSuffixValueZatoshi)
         ]
         return try JSONDecoder().decode(VotingBundleLayout.self, from: JSONSerialization.data(withJSONObject: payload))
     }

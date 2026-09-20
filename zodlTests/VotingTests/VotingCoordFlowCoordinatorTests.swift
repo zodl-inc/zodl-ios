@@ -702,6 +702,200 @@ extension VotingSharedStateSuites {
             #expect(session?.eligibleVotingWeight == session?.votingWeight)
         }
 
+        /// Bundle setup runs once, when a round is first entered. Leaving the
+        /// flow, saving a config source, switching accounts and restarting the app
+        /// all evict `roundCache`, and with it the trim figures -- which the
+        /// read-only eligibility report cannot give back, because it names no
+        /// dropped-bundle count and the count is what the Confirm screen's "not
+        /// included" row and the completed-round record compare against. Asking
+        /// the crate to re-derive the layout of a round whose rows already exist
+        /// is what restores them.
+        @MainActor
+        @Test func reEnteringATrimmedRoundRestoresWhatTheTrimLeftOut() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                // No bundle setup needed: the rows are already there from the
+                // entry whose cache entry has since been evicted. Two bundle
+                // phases, agreeing with the kept `bundleCount: 2` below.
+                $0.votingCrypto.sessionPlan = { _ in
+                    recorder.record("sessionPlan")
+                    return try self.plan(openProposals: [1, 2], bundlePhases: ["prepared", "prepared"])
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    return try self.bundleLayout(
+                        bundleCount: 2,
+                        eligibleWeight: 50_000_000,
+                        privacyTrimDroppedBundles: 3,
+                        privacyTrimDroppedValueZatoshi: 400_000
+                    )
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            let session = store.state.roundCache[self.activeRoundId]
+            #expect(recorder.events().filter { $0 == "setupBundles" }.count == 1)
+            // The live pair stays what this round delegates...
+            #expect(session?.bundleCount == 2)
+            #expect(session?.votingWeight == 50_000_000)
+            // ...and the eligible pair carries kept plus dropped again.
+            #expect(session?.eligibleBundleCount == 5)
+            #expect(session?.eligibleVotingWeight == 50_400_000)
+        }
+
+        /// The point of restoring the pair: a round finished after a re-entry
+        /// leaves the same receipt as one finished in the entry that set its
+        /// bundles up. Without the restore the record says nothing was left out.
+        @MainActor
+        @Test func aRoundRestoredFromATrimmedPrefixPersistsTheTrimFigures() async {
+            let recorder = EventRecorder()
+            let metadata = VotingMetadataBox()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    try self.plan(openProposals: [1, 2], bundlePhases: ["prepared", "prepared"])
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    try self.bundleLayout(
+                        bundleCount: 2,
+                        eligibleWeight: 50_000_000,
+                        privacyTrimDroppedBundles: 3,
+                        privacyTrimDroppedValueZatoshi: 400_000
+                    )
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            // The round completes from the session this re-entry restored, not
+            // from one built by hand: what the record carries is whatever the
+            // restore actually left behind.
+            var restored = tryUnwrap(store.state.roundCache[self.activeRoundId])
+            restored.votes = [1: .option(0)]
+            var state = VotingCoordFlow.State()
+            state.roundCache[activeRoundId] = restored
+
+            withDependencies {
+                $0.votingMetadata = self.votingMetadataClient(metadata)
+            } operation: {
+                _ = VotingCoordFlow().reduceBatchSubmissionCompleted(
+                    &state,
+                    roundId: self.activeRoundId,
+                    successCount: 1,
+                    failCount: 0
+                )
+            }
+
+            let record = tryUnwrap(metadata.records[self.activeRoundId])
+            #expect(record.votingWeight == 50_000_000)
+            #expect(record.eligibleVotingWeight == 50_400_000)
+            #expect(record.submittedBundleCount == 2)
+            #expect(record.totalBundleCount == 5)
+        }
+
+        /// A round an older build left mid-submission is display-only, and
+        /// `setupBundles` writes. Re-entry must not reach it for such a round --
+        /// its weight comes from the read-only report, as it always did.
+        @MainActor
+        @Test func reEnteringAFlaggedRoundNeverAsksTheCrateToSetUpBundles() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    try self.plan(openProposals: [1, 2], legacyInFlight: true)
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+                }
+                $0.votingCrypto.eligibility = { _ in
+                    recorder.record("eligibility")
+                    return try self.eligibilityReport()
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { store.state.legacyRoundSheetRoundId == self.activeRoundId }
+
+            #expect(recorder.events().filter { $0 == "setupBundles" }.isEmpty)
+            #expect(recorder.events().contains("eligibility"))
+            #expect(store.state.roundCache[self.activeRoundId]?.votingWeight == 50_000_000)
+        }
+
+        /// The restore is best-effort: a crate that refuses to re-derive the
+        /// layout -- a prefix it can no longer reproduce, say -- must not keep the
+        /// voter out of a round they can still read. The round opens on the
+        /// read-only report exactly as it did before the restore existed.
+        @MainActor
+        @Test func aRefusedLayoutRestoreStillOpensTheRoundOnTheEligibilityReport() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    throw VotingError(kind: .other, message: "the persisted prefix cannot be reproduced")
+                }
+                $0.votingCrypto.eligibility = { _ in
+                    recorder.record("eligibility")
+                    return try self.eligibilityReport()
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            #expect(recorder.events().contains("setupBundles"))
+            #expect(recorder.events().contains("eligibility"))
+            #expect(store.state.roundCache[self.activeRoundId]?.votingWeight == 50_000_000)
+            #expect(store.state.roundCache[self.activeRoundId]?.bundleCount == 1)
+        }
+
+        /// The trim is not the only thing that leaves bundles out: "use signed
+        /// bundles only" deletes the unsigned trailing ones, and the crate reports
+        /// those separately. A re-entry restores that difference the same way.
+        @MainActor
+        @Test func reEnteringARoundWithASkippedSuffixRestoresWhatWasSkipped() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    try self.plan(openProposals: [1, 2], bundlePhases: ["prepared", "prepared"])
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    try self.bundleLayout(
+                        bundleCount: 2,
+                        eligibleWeight: 50_000_000,
+                        skippedSuffixBundles: 1,
+                        skippedSuffixValueZatoshi: 250_000
+                    )
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            let session = store.state.roundCache[self.activeRoundId]
+            #expect(session?.bundleCount == 2)
+            #expect(session?.votingWeight == 50_000_000)
+            #expect(session?.eligibleBundleCount == 3)
+            #expect(session?.eligibleVotingWeight == 50_250_000)
+        }
+
         /// A wallet the crate refuses to bundle for is not an error screen: it is
         /// the polls list with the insufficient-balance sheet, so the voter can pick
         /// another round.
