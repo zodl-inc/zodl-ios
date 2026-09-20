@@ -317,13 +317,19 @@ extension VotingTestSuite {
         return payload
     }
 
-    func bundleLayout(bundleCount: UInt32, eligibleWeight: UInt64) throws -> VotingBundleLayout {
+    func bundleLayout(
+        bundleCount: UInt32,
+        eligibleWeight: UInt64,
+        privacyTrimDroppedBundles: UInt32 = 0,
+        privacyTrimDroppedValueZatoshi: UInt64 = 0
+    ) throws -> VotingBundleLayout {
         let payload: [String: Any] = [
             "bundle_count": Int(bundleCount),
             "eligible_weight": Int(eligibleWeight),
             "dropped_count": 0,
-            "privacy_trim_dropped_bundles": 0,
-            "privacy_trim_dropped_notes": 0
+            "privacy_trim_dropped_bundles": Int(privacyTrimDroppedBundles),
+            "privacy_trim_dropped_notes": 0,
+            "privacy_trim_dropped_value_zatoshi": Int(privacyTrimDroppedValueZatoshi)
         ]
         return try JSONDecoder().decode(VotingBundleLayout.self, from: JSONSerialization.data(withJSONObject: payload))
     }

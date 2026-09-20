@@ -2011,6 +2011,18 @@ extension VotingCoordFlow {
             let bundles = layout.privacyTrimDroppedBundles
             let notes = layout.privacyTrimDroppedNotes
             LoggerProxy.info("Round \(roundId): privacy trim dropped \(bundles) bundles, \(notes) notes")
+            // The crate left these bundles out of the delegation. The eligible
+            // pair is what the Confirm screen and the completed-round record
+            // compare the live pair against, so it carries the full figure --
+            // kept plus dropped, overriding the kept-only default
+            // `applyBundleTotals` just filled in above.
+            // `privacyTrimDroppedValueZatoshi` is the dropped notes' raw
+            // value, not their bundle-quantized voting weight; it is summed
+            // with `eligibleWeight` as the crate reports both, unconverted.
+            mutateSession(&state, roundId: roundId) { roundSession in
+                roundSession.eligibleBundleCount = layout.bundleCount + layout.privacyTrimDroppedBundles
+                roundSession.eligibleVotingWeight = layout.eligibleWeight + layout.privacyTrimDroppedValueZatoshi
+            }
         }
         return .merge(
             // Eligibility is proven the moment bundles exist, so hand

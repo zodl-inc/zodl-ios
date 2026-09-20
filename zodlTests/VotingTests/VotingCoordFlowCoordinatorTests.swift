@@ -497,6 +497,85 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[self.activeRoundId]?.votingWeight == 50_000_000)
         }
 
+        /// The crate's privacy trim leaves bundles out of the delegation; the
+        /// eligible pair must carry the full figure (kept + dropped) so the
+        /// Confirm screen's "not included" row and the completed-round record
+        /// have something to show.
+        @MainActor
+        @Test func aTrimmedBundleSetupRecordsWhatWasLeftOutForTheConfirmScreen() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    // Two bundle phases, agreeing with `bundleLayout`'s kept
+                    // `bundleCount: 2` below -- `reduceRoundSessionOpened` derives
+                    // its own `bundleCount` from `plan.delegationStatuses.count`,
+                    // and a mismatch there would clobber the figure this test
+                    // means to check.
+                    return try self.plan(
+                        needsBundleSetup: call == 1,
+                        openProposals: [1, 2],
+                        bundlePhases: ["prepared", "prepared"]
+                    )
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    try self.bundleLayout(
+                        bundleCount: 2,
+                        eligibleWeight: 50_000_000,
+                        privacyTrimDroppedBundles: 3,
+                        privacyTrimDroppedValueZatoshi: 400_000
+                    )
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            let session = store.state.roundCache[self.activeRoundId]
+            #expect(session?.bundleCount == 2)
+            #expect(session?.votingWeight == 50_000_000)
+            #expect(session?.eligibleBundleCount == 5)
+            #expect(session?.eligibleVotingWeight == 50_400_000)
+        }
+
+        /// Without a privacy trim, the eligible pair stays equal to the live
+        /// pair -- the "not included" row's trigger (`eligibleBundleCount >
+        /// bundleCount`) never fires for an untrimmed setup.
+        @MainActor
+        @Test func anUntrimmedBundleSetupLeavesTheEligiblePairEqualToTheLivePair() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    // See the trimmed test above: keep this agreeing with
+                    // `bundleLayout`'s `bundleCount: 2`.
+                    return try self.plan(
+                        needsBundleSetup: call == 1,
+                        openProposals: [1, 2],
+                        bundlePhases: ["prepared", "prepared"]
+                    )
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    try self.bundleLayout(bundleCount: 2, eligibleWeight: 50_000_000)
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            let session = store.state.roundCache[self.activeRoundId]
+            #expect(session?.bundleCount == 2)
+            #expect(session?.votingWeight == 50_000_000)
+            #expect(session?.eligibleBundleCount == session?.bundleCount)
+            #expect(session?.eligibleVotingWeight == session?.votingWeight)
+        }
+
         /// A wallet the crate refuses to bundle for is not an error screen: it is
         /// the polls list with the insufficient-balance sheet, so the voter can pick
         /// another round.
