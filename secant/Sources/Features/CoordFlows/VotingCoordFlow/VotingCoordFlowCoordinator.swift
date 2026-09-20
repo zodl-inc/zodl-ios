@@ -1810,9 +1810,11 @@ extension VotingCoordFlow {
         let roster = votingSession.proposals.map { proposal in
             VotingProposalRosterEntry(proposalId: proposal.id, numOptions: UInt32(proposal.options.count))
         }
-        // Tor for the session's chain and helper traffic whenever the wallet
-        // asked for it, and it fails closed: a voter who chose Tor is never
-        // silently announced over a plain connection.
+        // Tor for everything this session touches whenever the wallet asked
+        // for it -- the vote chain, the helper servers, the private lookups
+        // and the vote tree all ride the one route -- and it fails closed: a
+        // voter who chose Tor is never silently announced over a plain
+        // connection.
         let route = state.swapAPIAccess == .protected
             ? VotingTransportRoute.tor
             : VotingTransportRoute.direct

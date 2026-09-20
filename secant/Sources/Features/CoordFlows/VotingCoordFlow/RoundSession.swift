@@ -176,7 +176,8 @@ struct RoundSession: Equatable {
     /// A dedicated flag rather than re-reading `roundPlan?.hasLegacyInFlightSubmission`:
     /// `roundPlan` is also overwritten by plans embedded in drive events and
     /// run reports, which the SDK never stamps with this flag (they decode it
-    /// as `false` even for a legacy-in-flight round -- see `MIGRATING.md`).
+    /// as `false` even for a legacy-in-flight round -- see the SDK's migration
+    /// guide).
     /// Those writers currently sit behind the gate this flag protects, so the
     /// difference is latent, but every guard reads the latch rather than
     /// depend on that staying true.
