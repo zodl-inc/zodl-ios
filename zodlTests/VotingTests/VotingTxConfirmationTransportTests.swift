@@ -816,13 +816,23 @@ struct VotingTxConfirmationTransportTests {
         )])
     }
 
+    /// The direct transport bounds a stalled response by the poll budget it is handed: the
+    /// resource timeout becomes the clipped budget and the inactivity timeout is clipped to it too,
+    /// so a response that never arrives is cut off at 0.1 s instead of the session's 60 s default,
+    /// and the loader is torn down. The bound is pinned on the configuration the seam mutates (the
+    /// very object the session is built from) and confirmed by the request failing with a
+    /// `URLError`. The 30 s guard is a hang backstop only: far above the 0.1 s it confirms, below
+    /// the suite limit, and outside CI's scheduling noise. A 500 ms guard raced the first
+    /// URLSession use of a fresh test-runner process -- a cold CFNetwork start under load -- and
+    /// lost every time this test was partitioned onto the second runner, while passing warm on the
+    /// first (unit_tests jobs 104819496663 and 104825210677).
     @Test func aStalledDirectResponseTimesOutAndStopsItsTransport() async {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StallingTxConfirmationURLProtocol.self]
         let request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!)
 
         do {
-            _ = try await withTimeout(.milliseconds(500)) {
+            _ = try await withTimeout(.seconds(30)) {
                 try await performDirectTxConfirmationRequest(
                     request,
                     resourceTimeout: .milliseconds(100),
@@ -831,11 +841,19 @@ struct VotingTxConfirmationTransportTests {
             }
             Issue.record("a stalled confirmation transport returned without timing out")
         } catch is URLError {
-            // The request's own resource deadline fired.
+            // The request's own deadline fired.
         } catch {
             Issue.record("the request outlived its remaining budget: \(error)")
         }
 
+        #expect(
+            abs(configuration.timeoutIntervalForResource - 0.1) < 0.000_001,
+            "the resource timeout must be the clipped budget, not the session default"
+        )
+        #expect(
+            abs(configuration.timeoutIntervalForRequest - 0.1) < 0.000_001,
+            "the inactivity timeout must be clipped to the budget"
+        )
         await StallingTxConfirmationURLProtocol.started.countReached(1)
         await StallingTxConfirmationURLProtocol.stopped.countReached(1)
         #expect(StallingTxConfirmationURLProtocol.started.count == 1)

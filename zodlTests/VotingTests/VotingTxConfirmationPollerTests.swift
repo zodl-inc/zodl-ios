@@ -3,6 +3,16 @@
 //  VotingTxConfirmationPollerTests.swift
 //  zodlTests
 //
+//  The clock-driven tests run on `SignalledClock` (`TestSupport/SignalledClock.swift`), not
+//  `TestClock`: every `TestClock.advance` spends two to three `Task.megaYield`s -- 20 detached
+//  background-priority tasks each -- and on the shared CI runner one megaYield was measured at
+//  ~7 s, so the four-advance sweep test below ran 62-76 s of wall time against this suite's
+//  one-minute limit while its clock never passed its twentieth logical second. `SignalledClock`
+//  parks a sleep and then records its deadline, so `sleepDeadlines.countReached(n)` is the
+//  event-driven positive wait for "the n-th sleep is parked" and `advance(to:)` resumes it with
+//  no yield at all. Nothing here waits on wall time; the `.timeLimit` only turns a wait that never
+//  fires into a recorded failure.
+//
 
 import ComposableArchitecture
 import Foundation
@@ -15,11 +25,9 @@ struct VotingTxConfirmationPollerTests {
     private static let mined = TxConfirmation(height: 100, code: 0)
 
     @Test func aSlowPreferredServerTriggersAnElapsedSweepWellBeforeTheDeadline() async throws {
-        let testClock = TestClock()
+        let clock = SignalledClock()
         let preferences = SignalledRecords<String?>()
-        let fetchTimes = SignalledRecords<TestClock<Swift.Duration>.Instant>()
-        let sleepDeadlines = SignalledRecords<TestClock<Swift.Duration>.Instant>()
-        let clock = RecordingClock(base: testClock, sleepDeadlines: sleepDeadlines)
+        let fetchTimes = SignalledRecords<SignalledClock.Instant>()
 
         let task = Task {
             try await VotingTxConfirmationPoller.wait(
@@ -37,9 +45,12 @@ struct VotingTxConfirmationPollerTests {
             }
         }
 
+        // The slow preferred fetch (6 s), the cadence sleep, the second preferred fetch and its
+        // cadence sleep: each parks before its deadline is recorded, so advancing just past that
+        // deadline resumes exactly that sleep.
         for sleepCount in 1...4 {
-            await sleepDeadlines.countReached(sleepCount)
-            await testClock.advance(to: sleepDeadlines.values[sleepCount - 1].advanced(by: .nanoseconds(1)))
+            await clock.sleepDeadlines.countReached(sleepCount)
+            clock.advance(to: clock.sleepDeadlines.values[sleepCount - 1].advanced(by: .nanoseconds(1)))
         }
         await preferences.countReached(3)
         if preferences.values[2] != nil {
@@ -48,7 +59,7 @@ struct VotingTxConfirmationPollerTests {
             Issue.record(
                 "a full sweep was not selected after nine elapsed seconds; "
                     + "preferences=\(preferences.values), fetchTimes=\(fetchTimes.values), "
-                    + "sleepDeadlines=\(sleepDeadlines.values), now=\(testClock.now)"
+                    + "sleepDeadlines=\(clock.sleepDeadlines.values), now=\(clock.now)"
             )
             return
         }
@@ -57,14 +68,12 @@ struct VotingTxConfirmationPollerTests {
         #expect(result.confirmation == Self.mined)
         #expect(result.attempts == 3)
         #expect(preferences.values == [Self.preferredServer, Self.preferredServer, nil])
-        #expect(testClock.now < TestClock<Swift.Duration>.Instant(offset: .seconds(20)))
+        #expect(clock.now < SignalledClock.Instant(offset: .seconds(20)))
     }
 
     @Test func aFetchFinishingAtExpiryStartsNoFurtherFetchOrSleep() async throws {
-        let testClock = TestClock()
+        let clock = SignalledClock()
         let fetches = SignalledRecords<Void>()
-        let sleepDeadlines = SignalledRecords<TestClock<Swift.Duration>.Instant>()
-        let clock = RecordingClock(base: testClock, sleepDeadlines: sleepDeadlines)
 
         let task = Task {
             try await VotingTxConfirmationPoller.wait(
@@ -79,14 +88,15 @@ struct VotingTxConfirmationPollerTests {
         }
 
         await fetches.countReached(1)
-        await sleepDeadlines.countReached(1)
-        await testClock.advance(to: sleepDeadlines.values[0].advanced(by: .nanoseconds(1)))
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(to: clock.sleepDeadlines.values[0].advanced(by: .nanoseconds(1)))
         let result = try await task.value
 
         #expect(result.confirmation == nil)
         #expect(result.attempts == 1)
         #expect(fetches.count == 1)
-        try await testClock.checkSuspension()
+        #expect(clock.sleepDeadlines.count == 1, "the fetch's own sleep must be the only one")
+        #expect(clock.pendingSleeps == 0)
     }
 
     @Test func cancellationBeforeLookupStartsNoFetch() async {
@@ -113,7 +123,7 @@ struct VotingTxConfirmationPollerTests {
     }
 
     @Test func cancellationDuringCadenceSleepStopsPolling() async {
-        let clock = TestClock()
+        let clock = SignalledClock()
         let fetches = SignalledRecords<Void>()
 
         let task = Task {
@@ -128,13 +138,15 @@ struct VotingTxConfirmationPollerTests {
         }
 
         await fetches.countReached(1)
-        try? await clock.checkSuspension()
+        // The poller is parked in its cadence sleep when the cancel lands.
+        await clock.sleepDeadlines.countReached(1)
         task.cancel()
 
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
         #expect(fetches.count == 1)
+        #expect(clock.pendingSleeps == 0, "a cancelled sleep must leave nothing parked")
     }
 
     @Test func cancellationErrorFromFetchIsNeverRetried() async {
@@ -154,10 +166,8 @@ struct VotingTxConfirmationPollerTests {
     }
 
     @Test func retryableFetchErrorsCountAsAttempts() async throws {
-        let testClock = TestClock()
+        let clock = SignalledClock()
         let fetches = SignalledRecords<Void>()
-        let sleepDeadlines = SignalledRecords<TestClock<Swift.Duration>.Instant>()
-        let clock = RecordingClock(base: testClock, sleepDeadlines: sleepDeadlines)
 
         let task = Task {
             try await VotingTxConfirmationPoller.wait(
@@ -176,8 +186,8 @@ struct VotingTxConfirmationPollerTests {
         }
 
         await fetches.countReached(1)
-        await sleepDeadlines.countReached(1)
-        await testClock.advance(to: sleepDeadlines.values[0].advanced(by: .nanoseconds(1)))
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(to: clock.sleepDeadlines.values[0].advanced(by: .nanoseconds(1)))
         let result = try await task.value
 
         #expect(result == VotingTxConfirmationPollResult(confirmation: Self.mined, attempts: 2))
@@ -209,19 +219,6 @@ struct VotingTxConfirmationPollerTests {
 
         #expect(result == VotingTxConfirmationPollResult(confirmation: nil, attempts: 0))
         #expect(fetches.isEmpty)
-    }
-}
-
-private struct RecordingClock<Base: Clock>: Clock where Base.Duration == Swift.Duration {
-    let base: Base
-    let sleepDeadlines: SignalledRecords<Base.Instant>
-
-    var now: Base.Instant { base.now }
-    var minimumResolution: Swift.Duration { base.minimumResolution }
-
-    func sleep(until deadline: Base.Instant, tolerance: Swift.Duration?) async throws {
-        sleepDeadlines.record(deadline)
-        try await base.sleep(until: deadline, tolerance: tolerance)
     }
 }
 #endif

@@ -15,9 +15,10 @@
 //  Mirrors `RootTransactionsUpToDateEdgeTests.swift`: a plain `Store`, a file-scoped
 //  `baseNoOpDependencies`, `DispatchQueue.test` as `mainQueue` so both the 0.2 s throttle and the
 //  retry delays are advanced by hand, scripted `getAllTransactions` outcomes per account, and
-//  event-driven positive waits (a fetch count reached with the coalescing gate closed). The short
-//  sleeps guard NEGATIVES only. Every account switch goes through `.home(.walletAccountTapped)`,
-//  the same path `RootTransactionsAccountSwitchTests.swift` drives.
+//  event-driven positive waits (a fetch count reached with the coalescing gate closed; a retry's
+//  sleep parked on the scheduler, see `retryArmed(count:)`). The short sleeps guard NEGATIVES
+//  only. Every account switch goes through `.home(.walletAccountTapped)`, the same path
+//  `RootTransactionsAccountSwitchTests.swift` drives.
 //
 //  `.serialized`: constructing/driving `Root.State` touches the process-global
 //  `@Shared(.inMemory(...))` keys, same precedent as the other Root-level suites here.
@@ -72,6 +73,12 @@ import ComposableArchitecture
         let scripts = LockIsolated<[AccountUUID: [Outcome]]>([:])
         let fallback = LockIsolated<[AccountUUID: IdentifiedArrayOf<TransactionState>]>([:])
         let fetches = LockIsolated<[AccountUUID]>([])
+        /// Delayed-retry sleeps parked on `scheduler` so far. `.transactionsFetchFailed` returns its
+        /// retry as a `.run` effect whose first act is `mainQueue.sleep(for: <retry delay>)`; that
+        /// sleep reaches the scheduler only once the effect is actually running -- which is also the
+        /// earliest moment TCA's `.cancel(id:)` can reach it. Counted by the `mainQueue` tap in
+        /// `init`, waited on by `retryArmed(count:)`.
+        let retrySleepsScheduled = LockIsolated(0)
         let store: StoreOf<Root>
 
         init(selected: WalletAccount, accounts: [WalletAccount]) {
@@ -88,11 +95,36 @@ import ComposableArchitecture
             let scripts = self.scripts
             let fallback = self.fallback
             let fetches = self.fetches
+            let retrySleepsScheduled = self.retrySleepsScheduled
+            let retryDelaysInSeconds = Root.State.transactionsFetchRetryDelaysInSeconds
             store = Store(initialState: initialState) {
                 Root()
             } withDependencies: {
                 baseNoOpDependencies(&$0)
-                $0.mainQueue = scheduler.eraseToAnyScheduler()
+                // `scheduler.eraseToAnyScheduler()`, plus a tap on the one entry point
+                // `Scheduler.sleep(for:)` goes through (`schedule(after:interval:)`, via
+                // `timer(interval:)`): an interval equal to a retry delay is the delayed retry
+                // parking its sleep. Nothing else driven here sleeps for 2, 4, 8, 16 or 32 s -- the
+                // throttles are 0.2 s, the smart banner's account-switch dwell 1 s and its seat
+                // delay 1-1.5 s, the pending-row poller 30 s.
+                $0.mainQueue = AnyScheduler(
+                    minimumTolerance: { @Sendable in scheduler.minimumTolerance },
+                    now: { @Sendable in scheduler.now },
+                    scheduleImmediately: { @Sendable options, action in
+                        scheduler.schedule(options: options, action)
+                    },
+                    delayed: { @Sendable date, tolerance, options, action in
+                        scheduler.schedule(after: date, tolerance: tolerance, options: options, action)
+                    },
+                    interval: { @Sendable date, interval, tolerance, options, action in
+                        if retryDelaysInSeconds.contains(where: { interval == .seconds($0) }) {
+                            retrySleepsScheduled.withValue { $0 += 1 }
+                        }
+                        return scheduler.schedule(
+                            after: date, interval: interval, tolerance: tolerance, options: options, action
+                        )
+                    }
+                )
                 $0.sdkSynchronizer = .mocked(
                     stateStream: { states.eraseToAnyPublisher() },
                     eventStream: { events.eraseToAnyPublisher() }
@@ -152,6 +184,21 @@ import ComposableArchitecture
         /// is closed again.
         func settled(expectingFetches count: Int) async {
             while fetchCount < count || store.state.isTransactionsFetchInFlight {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
+
+        /// Event-driven positive wait: the `count`-th delayed retry is in flight, i.e. its sleep is
+        /// parked on the scheduler. `settled(expectingFetches:)` only says the reducer has SCHEDULED
+        /// a retry -- `transactionsFetchRetryAttempt` is bumped in the very reduce that returns the
+        /// effect -- but the effect starts on a later main-actor turn, and TCA's `.cancel(id:)`
+        /// reaches only an effect that has started. A test that cancels a pending retry must wait
+        /// for this first: sent in the same turn that observed `settled`, the cancel finds nothing
+        /// and the retry fires anyway. On CI's shared main actor that turn order was the rule, not
+        /// the exception (`backgroundingWhileARetryIsPendingDropsThatRetry` failed on every run);
+        /// on an idle machine the effect's task wins the turn, which is why it passed locally.
+        func retryArmed(count: Int) async {
+            while retrySleepsScheduled.value < count {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
         }
@@ -263,6 +310,9 @@ import ComposableArchitecture
         harness.script(accountB, [Outcome.failure(FetchStubError())])
         harness.switchTo(accountB)
         await harness.settled(expectingFetches: settledCount + 1)
+        #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failed read must have scheduled a retry")
+        // The retry must be in flight before backgrounding cancels it -- see `retryArmed(count:)`.
+        await harness.retryArmed(count: 1)
 
         harness.store.send(.initialization(.appDelegate(.didEnterBackground)))
         await harness.scheduler.advance(by: .seconds(120))
