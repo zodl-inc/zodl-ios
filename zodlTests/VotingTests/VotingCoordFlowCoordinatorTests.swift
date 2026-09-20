@@ -138,6 +138,60 @@ extension VotingSharedStateSuites {
             #expect(!store.state.pollsLoadError)
         }
 
+        /// A rounds fetch the transport could not complete is the recoverable
+        /// answer, not a cancellation: the voter gets the retryable sheet over the
+        /// polls list rather than a loading screen that never resolves.
+        @MainActor
+        @Test func roundTransportFailureShowsRecoverablePollsError() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.configureURLs = { _ in }
+                $0.votingAPI.fetchAllRounds = {
+                    recorder.record("fetchAllRounds")
+                    throw URLError(URLError.Code.timedOut)
+                }
+                $0.databaseFiles = .noOp
+                $0.votingCrypto.openDatabase = { _, _ in }
+                $0.votingCrypto.setWalletId = { _ in }
+                $0.votingCrypto.configureProving = { _ in }
+                $0.votingCrypto.warmProvingCaches = { }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.serviceConfigLoaded(Self.makeServiceConfig())).finish()
+
+            #expect(recorder.events().contains("fetchAllRounds"), "the fetch under test must have run")
+            #expect(store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
+        }
+
+        /// Try Again on that sheet runs the whole load again -- the config fetch
+        /// included -- and puts the loading screen back up while it does, rather
+        /// than only clearing the error off a list that is still empty.
+        @MainActor
+        @Test func retryPollLoadingStartsInitialization() async {
+            let recorder = EventRecorder()
+            var state = VotingCoordFlow.State()
+            state.pollsLoadError = true
+            state.rootScreen = .pollsList
+            let store = Store(initialState: state) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchServiceConfig = { _ in
+                    recorder.record("fetchServiceConfig")
+                    throw CancellationError()
+                }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.retryLoadRounds).finish()
+
+            #expect(recorder.events().filter { $0 == "fetchServiceConfig" }.count == 1)
+            #expect(store.state.rootScreen == .loading)
+        }
+
         /// A freshly loaded service configuration is not just handed to the API
         /// client: it is pushed into every round session already open, so a
         /// session opened before this load and one opened after cannot disagree
@@ -211,7 +265,32 @@ extension VotingSharedStateSuites {
             await store.send(.allRoundsLoaded([])).finish()
 
             #expect(recorder.events().contains("fetchZodlEndorsedRoundIds"), "the fetch under test must have run")
+            #expect(store.state.rootScreen == .loading)
             #expect(!store.state.pollsLoadError)
+        }
+
+        /// The same fetch failing on the transport is not a cancellation, and it
+        /// is the half of poll discovery the default source cannot do without:
+        /// the voter gets the retryable sheet rather than an empty list.
+        @MainActor
+        @Test func endorsementTransportFailureShowsRecoverablePollsError() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: VotingCoordFlow.State()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                $0.votingAPI.fetchZodlEndorsedRoundIds = {
+                    recorder.record("fetchZodlEndorsedRoundIds")
+                    throw URLError(URLError.Code.cannotConnectToHost)
+                }
+                $0.votingCrypto.pendingShareRounds = { [] }
+                $0.votingMetadata = self.votingMetadataClient(VotingMetadataBox())
+            }
+
+            await store.send(.allRoundsLoaded([])).finish()
+
+            #expect(recorder.events().contains("fetchZodlEndorsedRoundIds"), "the fetch under test must have run")
+            #expect(store.state.pollsLoadError)
+            #expect(store.state.rootScreen == .pollsList)
         }
 
         /// A failed default-source endorsement request is part of poll discovery, so
@@ -271,6 +350,11 @@ extension VotingSharedStateSuites {
             #expect(session.voteRecord?.proposalCount == 2)
             #expect(state.voteRecords[roundId]?.proposalCount == 2)
             #expect(metadata.records[roundId]?.proposalCount == 2)
+            // Nothing was left out of this round, so the record says so twice
+            // over: the whole eligible weight voted, and every bundle it had was
+            // submitted.
+            #expect(session.voteRecord?.eligibleVotingWeight == session.voteRecord?.votingWeight)
+            #expect(session.voteRecord?.totalBundleCount == session.voteRecord?.submittedBundleCount)
         }
 
         /// A software wallet's bundle setup can be trimmed by the crate too, so
@@ -1111,6 +1195,41 @@ extension VotingSharedStateSuites {
 
             #expect(recorder.events().contains("setBallotIntents") == false)
             #expect(recorder.events().contains("authenticate") == false)
+        }
+
+        /// The latch is what makes the round undriveable for the life of its
+        /// cached session, so it has to hold at the starters themselves and not
+        /// only at the entry that sets it. A successful authentication is the
+        /// last thing before a run: with the latch up, it must leave the round
+        /// exactly where it was rather than put it into "a run is driving it".
+        @Test func authenticationSucceededNeverStartsARunOnAFlaggedRound() {
+            var state = sessionFlowState(drafts: [1: .option(0)])
+            state.checkingEligibilityRoundId = nil
+            state.roundCache[activeRoundId]?.isLegacyInFlight = true
+            state.roundCache[activeRoundId]?.batchSubmissionStatus = .requested
+
+            _ = VotingCoordFlow().reduceAuthenticationSucceeded(&state, roundId: activeRoundId)
+
+            let session = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(session.batchSubmissionStatus == .requested)
+            #expect(!session.isSubmittingVote)
+        }
+
+        /// The same latch at the other starter. The precompute is triggered by
+        /// the voter simply reaching the ballot, so it is the one that would run
+        /// without any deliberate act -- and proving a delegation for a round
+        /// nothing may dispatch is work that can only ever be thrown away.
+        @Test func precomputeNeverWarmsAProofForAFlaggedRound() throws {
+            var state = sessionFlowState()
+            state.checkingEligibilityRoundId = nil
+            state.roundCache[activeRoundId]?.isLegacyInFlight = true
+            state.roundCache[activeRoundId]?.roundPlan = try plan(delegationBundlesNeedingWork: [0])
+
+            _ = VotingCoordFlow().reduceMaybeStartDelegationPrecompute(&state, roundId: activeRoundId)
+
+            let session = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(session.delegationPrecomputeStatus == .notStarted)
+            #expect(!session.isDelegationPrecomputeInFlight)
         }
 
         /// The precompute runs once for the bundle that owes delegation work, and
