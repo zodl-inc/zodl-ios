@@ -175,52 +175,10 @@ private let fastHttpSession: URLSession = {
 /// configuration's `timeoutIntervalForRequest` (measured: a request-level
 /// 3 s fails at 3.0 s on a session configured for 120 s). The Tor path is
 /// different: `TorClient.httpRequest` hands the URL, headers, and body to
-/// the Rust FFI and ignores `timeoutInterval` entirely. Confirmation GETs use
-/// the SDK's bounded transport below; all other Tor requests retain the
-/// existing `httpRequestOverTor` retry policy.
+/// the Rust FFI and ignores `timeoutInterval` entirely. Poll loading uses the
+/// SDK's bounded transport below; all other Tor requests retain the existing
+/// `httpRequestOverTor` retry policy.
 private let fastRequestTimeout: TimeInterval = 5
-
-/// Bound on one confirmation GET over Tor; matches the fast session's resource timeout.
-private let txConfirmationRequestBound: Duration = .seconds(10)
-
-typealias TxConfirmationRequestPerformer = @Sendable (
-    _ request: URLRequest,
-    _ remainingBudget: Duration
-) async throws -> (Data, URLResponse)
-
-/// Direct confirmation transport seam. The caller supplies the poll budget so a later request
-/// cannot outlive the whole confirmation wait. A custom configuration is used only by the real
-/// URLProtocol transport fixture; production reuses `fastHttpSession` for the full bound.
-func performDirectTxConfirmationRequest(
-    _ request: URLRequest,
-    resourceTimeout: Duration,
-    configuration: URLSessionConfiguration? = nil
-) async throws -> (Data, URLResponse) {
-    let clippedResourceTimeout = min(txConfirmationRequestBound, resourceTimeout)
-    guard clippedResourceTimeout > .zero else {
-        throw URLError(URLError.Code.timedOut)
-    }
-    let resourceTimeoutInterval = durationTimeInterval(clippedResourceTimeout)
-    let inactivityTimeoutInterval = min(fastRequestTimeout, resourceTimeoutInterval)
-    var request = request
-    request.timeoutInterval = inactivityTimeoutInterval
-
-    if clippedResourceTimeout == txConfirmationRequestBound, configuration == nil {
-        return try await fastHttpSession.data(for: request)
-    }
-
-    let scopedConfiguration = configuration ?? URLSessionConfiguration.default
-    scopedConfiguration.timeoutIntervalForRequest = inactivityTimeoutInterval
-    scopedConfiguration.timeoutIntervalForResource = resourceTimeoutInterval
-    let session = URLSession(configuration: scopedConfiguration)
-    defer { session.finishTasksAndInvalidate() }
-    return try await session.data(for: request)
-}
-
-private func durationTimeInterval(_ duration: Duration) -> TimeInterval {
-    let components = duration.components
-    return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
-}
 
 typealias VotingDirectRequest = @Sendable (_ request: URLRequest, _ fast: Bool) async throws -> (Data, URLResponse)
 
@@ -275,7 +233,6 @@ func routePollLoadingRequest(
 func routeVotingRequest(
     _ request: URLRequest,
     fast: Bool,
-    torTimeout: Duration?,
     access: WalletStorage.SwapAPIAccess,
     sdkSynchronizer: SDKSynchronizerClient,
     directRequest: @escaping VotingDirectRequest
@@ -286,20 +243,6 @@ func routeVotingRequest(
     }
 
     if access == .protected {
-        if let torTimeout {
-            try Task.checkCancellation()
-            let boundedTimeout = min(txConfirmationRequestBound, torTimeout)
-            guard boundedTimeout > .zero else {
-                throw URLError(URLError.Code.timedOut)
-            }
-            let timeoutMilliseconds = UInt64(durationTimeInterval(boundedTimeout) * 1_000)
-            guard timeoutMilliseconds > 0 else {
-                throw URLError(URLError.Code.timedOut)
-            }
-            let (data, response) = try await sdkSynchronizer.boundedTorGET(request, timeoutMilliseconds)
-            try Task.checkCancellation()
-            return (data, response as URLResponse)
-        }
         let (data, response) = try await sdkSynchronizer.httpRequestOverTor(request)
         return (data, response as URLResponse)
     }
@@ -307,25 +250,9 @@ func routeVotingRequest(
 }
 
 @Sendable
-private func performTxConfirmationRequest(
-    _ request: URLRequest,
-    remainingBudget: Duration
-) async throws -> (Data, URLResponse) {
-    @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
-    let requestBound = min(txConfirmationRequestBound, remainingBudget)
-    if swapAPIAccess == .protected {
-        return try await performVotingRequest(request, fast: true, torTimeout: requestBound)
-    }
-    return try await performDirectTxConfirmationRequest(request, resourceTimeout: requestBound)
-}
-
-/// `torTimeout`, when given, selects the SDK's owned bounded GET. The SDK applies that timeout to
-/// queue wait and native execution, and drains an active request before returning cancellation.
-@Sendable
 private func performVotingRequest(
     _ request: URLRequest,
-    fast: Bool = false,
-    torTimeout: Duration? = nil
+    fast: Bool = false
 ) async throws -> (Data, URLResponse) {
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
@@ -333,7 +260,6 @@ private func performVotingRequest(
     return try await routeVotingRequest(
         request,
         fast: fast,
-        torTimeout: torTimeout,
         access: swapAPIAccess,
         sdkSynchronizer: sdkSynchronizer,
         directRequest: { request, fast in
