@@ -412,10 +412,10 @@ struct VotingCoordFlow {
         case bundlesSetUp(roundId: String, layout: VotingBundleLayout)
         case bundleSetupFailed(roundId: String, error: VotingError)
         /// A round whose bundle rows already existed answered with its layout
-        /// again, on an entry that did not have to create them. It only
-        /// restores what the round is worth; unlike `bundlesSetUp` it starts
-        /// nothing, because the entry that asked for it is already opening the
-        /// round.
+        /// again, on an entry that found them there and so did not create them.
+        /// It only restores what the round is worth; unlike `bundlesSetUp` it
+        /// starts nothing, because the entry that asked for it is already
+        /// opening the round.
         case bundleLayoutRestored(roundId: String, layout: VotingBundleLayout)
         /// One step of the background delegation-proof precompute for a bundle.
         case precomputeProofEvent(roundId: String, bundleIndex: UInt32, event: VotingDelegationProofEvent)

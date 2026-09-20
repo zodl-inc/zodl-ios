@@ -1733,6 +1733,24 @@ extension VotingCoordFlow {
     /// The voting sidecar database, beside the wallet's own databases.
     static let votingSidecarFileName = "voting.sqlite3"
 
+    /// Whether this round's bundle rows do not exist yet, so laying them out is
+    /// the next thing that has to happen.
+    ///
+    /// `needsBundleSetup` on its own does not answer this. The SDK raises that
+    /// flag only for a round that already holds a ballot choice and has no rows
+    /// to cast it into -- the one ordering a host can resolve, by laying the
+    /// bundles out. A round nobody has decided on yet reports it as `false`
+    /// and owes a draft instead, and that is every round on a first entry, so
+    /// reading the flag alone treats a round the wallet has never laid out as
+    /// one whose layout is merely being re-read.
+    ///
+    /// What does answer it is the delegation statuses: the crate reports one
+    /// per bundle row, in bundle order, independently of any ballot, so an
+    /// empty list is a round with no bundles.
+    static func needsFirstBundleSetup(_ plan: VotingRoundPlan) -> Bool {
+        plan.needsBundleSetup || plan.delegationStatuses.isEmpty
+    }
+
     /// A directory of preserved copies of the voting database, written in
     /// Documents by builds 3.10.2 to 3.14.1.
     static let preservedVotingDatabaseDirectoryName = "voting_recovery"
@@ -1930,19 +1948,20 @@ extension VotingCoordFlow {
             )
 
             let plan = try await votingCrypto.sessionPlan(roundId)
-            if !plan.needsBundleSetup {
+            if !Self.needsFirstBundleSetup(plan) {
                 // The bundles already exist, so no first setup will answer with
-                // their weight. Setting them up again is how it is asked for:
-                // on a round whose rows are persisted the crate validates the
-                // stored prefix and hands back the same layout it built them
-                // from, including what its privacy trim dropped and what a skip
-                // deleted. Nothing on this side can reconstruct those -- the
-                // read-only report names no dropped-bundle count, and the count
-                // is persisted -- so without this an entry that found the
-                // round's cache evicted (leaving the flow, saving a config
-                // source, switching accounts, restarting the app) would show no
-                // "not included" row and finish with a record saying the whole
-                // wallet voted.
+                // their weight -- that one belongs to `reduceRoundSessionOpened`
+                // and runs only when the rows are missing. Setting them up again
+                // is how the weight is asked for here: on a round whose rows are
+                // persisted the crate validates the stored prefix and hands back
+                // the same layout it built them from, including what its privacy
+                // trim dropped and what a skip deleted. Nothing on this side can
+                // reconstruct those -- the read-only report names no
+                // dropped-bundle count, and the count is persisted -- so without
+                // this an entry that found the round's cache evicted (leaving the
+                // flow, saving a config source, switching accounts, restarting
+                // the app) would show no "not included" row and finish with a
+                // record saying the whole wallet voted.
                 var didRestoreLayout = false
                 // Never for a round an older build left mid-submission: that
                 // round is display-only and this call writes. Its weight comes
@@ -2140,7 +2159,7 @@ extension VotingCoordFlow {
         }
         state.roundCache[roundId] = session
 
-        if plan.needsBundleSetup {
+        if Self.needsFirstBundleSetup(plan) {
             guard !session.didAttemptBundleSetup else {
                 // A plan that still wants bundle rows after one setup answered
                 // is a disagreement with the sidecar, not a step to repeat.

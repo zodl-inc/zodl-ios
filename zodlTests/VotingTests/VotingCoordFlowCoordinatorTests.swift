@@ -687,10 +687,14 @@ extension VotingSharedStateSuites {
             } withDependencies: {
                 self.sessionDependencies(&$0, recorder: recorder)
                 $0.votingCrypto.sessionPlan = { _ in
-                    // The first plan is the one the round is opened on; the second is
-                    // the refresh `.bundlesSetUp` asks for once the rows exist.
+                    // The first plan is the one the round is opened on -- a round
+                    // with no bundle rows, which is what a first entry finds; the
+                    // second is the refresh `.bundlesSetUp` asks for once the rows
+                    // exist.
                     let call = recorder.recordAndCount("sessionPlan")
-                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                    return call == 1
+                        ? try self.freshRoundPlan()
+                        : try self.plan(openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in
                     recorder.record("setupBundles")
@@ -980,9 +984,80 @@ extension VotingSharedStateSuites {
             #expect(session?.eligibleVotingWeight == 50_250_000)
         }
 
+        /// The first entry into a round is the one that lays its bundles out, and
+        /// the plan that entry reads says so only by holding no delegation
+        /// statuses: a round nobody has decided on yet owes a draft, not bundle
+        /// setup. The round must go through first setup -- which is what applies
+        /// the layout, asks for the refreshed plan, and opens the round on it, so
+        /// the ballot-time precompute has bundles to warm for.
+        @MainActor
+        @Test func aFirstEntryLaysTheRoundOutAndOpensOnThePlanThatFollows() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    // Call 1 is what a round with no rows answers; call 2 is the
+                    // refreshed plan first setup asks for once they exist, and
+                    // only that one owes delegation work.
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return call == 1
+                        ? try self.freshRoundPlan()
+                        : try self.plan(openProposals: [1, 2], delegationBundlesNeedingWork: [0])
+                }
+                $0.votingCrypto.eligibility = { _ in
+                    recorder.record("eligibility")
+                    return try self.eligibilityReport()
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { recorder.events().contains("precomputeDelegationProof") }
+
+            let events = recorder.events()
+            #expect(events.filter { $0 == "setupBundles" }.count == 1)
+            #expect(events.filter { $0 == "sessionPlan" }.count == 2)
+            // The read-only report is the re-entry fallback and has no business
+            // here: this round's layout is being created, not re-derived.
+            #expect(events.contains("eligibility") == false)
+            #expect(self.isProposalListTop(store.state))
+            #expect(store.state.roundCache[self.activeRoundId]?.bundleCount == 1)
+            #expect(store.state.roundCache[self.activeRoundId]?.votingWeight == 50_000_000)
+        }
+
+        /// One attempt per entry. A plan that still reports no bundle rows after a
+        /// setup answered is a disagreement with the sidecar, and the round is
+        /// failed with it rather than set up again forever.
+        @MainActor
+        @Test func aSetupThatLeavesTheRoundWithoutBundlesFailsInsteadOfLooping() async {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    recorder.record("sessionPlan")
+                    return try self.freshRoundPlan()
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore {
+                if case .error = store.state.rootScreen { return true }
+                return false
+            }
+
+            #expect(recorder.events().filter { $0 == "setupBundles" }.count == 1)
+            #expect(store.state.path.isEmpty)
+            #expect(store.state.checkingEligibilityRoundId == nil)
+        }
+
         /// A wallet the crate refuses to bundle for is not an error screen: it is
         /// the polls list with the insufficient-balance sheet, so the voter can pick
-        /// another round.
+        /// another round. The refusal comes back from the round's first setup, so
+        /// it has to be the typed one the sheet reads -- not a layout restore's
+        /// swallowed failure.
         @MainActor
         @Test func ineligibleWalletShowsIneligibleScreen() async {
             let recorder = EventRecorder()
@@ -990,7 +1065,7 @@ extension VotingSharedStateSuites {
                 VotingCoordFlow()
             } withDependencies: {
                 self.sessionDependencies(&$0, recorder: recorder)
-                $0.votingCrypto.sessionPlan = { _ in try self.plan(needsBundleSetup: true, openProposals: [1, 2]) }
+                $0.votingCrypto.sessionPlan = { _ in try self.freshRoundPlan() }
                 $0.votingCrypto.setupBundles = { _ in
                     recorder.record("setupBundles")
                     throw VotingError(kind: .noSpendableNotes, message: "wallet holds no spendable notes")
@@ -1017,7 +1092,7 @@ extension VotingSharedStateSuites {
                 VotingCoordFlow()
             } withDependencies: {
                 self.sessionDependencies(&$0, recorder: recorder)
-                $0.votingCrypto.sessionPlan = { _ in try self.plan(needsBundleSetup: true, openProposals: [1, 2]) }
+                $0.votingCrypto.sessionPlan = { _ in try self.freshRoundPlan() }
                 $0.votingCrypto.setupBundles = { _ in
                     recorder.record("setupBundles")
                     throw VotingError(kind: .insufficientEligibility, message: "every bundle is below the divisor")

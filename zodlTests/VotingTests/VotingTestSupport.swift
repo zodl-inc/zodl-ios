@@ -186,15 +186,19 @@ extension VotingTestSuite {
         }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
         dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
-        // Re-entering a round whose rows already exist asks the crate to
-        // re-derive the layout, so every session open can reach this. The
-        // default answers the untrimmed single-bundle round the rest of these
-        // fixtures describe -- the same figures `eligibilityReport()` and a
-        // default `plan()` give -- so a suite that is not about the layout
-        // cannot tell the restore apart from the read-only path it replaces.
+        // Laying a round's bundles out, and re-deriving that layout when they
+        // already exist, are the same call, so every session open can reach
+        // this. The default answers the untrimmed single-bundle round the rest
+        // of these fixtures describe -- the same figures `eligibilityReport()`
+        // and a default `plan()` give -- so a suite that is not about the
+        // layout cannot tell first setup and restore apart. It records, because
+        // "this round never asks the crate to set bundles up" is a claim
+        // several suites make and an unrecorded double would let it pass on a
+        // round that did.
         dependencies.votingCrypto.pendingShareRounds = { [] }
         dependencies.votingCrypto.setupBundles = { _ in
-            try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+            recorder.record("setupBundles")
+            return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
         }
     }
 
@@ -259,9 +263,23 @@ extension VotingTestSuite {
 
     // MARK: - Wire-JSON fixtures
 
+    /// The plan a round whose bundle rows do not exist yet answers with -- the
+    /// shape every genuinely first entry into a round meets.
+    ///
+    /// `needsBundleSetup` is `false`, because the crate raises it only once a
+    /// ballot choice is waiting for rows to be cast into; what says the rows are
+    /// missing is that no bundle has a delegation status, because there is no
+    /// bundle. The wallet owes a draft instead.
+    func freshRoundPlan(openProposals: [UInt32] = [1, 2]) throws -> VotingRoundPlan {
+        try plan(openProposals: openProposals, bundlePhases: [])
+    }
+
     /// The crate's own wire shape for a plan, decoded rather than constructed:
     /// the SDK's views are `Decodable` only, and going through JSON keeps these
     /// tests honest about what a session actually answers with.
+    ///
+    /// The default is the other real shape, the one a round whose rows exist
+    /// answers with: one bundle, `prepared`, and no bundle setup owed.
     func plan(
         needsBundleSetup: Bool = false,
         openProposals: [UInt32] = [],
@@ -290,7 +308,15 @@ extension VotingTestSuite {
     /// `bundlePhases` names one bundle per entry, in index order, so a round
     /// with more than one bundle -- or one whose delegation the crate says is
     /// already `signed` -- can be described. The default is the single prepared
-    /// bundle most of these tests want.
+    /// bundle most of these tests want; an empty array is a round with no
+    /// bundle rows at all, which is what a first entry finds.
+    ///
+    /// `needs_draft_setup` is derived the way the crate derives it -- open
+    /// proposals with nothing decided against them -- rather than pinned, so
+    /// that flag always agrees with the rest of the fixture. `needsBundleSetup`
+    /// is still the caller's to set: many older fixtures raise it on a round
+    /// that has a bundle row, a shape the crate never reports, and they route
+    /// exactly as they did before the statuses were read as well.
     func planPayload(
         needsBundleSetup: Bool = false,
         openProposals: [UInt32] = [],
@@ -313,7 +339,7 @@ extension VotingTestSuite {
             "has_unconfirmed_shares": false,
             "hotkey_bound": true,
             "completed_for_display": completedChoices != nil,
-            "needs_draft_setup": false,
+            "needs_draft_setup": !allDecided && !openProposals.isEmpty,
             "needs_bundle_setup": needsBundleSetup,
             "needs_delegation_signing": false,
             "has_in_flight_delegation": false,
