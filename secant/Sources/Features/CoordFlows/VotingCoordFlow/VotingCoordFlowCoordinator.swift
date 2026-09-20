@@ -1119,12 +1119,21 @@ extension VotingCoordFlow {
                 // leaving the round's id on this list would have every
                 // share-tracking path (`shareTrackingForOpenRounds`,
                 // `reducePollShareStatus`) read a session that no longer
-                // exists and fail. Removing it here is what lets the next
-                // pending-share sweep (`reducePendingShareRoundsLoaded`, which
-                // never asks for a plan and so never reaches this gate) open a
-                // fresh tracking-only session for the round: share tracking is
+                // exists and fail. Removing it here is what lets a pending-share
+                // sweep (`reducePendingShareRoundsLoaded`, which never asks for
+                // a plan and so never reaches this gate) open a fresh
+                // tracking-only session for the round: share tracking is
                 // separate from this gate and stays working, just not on the
                 // session this handler is closing.
+                //
+                // And the sweep is asked for right here, once the close has
+                // returned. The entry that reached this gate replaced the
+                // round's tracking-only session and cancelled its re-arm timer
+                // before the plan came back, so without this nothing would
+                // reopen one until the voter left the flow and came back --
+                // and every re-tap of the round would do it again. The
+                // reopened session reads no plan, so it cannot return through
+                // this gate: the voter sees one sheet, not a loop.
                 state.checkingEligibilityRoundId = nil
                 state.pendingPipelineRoundId = nil
                 if case .proposalList = state.path.last {
@@ -1134,7 +1143,12 @@ extension VotingCoordFlow {
                 state.openRoundSessionIds.removeAll { $0 == roundId }
                 return .merge(
                     .cancel(id: cancelPipelineId),
-                    .run { [votingCrypto] _ in await votingCrypto.closeRoundSession(roundId) }
+                    .run { [votingCrypto] send in
+                        await votingCrypto.closeRoundSession(roundId)
+                        await send(.pendingShareRoundsLoaded(try await votingCrypto.pendingShareRounds()))
+                    } catch: { error, _ in
+                        LoggerProxy.warn("Reading the rounds that still owe helper shares failed: \(error)")
+                    }
                 )
 
             case .dismissLegacyRoundSheet:

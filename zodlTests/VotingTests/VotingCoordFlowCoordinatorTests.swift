@@ -1160,6 +1160,68 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().contains("runRound") == false)
         }
 
+        /// The gate closes the session the round was entered on, and the round's
+        /// own re-arm timer was cancelled by that entry, so nothing would reopen a
+        /// tracking-only session until the voter left the flow and came back.
+        /// Every re-tap did it again. The gate now asks for the sweep itself, and
+        /// the session it reopens never asks for a plan, so it cannot come back
+        /// through the gate: one sheet, one close, tracking alive again.
+        @MainActor
+        @Test func aFlaggedRoundReopensItsTrackingSessionWithoutASecondSheet() async throws {
+            let recorder = EventRecorder()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            var initialState = sessionFlowState()
+            initialState.walletId = Self.pendingWalletId
+            initialState.serviceConfig = Self.makeServiceConfig(
+                voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+                rounds: [self.activeRoundId: Self.roundEntry()]
+            )
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    recorder.record("sessionPlan")
+                    return try self.plan(needsBundleSetup: false, openProposals: [1, 2], legacyInFlight: true)
+                }
+                // The sidecar still names this round as owing helper-share work,
+                // which is what the sweep the gate asks for reads.
+                $0.votingCrypto.pendingShareRounds = {
+                    recorder.record("pendingShareRounds")
+                    return [pending]
+                }
+                $0.votingCrypto.trackShares = { _, _ in
+                    recorder.record("trackShares")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            // The sweep was asked for by the gate itself, after the close: the
+            // session it reopens must not be one the close is about to take away.
+            let events = recorder.events()
+            #expect(events.drop { $0 != "closeRoundSession" }.contains("pendingShareRounds"))
+            // Two opens: the entry the gate closed, and the tracking-only session
+            // the sweep put back. A round left on the open list would short-
+            // circuit the sweep instead of reopening anything.
+            #expect(events.filter { $0 == "openRoundSession" }.count == 2)
+            #expect(store.state.openRoundSessionIds == [self.activeRoundId])
+            // The reopened session is tracking-only: no plan is read on it, so it
+            // never reaches the gate, and nothing loops. One sheet, one close.
+            #expect(events.filter { $0 == "sessionPlan" }.count == 1)
+            #expect(events.filter { $0 == "closeRoundSession" }.count == 1)
+            #expect(store.state.legacyRoundSheetRoundId == self.activeRoundId)
+            #expect(events.contains("setupBundles") == false)
+            #expect(events.contains("runRound") == false)
+            #expect(events.contains("precomputeDelegationProof") == false)
+        }
+
         /// Defence in depth: if the proposal list were ever reached for a flagged
         /// round (it shouldn't be -- the round-entry gate keeps it off that path),
         /// tapping Submit must not write a ballot or ask for authentication. It
