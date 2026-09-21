@@ -342,6 +342,17 @@ struct VotingCoordFlow {
         /// A tracking pass that could not run at all: the round's session went
         /// away under it, or a run holds the session.
         case shareTrackingFailed(roundId: String, epoch: UInt64, error: VotingError)
+        /// The tracking-only session a pending-share round was resumed on is
+        /// open. Stamped with the generation it was opened for, so a session
+        /// the flow has since fenced cannot claim to be the round's live one.
+        case shareRecoverySessionOpened(roundId: String, epoch: UInt64)
+        /// The tracking-only open failed: the anchor could not be read, the
+        /// route was unavailable, or the SDK refused. The round has no session,
+        /// which is what decides whether another attempt is scheduled.
+        case shareRecoveryOpenFailed(roundId: String, epoch: UInt64, error: VotingError)
+        /// The backoff after a refused tracking-only open has run out. What the
+        /// round still owes is read again before anything is reopened.
+        case retryShareRecoveryOpen(roundId: String)
         case retryFetchTallyResults(roundId: String)
         case viewMyVotesTapped(roundId: String)
         case proposalTapped(roundId: String, proposalId: UInt32, mode: ProposalDetail.Mode = .voting)
@@ -529,6 +540,14 @@ struct VotingCoordFlow {
         VotingShareTrackingCancelID.resume(roundId)
     }
 
+    /// Cancellation id for the wait between two attempts at the session a
+    /// resume could not open. Its own id, so a scheduled attempt is stopped
+    /// without reaching the pass a session that did open is running -- the same
+    /// separation ``cancelShareTrackingReArmId(_:)`` keeps for the passes.
+    func cancelShareTrackingReopenId(_ roundId: String) -> VotingShareTrackingCancelID {
+        VotingShareTrackingCancelID.reopen(roundId)
+    }
+
     /// Cancellation id for the subscription to the wallet's Tor preference,
     /// which lives exactly as long as there is a session whose route it could
     /// invalidate.
@@ -559,6 +578,8 @@ enum VotingShareTrackingCancelID: Hashable {
     /// The session open that puts a round with interrupted delivery back in a
     /// position to be tracked.
     case resume(String)
+    /// The wait before another attempt at an open that was refused.
+    case reopen(String)
 }
 
 /// Why a wallet cannot take part in a round.

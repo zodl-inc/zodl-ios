@@ -3273,6 +3273,618 @@ extension VotingSharedStateSuites {
             #expect(sleeps.value.isEmpty)
         }
 
+        // MARK: - A tracking-only session that could not be opened
+
+        /// The anchor read in front of the tracking-only open is a network call,
+        /// and one that fails is not a round that stops being looked after: the
+        /// open is tried again on the same ladder a stalled pass uses, and the
+        /// round is tracked without the voter leaving the flow and coming back.
+        @MainActor
+        @Test func aTreeStateFailureOnResumeIsRetriedAndThenTracksShares() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.sdkSynchronizer.getTreeState = { _ in
+                    guard recorder.recordAndCount("getTreeState") > 1 else {
+                        throw URLError(URLError.Code.timedOut)
+                    }
+                    return Data([0x01])
+                }
+                $0.votingCrypto.pendingShareRounds = {
+                    recorder.record("pendingShareRounds")
+                    return [pending]
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+            #expect(recorder.events().contains("openRoundSession") == false)
+
+            await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+            await clock.advance(by: .seconds(15))
+
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open)
+            // The retry re-reads what the sidecar still owes rather than acting
+            // on the list it was handed a backoff ago.
+            #expect(recorder.events().filter { $0 == "pendingShareRounds" } == ["pendingShareRounds"])
+            #expect(recorder.events().filter { $0 == "openRoundSession" } == ["openRoundSession"])
+            #expect(recorder.events().contains("trackShares:\(activeRoundId)"))
+            #expect(store.state.roundCache[self.activeRoundId]?.shareTrackingAttempt == 0)
+        }
+
+        /// The same for the open itself: Tor not ready yet, or the SDK refusing
+        /// for a reason that passes.
+        @MainActor
+        @Test func aSessionOpenFailureOnResumeIsRetried() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = { [pending] }
+                $0.votingCrypto.openRoundSession = { _, _, _, _ in
+                    guard recorder.recordAndCount("openRoundSession") > 1 else {
+                        throw VotingError(
+                            kind: VotingErrorKind.pirUnavailable,
+                            retryable: true,
+                            message: "no helper answered"
+                        )
+                    }
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+
+            await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+            await clock.advance(by: .seconds(15))
+
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open)
+            #expect(recorder.events().filter { $0 == "openRoundSession" }.count == 2)
+            #expect(recorder.events().contains("trackShares:\(activeRoundId)"))
+        }
+
+        /// The sidecar's list lands again on every rounds refresh, and a round
+        /// already being opened -- or waiting out a backoff before it is -- must
+        /// not be opened a second time beside the first. Two opens carry two
+        /// generations, and the second would take the session out from under the
+        /// first.
+        @MainActor
+        @Test func repeatedDiscoveryWhileAnOpenOrBackoffIsPendingStartsNothingTwice() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let gate = TestGate()
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = {
+                    recorder.record("pendingShareRounds")
+                    return [pending]
+                }
+                $0.votingCrypto.openRoundSession = { _, _, _, _ in
+                    recorder.record("openRoundSession")
+                    await gate.wait()
+                    throw VotingError(
+                        kind: VotingErrorKind.pirUnavailable,
+                        retryable: true,
+                        message: "no helper answered"
+                    )
+                }
+                $0.votingCrypto.trackShares = { _, _ in
+                    recorder.record("trackShares")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore { recorder.events().contains("openRoundSession") }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .opening)
+
+            // A refresh while the first open is still in flight.
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await settle()
+            #expect(
+                recorder.events().filter { $0 == "openRoundSession" } == ["openRoundSession"],
+                "a round whose session is being opened must not be opened again"
+            )
+
+            await gate.open()
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+
+            // And a refresh while it is waiting out the backoff.
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await settle()
+            #expect(
+                recorder.events().filter { $0 == "openRoundSession" } == ["openRoundSession"],
+                "a round waiting out a backoff must not be opened again"
+            )
+            #expect(recorder.events().contains("trackShares") == false)
+            #expect(recorder.events().contains("pendingShareRounds") == false)
+        }
+
+        /// The sweep opens a session per round, and one that is refused is that
+        /// round's problem: the others are opened and tracked as they were.
+        @MainActor
+        @Test func oneRoundFailingToOpenDoesNotStopAnother() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            var initialState = pendingShareSweepState()
+            initialState.allRounds.append(
+                RoundListItem(
+                    roundNumber: 2,
+                    session: votingSession(proposalCount: 2, voteEndsIn: 3_600, roundIdByte: 0xBB)
+                )
+            )
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let otherPending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: otherRoundId)
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = { [pending, otherPending] }
+                $0.votingCrypto.openRoundSession = { inputs, _, _, _ in
+                    let roundId = inputs.roundParams.voteRoundId
+                    recorder.record("openRoundSession:\(roundId)")
+                    guard roundId != self.activeRoundId else {
+                        throw VotingError(
+                            kind: VotingErrorKind.pirUnavailable,
+                            retryable: true,
+                            message: "no helper answered"
+                        )
+                    }
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending, otherPending]))
+            await waitForStore { store.state.roundCache[self.otherRoundId]?.shareTrackingStatus == .confirmed }
+
+            #expect(store.state.roundCache[self.otherRoundId]?.liveSession == .open)
+            #expect(recorder.events().contains("trackShares:\(otherRoundId)"))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+            #expect(recorder.events().contains("trackShares:\(activeRoundId)") == false)
+        }
+
+        /// Everything that takes a round's session away takes its scheduled
+        /// reopen with it. A wake-up that survived one would open a session on
+        /// the wallet, the route or the sidecar the fence has just left behind.
+        @MainActor
+        @Test func accountChangeRouteChangeDismissalTeardownAndVoteEndEachCancelAPendingReopen() async throws {
+            enum Fence: String {
+                case accountChange
+                case routeChange
+                case dismissal
+                case teardown
+                case voteEnd
+            }
+
+            for fence in [Fence.accountChange, .routeChange, .dismissal, .teardown, .voteEnd] {
+                let recorder = EventRecorder()
+                let clock = RecordingTestClock()
+                let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+                var initialState = pendingShareSweepState()
+                if fence == .voteEnd {
+                    // `endShareTracking` only runs for the round the voter is on.
+                    initialState.path.append(.proposalList(ProposalList.State(roundId: activeRoundId)))
+                }
+                let store = Store(initialState: initialState) {
+                    VotingCoordFlow()
+                } withDependencies: {
+                    self.sessionDependencies(&$0, recorder: recorder)
+                    $0.continuousClock = clock
+                    $0.votingCrypto.setOperationEpoch = { _, _ in }
+                    $0.votingCrypto.closeAllRoundSessions = { }
+                    $0.votingCrypto.pendingShareRounds = {
+                        recorder.record("pendingShareRounds")
+                        return [pending]
+                    }
+                    $0.votingCrypto.openRoundSession = { _, _, _, _ in
+                        recorder.record("openRoundSession")
+                        throw VotingError(
+                            kind: VotingErrorKind.pirUnavailable,
+                            retryable: true,
+                            message: "no helper answered"
+                        )
+                    }
+                }
+
+                store.send(.pendingShareRoundsLoaded([pending]))
+                await waitForStore {
+                    store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+                }
+                await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+
+                switch fence {
+                // The account going away is the same fence as one being swapped
+                // in, and it is the one that starts no load of its own.
+                case .accountChange: store.send(.walletAccountChanged(nil))
+                case .routeChange: store.send(.swapAPIAccessChanged(.protected))
+                case .dismissal: store.send(.dismissFlow)
+                case .teardown: store.send(.votingTeardownBegan)
+                case .voteEnd: store.send(.roundStatusUpdated(roundId: activeRoundId, status: .tallying))
+                }
+
+                // Far past every rung of the ladder.
+                await clock.advance(by: .seconds(600))
+                await settle()
+
+                #expect(
+                    recorder.events().filter { $0 == "openRoundSession" } == ["openRoundSession"],
+                    "\(fence.rawValue) left a reopen that still opened a session"
+                )
+                #expect(
+                    recorder.events().filter { $0 == "pendingShareRounds" }.isEmpty,
+                    "\(fence.rawValue) left a reopen that still read the pending rounds"
+                )
+                // The cache survives every fence but the two that clear it, and
+                // where it does the round must no longer claim a session.
+                if let session = store.state.roundCache[activeRoundId] {
+                    #expect(session.liveSession == .none, "\(fence.rawValue) left the round claiming a session")
+                }
+            }
+        }
+
+        /// The open list is a superset on purpose -- a round whose open was
+        /// refused stays on it so a fence still closes whatever registered
+        /// behind the failure -- so membership is not permission to drive. A
+        /// poll for such a round must call nothing.
+        @MainActor
+        @Test func aRoundCountedForTeardownButNeverOpenedDoesNotTakeTheAlreadyOpenShortcut() async throws {
+            let recorder = EventRecorder()
+            var initialState = shareTrackingState()
+            initialState.roundCache[activeRoundId]?.liveSession = .none
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.trackShares = { _, _ in
+                    recorder.record("trackShares")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pollShareStatus(roundId: activeRoundId))
+            await settle()
+
+            #expect(recorder.events().contains("trackShares") == false)
+            #expect(store.state.roundCache[self.activeRoundId]?.isTrackingShares == false)
+        }
+
+        /// Entering the flow asks every round with a live session to track, and
+        /// a round the recovery path opened has no plan to read -- it never asks
+        /// for one. Filtering on the plan alone left exactly those rounds, the
+        /// ones a resume exists for, out of the one ladder that could rescue
+        /// them.
+        @MainActor
+        @Test func aRecoveryOpenedRoundIsPolledWhenTheListAppears() async throws {
+            let recorder = EventRecorder()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            var initialState = shareTrackingState()
+            // What a tracking-only session leaves behind: open, and nothing else.
+            initialState.roundCache[activeRoundId]?.roundPlan = nil
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.onAppear)
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            #expect(recorder.events().contains("trackShares:\(activeRoundId)"))
+        }
+
+        /// A warm cache entry is not on its own proof there is a session to act
+        /// on: a round whose open was refused keeps its hotkey and its bundles
+        /// and stays on the open list. Tapping it has to run the pipeline, or
+        /// the voter walks into a ballot whose Confirm answers `notOpen`.
+        @MainActor
+        @Test func aWarmCacheEntryWithoutALiveSessionIsNotAFastPathHit() async throws {
+            let recorder = EventRecorder()
+            var initialState = shareTrackingState()
+            initialState.roundCache[activeRoundId]?.hotkeyAddress = ""
+            initialState.roundCache[activeRoundId]?.bundleCount = 1
+            initialState.roundCache[activeRoundId]?.liveSession = .none
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.roundPlan = { _, _ in try self.plan(openProposals: [1, 2]) }
+            }
+
+            store.send(.roundTapped(activeRoundId))
+
+            // The reducer answers synchronously, so this is the whole question:
+            // the fast path pushes the ballot at once, the full pipeline puts
+            // the spinner on the row and opens a session first.
+            #expect(
+                self.isProposalListTop(store.state) == false,
+                "a round with no live session must not be walked straight into"
+            )
+            #expect(store.state.checkingEligibilityRoundId == self.activeRoundId)
+            await waitForStore { recorder.events().contains("openRoundSession") }
+        }
+
+        /// A pass in flight is never cancelled by the reopen machinery -- not by
+        /// another round's ladder, and not by its own round being discovered
+        /// again. Cancelling a pass finishes the session under it, permanently,
+        /// so a reopen that reached one would take away the very session it was
+        /// trying to restore.
+        @MainActor
+        @Test func aLiveTrackingPassStaysSingleFlight() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let gate = TestGate()
+            let allConfirmed = try shareTrackingReport(kind: "all_confirmed")
+            var initialState = shareTrackingState()
+            initialState.allRounds.append(
+                RoundListItem(
+                    roundNumber: 2,
+                    session: votingSession(proposalCount: 2, voteEndsIn: 3_600, roundIdByte: 0xBB)
+                )
+            )
+            initialState.walletId = Self.pendingWalletId
+            initialState.serviceConfig = Self.makeServiceConfig(
+                voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+                rounds: [self.activeRoundId: Self.roundEntry(), self.otherRoundId: Self.roundEntry()]
+            )
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let otherPending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: otherRoundId)
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = { [pending, otherPending] }
+                $0.votingCrypto.openRoundSession = { inputs, _, _, _ in
+                    recorder.record("openRoundSession:\(inputs.roundParams.voteRoundId)")
+                    throw VotingError(
+                        kind: VotingErrorKind.pirUnavailable,
+                        retryable: true,
+                        message: "no helper answered"
+                    )
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        let task = Task {
+                            await gate.wait()
+                            continuation.yield(VotingShareTrackingRunEvent.finished(allConfirmed))
+                            continuation.finish()
+                        }
+                        continuation.onTermination = { reason in
+                            if case .cancelled = reason {
+                                recorder.record("trackShares.cancelled")
+                            }
+                            task.cancel()
+                        }
+                    }
+                }
+            }
+
+            // A pass is running on the round that does have a session.
+            store.send(.pollShareStatus(roundId: activeRoundId))
+            await waitForStore { recorder.events().contains("trackShares:\(self.activeRoundId)") }
+            #expect(store.state.roundCache[self.activeRoundId]?.isTrackingShares == true)
+
+            // The sweep names both: the second round's open is refused and puts
+            // a reopen on the ladder, and the first is asked to poll again.
+            store.send(.pendingShareRoundsLoaded([pending, otherPending]))
+            await waitForStore {
+                store.state.roundCache[self.otherRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+            await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+            await clock.advance(by: .seconds(15))
+            await settle()
+
+            await gate.open()
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            #expect(recorder.events().contains("trackShares.cancelled") == false)
+            #expect(
+                recorder.events().filter { $0 == "trackShares:\(self.activeRoundId)" }
+                    == ["trackShares:\(activeRoundId)"]
+            )
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open)
+        }
+
+        /// A voter who asked for Tor is never announced over a plain connection,
+        /// and a retry is no exception: the route is derived from what the
+        /// wallet asks for now, exactly as the first attempt derived it.
+        @MainActor
+        @Test func aTorRouteIsRetriedOverTorOnly() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let initialState = pendingShareSweepState()
+            let swapAPIAccess = initialState.$swapAPIAccess
+            swapAPIAccess.withLock { $0 = .protected }
+            defer { swapAPIAccess.withLock { $0 = .direct } }
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = { [pending] }
+                $0.votingCrypto.openRoundSession = { _, _, route, _ in
+                    guard recorder.recordAndCount("openRoundSession:\(route)") > 2 else {
+                        throw VotingError(
+                            kind: VotingErrorKind.pirUnavailable,
+                            retryable: true,
+                            message: "no helper answered"
+                        )
+                    }
+                }
+                $0.votingCrypto.trackShares = { _, _ in
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+            await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+            await clock.advance(by: .seconds(15))
+
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .backingOff(attempt: 1)
+            }
+            await waitForStore {
+                clock.sleeps.value == [Swift.Duration.seconds(15), Swift.Duration.seconds(30)]
+            }
+            await clock.advance(by: .seconds(30))
+
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.liveSession == .open }
+            let opens = recorder.events().filter { $0.hasPrefix("openRoundSession:") }
+            #expect(opens.count == 3)
+            #expect(opens.allSatisfy { $0 == "openRoundSession:tor" }, "a retry must never fall back to direct")
+        }
+
+        /// A refusal that says something about the round rather than about the
+        /// moment is not waited out: the same call an hour later is the same
+        /// call. Driven beside a refusal that *can* pass, so the difference is
+        /// the classification and nothing else -- one round is left with no
+        /// session and nothing scheduled, the other climbs the ladder.
+        @MainActor
+        @Test func aFailureWaitingCannotHealEndsTheRetry() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            var initialState = pendingShareSweepState()
+            initialState.allRounds.append(
+                RoundListItem(
+                    roundNumber: 2,
+                    session: votingSession(proposalCount: 2, voteEndsIn: 3_600, roundIdByte: 0xBB)
+                )
+            )
+            let refused = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let unreachable = try pendingShareRound(walletId: Self.pendingWalletId, roundId: otherRoundId)
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.pendingShareRounds = {
+                    recorder.record("pendingShareRounds")
+                    return [refused, unreachable]
+                }
+                $0.votingCrypto.openRoundSession = { inputs, _, _, _ in
+                    let roundId = inputs.roundParams.voteRoundId
+                    recorder.record("openRoundSession:\(roundId)")
+                    guard roundId == self.activeRoundId else {
+                        throw VotingError(
+                            kind: VotingErrorKind.pirUnavailable,
+                            retryable: true,
+                            message: "no helper answered"
+                        )
+                    }
+                    throw VotingError(
+                        kind: VotingErrorKind.invalidInput,
+                        message: "the round's parameters were refused"
+                    )
+                }
+                $0.votingCrypto.trackShares = { _, _ in
+                    recorder.record("trackShares")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([refused, unreachable]))
+            await waitForStore {
+                store.state.roundCache[self.otherRoundId]?.liveSession == .backingOff(attempt: 0)
+            }
+            await waitForStore { clock.sleeps.value == [Swift.Duration.seconds(15)] }
+            await settle()
+
+            // Spelled out: an unqualified `.none` against an optional is
+            // `Optional.none`, which is a different question entirely.
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.liveSession == LiveSessionState.none,
+                "a refusal that cannot heal leaves the round with no session and nothing pending"
+            )
+            #expect(
+                clock.sleeps.value == [Swift.Duration.seconds(15)],
+                "only the refusal that can pass is waited out"
+            )
+
+            // One rung, exactly: the round that could not be reached is opened
+            // again, and the one refused for good is not.
+            await clock.advance(by: .seconds(15))
+            await waitForStore {
+                store.state.roundCache[self.otherRoundId]?.liveSession == .backingOff(attempt: 1)
+            }
+
+            #expect(
+                recorder.events().filter { $0 == "openRoundSession:\(self.otherRoundId)" }.count == 2
+            )
+            #expect(
+                recorder.events().filter { $0 == "openRoundSession:\(self.activeRoundId)" }
+                    == ["openRoundSession:\(activeRoundId)"]
+            )
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.liveSession == LiveSessionState.none,
+                "the round refused for good is still not opened again"
+            )
+            #expect(recorder.events().contains("trackShares") == false)
+        }
+
         // MARK: - MOB-1810 health sweep hooks
 
         @MainActor

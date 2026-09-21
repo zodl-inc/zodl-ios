@@ -154,6 +154,9 @@ extension VotingCoordFlow {
                 if state.checkingEligibilityRoundId == roundId {
                     state.checkingEligibilityRoundId = nil
                 }
+                // The open stopped before it opened anything, so the round has
+                // no session -- and must not go on claiming one is on its way.
+                mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
                 return .none
 
             case .initialize:
@@ -581,11 +584,17 @@ extension VotingCoordFlow {
                     // going through `reduceRoundSessionOpened`, and that gate must
                     // hold here too. Falling through re-drives the round through the
                     // full pipeline below, which reaches the gate.
+                    //
+                    // The round's own `liveSession` is what says the session is
+                    // there, never `openRoundSessionIds`: that list is a superset
+                    // a fence reads, and a round whose open was refused stays on
+                    // it carrying a warm cache -- exactly the pair that would walk
+                    // the voter into a ballot with no session behind it.
                     if let cached = state.roundCache[roundId],
                        cached.hotkeyAddress != nil,
                        cached.bundleCount > 0,
                        !cached.isLegacyInFlight,
-                       state.openRoundSessionIds.contains(roundId) {
+                       cached.liveSession == .open {
                         state.path.append(.proposalList(ProposalList.State(roundId: roundId)))
                         return .merge(
                             startHealthSweep,
@@ -754,6 +763,11 @@ extension VotingCoordFlow {
 
             case let .roundSessionOpenFailed(roundId, error):
                 LoggerProxy.error("Opening the round session for \(roundId) failed: \(error.message)")
+                // The round keeps its place on `openRoundSessionIds` -- a session
+                // that registered behind the failure is still a fence's to close
+                // -- and loses its claim to a live one, so a re-tap runs the
+                // pipeline again instead of walking past it.
+                mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
                 return .send(.pipelineFailed(
                     roundId: roundId,
                     message: VotingErrorMapper.userFriendlyMessage(from: error)
@@ -1148,6 +1162,10 @@ extension VotingCoordFlow {
                 }
                 state.legacyRoundSheetRoundId = roundId
                 state.openRoundSessionIds.removeAll { $0 == roundId }
+                // The close below is what the round loses, so it stops claiming
+                // a live session here. The sweep asked for right after opens a
+                // tracking-only one and is what puts the claim back.
+                mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
                 return .merge(
                     .cancel(id: cancelPipelineId),
                     .run { [votingCrypto] send in
@@ -1309,6 +1327,15 @@ extension VotingCoordFlow {
 
             case let .shareTrackingFailed(roundId, epoch, error):
                 return reduceShareTrackingFailed(&state, roundId: roundId, epoch: epoch, error: error)
+
+            case let .shareRecoverySessionOpened(roundId, epoch):
+                return reduceShareRecoverySessionOpened(&state, roundId: roundId, epoch: epoch)
+
+            case let .shareRecoveryOpenFailed(roundId, epoch, error):
+                return reduceShareRecoveryOpenFailed(&state, roundId: roundId, epoch: epoch, error: error)
+
+            case let .retryShareRecoveryOpen(roundId):
+                return reduceRetryShareRecoveryOpen(&state, roundId: roundId)
 
             case .dismissIneligibleSheet:
                 state.ineligibleSheet = nil
@@ -1600,6 +1627,11 @@ extension VotingCoordFlow {
         state.roundCache = state.roundCache.mapValues { session in
             var stamped = session
             stamped.sessionEpoch = epoch
+            // Every session this flow had is given back below, and an open
+            // still in flight is one the epoch has already disowned. No round
+            // keeps a claim to one, which is also what lets a later sweep open
+            // a fresh session for a round that still owes helper work.
+            stamped.liveSession = .none
             return stamped
         }
         let openRoundIds = state.openRoundSessionIds
@@ -1863,6 +1895,10 @@ extension VotingCoordFlow {
         // belongs to a session that no longer exists.
         roundSession.isTrackingShares = false
         roundSession.shareTrackingAttempt = 0
+        // From here the round has an open on the way and nothing to drive yet.
+        // It becomes the round's live session in `reduceRoundSessionOpened`,
+        // once the legacy gate has let it through.
+        roundSession.liveSession = .opening
         roundSession.lastRunFailureSummary = nil
         roundSession.progress = VotingRoundProgressSnapshot()
         roundSession.delegationProofStatus = ProofStatus.notStarted
@@ -2014,12 +2050,15 @@ extension VotingCoordFlow {
         // A previous entry's warm-up belongs to the session this open replaces,
         // and it holds the crate's proof lock for as long as it runs. The
         // round's scheduled tracking pass goes the same way -- it would wake up
-        // against a session that has been replaced -- but the pass that may be
-        // in flight is left to end on its own, because cancelling one finishes
-        // the session under it and this open closes that session anyway.
+        // against a session that has been replaced -- and so does a scheduled
+        // reopen, which exists to give the round a session this entry is about
+        // to give it anyway. The pass that may be in flight is left to end on
+        // its own, because cancelling one finishes the session under it and
+        // this open closes that session anyway.
         return .merge(
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelShareTrackingReArmId(roundId)),
+            .cancel(id: cancelShareTrackingReopenId(roundId)),
             observeRoute,
             open
         )
@@ -2160,6 +2199,11 @@ extension VotingCoordFlow {
         }
         var session = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
         session.roundPlan = plan
+        // Past the fence and past the legacy gate, so this is the round's live
+        // session: everything that needs one may now use it. A round the gate
+        // turned back never reaches here, and the session it was read on is
+        // given back rather than driven.
+        session.liveSession = .open
         // The session binds the hotkey as it opens, so reaching here is the
         // proof this round has one. The address itself is not read back from
         // the keychain, so it stays empty — as it did before the session.
@@ -3182,7 +3226,10 @@ extension VotingCoordFlow {
     /// run through, so the only thing that stands one down in time for the next
     /// Confirm is the driver running out of passes and this flow re-arming it.
     func reducePollShareStatus(_ state: inout State, roundId: String) -> Effect<Action> {
-        guard state.openRoundSessionIds.contains(roundId) else { return .none }
+        // The round's own `liveSession`, never `openRoundSessionIds`: that list
+        // is the superset a fence reads, and it keeps a round whose open was
+        // refused -- which is precisely a round with nothing to drive.
+        guard state.roundCache[roundId]?.liveSession == .open else { return .none }
         // An entry into the round is about to replace its session, and it clears
         // `isTrackingShares` for the session it is opening -- so without this, a
         // poll landing in that window gets past the flag and starts a second
@@ -3287,7 +3334,10 @@ extension VotingCoordFlow {
     /// Not re-armed: a throw here is the session going away under the pass or a
     /// run holding it, not a helper the driver could not reach -- the driver
     /// reports those through its own quiescence. The next trigger picks the
-    /// round back up, on whatever session it has by then.
+    /// round back up, on whatever session it has by then: a round whose session
+    /// a run handed back is polled again on it, and a round whose session is
+    /// gone has no live one to short-circuit the next pending-share sweep, so
+    /// that sweep opens it a fresh one.
     func reduceShareTrackingFailed(
         _ state: inout State,
         roundId: String,
@@ -3339,14 +3389,191 @@ extension VotingCoordFlow {
         .cancellable(id: cancelShareTrackingReArmId(roundId), cancelInFlight: true)
     }
 
+    /// `.shareRecoverySessionOpened` handler. The round has a session again, so
+    /// it is asked to track on it.
+    func reduceShareRecoverySessionOpened(
+        _ state: inout State,
+        roundId: String,
+        epoch: UInt64
+    ) -> Effect<Action> {
+        // A session that finished opening after its round was fenced, ended or
+        // handed back belongs to a generation this flow has left behind. It is
+        // not claimed here, and it is not leaked either: the round went onto
+        // `openRoundSessionIds` before the open started, which is what makes
+        // every one of those paths close it.
+        guard state.roundCache[roundId]?.sessionEpoch == epoch,
+              state.openRoundSessionIds.contains(roundId)
+        else {
+            LoggerProxy.info("Voting: \(roundId) resumed onto a session this flow has already given back")
+            return .none
+        }
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.liveSession = .open
+            // The ladder that got the round here counted refused opens. This
+            // session is new, so the passes it runs start from the first rung.
+            roundSession.shareTrackingAttempt = 0
+        }
+        return .send(.pollShareStatus(roundId: roundId))
+    }
+
+    /// `.shareRecoveryOpenFailed` handler. The tracking-only open was refused.
+    ///
+    /// The round keeps its place on `openRoundSessionIds` -- a session that
+    /// registered behind the failure is still a fence's to close -- and loses
+    /// its claim to a live one, which is what stops every later trigger driving
+    /// a session that is not there. Then the ladder a stalled pass uses:
+    /// another open, unless the refusal is one waiting cannot heal or the wait
+    /// would land after the vote has closed.
+    func reduceShareRecoveryOpenFailed(
+        _ state: inout State,
+        roundId: String,
+        epoch: UInt64,
+        error: VotingError
+    ) -> Effect<Action> {
+        // A refusal from a generation this flow has fenced describes an open
+        // for a wallet, a route or a sidecar that is gone.
+        guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
+        LoggerProxy.warn("Resuming share tracking for \(roundId) failed to open a session: \(error.message)")
+        mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
+
+        guard Self.waitingCanHeal(error) else {
+            LoggerProxy.warn("Voting: \(roundId) is not resumed again; the same open would be refused the same way")
+            return .none
+        }
+        guard let session = state.roundCache[roundId],
+              let voteEndTime = activeSession(in: state, roundId: roundId)?.voteEndTime
+        else { return .none }
+
+        let attempt = session.shareTrackingAttempt
+        let delaySeconds = Self.shareTrackingBackoffSeconds(attempt: attempt)
+        guard Date().addingTimeInterval(TimeInterval(delaySeconds)) < voteEndTime else {
+            // Nothing can be confirmed after the vote closes, so waiting for it
+            // would be waiting for nothing.
+            LoggerProxy.info("Voting: \(roundId) is not resumed again: the vote ends first")
+            mutateSession(&state, roundId: roundId) { roundSession in
+                if roundSession.shareTrackingStatus != .confirmed {
+                    roundSession.shareTrackingStatus = .ended
+                }
+            }
+            return .none
+        }
+
+        mutateSession(&state, roundId: roundId) { roundSession in
+            roundSession.liveSession = .backingOff(attempt: attempt)
+            roundSession.shareTrackingAttempt = attempt + 1
+        }
+        return .run { [continuousClock] send in
+            try await continuousClock.sleep(for: .seconds(delaySeconds))
+            await send(.retryShareRecoveryOpen(roundId: roundId))
+        }
+        .cancellable(id: cancelShareTrackingReopenId(roundId), cancelInFlight: true)
+    }
+
+    /// `.retryShareRecoveryOpen` handler. The backoff after a refused open has
+    /// run out.
+    ///
+    /// What the sidecar still owes is read again rather than the list the round
+    /// was discovered in being reused, so a round whose shares were confirmed
+    /// some other way in the meantime is simply dropped. The open that follows
+    /// is the ordinary one, which derives its route from what the wallet asks
+    /// for now -- a voter who chose Tor between two attempts is announced over
+    /// Tor on the second, and never over a plain connection.
+    func reduceRetryShareRecoveryOpen(_ state: inout State, roundId: String) -> Effect<Action> {
+        // Anything but `.backingOff` means the round has been picked up, or put
+        // down, since the wait started.
+        guard let session = state.roundCache[roundId],
+              case .backingOff = session.liveSession
+        else { return .none }
+        let epoch = session.sessionEpoch
+        // Back to "no session and nothing scheduled", which is the one state
+        // the sweep opens from.
+        mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
+        return .run { [votingCrypto] send in
+            let pending = try await votingCrypto.pendingShareRounds()
+            await send(.pendingShareRoundsLoaded(pending.filter { $0.roundId == roundId }))
+        } catch: { error, send in
+            // The read is part of the attempt, so a read that failed is an
+            // attempt that failed: it climbs the same ladder rather than
+            // leaving the round with nothing scheduled.
+            await send(.shareRecoveryOpenFailed(
+                roundId: roundId,
+                epoch: epoch,
+                error: Self.votingError(from: error)
+            ))
+        }
+        .cancellable(id: cancelShareTrackingResumeId(roundId), cancelInFlight: true)
+    }
+
+    /// Whether waiting could change the answer to a refused session open.
+    ///
+    /// Every kind is named rather than defaulted: a kind left to a default is a
+    /// round either retried for nothing or dropped for the rest of the visit,
+    /// and neither is a guess worth making silently.
+    ///
+    /// ``VotingError/retryable`` is not the gate. It covers only `busy`,
+    /// `dbBusy` and one flavour of `pirUnavailable`, and everything that did
+    /// not decode as the crate's own envelope -- which is where a tree-state
+    /// read, a Tor client that is not up yet and a transport failure all land
+    /// -- is reported as a non-retryable `other`. Gating on it would refuse a
+    /// second attempt to exactly the failures this ladder exists for.
+    static func waitingCanHeal(_ error: VotingError) -> Bool {
+        switch error.kind {
+        case .busy, .dbBusy, .pirUnavailable:
+            // Contention and the network. A later attempt is the whole remedy,
+            // and the crate's own PIR text names connections and timeouts.
+            return true
+        case .storage, .internal:
+            // A durable read or write that failed before its result could be
+            // read, and a failure the crate could not classify. Neither says
+            // anything about this round that a second attempt must repeat.
+            return true
+        case .proofFailed:
+            // An open proves nothing, so this reaching here at all is a
+            // surprise rather than a verdict on the round.
+            return true
+        case .other:
+            // Everything that is not the crate's -- the anchor read, the Tor
+            // client, the transport -- and every category a newer crate adds.
+            // The one answer that must not change: this is what strands a
+            // round when it is called final.
+            return true
+        case .invalidInput:
+            // The arguments this flow built were refused. The same call an hour
+            // later is the same call.
+            return false
+        case .insufficientEligibility, .noSpendableNotes:
+            // Statements about the wallet's notes at a snapshot height that has
+            // already passed. Nothing later moves them.
+            return false
+        case .setupAlreadyPersisted, .delegationTargetMismatch,
+             .delegationAlreadyBroadcast, .delegationPcztUnavailable:
+            // Statements about rows that already exist: write-once setup, a
+            // delegation that does not reproduce from the hotkey this wallet
+            // holds (retrying with the same key never succeeds, in the crate's
+            // own words), one that may already be on chain, and a stored setup
+            // with no transaction in it.
+            return false
+        case .keystoneSignatureConflict:
+            // A stored signature disagreeing with a scanned bundle is a
+            // disagreement, not a moment that passes.
+            return false
+        }
+    }
+
     /// `.pendingShareRoundsLoaded` handler. The sidecar's own list of rounds
     /// that still owe helper work, turned into sessions and tracking passes.
     ///
     /// Three filters, and each one drops a round this flow has no business
     /// opening: another wallet's, one the authenticated config no longer
-    /// carries, and one whose vote has already ended. A round the flow already
-    /// holds a session for is not reopened -- that would replace the session a
-    /// pass may be running on -- it is simply asked to track.
+    /// carries, and one whose vote has already ended. What is then done with a
+    /// round is its own ``RoundSession/liveSession``'s to say: one with a live
+    /// session is asked to track on it rather than reopened, because reopening
+    /// would replace the session a pass may be running on; one already opening,
+    /// or waiting out the backoff after a refused open, is left to that; and
+    /// only a round with no session at all is opened here.
+    ///
+    /// This lands again on every rounds refresh and on every turn of the
+    /// new-round poll, so "already on its way" has to be an answer it can give.
     func reducePendingShareRoundsLoaded(
         _ state: inout State,
         rounds: [VotingPendingShareRound]
@@ -3381,9 +3608,20 @@ extension VotingCoordFlow {
                   let item = state.allRounds.first(where: { $0.id == roundId }),
                   item.session.voteEndTime > now
             else { continue }
-            guard !state.openRoundSessionIds.contains(roundId) else {
+            switch state.roundCache[roundId]?.liveSession ?? LiveSessionState.none {
+            case .open:
+                // A session a pass may be running on is never replaced; the
+                // round is simply asked to track on the one it has.
                 effects.append(.send(.pollShareStatus(roundId: roundId)))
                 continue
+            case .opening, .backingOff:
+                // An open is already on its way. Two of them carry two
+                // generations, which is the one thing the registry's
+                // single-flight cannot join, so a second would take the session
+                // out from under the first.
+                continue
+            case .none:
+                break
             }
 
             let votingSession = item.session
@@ -3395,12 +3633,23 @@ extension VotingCoordFlow {
             var roundSession = state.roundCache[roundId] ?? RoundSession(roundId: roundId)
             roundSession.sessionEpoch = epoch
             // A cancelled pass never delivers a terminal action, so a round
-            // reaching the resume path can still be carrying the flag and the
-            // ladder of a pass that ended with a session this is replacing.
+            // reaching the resume path can still be carrying the flag of a pass
+            // that ended with a session this is replacing. Its ladder is reset
+            // where the fresh session arrives (`.shareRecoverySessionOpened`)
+            // rather than here, because between here and there the same counter
+            // is what spaces out the attempts at opening one.
             roundSession.isTrackingShares = false
-            roundSession.shareTrackingAttempt = 0
+            roundSession.liveSession = .opening
             state.roundCache[roundId] = roundSession
-            state.openRoundSessionIds.append(roundId)
+            // The round counts as open from here, the same way an entry does:
+            // the list is what a fence closes, and a session that registered
+            // behind a failing open still has to be given back. Once, though --
+            // a second attempt at the same round is the same round, and a
+            // duplicate would have a fence close it twice and the flow poll it
+            // twice.
+            if !state.openRoundSessionIds.contains(roundId) {
+                state.openRoundSessionIds.append(roundId)
+            }
             state.sessionRouteAccess = state.swapAPIAccess
             didOpen = true
 
@@ -3429,9 +3678,16 @@ extension VotingCoordFlow {
                     route,
                     epoch
                 )
-                await send(.pollShareStatus(roundId: roundId))
-            } catch: { error, _ in
-                LoggerProxy.warn("Resuming share tracking for \(roundId) failed to open a session: \(error)")
+                await send(.shareRecoverySessionOpened(roundId: roundId, epoch: epoch))
+            } catch: { error, send in
+                // A refused open is not a round that stops being looked after:
+                // the anchor read and the transport both fail for reasons that
+                // pass, and nothing else would ever come back to this round.
+                await send(.shareRecoveryOpenFailed(
+                    roundId: roundId,
+                    epoch: epoch,
+                    error: Self.votingError(from: error)
+                ))
             }
             .cancellable(id: cancelShareTrackingResumeId(roundId), cancelInFlight: true))
         }
@@ -3449,16 +3705,19 @@ extension VotingCoordFlow {
         return .merge(effects + [observeRoute])
     }
 
-    /// Every open round whose plan still says a share is unconfirmed, asked to
+    /// Every round with a live session that could still owe a share, asked to
     /// track. What entering the flow acts on.
     ///
     /// A round a pass has already settled is left alone: the plan is only as
     /// new as the last thing that refreshed it, and the driver's own answer is
-    /// newer than that.
+    /// newer than that. A round with no plan at all is not left alone, though
+    /// -- a tracking-only session never asks for one, so the rounds a resume
+    /// exists for are exactly the ones a plan filter would drop.
     private func shareTrackingForOpenRounds(_ state: State) -> Effect<Action> {
         let roundIds = state.openRoundSessionIds.filter { roundId in
             guard let session = state.roundCache[roundId] else { return false }
-            guard session.roundPlan?.hasUnconfirmedShares == true else { return false }
+            guard session.liveSession == .open else { return false }
+            if let plan = session.roundPlan, !plan.hasUnconfirmedShares { return false }
             switch session.shareTrackingStatus {
             case .confirmed, .ended:
                 return false
@@ -3479,7 +3738,8 @@ extension VotingCoordFlow {
         .merge(
             .cancel(id: cancelShareTrackingId(roundId)),
             .cancel(id: cancelShareTrackingReArmId(roundId)),
-            .cancel(id: cancelShareTrackingResumeId(roundId))
+            .cancel(id: cancelShareTrackingResumeId(roundId)),
+            .cancel(id: cancelShareTrackingReopenId(roundId))
         )
     }
 
@@ -3502,6 +3762,9 @@ extension VotingCoordFlow {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isTrackingShares = false
             roundSession.shareTrackingAttempt = 0
+            // The session is closed below and nothing reopens one for a vote
+            // that is over, so the round stops claiming it has one.
+            roundSession.liveSession = .none
             // A round whose shares were confirmed before the vote closed keeps
             // that answer. Every other round gets the terminal one: the vote is
             // over, so no later pass can change what it is holding.

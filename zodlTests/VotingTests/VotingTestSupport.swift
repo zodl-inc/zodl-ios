@@ -593,11 +593,33 @@ extension VotingTestSuite {
     /// A round with an open session and nothing tracking it yet -- the state a
     /// `.pollShareStatus` trigger finds -- on a vote that ends far enough away
     /// for the whole backoff ladder to fit before it.
+    ///
+    /// The session is live as well as counted: the open list is a superset a
+    /// fence reads, and it is the round's own ``RoundSession/liveSession`` that
+    /// says there is something to drive.
     func shareTrackingState(voteEndsIn: TimeInterval = 3_600) -> VotingCoordFlow.State {
         var state = sessionFlowState(voteEndsIn: voteEndsIn)
         state.checkingEligibilityRoundId = nil
         state.openRoundSessionIds = [activeRoundId]
+        state.roundCache[activeRoundId]?.liveSession = .open
         state.sessionRouteAccess = .direct
+        return state
+    }
+
+    /// The state a pending-share sweep runs in: this wallet's sidecar still owes
+    /// helper work for a round the authenticated config carries, and the flow
+    /// holds no session for it.
+    ///
+    /// Both round ids are configured, so a test that lists two pending rounds
+    /// can tell "the sweep dropped it" apart from "the config never carried it".
+    func pendingShareSweepState(voteEndsIn: TimeInterval = 3_600) -> VotingCoordFlow.State {
+        var state = sessionFlowState(voteEndsIn: voteEndsIn)
+        state.checkingEligibilityRoundId = nil
+        state.walletId = Self.pendingWalletId
+        state.serviceConfig = Self.makeServiceConfig(
+            voteServers: [VotingServiceConfig.ServiceEndpoint(url: "https://vote.example.com", label: "vote")],
+            rounds: [activeRoundId: Self.roundEntry(), otherRoundId: Self.roundEntry()]
+        )
         return state
     }
 
@@ -653,6 +675,19 @@ extension VotingTestSuite {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
+    }
+
+    /// Gives a store's effects several turns to reach the reducer, for the
+    /// assertions that are about nothing happening.
+    ///
+    /// Turns rather than time: an effect that was going to send needs the
+    /// scheduler, not a wall clock, and a test that waited on one would be
+    /// slower and no more certain.
+    @MainActor
+    func settle() async {
+        for _ in 0..<50 {
+            await Task.yield()
+        }
     }
 
     /// Signs whichever bundle the flow has put on screen, the way the voter
@@ -763,6 +798,41 @@ struct RecordingImmediateClock: Clock {
         sleeps.withValue { $0.append(epoch.duration(to: deadline)) }
         await Task.yield()
         try Task.checkCancellation()
+    }
+}
+
+/// Parks every sleeper until the test advances it, and says what each one asked
+/// to wait for.
+///
+/// A bare `TestClock` leaves a test guessing whether the effect under it has got
+/// as far as registering its sleep: an advance that lands first moves the clock
+/// past nothing, and the sleep registered after it asks for a deadline measured
+/// from the time the test has already gone to -- so it waits for good and the
+/// test times out. ``sleeps`` closes that window: a test waits for the wait,
+/// then advances. It pins the ladder exactly at the same time, the way
+/// ``RecordingImmediateClock`` does for the passes that need no advancing.
+///
+/// A struct over a class handle, so the copy the store holds and the one the
+/// test advances are the same clock.
+struct RecordingTestClock: Clock {
+    typealias Instant = TestClock<Swift.Duration>.Instant
+    // Spelled out because `ZcashLightClientKit` exports a `Duration` of its own,
+    // and an unqualified one in this file resolves to that instead.
+    typealias Duration = Swift.Duration
+
+    let sleeps = LockIsolated<[Swift.Duration]>([])
+    let base = TestClock<Swift.Duration>()
+
+    var now: Instant { base.now }
+    var minimumResolution: Swift.Duration { base.minimumResolution }
+
+    func sleep(until deadline: Instant, tolerance: Swift.Duration?) async throws {
+        sleeps.withValue { $0.append(self.base.now.duration(to: deadline)) }
+        try await base.sleep(until: deadline, tolerance: tolerance)
+    }
+
+    func advance(by duration: Swift.Duration) async {
+        await base.advance(by: duration)
     }
 }
 

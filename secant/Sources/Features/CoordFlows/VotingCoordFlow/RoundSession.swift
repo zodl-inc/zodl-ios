@@ -194,6 +194,15 @@ struct RoundSession: Equatable {
     /// state.
     var sessionEpoch: UInt64 = 0
 
+    /// Whether this round has a session the flow can act on right now.
+    ///
+    /// `VotingCoordFlow.State.openRoundSessionIds` is deliberately a superset --
+    /// a round whose open was refused stays on it, because that list is what a
+    /// fence closes -- so it answers "which rounds must be fenced", never "which
+    /// rounds have a working session". This answers the second question, and it
+    /// is the one every caller that is about to *use* a session reads.
+    var liveSession: LiveSessionState = .none
+
     /// Per-bundle result of the standalone delegation-proof precompute:
     /// whether that bundle's proof was generated or reused from the shared
     /// cache. Absent means no precompute has answered for the bundle yet.
@@ -317,6 +326,28 @@ enum KeystoneSigningStatus: Equatable {
     case parsingSignature
     case finalizingAuthorization
     case failed(String)
+}
+
+/// Whether a round has a session to act on, and if not, what is being done
+/// about it.
+///
+/// Only ``open`` licenses a call that needs one -- a tracking pass, a run, the
+/// Polls List walking past the pipeline into a ballot. The other three are the
+/// ways a round can be without one: nothing has been started, an open is in
+/// flight, or an open was refused and another is scheduled. Telling them apart
+/// is what stops a second open being started beside the first, and what stops a
+/// round whose open was refused being treated as though it had succeeded.
+enum LiveSessionState: Equatable {
+    /// No session: never opened, refused for good, fenced, closed, or ended.
+    case none
+    /// An open is in flight. Nothing may use the session yet, and nothing may
+    /// start a second open.
+    case opening
+    /// A session is open and bound to ``RoundSession/sessionEpoch``.
+    case open
+    /// An open was refused and the next attempt is waiting out its backoff.
+    /// `attempt` counts the refusals so far, from zero.
+    case backingOff(attempt: Int)
 }
 
 /// Where a round's helper shares stand.
