@@ -6,6 +6,7 @@
 import ComposableArchitecture
 import Foundation
 import Testing
+import UIKit
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
@@ -336,7 +337,10 @@ struct ExportViewingKeysLifecycleTests {
         await store.receive(.shareReady(UUID(1), .success(payload))) {
             $0.detail?.shareRequestID = nil
             $0.detail?.sharePayload = payload
+            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
         }
+        let ownership = try #require(store.state.detail?.shareOwnership)
+        #expect(ownership.claimNativeOwnership())
         await store.send(.sharePresented) {
             $0.detail?.isSharePresented = true
         }
@@ -349,8 +353,90 @@ struct ExportViewingKeysLifecycleTests {
         }
         await store.send(.shareDismissed) {
             $0.detail?.sharePayload = nil
+            $0.detail?.shareOwnership = nil
             $0.detail?.isSharePresented = false
         }
+        #expect(ownership.isFinished)
+    }
+
+    @Test
+    func controllerConstructionRetainsNativePayloadBeforeAppearance() async throws {
+        let store = try await makeStore()
+        await enterAndReveal(store, receiveQR: true)
+        await store.send(.shareTapped) {
+            $0.detail?.shareRequestID = UUID(1)
+        }
+        let key = try #require(store.state.detail?.key)
+        let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
+        await store.receive(.shareReady(UUID(1), .success(payload))) {
+            $0.detail?.shareRequestID = nil
+            $0.detail?.sharePayload = payload
+            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+        }
+        let ownership = try #require(store.state.detail?.shareOwnership)
+        var presentationCount = 0
+        let controller = ViewingKeyActivityView.makeController(
+            activityItems: ["public fixture"],
+            ownership: ownership,
+            onPresented: { presentationCount += 1 },
+            onCompletion: {}
+        )
+        #expect(controller.didTransferPayload)
+        #expect(ownership.hasNativeOwnership)
+
+        await store.send(.becameInactive) {
+            $0.isInactive = true
+        }
+        #expect(store.state.detail?.sharePayload != nil)
+
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        #expect(presentationCount == 1)
+        await store.send(.sharePresented) {
+            $0.detail?.isSharePresented = true
+        }
+        await store.send(.shareDismissed) {
+            $0.detail?.sharePayload = nil
+            $0.detail?.shareOwnership = nil
+            $0.detail?.isSharePresented = false
+        }
+        #expect(ownership.isFinished)
+    }
+
+    @Test
+    func inactivityBeforeControllerConstructionCancelsWithoutTransferringPayload() async throws {
+        let store = try await makeStore()
+        await enterAndReveal(store, receiveQR: true)
+        await store.send(.shareTapped) {
+            $0.detail?.shareRequestID = UUID(1)
+        }
+        let key = try #require(store.state.detail?.key)
+        let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
+        await store.receive(.shareReady(UUID(1), .success(payload))) {
+            $0.detail?.shareRequestID = nil
+            $0.detail?.sharePayload = payload
+            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+        }
+        let ownership = try #require(store.state.detail?.shareOwnership)
+
+        await store.send(.becameInactive) {
+            $0.isInactive = true
+            $0.detail?.sharePayload = nil
+            $0.detail?.shareOwnership = nil
+        }
+        #expect(ownership.wasCancelledBeforeHandoff)
+
+        var presentationCount = 0
+        let controller = ViewingKeyActivityView.makeController(
+            activityItems: ["public fixture"],
+            ownership: ownership,
+            onPresented: { presentationCount += 1 },
+            onCompletion: {}
+        )
+        #expect(!controller.didTransferPayload)
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        #expect(presentationCount == 0)
     }
 
     @Test

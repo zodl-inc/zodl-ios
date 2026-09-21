@@ -109,12 +109,14 @@ struct ViewingKeyPresentationTests {
         let key = try #require(session.key(for: .full))
         let png = try await ViewingKeyQRCodeClient.liveValue.png(key)
         let payload = ViewingKeySharePayload(id: UUID(), key: key, png: png)
+        let ownership = ViewingKeyShareOwnership(payloadID: payload.id)
 
         let items = ViewingKeyShareItems(payload: payload, title: "Public test title")
         let rawString = try #require(items.activityItems.first as? String)
         let pngItem = try #require(items.activityItems.last as? ShareablePNG)
         let controller = ViewingKeyActivityView.makeController(
             activityItems: items.activityItems,
+            ownership: ownership,
             onCompletion: {}
         )
 
@@ -129,11 +131,18 @@ struct ViewingKeyPresentationTests {
     @Test
     func shareBridgeReportsUIKitOwnershipOnce() {
         var presentationCount = 0
+        var completionCount = 0
+        let ownership = ViewingKeyShareOwnership(payloadID: UUID())
         let controller = ViewingKeyActivityView.makeController(
             activityItems: ["public fixture"],
+            ownership: ownership,
             onPresented: { presentationCount += 1 },
-            onCompletion: {}
+            onCompletion: { completionCount += 1 }
         )
+
+        #expect(controller.didTransferPayload)
+        #expect(ownership.hasNativeOwnership)
+        #expect(presentationCount == 0)
 
         controller.beginAppearanceTransition(true, animated: false)
         controller.endAppearanceTransition()
@@ -143,6 +152,28 @@ struct ViewingKeyPresentationTests {
         controller.endAppearanceTransition()
 
         #expect(presentationCount == 1)
+        controller.completionWithItemsHandler?(nil, false, nil, nil)
+        #expect(completionCount == 1)
+        #expect(ownership.isFinished)
+    }
+
+    @Test
+    func cancelledShareOwnershipTransfersNoPayloadOrPresentationCallback() {
+        var presentationCount = 0
+        let ownership = ViewingKeyShareOwnership(payloadID: UUID())
+        #expect(!ownership.cancelPreparedUnlessNativeOwned())
+        let controller = ViewingKeyActivityView.makeController(
+            activityItems: ["public fixture"],
+            ownership: ownership,
+            onPresented: { presentationCount += 1 },
+            onCompletion: {}
+        )
+
+        #expect(ownership.wasCancelledBeforeHandoff)
+        #expect(!controller.didTransferPayload)
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        #expect(presentationCount == 0)
     }
 
     @Test(arguments: [2, 3])

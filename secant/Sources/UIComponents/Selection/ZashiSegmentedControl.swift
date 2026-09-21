@@ -54,7 +54,7 @@ struct ZashiSegmentedControl<Selection: Hashable>: View {
                             .medium,
                             size: 16,
                             color: isSelected
-                                ? Design.Btns.Primary.fg.color(colorScheme)
+                                ? selectedForeground
                                 : Design.Text.primary.color(colorScheme)
                         )
                         .frame(maxWidth: .infinity, minHeight: 40)
@@ -63,7 +63,7 @@ struct ZashiSegmentedControl<Selection: Hashable>: View {
                         .background {
                             if isSelected {
                                 RoundedRectangle(cornerRadius: Design.Radius._lg)
-                                    .fill(Design.Btns.Primary.bg.color(colorScheme))
+                                    .fill(selectedBackground)
                             }
                         }
                 }
@@ -72,5 +72,17 @@ struct ZashiSegmentedControl<Selection: Hashable>: View {
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
+    }
+
+    private var selectedBackground: Color {
+        colorScheme == .light
+            ? Design.Surfaces.bgPrimary.color(colorScheme)
+            : Design.Btns.Primary.bg.color(colorScheme)
+    }
+
+    private var selectedForeground: Color {
+        colorScheme == .light
+            ? Design.Text.primary.color(colorScheme)
+            : Design.Btns.Primary.fg.color(colorScheme)
     }
 }

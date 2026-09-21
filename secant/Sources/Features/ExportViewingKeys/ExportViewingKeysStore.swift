@@ -5,6 +5,7 @@
 
 import ComposableArchitecture
 import Foundation
+import os
 @preconcurrency import ZcashLightClientKit
 
 enum ViewingKeyTab: Equatable, CaseIterable, Sendable {
@@ -34,6 +35,73 @@ struct ViewingKeySharePayload: Identifiable, Equatable, Sendable, CustomStringCo
     }
 }
 
+final class ViewingKeyShareOwnership: @unchecked Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    private enum Phase: Sendable {
+        case prepared
+        case nativeOwned
+        case cancelled
+        case finished
+    }
+
+    let payloadID: UUID
+    private let phase = OSAllocatedUnfairLock(initialState: Phase.prepared)
+
+    var hasNativeOwnership: Bool {
+        phase.withLock { $0 == .nativeOwned }
+    }
+
+    var wasCancelledBeforeHandoff: Bool {
+        phase.withLock { $0 == .cancelled }
+    }
+
+    var isFinished: Bool {
+        phase.withLock { $0 == .finished }
+    }
+
+    var description: String { "<redacted viewing key share ownership>" }
+    var debugDescription: String { description }
+    var customMirror: Mirror {
+        Mirror(self, unlabeledChildren: EmptyCollection<Any>(), displayStyle: .class)
+    }
+
+    init(payloadID: UUID) {
+        self.payloadID = payloadID
+    }
+
+    func claimNativeOwnership() -> Bool {
+        phase.withLock { phase in
+            guard phase == .prepared else { return false }
+            phase = .nativeOwned
+            return true
+        }
+    }
+
+    func cancelPreparedUnlessNativeOwned() -> Bool {
+        phase.withLock { phase in
+            switch phase {
+            case .prepared:
+                phase = .cancelled
+                return false
+            case .nativeOwned:
+                return true
+            case .cancelled, .finished:
+                return false
+            }
+        }
+    }
+
+    func finish() {
+        phase.withLock { $0 = .finished }
+    }
+
+    static func == (lhs: ViewingKeyShareOwnership, rhs: ViewingKeyShareOwnership) -> Bool {
+        guard lhs !== rhs else { return true }
+        let lhsPhase = lhs.phase.withLock { $0 }
+        let rhsPhase = rhs.phase.withLock { $0 }
+        return lhs.payloadID == rhs.payloadID && lhsPhase == rhsPhase
+    }
+}
+
 @Reducer
 struct ExportViewingKeys {
     private enum CancelID {
@@ -53,6 +121,7 @@ struct ExportViewingKeys {
             var qrRequestID: UUID?
             var shareRequestID: UUID?
             var sharePayload: ViewingKeySharePayload?
+            var shareOwnership: ViewingKeyShareOwnership?
             var isSharePresented = false
 
             var description: String { "<redacted viewing key detail>" }
@@ -94,7 +163,10 @@ struct ExportViewingKeys {
 
         var canShare: Bool {
             guard isPayloadVisible, let detail else { return false }
-            return detail.key != nil && detail.shareRequestID == nil && detail.sharePayload == nil
+            return detail.key != nil
+                && detail.shareRequestID == nil
+                && detail.sharePayload == nil
+                && detail.shareOwnership == nil
         }
 
         var isPayloadVisible: Bool {
@@ -161,7 +233,9 @@ struct ExportViewingKeys {
 
             if state.isInvalidated {
                 if case .shareDismissed = action {
+                    state.detail?.shareOwnership?.finish()
                     state.detail?.sharePayload = nil
+                    state.detail?.shareOwnership = nil
                     state.detail?.isSharePresented = false
                 }
                 return .none
@@ -262,8 +336,10 @@ struct ExportViewingKeys {
                 detail.qrFailed = false
                 detail.qrRequestID = nil
                 detail.shareRequestID = nil
-                if !detail.isSharePresented {
+                if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
                     detail.sharePayload = nil
+                    detail.shareOwnership = nil
+                    detail.isSharePresented = false
                 }
                 state.detail = detail
                 return .merge(
@@ -326,20 +402,29 @@ struct ExportViewingKeys {
                 switch result {
                 case let .success(payload):
                     detail.sharePayload = payload
+                    detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
                 case .failure:
                     detail.sharePayload = nil
+                    detail.shareOwnership = nil
                     state.sharingError = true
                 }
                 state.detail = detail
                 return .none
 
             case .sharePresented:
-                guard state.isPayloadVisible, state.detail?.sharePayload != nil else { return .none }
+                guard let detail = state.detail,
+                      let payload = detail.sharePayload,
+                      detail.shareOwnership?.payloadID == payload.id,
+                      detail.shareOwnership?.hasNativeOwnership == true else {
+                    return .none
+                }
                 state.detail?.isSharePresented = true
                 return .none
 
             case .shareDismissed:
+                state.detail?.shareOwnership?.finish()
                 state.detail?.sharePayload = nil
+                state.detail?.shareOwnership = nil
                 state.detail?.isSharePresented = false
                 return .none
 
@@ -372,9 +457,12 @@ struct ExportViewingKeys {
             case .becameInactive:
                 state.isInactive = true
                 state.detail?.qrRequestID = nil
-                if state.detail?.isSharePresented != true {
+                let nativeOwnsPayload = state.detail?.shareOwnership?.cancelPreparedUnlessNativeOwned() == true
+                if !nativeOwnsPayload {
                     state.detail?.shareRequestID = nil
                     state.detail?.sharePayload = nil
+                    state.detail?.shareOwnership = nil
+                    state.detail?.isSharePresented = false
                 }
                 return .merge(
                     .cancel(id: CancelID.qr),
@@ -425,8 +513,10 @@ struct ExportViewingKeys {
         detail.qrFailed = false
         detail.qrRequestID = nil
         detail.shareRequestID = nil
-        if !detail.isSharePresented {
+        if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
             detail.sharePayload = nil
+            detail.shareOwnership = nil
+            detail.isSharePresented = false
         }
         state.detail = detail
     }

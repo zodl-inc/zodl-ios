@@ -233,6 +233,7 @@ struct ExportViewingKeysTests {
         await store.receive(.shareReady(UUID(1), .success(expectedPayload))) {
             $0.detail?.shareRequestID = nil
             $0.detail?.sharePayload = expectedPayload
+            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: expectedPayload.id)
         }
         let payload = try #require(store.state.detail?.sharePayload)
         let encoded = encodedMaterials.values

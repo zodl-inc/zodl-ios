@@ -62,17 +62,27 @@ struct ViewingKeyShareItems {
     }
 }
 
+struct ViewingKeyNativeShare: Identifiable {
+    let payload: ViewingKeySharePayload
+    let ownership: ViewingKeyShareOwnership
+
+    var id: UUID { payload.id }
+}
+
 struct ViewingKeyActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
+    let ownership: ViewingKeyShareOwnership
     let onPresented: () -> Void
     let onCompletion: () -> Void
 
     init(
         activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
         onPresented: @escaping () -> Void,
         onCompletion: @escaping () -> Void
     ) {
         self.activityItems = activityItems
+        self.ownership = ownership
         self.onPresented = onPresented
         self.onCompletion = onCompletion
     }
@@ -80,6 +90,7 @@ struct ViewingKeyActivityView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIActivityViewController {
         Self.makeController(
             activityItems: activityItems,
+            ownership: ownership,
             onPresented: onPresented,
             onCompletion: onCompletion
         )
@@ -89,10 +100,12 @@ struct ViewingKeyActivityView: UIViewControllerRepresentable {
 
     static func makeController(
         activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
         onCompletion: @escaping () -> Void
-    ) -> UIActivityViewController {
+    ) -> ViewingKeyActivityViewController {
         makeController(
             activityItems: activityItems,
+            ownership: ownership,
             onPresented: {},
             onCompletion: onCompletion
         )
@@ -100,14 +113,17 @@ struct ViewingKeyActivityView: UIViewControllerRepresentable {
 
     static func makeController(
         activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
         onPresented: @escaping () -> Void,
         onCompletion: @escaping () -> Void
-    ) -> UIActivityViewController {
+    ) -> ViewingKeyActivityViewController {
         let controller = ViewingKeyActivityViewController(
             activityItems: activityItems,
+            ownership: ownership,
             onPresented: onPresented
         )
         controller.completionWithItemsHandler = { _, _, _, _ in
+            ownership.finish()
             onCompletion()
         }
         controller.popoverPresentationController?.sourceView = controller.view
@@ -121,13 +137,23 @@ struct ViewingKeyActivityView: UIViewControllerRepresentable {
     }
 }
 
-private final class ViewingKeyActivityViewController: UIActivityViewController {
+final class ViewingKeyActivityViewController: UIActivityViewController {
+    let didTransferPayload: Bool
     private let onPresented: () -> Void
     private var didNotifyPresentation = false
 
-    init(activityItems: [Any], onPresented: @escaping () -> Void) {
+    init(
+        activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
+        onPresented: @escaping () -> Void
+    ) {
+        let didTransferPayload = ownership.claimNativeOwnership()
+        self.didTransferPayload = didTransferPayload
         self.onPresented = onPresented
-        super.init(activityItems: activityItems, applicationActivities: nil)
+        super.init(
+            activityItems: didTransferPayload ? activityItems : [],
+            applicationActivities: nil
+        )
     }
 
     @available(*, unavailable)
@@ -137,7 +163,7 @@ private final class ViewingKeyActivityViewController: UIActivityViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !didNotifyPresentation else { return }
+        guard didTransferPayload, !didNotifyPresentation else { return }
         didNotifyPresentation = true
         onPresented()
     }
