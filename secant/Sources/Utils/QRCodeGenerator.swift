@@ -88,6 +88,10 @@ enum QRCodeGenerator {
         export: Bool = true,
         overlayedWithZcashLogo: Bool = true
     ) -> CGImage? {
+        if !overlayedWithZcashLogo {
+            return context.createCGImage(baseImage, from: baseImage.extent)
+        }
+
         let maxPrivacyPostfix = vendor == .zashi ? maxPrivacy ? "Max" : "Low" : ""
         let vendorPrefix = vendor == .zashi ? "" : "KS_"
         let filename = export ? "QROverlay" : "QRDynamicOverlay"
@@ -109,13 +113,9 @@ enum QRCodeGenerator {
         let translationTransform = CGAffineTransform(translationX: iconRect.origin.x, y: iconRect.origin.y)
         let transformedIconCIImage = iconCIImage.transformed(by: scaleTransform.concatenating(translationTransform))
         
-        if overlayedWithZcashLogo {
-            let combinedImage = transformedIconCIImage.composited(over: baseImage)
-            
-            return context.createCGImage(combinedImage, from: combinedImage.extent)
-        } else {
-            return context.createCGImage(baseImage, from: baseImage.extent)
-        }
+        let combinedImage = transformedIconCIImage.composited(over: baseImage)
+
+        return context.createCGImage(combinedImage, from: combinedImage.extent)
     }
 }
 
