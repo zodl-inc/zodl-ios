@@ -83,7 +83,8 @@ struct ViewingKeyPresentationTests {
             png: png
         )
 
-        #expect(presentation == .revealed(key: key.rawValue, png: png.data))
+        let revealedPresentationMatches = presentation == .revealed(key: key.rawValue, png: png.data)
+        #expect(revealedPresentationMatches)
     }
 
     @Test
@@ -104,7 +105,8 @@ struct ViewingKeyPresentationTests {
         let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
 
         #expect(item.activityViewController(controller, dataTypeIdentifierForActivityType: nil) == UTType.png.identifier)
-        #expect((item.activityViewController(controller, itemForActivityType: nil) as? Data) == bytes)
+        let sharedPNGMatches = (item.activityViewController(controller, itemForActivityType: nil) as? Data) == bytes
+        #expect(sharedPNGMatches)
     }
 
     @Test
@@ -126,11 +128,10 @@ struct ViewingKeyPresentationTests {
         )
 
         #expect(items.activityItems.count == 2)
-        #expect(rawString == key.rawValue)
-        #expect(
-            (pngItem.activityViewController(controller, itemForActivityType: nil) as? Data)
-                == png.data
-        )
+        let sharedStringMatches = rawString == key.rawValue
+        let sharedPNGMatches = (pngItem.activityViewController(controller, itemForActivityType: nil) as? Data) == png.data
+        #expect(sharedStringMatches)
+        #expect(sharedPNGMatches)
     }
 
     @Test

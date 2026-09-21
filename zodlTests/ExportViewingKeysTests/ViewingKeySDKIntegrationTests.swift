@@ -69,7 +69,8 @@ struct ViewingKeySDKIntegrationTests {
                 key: key.rawValue,
                 png: png.data
             )
-            #expect(presentation == expectedPresentation)
+            let revealedPresentationMatches = presentation == expectedPresentation
+            #expect(revealedPresentationMatches)
         }
     }
 
