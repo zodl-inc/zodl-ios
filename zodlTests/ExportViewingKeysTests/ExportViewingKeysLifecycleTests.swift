@@ -453,6 +453,35 @@ struct ExportViewingKeysLifecycleTests {
         await store.receive(.delegate(.finished))
     }
 
+    @Test
+    func detailBackCancelsPreparedNativeOwnershipBeforeControllerConstruction() async throws {
+        let store = try await makeStore()
+        await enterAndReveal(store, receiveQR: true)
+        await store.send(.shareTapped) {
+            $0.detail?.shareRequestID = UUID(1)
+        }
+        let key = try #require(store.state.detail?.key)
+        let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
+        await store.receive(.shareReady(UUID(1), .success(payload))) {
+            $0.detail?.shareRequestID = nil
+            $0.detail?.sharePayload = payload
+            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+        }
+        let ownership = try #require(store.state.detail?.shareOwnership)
+        await store.send(.backTapped) {
+            $0.detail = nil
+        }
+        #expect(ownership.wasCancelledBeforeHandoff)
+        let controller = ViewingKeyActivityView.makeController(
+            activityItems: ["public fixture"],
+            ownership: ownership,
+            onPresented: {},
+            onCompletion: {}
+        )
+        #expect(!controller.didTransferPayload)
+        #expect(store.state.selectedKind == .incoming)
+    }
+
     private var defaultPNG: ViewingKeyPNG {
         ViewingKeyPNG(data: Data([0x89, 0x50, 0x4e, 0x47]))
     }

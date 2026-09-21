@@ -33,6 +33,7 @@ enum AccessibilityID {
 
     enum AdvancedSettings {
         static let exportPrivateData = "advancedSettings.exportPrivateData"
+        static let exportViewingKey = "advancedSettings.exportViewingKey"
     }
 
     enum SendForm {

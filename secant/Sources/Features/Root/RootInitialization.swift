@@ -1642,7 +1642,10 @@ extension Root {
                 
             case .initialization(.resetZashiRequest(let areMetadataPreserved)):
                 state.areMetadataPreserved = areMetadataPreserved
-                return .send(.initialization(.resetZashi))
+                return .concatenate(
+                    .send(.settings(.invalidateViewingKeyExport)),
+                    .send(.initialization(.resetZashi))
+                )
                 
             case .initialization(.resetZashiRequestCanceled):
                 state.alert = nil

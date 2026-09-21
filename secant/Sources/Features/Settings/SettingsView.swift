@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import ComposableArchitecture
 
 struct SettingsView: View {
@@ -126,6 +127,8 @@ struct SettingsView: View {
                     DisconnectHWWalletView(store: store)
                 case let .currencyConversionSetup(store):
                     CurrencyConversionSetupView(store: store)
+                case let .exportViewingKeys(store):
+                    ExportViewingKeysView(store: store)
                 case let .exportPrivateData(store):
                     PrivateDataConsentView(store: store)
                 case let .exportTransactionHistory(store):
@@ -155,6 +158,28 @@ struct SettingsView: View {
                 case let .whatsNew(store):
                     WhatsNewView(store: store)
                 }
+            }
+            .onAppear {
+                // Settings state is retained while off-screen and can miss an active notification.
+                store.send(UIApplication.shared.applicationState == .active ? .viewingKeyBecameActive : .viewingKeyBecameInactive)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                store.send(.viewingKeyBecameInactive)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                store.send(.viewingKeyBecameActive)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                store.send(.viewingKeyEnteredBackground)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+                store.send(.viewingKeyEnteredBackground)
+            }
+            .onChange(of: store.isViewingKeyProvenanceValid) { _ in
+                store.send(.validateViewingKeySession)
+            }
+            .onDisappear {
+                store.send(.viewingKeySettingsDisappeared)
             }
             .applyScreenBackground()
             .zashiSheet(isPresented: $store.isInRecoverFundsMode) {

@@ -191,6 +191,30 @@ struct ExportViewingKeys {
             self.session = session
             self.currentNetwork = session.network
         }
+
+        /// Ends the app-owned session while respecting a payload already handed to UIKit.
+        mutating func invalidateForExit() {
+            isInvalidated = true
+            isConsentPresented = false
+            pendingFullExport = false
+            consent = []
+            isInactive = false
+            unavailableKey = false
+            sharingError = false
+            guard var detail else { return }
+            detail.isRevealed = false
+            detail.key = nil
+            detail.qr = nil
+            detail.qrFailed = false
+            detail.qrRequestID = nil
+            detail.shareRequestID = nil
+            if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
+                detail.sharePayload = nil
+                detail.shareOwnership = nil
+                detail.isSharePresented = false
+            }
+            self.detail = detail
+        }
     }
 
     enum Action: Equatable {
@@ -242,8 +266,7 @@ struct ExportViewingKeys {
             }
 
             if !state.isSessionValid {
-                state.isInvalidated = true
-                clearDisclosure(state: &state)
+                state.invalidateForExit()
                 return .merge(
                     .cancel(id: CancelID.qr),
                     .cancel(id: CancelID.share),
@@ -439,14 +462,14 @@ struct ExportViewingKeys {
 
             case .backTapped:
                 guard state.detail != nil else {
-                    state.isInvalidated = true
-                    clearDisclosure(state: &state)
+                    state.invalidateForExit()
                     return .merge(
                         .cancel(id: CancelID.qr),
                         .cancel(id: CancelID.share),
                         .send(.delegate(.finished))
                     )
                 }
+                _ = state.detail?.shareOwnership?.cancelPreparedUnlessNativeOwned()
                 state.detail = nil
                 state.sharingError = false
                 return .merge(
@@ -485,8 +508,7 @@ struct ExportViewingKeys {
                 return generateQRCode(key: key, requestID: requestID)
 
             case .enteredBackground, .viewDisappeared:
-                state.isInvalidated = true
-                clearDisclosure(state: &state)
+                state.invalidateForExit()
                 return .merge(
                     .cancel(id: CancelID.qr),
                     .cancel(id: CancelID.share),
@@ -497,28 +519,6 @@ struct ExportViewingKeys {
                 return .none
             }
         }
-    }
-
-    private func clearDisclosure(state: inout State) {
-        state.isConsentPresented = false
-        state.pendingFullExport = false
-        state.consent = []
-        state.isInactive = false
-        state.unavailableKey = false
-        state.sharingError = false
-        guard var detail = state.detail else { return }
-        detail.isRevealed = false
-        detail.key = nil
-        detail.qr = nil
-        detail.qrFailed = false
-        detail.qrRequestID = nil
-        detail.shareRequestID = nil
-        if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
-            detail.sharePayload = nil
-            detail.shareOwnership = nil
-            detail.isSharePresented = false
-        }
-        state.detail = detail
     }
 
     private func generateQRCode(key: ViewingKeyMaterial, requestID: UUID) -> Effect<Action> {

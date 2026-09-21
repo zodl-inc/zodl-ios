@@ -15,6 +15,7 @@ struct Settings {
         case chooseServerSetup(ServerSetup)
         case disconnectHWWallet(DisconnectHWWallet)
         case currencyConversionSetup(CurrencyConversionSetup)
+        case exportViewingKeys(ExportViewingKeys)
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
         case migrationRestart(MigrationRestart)
@@ -43,6 +44,8 @@ struct Settings {
         var isResyncHelpSheetPresented = false
         var isTorOn = false
         var path = StackState<Path.State>()
+        var pendingViewingKeyAuthentication: PendingViewingKeyAuthentication?
+        var isViewingKeyInactive = false
         #if VOTING_ENABLED
         /// fullScreenCover for the new voting CoordFlow. Isolating its
         /// NavigationStack via fullScreenCover avoids SwiftUI's
@@ -95,6 +98,13 @@ struct Settings {
         case resyncFinished
         case sendUsFeedbackTapped
         case whatsNewTapped
+        case viewingKeyAuthenticationFinished(UUID, Bool)
+        case viewingKeyBecameInactive
+        case viewingKeyBecameActive
+        case viewingKeyEnteredBackground
+        case validateViewingKeySession
+        case viewingKeySettingsDisappeared
+        case invalidateViewingKeyExport
     }
 
     @Dependency(\.appVersion) var appVersion
@@ -102,17 +112,25 @@ struct Settings {
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.uuid) var uuid
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
     var body: some Reducer<State, Action> {
         BindingReducer()
         
+        viewingKeyPrePopReduce()
+
         coordinatorReduce()
         
         Reduce { state, action in
+            if let effect = reduceViewingKeyExport(state: &state, action: action) {
+                return effect
+            }
             switch action {
             case .onAppear:
+                let exportCleanup = invalidateViewingKeyExport(state: &state)
                 // __LD TESTED
                 state.appVersion = appVersion.appVersion()
                 state.appBuild = appVersion.appBuild()
@@ -120,8 +138,13 @@ struct Settings {
                 if let torOnFlag = walletStorage.exportTorSetupFlag() {
                     state.isTorOn = torOnFlag
                 }
-                return .none
+                return exportCleanup
             
+            case .viewingKeyAuthenticationFinished, .viewingKeyBecameInactive, .viewingKeyBecameActive,
+                 .viewingKeyEnteredBackground, .validateViewingKeySession, .viewingKeySettingsDisappeared,
+                 .invalidateViewingKeyExport:
+                return .none
+
             case .backToHomeTapped:
                 return .none
                 

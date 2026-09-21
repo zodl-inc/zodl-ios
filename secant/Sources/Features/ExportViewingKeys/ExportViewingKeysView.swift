@@ -9,7 +9,6 @@ import SwiftUI
 
 struct ExportViewingKeysView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.scenePhase) private var scenePhase
     @Perception.Bindable var store: StoreOf<ExportViewingKeys>
 
     init(store: StoreOf<ExportViewingKeys>) {
@@ -69,18 +68,7 @@ struct ExportViewingKeysView: View {
                     onCompletion: { store.send(.shareDismissed) }
                 )
             }
-            .onChange(of: scenePhase) { phase in
-                switch phase {
-                case .active:
-                    store.send(.becameActive)
-                case .inactive:
-                    store.send(.becameInactive)
-                case .background:
-                    store.send(.enteredBackground)
-                @unknown default:
-                    store.send(.becameInactive)
-                }
-            }
+
         }
     }
 

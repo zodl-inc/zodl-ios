@@ -13,6 +13,7 @@ struct AdvancedSettings {
             case chooseServer
             case disconnectHWWallet
             case exportPrivateData
+            case exportViewingKey
             case exportTaxFile
             case recoveryPhrase
             case resetZashi
@@ -100,6 +101,9 @@ struct AdvancedSettings {
                 // the flow spends nothing — it cancels a plan (already-broadcast transfers stay
                 // migrated on-chain). Double-gating it would be the only place in the app where a
                 // confirm sheet sits behind Face ID.
+                case .exportViewingKey:
+                    // Settings owns the captured account and originating navigation entry.
+                    return .none
                 case .chooseServer, .torSetup, .restartMigration:
                     return .send(.operationAccessGranted(operation))
                 case .recoveryPhrase, .exportPrivateData, .exportTaxFile, .resetZashi, .disconnectHWWallet, .resyncWallet:
