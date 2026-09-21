@@ -157,13 +157,16 @@ extension VotingCoordFlow {
                 // The open stopped before it opened anything, so the round has
                 // no session -- and must not go on claiming one is on its way.
                 mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
-                // A teardown still under way answers this with nothing, which
-                // is the whole of what can be done for the round until the
-                // reset is over. One that has already finished -- the open
-                // captured the generation before it began and read it after --
-                // leaves the sidecar readable, and the round is picked back up
-                // without waiting for the voter's next visit.
-                return resumePendingSharesAfterEntryEnded(roundId: roundId)
+                // And nothing more. The other exits that leave a round without
+                // a session put it back on the pending-share sweep; this one
+                // cannot, because the only thing that sends it is a wallet
+                // teardown, and the sidecar the sweep would read is the one the
+                // reset is closing and deleting. Asking for it while the window
+                // is open is refused, and asking after it has closed reaches a
+                // database that is no longer open. The flow leaves this state
+                // through a fresh initialize, which reads the list again and
+                // starts the round's recovery over.
+                return .none
 
             case .initialize:
                 // Sweep legacy plaintext keys from a prior internal-build
@@ -1903,6 +1906,12 @@ extension VotingCoordFlow {
     /// `cancelShareTrackingResumeId` below is what stops that, together with the
     /// cancellation check the resume effect makes immediately before it opens
     /// anything.
+    ///
+    /// Not for a sweep open that is already inside the SDK call, though: the
+    /// cancellation cannot reach it there, and the registry gives one session
+    /// per round to whoever asks, whatever binding each of them asked for. This
+    /// entry can still be handed that session, and the window lasts as long as
+    /// the SDK's own open does.
     func reduceStartActiveRoundPipeline(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let item = state.allRounds.first(where: { $0.id == roundId }),
               item.session.status == .active
@@ -3751,7 +3760,11 @@ extension VotingCoordFlow {
     /// while it is parked in its anchor read. That entry cancels this open, and
     /// the effect checks the cancellation immediately before it opens anything,
     /// so the round keeps the session the voter's entry gave it rather than a
-    /// roster-only one registered behind it.
+    /// roster-only one registered behind it. Once this open is inside the SDK
+    /// call the cancellation no longer reaches it, and the registry joins the
+    /// entry's open to this one regardless of the binding either asked for --
+    /// so for as long as that call takes, the round can still end up on the
+    /// roster-only session this opened.
     func reducePendingShareRoundsLoaded(
         _ state: inout State,
         rounds: [VotingPendingShareRound]
@@ -3907,9 +3920,11 @@ extension VotingCoordFlow {
     ///
     /// The filtered read is also what decides whether anything happens at all:
     /// a round that owes no share comes back as an empty list, and the sweep
-    /// does nothing with it. Nothing here can come back round, either -- the
-    /// sweep opens no entry pipeline, so none of the exits that call this can
-    /// fire from what it starts.
+    /// does nothing with it. Nothing here can come back round, either: all
+    /// three callers sit on the entry pipeline -- a refused open, the wallet
+    /// sync gate, and an entry taking another round's open away -- and the
+    /// sweep starts no entry pipeline, so none of them can fire from what this
+    /// starts. A sweep open that is refused climbs its own ladder instead.
     ///
     /// Refused outright while a wallet teardown is under way: the sidecar this
     /// would read is the one the reset is deleting, and a flow in that state
