@@ -10,6 +10,27 @@ enum VotingSessionError: Error, Equatable {
     case notOpen(roundId: String)
 }
 
+/// What the registry needs from a round session: enough to stop it, close it
+/// and keep it current.
+///
+/// The SDK's ``VotingRoundSession`` is the only production conformer, and the
+/// only thing that could be one — the call that builds a session is internal to
+/// the SDK, so nothing here can make another. The registry is generic over this
+/// protocol rather than over that class so its close ordering can be exercised
+/// against a session whose `close()` is held open, which is the only way to ask
+/// what a second closer does while a first one is still joining the calls a
+/// session has in flight.
+protocol VotingRegistrySession: AnyObject, Sendable {
+    var roundId: String { get }
+
+    func cancel()
+    func close() async
+    func setOperationEpoch(_ epoch: UInt64)
+    func updateHostConfiguration(_ overrides: VotingHostOverrides) throws
+}
+
+extension VotingRoundSession: VotingRegistrySession {}
+
 /// The app's open voting round sessions, one per round.
 ///
 /// A ``VotingRoundSession`` is the round's whole working life on the SDK side
@@ -29,6 +50,17 @@ enum VotingSessionError: Error, Equatable {
 /// before it suspends and later openers await that attempt instead of starting
 /// their own.
 ///
+/// Teardown is owned rather than awaited in place. Closing takes the session
+/// off the books at once and leaves a *drain* behind — the task cancelling and
+/// closing it — which stays here until it has finished. Closers overlap by
+/// design: the flow gives its sessions back while the wallet reset is closing
+/// the store, rather than making the reset wait for the flow to notice. So a
+/// closer that finds nothing left to remove still waits for the drains that are
+/// running, and an open replacing a session waits for that round's drains
+/// before it builds. That is what keeps the last two guarantees honest under an
+/// overlap: returning from a close means the session is closed, not merely
+/// forgotten, so the store can be closed and its file removed behind it.
+///
 /// An actor rather than a lock because closing a session suspends (it waits for
 /// the calls still in flight), and because nothing here is on a hot path.
 ///
@@ -36,25 +68,37 @@ enum VotingSessionError: Error, Equatable {
 /// through the synchronizer, which owns the Tor runtime a `.tor` route needs;
 /// taking that as a closure keeps this type free of the dependency graph and
 /// lets a test drive the bookkeeping without a live sidecar.
-actor VotingSessionRegistry {
+actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     typealias Factory = @Sendable (
         _ inputs: VotingSessionInputs,
         _ binding: VotingSessionBinding,
         _ route: VotingTransportRoute,
         _ epoch: UInt64
-    ) async throws -> VotingRoundSession
+    ) async throws -> Session
 
     /// One open in flight. The id tells an attempt apart from the one that
     /// replaced it, so a finishing open only ever clears its own entry.
     private struct OpenAttempt {
         let id: UInt64
-        let task: Task<VotingRoundSession, Error>
+        let task: Task<Session, Error>
+    }
+
+    /// One piece of teardown still running: a session being closed, or an
+    /// abandoned open being waited out.
+    ///
+    /// It stays here until it has finished, so every closer can see it and wait
+    /// for it, not only the one that started it.
+    private struct Drain {
+        let key: String
+        let task: Task<Void, Never>
     }
 
     private let makeSession: Factory
-    private var sessions: [String: VotingRoundSession] = [:]
+    private var sessions: [String: Session] = [:]
     private var opening: [String: OpenAttempt] = [:]
+    private var drains: [UInt64: Drain] = [:]
     private var nextAttemptId: UInt64 = 0
+    private var nextDrainId: UInt64 = 0
 
     /// How many times the registry has been invalidated wholesale.
     ///
@@ -69,6 +113,12 @@ actor VotingSessionRegistry {
     /// The rounds with an open session, for tests and diagnostics.
     var openRoundIds: [String] {
         Array(sessions.keys)
+    }
+
+    /// How many closes and abandoned opens have not finished yet, for tests and
+    /// diagnostics. Zero means nothing this registry owns is still winding down.
+    var pendingDrainCount: Int {
+        drains.count
     }
 
     init(makeSession: @escaping Factory) {
@@ -91,8 +141,8 @@ actor VotingSessionRegistry {
         binding: VotingSessionBinding,
         route: VotingTransportRoute,
         epoch: UInt64
-    ) async throws -> VotingRoundSession {
-        let roundId = VotingSessionRegistry.key(inputs.roundParams.voteRoundId)
+    ) async throws -> Session {
+        let roundId = Self.key(inputs.roundParams.voteRoundId)
 
         if let inFlight = opening[roundId] {
             return try await inFlight.task.value
@@ -128,8 +178,8 @@ actor VotingSessionRegistry {
     }
 
     /// The open session for `roundId`, or ``VotingSessionError/notOpen(roundId:)``.
-    func session(for roundId: String) throws -> VotingRoundSession {
-        guard let session = sessions[VotingSessionRegistry.key(roundId)] else {
+    func session(for roundId: String) throws -> Session {
+        guard let session = sessions[Self.key(roundId)] else {
             throw VotingSessionError.notOpen(roundId: roundId)
         }
 
@@ -142,34 +192,42 @@ actor VotingSessionRegistry {
     /// close waits on it; without that, closing a live run would block until the
     /// driver reached quiescence on its own. An open still building a session
     /// for this round is cancelled and waited for as well, so nothing can
-    /// register behind the close. Closing a round that has neither does nothing.
+    /// register behind the close. Closing a round that has neither does nothing
+    /// — except wait for a close of this round somebody else started, which is
+    /// still a close this caller is entitled to see through.
+    ///
+    /// Only this round: a round quiet enough to close is not held behind one
+    /// that is not.
     func close(_ roundId: String) async {
-        await abandonOpen(VotingSessionRegistry.key(roundId))
-        await closeSession(VotingSessionRegistry.key(roundId))
+        let key = Self.key(roundId)
+        abandonOpen(key)
+        closeSession(key)
+
+        await awaitDrains(of: key)
     }
 
     /// Close every open session and move the generation on.
     ///
     /// The generation moves before anything is awaited, so an open already in
     /// flight sees it when the SDK answers and closes its own session rather
-    /// than registering it here.
+    /// than registering it here. The same is true of the removals: this takes
+    /// everything off the books before it suspends, and only then waits.
+    ///
+    /// Returning means every session is closed, not merely that the books are
+    /// empty — including the ones another caller was already closing and the one
+    /// an open in flight hands back on its way out. That is what the sidecar's
+    /// store relies on before it closes and its file is removed.
     func closeAll() async {
-        let inFlight = opening
-        let open = sessions
-        opening.removeAll()
-        sessions.removeAll()
         invalidate()
 
-        for attempt in inFlight.values {
-            attempt.task.cancel()
+        for key in Array(opening.keys) {
+            abandonOpen(key)
         }
-        for attempt in inFlight.values {
-            _ = try? await attempt.task.value
+        for key in Array(sessions.keys) {
+            closeSession(key)
         }
-        for session in open.values {
-            session.cancel()
-            await session.close()
-        }
+
+        await awaitDrains(of: nil)
     }
 
     /// Stop the bounded passes the round's session is driving, keeping the
@@ -180,13 +238,13 @@ actor VotingSessionRegistry {
     /// session does nothing; an open still in flight is left alone, because a
     /// session that does not exist yet has nothing to stop.
     func cancel(_ roundId: String) {
-        sessions[VotingSessionRegistry.key(roundId)]?.cancel()
+        sessions[Self.key(roundId)]?.cancel()
     }
 
     /// Move the round's submission epoch, invalidating passes that captured an
     /// older one. A round with no session does nothing.
     func setEpoch(_ roundId: String, _ epoch: UInt64) {
-        sessions[VotingSessionRegistry.key(roundId)]?.setOperationEpoch(epoch)
+        sessions[Self.key(roundId)]?.setOperationEpoch(epoch)
     }
 
     /// Push a refreshed service configuration into every open session. A
@@ -214,43 +272,115 @@ actor VotingSessionRegistry {
         binding: VotingSessionBinding,
         route: VotingTransportRoute,
         epoch: UInt64
-    ) async throws -> VotingRoundSession {
-        await closeSession(roundId)
+    ) async throws -> Session {
         let generationAtStart = generation
+
+        // An attempt abandoned before it ever ran is cancelled by the time it
+        // gets here, and the drain that abandoned it is waiting for exactly this
+        // task. Leaving now is what lets that drain finish.
+        guard !Task.isCancelled else {
+            throw VotingSessionError.notOpen(roundId: roundId)
+        }
+
+        closeSession(roundId)
+
+        // Only the drains of this round that exist right now, and deliberately
+        // no second look for later ones: a drain registered after this point may
+        // be the one abandoning this very attempt — it cancels the attempt and
+        // then waits for it — and an attempt waiting for its own abandonment
+        // would never finish. The cancellation such a drain delivers is what
+        // stops this attempt instead, at the fences below.
+        let inherited = drains.values.filter { $0.key == roundId }.map(\.task)
+        for task in inherited {
+            await task.value
+        }
+
+        guard generation == generationAtStart, !Task.isCancelled else {
+            throw VotingSessionError.notOpen(roundId: roundId)
+        }
 
         let session = try await makeSession(inputs, binding, route, epoch)
 
         // The registry may have been torn down, or this round closed, while the
         // SDK was building. Registering now would leave a live session behind a
         // closed store, so the session this attempt made is closed and the
-        // caller told the round is not open.
+        // caller told the round is not open. That close is a drain of its own,
+        // so a teardown still waiting sees it rather than returning in front of
+        // a session it never knew about.
         guard generation == generationAtStart, !Task.isCancelled else {
-            session.cancel()
-            await session.close()
+            startDrain(roundId) {
+                session.cancel()
+                await session.close()
+            }
             throw VotingSessionError.notOpen(roundId: roundId)
         }
 
-        sessions[VotingSessionRegistry.key(session.roundId)] = session
+        sessions[Self.key(session.roundId)] = session
         return session
     }
 
-    /// Cancel an open still building a session for `key` and wait for it to
-    /// finish, so nothing registers after the caller has decided the round is
-    /// closed.
-    private func abandonOpen(_ key: String) async {
+    /// Cancel an open still building a session for `key` and leave the wait for
+    /// it behind as a drain, so nothing registers after the caller has decided
+    /// the round is closed — and so a closer that arrives later waits for the
+    /// attempt too.
+    ///
+    /// Removing and cancelling happen here, before the drain is registered and
+    /// before anything suspends: an attempt that has not started yet would
+    /// otherwise find this drain in its own snapshot and wait for a drain that
+    /// is waiting for it.
+    private func abandonOpen(_ key: String) {
         guard let attempt = opening.removeValue(forKey: key) else { return }
 
-        attempt.task.cancel()
-        _ = try? await attempt.task.value
+        let task = attempt.task
+        task.cancel()
+        startDrain(key) {
+            _ = try? await task.value
+        }
     }
 
-    /// Close the round's registered session, if it has one. Does not touch an
-    /// open in flight — the attempt that calls this is the open in flight.
-    private func closeSession(_ key: String) async {
+    /// Take the round's registered session off the books and leave its close
+    /// running as a drain. Does not touch an open in flight — the attempt that
+    /// calls this is the open in flight.
+    private func closeSession(_ key: String) {
         guard let session = sessions.removeValue(forKey: key) else { return }
 
-        session.cancel()
-        await session.close()
+        startDrain(key) {
+            session.cancel()
+            await session.close()
+        }
+    }
+
+    /// Registers `work` as a drain of `key` before anything suspends, so the
+    /// very next caller into the actor already sees it.
+    private func startDrain(_ key: String, _ work: @escaping @Sendable () async -> Void) {
+        nextDrainId &+= 1
+        let id = nextDrainId
+        let task = Task { [weak self] in
+            await work()
+            await self?.finishDrain(id)
+        }
+        drains[id] = Drain(key: key, task: task)
+    }
+
+    private func finishDrain(_ id: UInt64) {
+        drains[id] = nil
+    }
+
+    /// Waits until no drain of `key` — every round when `nil` — is left,
+    /// including ones registered while this was waiting.
+    ///
+    /// The re-read is the point: a drain can hand off to another (an abandoned
+    /// open produces a session that then has to be closed), and a closer that
+    /// stopped at the first batch would return in front of the second.
+    private func awaitDrains(of key: String?) async {
+        while true {
+            let pending = drains.values.filter { key == nil || $0.key == key }
+            guard !pending.isEmpty else { return }
+
+            for drain in pending {
+                await drain.task.value
+            }
+        }
     }
 
     /// Round ids are canonical lowercase hex on the SDK side, so lookups are
@@ -260,4 +390,7 @@ actor VotingSessionRegistry {
         roundId.lowercased()
     }
 }
+
+/// The registry the app runs on: the one over the SDK's session.
+typealias VotingSessionRegistry = VotingSessionRegistryCore<VotingRoundSession>
 #endif
