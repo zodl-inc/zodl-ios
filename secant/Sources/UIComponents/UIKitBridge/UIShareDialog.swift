@@ -6,9 +6,142 @@
 //
 
 import Foundation
-import UIKit
-import SwiftUI
 import LinkPresentation
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+final class ShareablePNG: NSObject, UIActivityItemSource {
+    private let data: Data
+    let title: String
+
+    init(data: Data, title: String) {
+        self.data = data
+        self.title = title
+
+        super.init()
+    }
+
+    func activityViewControllerPlaceholderItem(
+        _ activityViewController: UIActivityViewController
+    ) -> Any {
+        data as NSData
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        data as NSData
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        UTType.png.identifier
+    }
+
+    func activityViewControllerLinkMetadata(
+        _ activityViewController: UIActivityViewController
+    ) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = title
+        return metadata
+    }
+}
+
+struct ViewingKeyShareItems {
+    let activityItems: [Any]
+
+    init(payload: ViewingKeySharePayload, title: String) {
+        activityItems = [
+            payload.key.rawValue,
+            ShareablePNG(data: payload.png.data, title: title)
+        ]
+    }
+}
+
+struct ViewingKeyActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let onPresented: () -> Void
+    let onCompletion: () -> Void
+
+    init(
+        activityItems: [Any],
+        onPresented: @escaping () -> Void,
+        onCompletion: @escaping () -> Void
+    ) {
+        self.activityItems = activityItems
+        self.onPresented = onPresented
+        self.onCompletion = onCompletion
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        Self.makeController(
+            activityItems: activityItems,
+            onPresented: onPresented,
+            onCompletion: onCompletion
+        )
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+
+    static func makeController(
+        activityItems: [Any],
+        onCompletion: @escaping () -> Void
+    ) -> UIActivityViewController {
+        makeController(
+            activityItems: activityItems,
+            onPresented: {},
+            onCompletion: onCompletion
+        )
+    }
+
+    static func makeController(
+        activityItems: [Any],
+        onPresented: @escaping () -> Void,
+        onCompletion: @escaping () -> Void
+    ) -> UIActivityViewController {
+        let controller = ViewingKeyActivityViewController(
+            activityItems: activityItems,
+            onPresented: onPresented
+        )
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            onCompletion()
+        }
+        controller.popoverPresentationController?.sourceView = controller.view
+        controller.popoverPresentationController?.sourceRect = CGRect(
+            x: controller.view.bounds.midX,
+            y: controller.view.bounds.midY,
+            width: 0,
+            height: 0
+        )
+        return controller
+    }
+}
+
+private final class ViewingKeyActivityViewController: UIActivityViewController {
+    private let onPresented: () -> Void
+    private var didNotifyPresentation = false
+
+    init(activityItems: [Any], onPresented: @escaping () -> Void) {
+        self.onPresented = onPresented
+        super.init(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !didNotifyPresentation else { return }
+        didNotifyPresentation = true
+        onPresented()
+    }
+}
 
 final class ShareableImage: NSObject, UIActivityItemSource {
     private let image: UIImage

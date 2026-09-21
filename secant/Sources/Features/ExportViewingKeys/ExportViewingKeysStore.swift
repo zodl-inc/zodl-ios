@@ -353,6 +353,15 @@ struct ExportViewingKeys {
                 return .none
 
             case .backTapped:
+                guard state.detail != nil else {
+                    state.isInvalidated = true
+                    clearDisclosure(state: &state)
+                    return .merge(
+                        .cancel(id: CancelID.qr),
+                        .cancel(id: CancelID.share),
+                        .send(.delegate(.finished))
+                    )
+                }
                 state.detail = nil
                 state.sharingError = false
                 return .merge(

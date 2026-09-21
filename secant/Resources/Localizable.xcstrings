@@ -24206,6 +24206,370 @@
         }
       }
     },
+    "viewing_key_acknowledge_history" : {
+      "comment" : "MARK: - Viewing Key Export",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I understand this reveals all my transactions, past and future"
+          }
+        }
+      }
+    },
+    "viewing_key_acknowledge_irreversible" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I understand this cannot be undone"
+          }
+        }
+      }
+    },
+    "viewing_key_acknowledge_recipient" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I trust the party I'm sharing this with"
+          }
+        }
+      }
+    },
+    "viewing_key_display_string" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display key string"
+          }
+        }
+      }
+    },
+    "viewing_key_export" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Viewing Key"
+          }
+        }
+      }
+    },
+    "viewing_key_export_key" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Key"
+          }
+        }
+      }
+    },
+    "viewing_key_full_description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full visibility into all wallet activity. Use for watch-only wallets, auditing, or legal compliance."
+          }
+        }
+      }
+    },
+    "viewing_key_full_qr_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only scan in a trusted, private environment"
+          }
+        }
+      }
+    },
+    "viewing_key_full_string_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This key reveals your full send and receive history. Only share with trusted parties."
+          }
+        }
+      }
+    },
+    "viewing_key_full_subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full visibility. Handle with care."
+          }
+        }
+      }
+    },
+    "viewing_key_full_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full Viewing Key"
+          }
+        }
+      }
+    },
+    "viewing_key_go_back" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go back"
+          }
+        }
+      }
+    },
+    "viewing_key_hidden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing key hidden"
+          }
+        }
+      }
+    },
+    "viewing_key_hide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide key"
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lets others see incoming transactions only. Safe for accountants and payment verification."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_string_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This key is safe to share with accounting software or watch-only wallets."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incoming transactions only."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incoming Viewing Key"
+          }
+        }
+      }
+    },
+    "viewing_key_intro" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharing a viewing key lets others monitor your **%@** wallet activity. Never share with anyone you don't trust."
+          }
+        }
+      }
+    },
+    "viewing_key_key_string" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Key String"
+          }
+        }
+      }
+    },
+    "viewing_key_qr_code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR Code"
+          }
+        }
+      }
+    },
+    "viewing_key_qr_failure_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There was a problem generating your QR code. Try switching to key string instead."
+          }
+        }
+      }
+    },
+    "viewing_key_qr_failure_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't generate QR code"
+          }
+        }
+      }
+    },
+    "viewing_key_reveal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reveal key"
+          }
+        }
+      }
+    },
+    "viewing_key_scan_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan with any compatible wallet to add as watch-only."
+          }
+        }
+      }
+    },
+    "viewing_key_share_failure_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The QR image couldn't be prepared. Try again."
+          }
+        }
+      }
+    },
+    "viewing_key_share_failure_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't share viewing key"
+          }
+        }
+      }
+    },
+    "viewing_key_unavailable_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This viewing key isn't available for this account."
+          }
+        }
+      }
+    },
+    "viewing_key_unavailable_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing key unavailable"
+          }
+        }
+      }
+    },
+    "viewing_key_warning_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anyone with this key can see every transaction you've ever made, and every one you make in the future."
+          }
+        }
+      }
+    },
+    "viewing_key_warning_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before you share your Full Viewing Key"
+          }
+        }
+      }
+    },
+    "viewing_key_your_full" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Full Viewing Key"
+          }
+        }
+      }
+    },
+    "viewing_key_your_incoming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Incoming Viewing Key"
+          }
+        }
+      }
+    },
     "whatsNew.version" : {
       "comment" : "MARK: - What's new",
       "extractionState" : "manual",

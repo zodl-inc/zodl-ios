@@ -29,6 +29,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
     let horizontalPadding: CGFloat
     let verticalPadding: CGFloat
     let minHeight: CGFloat?
+    let allowsMultilineTitle: Bool
     @ViewBuilder let prefixView: PrefixContent?
     @ViewBuilder let accessoryView: AccessoryContent?
     let action: () -> Void
@@ -41,6 +42,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
         minHeight: CGFloat? = nil,
+        allowsMultilineTitle: Bool = false,
         prefixView: PrefixContent?,
         accessoryView: AccessoryContent?,
         action: @escaping () -> Void
@@ -52,6 +54,7 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
         self.horizontalPadding = horizontalPadding
         self.verticalPadding = verticalPadding
         self.minHeight = minHeight
+        self.allowsMultilineTitle = allowsMultilineTitle
         self.accessoryView = accessoryView
         self.prefixView = prefixView
         self.action = action
@@ -69,7 +72,9 @@ struct ZashiButton<PrefixContent, AccessoryContent>: View where PrefixContent: V
 
                 Text(title)
                     .font(.custom(FontFamily.Inter.semiBold.name, size: fontSize))
-                    .fixedSize()
+                    .lineLimit(allowsMultilineTitle ? nil : 1)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: !allowsMultilineTitle, vertical: true)
                     .minimumScaleFactor(0.5)
                 
                 if let accessoryView {
@@ -213,6 +218,7 @@ extension ZashiButton where PrefixContent == EmptyView, AccessoryContent == Empt
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
         minHeight: CGFloat? = nil,
+        allowsMultilineTitle: Bool = false,
         action: @escaping () -> Void
     ) {
         self.init(
@@ -223,6 +229,7 @@ extension ZashiButton where PrefixContent == EmptyView, AccessoryContent == Empt
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
             minHeight: minHeight,
+            allowsMultilineTitle: allowsMultilineTitle,
             prefixView: nil,
             accessoryView: nil,
             action: action
@@ -239,6 +246,7 @@ extension ZashiButton where PrefixContent == EmptyView {
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
         minHeight: CGFloat? = nil,
+        allowsMultilineTitle: Bool = false,
         accessoryView: AccessoryContent,
         action: @escaping () -> Void
     ) {
@@ -250,6 +258,7 @@ extension ZashiButton where PrefixContent == EmptyView {
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
             minHeight: minHeight,
+            allowsMultilineTitle: allowsMultilineTitle,
             prefixView: nil,
             accessoryView: accessoryView,
             action: action
@@ -266,6 +275,7 @@ extension ZashiButton where AccessoryContent == EmptyView {
         horizontalPadding: CGFloat = 18,
         verticalPadding: CGFloat = 12,
         minHeight: CGFloat? = nil,
+        allowsMultilineTitle: Bool = false,
         prefixView: PrefixContent,
         action: @escaping () -> Void
     ) {
@@ -277,6 +287,7 @@ extension ZashiButton where AccessoryContent == EmptyView {
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
             minHeight: minHeight,
+            allowsMultilineTitle: allowsMultilineTitle,
             prefixView: prefixView,
             accessoryView: nil,
             action: action

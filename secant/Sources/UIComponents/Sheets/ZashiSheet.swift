@@ -59,6 +59,10 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     @State var sheetHeight: CGFloat = .zero
     let sheetContent: () -> SheetContent
 
+    private var measuredDetents: Set<PresentationDetent> {
+        sheetHeight > 0 ? [.height(sheetHeight)] : [.large]
+    }
+
     func body(content: Content) -> some View {
         content
             .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
@@ -71,14 +75,14 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                 WithPerceptionTracking {
                     if #available(iOS 26.0, *) {
                         mainBody26()
-                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDetents(measuredDetents)
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .padding(.horizontal, horizontalPadding)
                             .applySheetBackground()
                     } else if #available(iOS 16.4, *) {
                         mainBody()
                             .id(sheetHeight)
-                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDetents(measuredDetents)
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .presentationCornerRadius(Design.Radius._4xl)
                             .padding(.horizontal, horizontalPadding)
@@ -86,7 +90,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                     } else if #available(iOS 16.0, *) {
                         mainBody()
                             .id(sheetHeight)
-                            .presentationDetents([.height(sheetHeight)])
+                            .presentationDetents(measuredDetents)
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .padding(.horizontal, horizontalPadding)
                             .applySheetBackground()
