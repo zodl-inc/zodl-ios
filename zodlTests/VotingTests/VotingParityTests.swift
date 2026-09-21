@@ -63,9 +63,9 @@ extension VotingSharedStateSuites {
                         continuation.finish()
                     }
                 }
-                $0.votingCrypto.setBallotIntents = { _, _ in
-                    try self.plan(
-                        allDecided: true,
+                $0.votingCrypto.setBallotIntents = { _, intents in
+                    try self.recordedBallotPlan(
+                        intents,
                         delegationBundlesNeedingWork: [0, 1],
                         bundlePhases: ["prepared", "prepared"]
                     )
@@ -151,7 +151,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     let call = recorder.recordAndCount("runRound")
                     return AsyncThrowingStream { continuation in
@@ -236,7 +235,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.setOperationEpoch = { roundId, epoch in
                     recorder.record("setOperationEpoch:\(roundId):\(epoch)")
                 }
@@ -378,7 +376,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     let call = recorder.recordAndCount("runRound")
                     return AsyncThrowingStream { continuation in
@@ -421,7 +418,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     refusedRecorder.record("runRound")
                     return AsyncThrowingStream { continuation in
@@ -481,7 +477,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     let call = recorder.recordAndCount("runRound")
                     return AsyncThrowingStream { continuation in
@@ -526,7 +521,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     recorder.record("runRound")
                     return AsyncThrowingStream { continuation in
@@ -575,7 +569,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.setOperationEpoch = { _, _ in }
                 $0.votingCrypto.closeRoundSession = { roundId in recorder.record("closeRoundSession:\(roundId)") }
                 $0.votingCrypto.runRound = { _, _, _ in

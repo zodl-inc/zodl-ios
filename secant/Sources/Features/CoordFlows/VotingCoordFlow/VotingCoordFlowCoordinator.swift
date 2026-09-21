@@ -2862,11 +2862,15 @@ extension VotingCoordFlow {
         return .run { [votingCrypto, localAuthentication] send in
             let plan = try await votingCrypto.setBallotIntents(roundId, intents)
             await send(.ballotIntentsRecorded(roundId: roundId, plan: plan))
-            guard plan.allDecided else {
-                // Every rostered proposal was just given a decision, so the
-                // planner disagreeing means the roster is not the one the
-                // session was bound to. Nothing here can cast a ballot for it.
-                LoggerProxy.error("Round \(roundId) refused to cast: the ballot is incomplete after recording intents")
+            // The planner empties `openProposals` the moment every rostered
+            // proposal has an intent, and lists an intent it cannot cast under
+            // `unrosteredIntents`. Those two say whether this ballot can be
+            // cast. `allDecided` cannot: it turns true only once the chosen
+            // votes are confirmed, so a fresh ballot never has it.
+            guard plan.openProposals.isEmpty, plan.unrosteredIntents.isEmpty else {
+                LoggerProxy.error(
+                    "Round \(roundId) refused to cast: open \(plan.openProposals), unrostered \(plan.unrosteredIntents)"
+                )
                 await send(.batchSubmissionFailed(
                     roundId: roundId,
                     error: String(localizable: .coinVoteSubmissionGenericBatchFailure),

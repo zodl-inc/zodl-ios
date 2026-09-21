@@ -1330,9 +1330,9 @@ extension VotingSharedStateSuites {
                 VotingCoordFlow()
             } withDependencies: {
                 self.sessionDependencies(&$0, recorder: recorder)
-                $0.votingCrypto.setBallotIntents = { _, _ in
+                $0.votingCrypto.setBallotIntents = { _, intents in
                     recorder.record("setBallotIntents")
-                    return try self.plan(allDecided: true)
+                    return try self.recordedBallotPlan(intents)
                 }
                 $0.localAuthentication.authenticate = {
                     recorder.record("authenticate")
@@ -1421,8 +1421,8 @@ extension VotingSharedStateSuites {
                         continuation.finish()
                     }
                 }
-                $0.votingCrypto.setBallotIntents = { _, _ in
-                    try self.plan(allDecided: true, delegationBundlesNeedingWork: [0])
+                $0.votingCrypto.setBallotIntents = { _, intents in
+                    try self.recordedBallotPlan(intents, delegationBundlesNeedingWork: [0])
                 }
                 $0.votingCrypto.runRound = { _, signer, _ in
                     recorder.record(
@@ -1472,7 +1472,7 @@ extension VotingSharedStateSuites {
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
                 $0.votingCrypto.setBallotIntents = { _, recorded in
                     intents.withValue { $0 = recorded }
-                    return try self.plan(allDecided: true)
+                    return try self.recordedBallotPlan(recorded)
                 }
                 $0.votingCrypto.runRound = { _, _, _ in
                     AsyncThrowingStream { continuation in
@@ -1496,6 +1496,294 @@ extension VotingSharedStateSuites {
             )
         }
 
+        /// The ordinary ballot: one proposal voted on, one left blank. Recording
+        /// it casts nothing, so the plan that comes back still calls the round
+        /// undecided — and Confirm must read that as "nothing has been cast yet",
+        /// which is what it means, rather than as a refusal. The voter is asked
+        /// to authenticate once and the round is driven once.
+        @MainActor
+        @Test func aFreshBallotWithAChoiceAndASkipAuthenticatesOnceAndStartsOneRun() async throws {
+            let recorder = EventRecorder()
+            // Proposal 2 carries options 0 and 1, so choice 2 is the synthetic
+            // Abstain the ballot UI offers: proposal 1 is a real choice and
+            // proposal 2 is recorded as a skip.
+            let report = try runReport(
+                kind: "no_work_left",
+                completedProposals: 1,
+                totalProposals: 2,
+                completedChoices: [(1, 0)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(2)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    recorder.record(
+                        signer == VotingDelegationSigner.software(seed: Self.walletSeed)
+                            ? "runRound.software"
+                            : "runRound.otherSigner"
+                    )
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            // Either terminal state ends the wait, so a Confirm that refuses the
+            // ballot fails here immediately instead of timing out.
+            await waitForStore {
+                let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                return status == .completed(successCount: 2) || status?.isFailureState == true
+            }
+
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2))
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+            #expect(recorder.events().filter { $0.hasPrefix("runRound") } == ["runRound.software"])
+            #expect(store.state.roundCache[activeRoundId]?.votes == [1: .option(0), 2: .option(2)])
+        }
+
+        /// The same ballot on a wallet whose key lives on the device. The gate is
+        /// the plan's, not the signer's, so it has to let this one through too —
+        /// and a Keystone round asks for neither a biometric prompt nor the seed,
+        /// because it has no seed to read.
+        @MainActor
+        @Test func aFreshKeystoneBallotStartsItsRunWithoutASeedSigner() async throws {
+            let recorder = EventRecorder()
+            let report = try runReport(
+                kind: "no_work_left",
+                completedProposals: 1,
+                totalProposals: 2,
+                completedChoices: [(1, 0)]
+            )
+            let store = Store(
+                initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(2)], isKeystone: true)
+            ) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 1)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.mnemonic.toSeed = { _ in
+                    recorder.record("toSeed")
+                    return Self.walletSeed
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    recorder.record(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                return status == .completed(successCount: 2) || status?.isFailureState == true
+            }
+
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2))
+            #expect(recorder.events().filter { $0.hasPrefix("runRound") } == ["runRound.keystoneStored"])
+            #expect(!recorder.events().contains("authenticate"))
+            #expect(!recorder.events().contains("toSeed"))
+        }
+
+        /// A proposal the planner still lists as open is a rostered proposal with
+        /// no terminal decision against it, which is the one thing that really
+        /// does make a ballot incomplete. Nothing here can complete it, so the
+        /// round is refused rather than driven.
+        @MainActor
+        @Test func aBallotThePlannerStillCallsOpenNeverStartsARun() async throws {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(openProposals: [2]) }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            guard
+                case let .submissionFailed(_, submittedCount, totalCount) =
+                    tryUnwrap(store.state.roundCache[activeRoundId]).batchSubmissionStatus
+            else {
+                Issue.record("expected a submission failure")
+                return
+            }
+            #expect(submittedCount == 0)
+            #expect(totalCount == 2)
+            #expect(!recorder.events().contains { $0.hasPrefix("runRound") })
+            #expect(!recorder.events().contains("authenticate"))
+        }
+
+        /// The other half of what the planner withholds a cast for: an intent it
+        /// holds for a proposal outside the authenticated roster. The host has to
+        /// clear that intent before anything can be cast, so a run would only
+        /// stop on the same thing.
+        @MainActor
+        @Test func aBallotWithUnrosteredIntentsNeverStartsARun() async throws {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(unrosteredIntents: [9]) }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            #expect(!recorder.events().contains { $0.hasPrefix("runRound") })
+            #expect(!recorder.events().contains("authenticate"))
+        }
+
+        /// The ballot is written before the prompt on purpose, so a voter who
+        /// dismisses Face ID has a recorded ballot and no run. The CTA goes back
+        /// to where it was rather than staying disabled.
+        @MainActor
+        @Test func aDeclinedAuthenticationStartsNoRun() async throws {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, intents in
+                    recorder.record("setBallotIntents")
+                    return try self.recordedBallotPlan(intents)
+                }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return false
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            let confirm = store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { recorder.events().contains("authenticate") }
+            await confirm.finish()
+
+            #expect(recorder.events().filter { $0 == "setBallotIntents" } == ["setBallotIntents"])
+            #expect(!recorder.events().contains { $0.hasPrefix("runRound") })
+            let session = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(session.batchSubmissionStatus == .idle)
+            #expect(!session.isSubmittingVote)
+        }
+
+        /// Confirm is one tap however many times it is tapped. The second tap
+        /// arrives while the first is still writing the ballot, and it must add
+        /// nothing: no second write, no second prompt, no second run — a second
+        /// run would cancel the first one mid-flight.
+        @MainActor
+        @Test func aSecondConfirmWhileTheFirstIsPendingWritesNoSecondBallot() async throws {
+            let recorder = EventRecorder()
+            let gate = TestGate()
+            let report = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.setBallotIntents = { _, intents in
+                    recorder.record("setBallotIntents")
+                    // Parked where the first Confirm is still writing, so the
+                    // second one lands against a `.requested` round.
+                    await gate.wait()
+                    return try self.recordedBallotPlan(intents)
+                }
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { recorder.events().contains("setBallotIntents") }
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .requested)
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await gate.open()
+            await waitForStore {
+                let status = store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus
+                return status == .completed(successCount: 2) || status?.isFailureState == true
+            }
+
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2))
+            #expect(recorder.events().filter { $0 == "setBallotIntents" } == ["setBallotIntents"])
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+            #expect(recorder.events().filter { $0 == "runRound" } == ["runRound"])
+        }
+
         /// A submission the chain refused is terminal: the voter is told what the
         /// chain said, with the ballot counts, and not offered a silent success.
         @MainActor
@@ -1517,7 +1805,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     AsyncThrowingStream { continuation in
                         continuation.yield(VotingRoundRunEvent.finished(report))
@@ -1582,7 +1869,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     recorder.record("runRound")
                     return AsyncThrowingStream { continuation in
@@ -1623,7 +1909,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     recorder.record("runRound")
                     return AsyncThrowingStream { continuation in
@@ -1712,7 +1997,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     AsyncThrowingStream { continuation in
                         continuation.yield(VotingRoundRunEvent.finished(report))
@@ -1753,7 +2037,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
                 $0.votingCrypto.runRound = { _, _, _ in
                     AsyncThrowingStream { continuation in
                         continuation.yield(VotingRoundRunEvent.finished(report))

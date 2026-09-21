@@ -158,6 +158,12 @@ extension VotingTestSuite {
 
     /// Everything the round-session path touches outside `votingCrypto`'s
     /// session calls, which each test stubs for itself.
+    ///
+    /// `setBallotIntents` is wired here rather than left to each test, because
+    /// what a session answers a recorded ballot with is not a per-test choice:
+    /// it is `recordedBallotPlan`, the shape the planner really produces. A
+    /// test whose round owes something else on top of that ballot calls the
+    /// same helper with what it owes, rather than describing a plan of its own.
     func sessionDependencies(_ dependencies: inout DependencyValues, recorder: EventRecorder) {
         dependencies.sdkSynchronizer = .mocked(
             latestState: {
@@ -190,6 +196,7 @@ extension VotingTestSuite {
             return AsyncThrowingStream { $0.finish() }
         }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
+        dependencies.votingCrypto.setBallotIntents = { _, intents in try self.recordedBallotPlan(intents) }
         dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
         // Laying a round's bundles out, and re-deriving that layout when they
         // already exist, are the same call, so every session open can reach
@@ -223,7 +230,6 @@ extension VotingTestSuite {
         dependencies.votingCrypto.setupBundles = { _ in
             try self.bundleLayout(bundleCount: bundleCount, eligibleWeight: 100_000_000)
         }
-        dependencies.votingCrypto.setBallotIntents = { _, _ in try self.plan(allDecided: true) }
         dependencies.votingCrypto.keystoneSignatures = { _ in [] }
         dependencies.votingCrypto.keystoneSigningRequests = { _, bundleIndices in
             recorder.record("keystoneSigningRequests:\(Self.indexList(bundleIndices))")
@@ -288,7 +294,10 @@ extension VotingTestSuite {
     func plan(
         needsBundleSetup: Bool = false,
         openProposals: [UInt32] = [],
+        unrosteredIntents: [UInt32] = [],
         allDecided: Bool = false,
+        hasRemainingVoteOrShareWork: Bool? = nil,
+        hasRecoverableVoteOrShareWork: Bool? = nil,
         delegationBundlesNeedingWork: [UInt32] = [],
         delegationBundlesNeedingSigning: [UInt32] = [],
         completedChoices: [(UInt32, UInt32?)]? = nil,
@@ -298,7 +307,10 @@ extension VotingTestSuite {
         let payload = planPayload(
             needsBundleSetup: needsBundleSetup,
             openProposals: openProposals,
+            unrosteredIntents: unrosteredIntents,
             allDecided: allDecided,
+            hasRemainingVoteOrShareWork: hasRemainingVoteOrShareWork,
+            hasRecoverableVoteOrShareWork: hasRecoverableVoteOrShareWork,
             delegationBundlesNeedingWork: delegationBundlesNeedingWork,
             delegationBundlesNeedingSigning: delegationBundlesNeedingSigning,
             completedChoices: completedChoices,
@@ -306,6 +318,31 @@ extension VotingTestSuite {
             legacyInFlight: legacyInFlight
         )
         return try JSONDecoder().decode(VotingRoundPlan.self, from: JSONSerialization.data(withJSONObject: payload))
+    }
+
+    /// The plan a session answers `setBallotIntents` with, for the ballot it has
+    /// just recorded.
+    ///
+    /// The planner calls a ballot decided only once its chosen votes are
+    /// confirmed on chain, and recording intents casts nothing -- so a ballot
+    /// carrying any real choice comes back with `allDecided` still `false`.
+    /// Only a ballot of nothing but skips is decided the moment it is written,
+    /// because a skip needs no vote to confirm. What says the ballot itself is
+    /// complete, in both cases, is that the planner left no rostered proposal
+    /// open and refused none of the intents.
+    ///
+    /// Anything the round still owes on top of the ballot -- a bundle's
+    /// delegation, say -- is the caller's to name, the same as for `plan`.
+    func recordedBallotPlan(
+        _ intents: [VotingBallotIntent],
+        delegationBundlesNeedingWork: [UInt32] = [],
+        bundlePhases: [String]? = nil
+    ) throws -> VotingRoundPlan {
+        try plan(
+            allDecided: intents.allSatisfy { $0.decision == VotingBallotDecision.skipped },
+            delegationBundlesNeedingWork: delegationBundlesNeedingWork,
+            bundlePhases: bundlePhases
+        )
     }
 
     /// One plan in the crate's wire shape.
@@ -322,17 +359,30 @@ extension VotingTestSuite {
     /// is still the caller's to set: many older fixtures raise it on a round
     /// that has a bundle row, a shape the crate never reports, and they route
     /// exactly as they did before the statuses were read as well.
+    ///
+    /// `openProposals`, `unrosteredIntents` and `allDecided` are independent,
+    /// because the crate keeps them independent: recording a choice clears its
+    /// proposal from `open_proposals` at once, while `all_decided` waits for
+    /// that vote to confirm on chain. The pair a ballot with a real choice in
+    /// it comes back as -- everything closed, nothing decided -- is not
+    /// describable otherwise, and it is the pair a Confirm actually meets.
+    ///
+    /// The two work flags default to `!allDecided`, which is what a round that
+    /// has nothing but a cast left really answers, and either can be named on
+    /// its own where a fixture means something else by it.
     func planPayload(
         needsBundleSetup: Bool = false,
         openProposals: [UInt32] = [],
+        unrosteredIntents: [UInt32] = [],
         allDecided: Bool = false,
+        hasRemainingVoteOrShareWork: Bool? = nil,
+        hasRecoverableVoteOrShareWork: Bool? = nil,
         delegationBundlesNeedingWork: [UInt32] = [],
         delegationBundlesNeedingSigning: [UInt32] = [],
         completedChoices: [(UInt32, UInt32?)]? = nil,
         bundlePhases: [String]? = nil,
         legacyInFlight: Bool = false
     ) -> [String: Any] {
-        let noIntents: [Int] = []
         let delegationStatuses = (bundlePhases ?? ["prepared"]).enumerated().map { index, phase in
             ["bundle_index": index, "phase": phase, "terminal": false] as [String: Any]
         }
@@ -351,12 +401,12 @@ extension VotingTestSuite {
             "delegation_bundles_needing_work": delegationBundlesNeedingWork.map { Int($0) },
             "delegation_bundles_needing_signing": delegationBundlesNeedingSigning.map { Int($0) },
             "needs_vote_polling": false,
-            "has_remaining_vote_or_share_work": !allDecided,
-            "has_recoverable_vote_or_share_work": !allDecided,
+            "has_remaining_vote_or_share_work": hasRemainingVoteOrShareWork ?? !allDecided,
+            "has_recoverable_vote_or_share_work": hasRecoverableVoteOrShareWork ?? !allDecided,
             "primary_action": needsBundleSetup ? "delegate" : "vote",
             "delegation_statuses": delegationStatuses,
             "open_proposals": openProposals.map { Int($0) },
-            "unrostered_intents": noIntents,
+            "unrostered_intents": unrosteredIntents.map { Int($0) },
             "immediate_share_confirmed": false,
             "all_decided": allDecided
         ]
@@ -444,6 +494,11 @@ extension VotingTestSuite {
             ]
         ]
         if let completedChoices {
+            // The only plan in these fixtures that is honestly `allDecided`:
+            // a run reports a completed display once the votes behind it are
+            // confirmed on chain, which is the one thing the planner waits for
+            // before calling a choice decided. A plan a Confirm meets is never
+            // this one -- see `recordedBallotPlan`.
             payload["plan"] = planPayload(
                 allDecided: true,
                 completedChoices: completedChoices,
