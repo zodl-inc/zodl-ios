@@ -216,7 +216,11 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     /// Returning means every session is closed, not merely that the books are
     /// empty — including the ones another caller was already closing and the one
     /// an open in flight hands back on its way out. That is what the sidecar's
-    /// store relies on before it closes and its file is removed.
+    /// store relies on before it closes and its file is removed. Every session
+    /// of the generation this ends, that is: an open that *starts* after the
+    /// prologue below captures the new generation, so it is neither abandoned
+    /// here nor waited for, and it registers a session of its own. Keeping that
+    /// from happening is the teardown window's job rather than this one's.
     func closeAll() async {
         invalidate()
 

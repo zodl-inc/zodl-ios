@@ -164,6 +164,9 @@ extension VotingTestSuite {
     /// it is `recordedBallotPlan`, the shape the planner really produces. A
     /// test whose round owes something else on top of that ballot calls the
     /// same helper with what it owes, rather than describing a plan of its own.
+    /// It records, because "this round never writes a ballot" is a claim
+    /// several suites make and an unrecorded write would let it pass on a round
+    /// that did.
     func sessionDependencies(_ dependencies: inout DependencyValues, recorder: EventRecorder) {
         dependencies.sdkSynchronizer = .mocked(
             latestState: {
@@ -196,7 +199,10 @@ extension VotingTestSuite {
             return AsyncThrowingStream { $0.finish() }
         }
         dependencies.votingCrypto.eligibility = { _ in try self.eligibilityReport() }
-        dependencies.votingCrypto.setBallotIntents = { _, intents in try self.recordedBallotPlan(intents) }
+        dependencies.votingCrypto.setBallotIntents = { _, intents in
+            recorder.record("setBallotIntents")
+            return try self.recordedBallotPlan(intents)
+        }
         dependencies.votingCrypto.updateHostConfiguration = { _ in recorder.record("updateHostConfiguration") }
         // Laying a round's bundles out, and re-deriving that layout when they
         // already exist, are the same call, so every session open can reach

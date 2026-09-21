@@ -3706,8 +3706,7 @@ extension VotingCoordFlow {
             // Statements about the wallet's notes at a snapshot height that has
             // already passed. Nothing later moves them.
             return false
-        case .setupAlreadyPersisted, .delegationTargetMismatch,
-             .delegationAlreadyBroadcast, .delegationPcztUnavailable:
+        case .setupAlreadyPersisted, .delegationTargetMismatch, .delegationAlreadyBroadcast, .delegationPcztUnavailable:
             // Statements about rows that already exist: write-once setup, a
             // delegation that does not reproduce from the hotkey this wallet
             // holds (retrying with the same key never succeeds, in the crate's

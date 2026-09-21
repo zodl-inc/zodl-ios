@@ -343,6 +343,13 @@ import Testing
         await settle("the open to reach the factory") { await factory.calls == 1 }
 
         let closing = Task { await registry.close(roundId) }
+        // The close has to reach the actor first, or `closeAll` finds the
+        // attempt still on the books, abandons it itself, and waits for it --
+        // which a registry that only removed and then awaited would also do.
+        // The question here is the other order: what the drain does when the
+        // books are already empty and somebody else's teardown is running.
+        await settle("the close to leave its drain behind") { await registry.pendingDrainCount == 1 }
+
         let draining = Task {
             await registry.closeAll()
             events.record("closeAllReturned")

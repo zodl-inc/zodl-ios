@@ -1198,6 +1198,7 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().contains("setupBundles") == false)
             #expect(recorder.events().contains("runRound") == false)
             #expect(recorder.events().contains("precomputeDelegationProof") == false)
+            #expect(recorder.events().contains("setBallotIntents") == false)
             #expect(recorder.events().contains("closeRoundSession"))
             #expect(store.state.pendingPipelineRoundId == nil)
             // The session opened only to read the plan is given back completely:
@@ -1277,6 +1278,7 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().contains("setupBundles") == false)
             #expect(recorder.events().contains("precomputeDelegationProof") == false)
             #expect(recorder.events().contains("runRound") == false)
+            #expect(recorder.events().contains("setBallotIntents") == false)
         }
 
         /// The gate closes the session the round was entered on, and the round's
@@ -1354,6 +1356,7 @@ extension VotingSharedStateSuites {
             #expect(events.contains("setupBundles") == false)
             #expect(events.contains("runRound") == false)
             #expect(events.contains("precomputeDelegationProof") == false)
+            #expect(events.contains("setBallotIntents") == false)
         }
 
         /// Defence in depth: if the proposal list were ever reached for a flagged
@@ -1370,10 +1373,6 @@ extension VotingSharedStateSuites {
                 VotingCoordFlow()
             } withDependencies: {
                 self.sessionDependencies(&$0, recorder: recorder)
-                $0.votingCrypto.setBallotIntents = { _, intents in
-                    recorder.record("setBallotIntents")
-                    return try self.recordedBallotPlan(intents)
-                }
                 $0.localAuthentication.authenticate = {
                     recorder.record("authenticate")
                     return true
@@ -1718,6 +1717,15 @@ extension VotingSharedStateSuites {
             store.send(.submitAllDraftsTapped(roundId: activeRoundId))
             await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
 
+            guard
+                case let .submissionFailed(_, submittedCount, totalCount) =
+                    tryUnwrap(store.state.roundCache[activeRoundId]).batchSubmissionStatus
+            else {
+                Issue.record("expected a submission failure")
+                return
+            }
+            #expect(submittedCount == 0)
+            #expect(totalCount == 2)
             #expect(!recorder.events().contains { $0.hasPrefix("runRound") })
             #expect(!recorder.events().contains("authenticate"))
         }
@@ -1737,10 +1745,6 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
-                $0.votingCrypto.setBallotIntents = { _, intents in
-                    recorder.record("setBallotIntents")
-                    return try self.recordedBallotPlan(intents)
-                }
                 $0.localAuthentication.authenticate = {
                     recorder.record("authenticate")
                     return false
@@ -1784,6 +1788,10 @@ extension VotingSharedStateSuites {
                     return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
                 }
                 $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                // The shared stub over again, plus the gate: this is the one
+                // test that needs the write held open, and the recording has to
+                // come along because this replaces the shared stub rather than
+                // wrapping it.
                 $0.votingCrypto.setBallotIntents = { _, intents in
                     recorder.record("setBallotIntents")
                     // Parked where the first Confirm is still writing, so the
@@ -2456,7 +2464,10 @@ extension VotingSharedStateSuites {
             // from it.
             #expect(updated.keystoneSignedBundles == Set([0]))
             #expect(updated.keystoneBundlesToSign.isEmpty)
-            #expect(updated.currentKeystoneBundleIndex == updated.resolvedKeystonePrefixCount)
+            // The figure itself, not the expression under test: bundle 0 is
+            // stored and bundle 1 is not, so the screen resumes at 1 -- one
+            // signed bundle counted from the first.
+            #expect(updated.currentKeystoneBundleIndex == 1)
             #expect(updated.pendingKeystoneRequest == nil)
             #expect(updated.keystoneSigningStatus == .idle)
             #expect(updated.batchSubmissionStatus == .idle)
@@ -2547,10 +2558,11 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().filter { $0.hasPrefix("runRound") }.count == 2)
         }
 
-        /// A late `.keystoneAllBundlesSigned` -- the last stored signature's
-        /// own send, arriving after the voter has already backed out of the
-        /// signing screen -- must not resume the round: the handoff it was
-        /// answering is closed, and nothing is left driving it.
+        /// `.keystoneAllBundlesSigned` resumes the round only when it is the
+        /// live continuation of a signing handoff that is still open. This
+        /// delivers one that is not -- the voter has backed out, so the handoff
+        /// it would be answering is closed and nothing is driving the round --
+        /// and the guard, not the sender, is what this pins.
         @MainActor
         @Test func anAllBundlesSignedThatArrivesAfterTheVoterBackedOutStartsNothing() async throws {
             let recorder = EventRecorder()
@@ -2586,9 +2598,9 @@ extension VotingSharedStateSuites {
             store.send(.delegationRejected(roundId: activeRoundId))
             #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .idle)
 
-            // A signature-stored effect that was already on its way when Back
-            // was pressed delivers its `.keystoneAllBundlesSigned` late, after
-            // the handoff it belongs to is closed. The guard this exercises is
+            // An action that is not the live continuation of an open handoff:
+            // the round is back at `.idle` with nothing driving it, which is
+            // exactly the state the guard exists to refuse. The guard is
             // checked synchronously, before any run effect is created, so
             // what it leaves untouched can be asserted right after the plain
             // `send` with no wait: `send` itself runs the reducer to
