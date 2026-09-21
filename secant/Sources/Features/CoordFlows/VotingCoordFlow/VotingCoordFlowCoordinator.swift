@@ -794,6 +794,26 @@ extension VotingCoordFlow {
                     ))
                 )
 
+            case let .roundSessionLost(roundId, epoch):
+                // The same answer the share-tracking path acts on, from the
+                // calls that lead to a ballot. A fence that closed the round's
+                // session after the voter re-entered it is the way this
+                // happens, and the fast path on the polls list trusts the
+                // round's own fact -- so a round left claiming an open voting
+                // session would have every re-tap walk back into the session
+                // that is gone, which is the one recovery the voter has.
+                //
+                // Only for the generation that was refused, and only while the
+                // round still claims a session: a newer open's claim is not a
+                // stale refusal's to take away.
+                guard state.roundCache[roundId]?.sessionEpoch == epoch else { return .none }
+                mutateSession(&state, roundId: roundId) { roundSession in
+                    if roundSession.liveSession.isOpen {
+                        roundSession.liveSession = .none
+                    }
+                }
+                return .none
+
             case let .bundlesSetUp(roundId, layout):
                 return reduceBundlesSetUp(&state, roundId: roundId, layout: layout)
 
@@ -3004,6 +3024,9 @@ extension VotingCoordFlow {
         )
         let needsAuthentication = !state.isKeystoneUser && !state.pendingBatchSubmission
         let totalCount = max(intents.count, session.draftVotes.count)
+        // The generation this write belongs to, so a refusal it comes back with
+        // cannot be read as an answer about a session opened since.
+        let epoch = session.sessionEpoch
         // What this run was asked to decide. Kept because the plan's completed
         // display carries only proposals with a choice, so a deliberate skip
         // appears nowhere in it and its draft would outlive the round.
@@ -3038,6 +3061,14 @@ extension VotingCoordFlow {
             await send(.authenticationSucceeded(roundId: roundId))
         } catch: { error, send in
             LoggerProxy.error("Recording the ballot for \(roundId) failed: \(error)")
+            // Classified here, where the registry's own answer is still in hand
+            // -- `votingError(from:)` below flattens `notOpen` into the
+            // unclassified `other` kind alongside everything else that is not
+            // the crate's. A session that is there and busy is not this, and
+            // must not be read as it: the round still has that session.
+            if Self.isSessionGone(error) {
+                await send(.roundSessionLost(roundId: roundId, epoch: epoch))
+            }
             await send(.batchSubmissionFailed(
                 roundId: roundId,
                 error: VotingErrorMapper.userFriendlyMessage(from: error),
@@ -3192,6 +3223,13 @@ extension VotingCoordFlow {
             }
         } catch: { error, send in
             LoggerProxy.error("Round run for \(roundId) failed to start: \(error)")
+            // Classified before `votingError(from:)` flattens it, the same way
+            // the share-tracking path classifies its own throw: `notOpen` is
+            // the round's session gone, where a busy session is one that is
+            // there and holding the round.
+            if Self.isSessionGone(error) {
+                await send(.roundSessionLost(roundId: roundId, epoch: epoch))
+            }
             await send(.roundRunFailed(roundId: roundId, epoch: epoch, error: Self.votingError(from: error)))
         }
         .cancellable(id: cancelSubmissionId, cancelInFlight: true)

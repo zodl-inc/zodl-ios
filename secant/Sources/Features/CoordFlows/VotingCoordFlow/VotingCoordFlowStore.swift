@@ -420,6 +420,12 @@ struct VotingCoordFlow {
         /// plan it leaves the round in.
         case ballotIntentsRecorded(roundId: String, plan: VotingRoundPlan)
         case roundSessionOpenFailed(roundId: String, error: VotingError)
+        /// A call on the voting path was told the round has no session at all.
+        /// Sent from where the registry's own error is still typed, because a
+        /// session that is there and busy is a different answer entirely, and
+        /// carrying the generation the caller held so a refusal from a session
+        /// that has since been replaced cannot take a newer one's claim away.
+        case roundSessionLost(roundId: String, epoch: UInt64)
         /// The round's bundle rows are persisted; the layout says how many and
         /// for how much voting power.
         case bundlesSetUp(roundId: String, layout: VotingBundleLayout)

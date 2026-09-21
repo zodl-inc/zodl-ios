@@ -4167,6 +4167,90 @@ extension VotingSharedStateSuites {
             #expect(opens.allSatisfy { $0 == "openRoundSession:tor" }, "a retry must never fall back to direct")
         }
 
+        /// A round-scoped call that answers `notOpen` is the round's session
+        /// gone, which the serial fence loop can do late -- after the voter has
+        /// re-entered the round it is closing. Only the share-tracking path used
+        /// to hear that; the voting path left the round claiming an open voting
+        /// session, so the re-tap that is the voter's one recovery took the fast
+        /// path straight back into the session that is not there.
+        @MainActor
+        @Test func aBallotRefusedBecauseTheSessionIsGoneLetsTheNextTapOpenAFreshOne() async throws {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.roundPlan = { _, _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingAPI.fetchRoundById = { _ in self.votingSession(proposalCount: 2, voteEndsIn: 3_600) }
+                $0.votingCrypto.setBallotIntents = { roundId, _ in
+                    recorder.record("setBallotIntents")
+                    throw VotingSessionError.notOpen(roundId: roundId)
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .voting))
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true
+            }
+
+            #expect(recorder.events().contains("setBallotIntents"))
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.liveSession == LiveSessionState.none,
+                "a round told it has no session must stop claiming one"
+            )
+
+            // The voter's one recovery is tapping the round again, and it has to
+            // run the pipeline rather than walk back into the session that is
+            // gone.
+            store.send(.roundTapped(activeRoundId))
+            #expect(
+                store.state.checkingEligibilityRoundId == self.activeRoundId,
+                "the re-tap must open a session rather than take the fast path"
+            )
+            await waitForStore { recorder.events().filter { $0 == "openRoundSession" }.count == 2 }
+        }
+
+        /// The same for the call that starts the run: a `notOpen` from it is the
+        /// round's session gone, not a run that failed on its own terms. A
+        /// `sessionBusy` is not -- that session exists -- so the classification
+        /// happens where the registry's own error is still in hand.
+        @MainActor
+        @Test func aRunRefusedBecauseTheSessionIsGoneReleasesTheRoundsClaim() async throws {
+            let recorder = EventRecorder()
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.runRound = { roundId, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(throwing: VotingSessionError.notOpen(roundId: roundId))
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .voting))
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true
+            }
+
+            #expect(recorder.events().contains("runRound"))
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.liveSession == LiveSessionState.none,
+                "a round told it has no session must stop claiming one"
+            )
+        }
+
         /// An entry that stops at the wallet-sync gate leaves the round with no
         /// session, and by then everything that used to bring it back is gone:
         /// the entry moved the epoch and cancelled the round's re-arm timer
