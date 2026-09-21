@@ -652,6 +652,46 @@ extension VotingSharedStateSuites {
             #expect(!isDelegationSigningTop(state))
         }
 
+        /// A run in flight still owns `batchSubmissionStatus`: its own
+        /// `.finished` handling is what will resolve it next, so a rejection
+        /// racing it must not also write to the field -- two writers on one
+        /// status is exactly what would reopen the CTA out from under a
+        /// submission that is still going.
+        @Test func rejectingWhileARunIsLiveChangesNothing() {
+            var session = roundSession(
+                drafts: [2: .option(1)],
+                votes: [1: .option(0)]
+            )
+            session.bundleCount = 2
+            session.keystoneBundlesToSign = [1]
+            session.keystoneSignedBundles = [0]
+            session.currentKeystoneBundleIndex = 1
+            session.keystoneSigningStatus = .awaitingSignature
+            session.batchSubmissionStatus = .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7)
+            session.isSubmittingVote = true
+            var state = VotingCoordFlow.State()
+            state.isKeystoneUser = true
+            state.pendingBatchSubmission = true
+            state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
+            state.roundCache[roundId] = session
+
+            _ = VotingCoordFlow().coordinatorReduce().reduce(
+                into: &state,
+                action: .delegationRejected(roundId: roundId)
+            )
+
+            let updated = tryUnwrap(state.roundCache[roundId])
+            // The duplicate-submission guard: a live run keeps the status it set.
+            #expect(updated.batchSubmissionStatus == .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7))
+            // The signing loop itself is still stood down and the screen is
+            // still popped -- only the submission status is left alone.
+            #expect(updated.keystoneSignedBundles == Set([0]))
+            #expect(updated.keystoneBundlesToSign.isEmpty)
+            #expect(updated.keystoneSigningStatus == .idle)
+            #expect(!state.pendingBatchSubmission)
+            #expect(!isDelegationSigningTop(state))
+        }
+
         private let roundId = "round-1"
 
         private func roundSession(
@@ -2226,6 +2266,278 @@ extension VotingSharedStateSuites {
                     == ["runRound.keystoneStored", "runRound.keystoneStored"]
             )
             #expect(store.state.roundCache[activeRoundId]?.bundleCount == 1)
+        }
+
+        // MARK: - Leaving Keystone signing mid-loop
+
+        /// Leaving the signing screen -- Back, before any bundle is signed --
+        /// must give Confirm back a usable CTA. The run narrates a positive
+        /// tally before it stops to ask for signatures, which moves
+        /// `batchSubmissionStatus` to `.submitting`; the rejection has to roll
+        /// that back too, not only `.authorizing`, or the bar freezes and the
+        /// button never re-enables.
+        @MainActor
+        @Test func backingOutOfTheSigningScreenLeavesConfirmUsable() async throws {
+            let recorder = EventRecorder()
+            let progressEvent = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let signingReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [0, 1]
+            )
+            let completedReport = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)], isKeystone: true)) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 2)
+                $0.votingCrypto.storeKeystoneSignatures = { _, signed in
+                    recorder.record("storeKeystoneSignatures:\(Self.indexList(signed.map(\.bundleIndex)))")
+                    return try self.keystoneBatchResult(inserted: UInt32(signed.count))
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    let call = recorder.recordAndCount(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(progressEvent))
+                        }
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? signingReport : completedReport))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.pendingKeystoneRequest?.bundleIndex == 0
+            }
+
+            store.send(.delegationRejected(roundId: activeRoundId))
+
+            let updated = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(updated.batchSubmissionStatus == .idle)
+            #expect(!updated.isSubmittingVote)
+            #expect(updated.draftVotes == [1: .option(0), 2: .option(1)])
+            #expect(updated.votes == [:])
+            #expect(!isDelegationSigningTop(store.state))
+
+            // A second Confirm starts a new run.
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                recorder.events().filter { $0.hasPrefix("runRound") }.count == 2
+            }
+        }
+
+        /// The same recovery when the signing screen itself never got a QR to
+        /// show: `keystoneSigningRequests` failing routes to the rejection
+        /// sheet's own "Go Back", which sends the identical action.
+        @MainActor
+        @Test func aFailedSigningRequestThenGoBackLeavesConfirmUsable() async throws {
+            let recorder = EventRecorder()
+            let progressEvent = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let signingReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [0, 1]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)], isKeystone: true)) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 2)
+                $0.votingCrypto.keystoneSigningRequests = { _, bundleIndices in
+                    recorder.record("keystoneSigningRequests:\(Self.indexList(bundleIndices))")
+                    throw VotingError(kind: .busy, message: "device unreachable")
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    recorder.record(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.event(progressEvent))
+                        continuation.yield(VotingRoundRunEvent.finished(signingReport))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                guard case .failed = store.state.roundCache[self.activeRoundId]?.keystoneSigningStatus else {
+                    return false
+                }
+                return true
+            }
+
+            store.send(.delegationRejected(roundId: activeRoundId))
+
+            let updated = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(updated.batchSubmissionStatus == .idle)
+            #expect(!updated.isSubmittingVote)
+            #expect(updated.draftVotes == [1: .option(0), 2: .option(1)])
+            #expect(updated.votes == [:])
+            #expect(!isDelegationSigningTop(store.state))
+
+            // A second Confirm starts a new run.
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                recorder.events().filter { $0.hasPrefix("runRound") }.count == 2
+            }
+        }
+
+        /// Backing out after one bundle is already stored keeps exactly the
+        /// bookkeeping `resetKeystoneSigningLoop` says it keeps: the crate's own
+        /// stored signature, so a resumed loop does not ask the device to sign
+        /// bundle 0 again.
+        @MainActor
+        @Test func cancellingAfterOneStoredSignatureKeepsItAndTheDrafts() async throws {
+            let recorder = EventRecorder()
+            let progressEvent = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let firstSigningReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [0, 1]
+            )
+            // A re-run's own report only ever names what the crate still lacks a
+            // signature for.
+            let secondSigningReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [1]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)], isKeystone: true)) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 2)
+                $0.votingCrypto.storeKeystoneSignatures = { _, signed in
+                    recorder.record("storeKeystoneSignatures:\(Self.indexList(signed.map(\.bundleIndex)))")
+                    return try self.keystoneBatchResult(inserted: UInt32(signed.count))
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    let call = recorder.recordAndCount(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(progressEvent))
+                            continuation.yield(VotingRoundRunEvent.finished(firstSigningReport))
+                        } else {
+                            continuation.yield(VotingRoundRunEvent.finished(secondSigningReport))
+                        }
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await scanKeystoneSignature(store, bundleIndex: 0)
+            // Bundle 1's QR is up next; back out before scanning it.
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.pendingKeystoneRequest?.bundleIndex == 1
+            }
+
+            store.send(.delegationRejected(roundId: activeRoundId))
+
+            let updated = tryUnwrap(store.state.roundCache[activeRoundId])
+            // Exactly what `resetKeystoneSigningLoop` preserves: the stored
+            // signature and its bookkeeping survive so a resumed loop starts
+            // from it.
+            #expect(updated.keystoneSignedBundles == Set([0]))
+            #expect(updated.keystoneBundlesToSign.isEmpty)
+            #expect(updated.currentKeystoneBundleIndex == updated.resolvedKeystonePrefixCount)
+            #expect(updated.pendingKeystoneRequest == nil)
+            #expect(updated.keystoneSigningStatus == .idle)
+            #expect(updated.batchSubmissionStatus == .idle)
+            #expect(updated.draftVotes == [1: .option(0), 2: .option(1)])
+            #expect(!isDelegationSigningTop(store.state))
+
+            // Retrying Confirm asks only for the bundle still unsigned: bundle 1
+            // is asked for again (its first request was abandoned along with
+            // the screen the voter backed out of), but bundle 0 -- already
+            // stored -- is never asked for a second time.
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.pendingKeystoneRequest?.bundleIndex == 1
+            }
+
+            #expect(
+                recorder.events().filter { $0.hasPrefix("keystoneSigningRequests") }
+                    == ["keystoneSigningRequests:0", "keystoneSigningRequests:1", "keystoneSigningRequests:1"]
+            )
+        }
+
+        /// Signing every bundle resumes the round exactly once: the two
+        /// senders of `.keystoneAllBundlesSigned` are mutually exclusive, and a
+        /// stale repeat of the action after the round has already finished on
+        /// it must not drive another run.
+        @MainActor
+        @Test func aCompletedSigningResumesExactlyOneRun() async throws {
+            let recorder = EventRecorder()
+            let progressEvent = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let signingReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [0, 1]
+            )
+            let completedReport = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)], isKeystone: true)) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 2)
+                $0.votingCrypto.storeKeystoneSignatures = { _, signed in
+                    recorder.record("storeKeystoneSignatures:\(Self.indexList(signed.map(\.bundleIndex)))")
+                    return try self.keystoneBatchResult(inserted: UInt32(signed.count))
+                }
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    let call = recorder.recordAndCount(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(progressEvent))
+                        }
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? signingReport : completedReport))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await scanKeystoneSignature(store, bundleIndex: 0)
+            await scanKeystoneSignature(store, bundleIndex: 1)
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            // Exactly one further run beyond the one that asked for signatures:
+            // the two sends of `.keystoneAllBundlesSigned` in the production
+            // code (`reduceStartDelegationProof`'s "nothing left to ask for"
+            // branch and `reduceKeystoneBundleSignatureStored`'s "that was the
+            // last one" branch) are mutually exclusive, so signing every bundle
+            // drives this exactly once.
+            #expect(
+                recorder.events().filter { $0.hasPrefix("runRound") }
+                    == ["runRound.keystoneStored", "runRound.keystoneStored"]
+            )
         }
 
         // MARK: - Lifecycle fencing

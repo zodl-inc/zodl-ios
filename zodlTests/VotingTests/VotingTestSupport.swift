@@ -530,6 +530,24 @@ extension VotingTestSuite {
         try JSONDecoder().decode(VotingRoundDriveEvent.self, from: Data(json.utf8))
     }
 
+    /// A `plan_refreshed` drive event carrying the run's own work tally -- the
+    /// narration a run sends before it stops to ask for Keystone signatures, or
+    /// to report any other quiescence. `totalProposals` positive is what moves
+    /// `batchSubmissionStatus` to `.submitting` (`applySubmissionProgress`), so
+    /// a fixture describing that handoff needs one of these ahead of the report.
+    func planRefreshedEvent(completedProposals: UInt32, totalProposals: UInt32) throws -> VotingRoundDriveEvent {
+        try driveEvent("""
+        {
+            "kind": "plan_refreshed",
+            "tally": {
+                "completed_proposals": \(completedProposals),
+                "total_proposals": \(totalProposals),
+                "remaining_obligations": \(totalProposals - completedProposals)
+            }
+        }
+        """)
+    }
+
     func keystoneSigningRequest(
         bundleIndex: UInt32,
         bundleCount: UInt32,

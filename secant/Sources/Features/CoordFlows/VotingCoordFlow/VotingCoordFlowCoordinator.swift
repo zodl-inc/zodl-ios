@@ -915,8 +915,15 @@ extension VotingCoordFlow {
                 // starts from.
                 mutateSession(&state, roundId: roundId) { roundSession in
                     resetKeystoneSigningLoop(&roundSession)
-                    if case .authorizing = roundSession.batchSubmissionStatus {
-                        roundSession.batchSubmissionStatus = .idle
+                    switch roundSession.batchSubmissionStatus {
+                    case .authorizing, .submitting:
+                        // The run that set this has already stopped to ask for
+                        // signatures; nothing is driving the round any more.
+                        if !roundSession.isSubmittingVote {
+                            roundSession.batchSubmissionStatus = .idle
+                        }
+                    default:
+                        break
                     }
                 }
                 state.pendingBatchSubmission = false
@@ -2535,6 +2542,13 @@ extension VotingCoordFlow {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.keystoneBundlesToSign = bundles
             roundSession.keystoneSigningStatus = .idle
+            // The driver has stopped to ask for signatures, so nothing is
+            // driving the round while the voter is on the signing screen.
+            // Whatever the run's own narration last wrote here -- `.submitting`,
+            // once it had reported a positive tally -- no longer describes a
+            // run in progress, and leaving it would freeze Confirm's bar behind
+            // this screen.
+            roundSession.batchSubmissionStatus = .authorizing
         }
         if !hasKeystoneSigningRound(state: state, roundId: roundId) {
             state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
