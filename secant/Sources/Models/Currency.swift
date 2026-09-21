@@ -83,6 +83,19 @@ struct CurrencyISO4217: RawRepresentable, Hashable, Codable, Sendable {
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
     }
+
+    func formatNumericAmount(_ value: Double, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .currency
+        formatter.currencyCode = code
+
+        return Decimal(value).formatted(
+            .number
+                .precision(.fractionLength(formatter.maximumFractionDigits))
+                .locale(locale)
+        )
+    }
 }
 
 struct CurrencyConversion: Equatable {

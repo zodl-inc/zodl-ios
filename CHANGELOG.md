@@ -11,6 +11,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-1706] Choose from more supported currencies in Currency Conversion, with a retry option if the currency list cannot be loaded.
 
+### Fixed
+
+- [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+
 ## [3.14.1] - 2026-09-17
 
 ### Changed
