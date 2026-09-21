@@ -157,7 +157,13 @@ extension VotingCoordFlow {
                 // The open stopped before it opened anything, so the round has
                 // no session -- and must not go on claiming one is on its way.
                 mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
-                return .none
+                // A teardown still under way answers this with nothing, which
+                // is the whole of what can be done for the round until the
+                // reset is over. One that has already finished -- the open
+                // captured the generation before it began and read it after --
+                // leaves the sidecar readable, and the round is picked back up
+                // without waiting for the voter's next visit.
+                return resumePendingSharesAfterEntryEnded(roundId: roundId)
 
             case .initialize:
                 // Sweep legacy plaintext keys from a prior internal-build
@@ -776,10 +782,17 @@ extension VotingCoordFlow {
                 // -- and loses its claim to a live one, so a re-tap runs the
                 // pipeline again instead of walking past it.
                 mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
-                return .send(.pipelineFailed(
-                    roundId: roundId,
-                    message: VotingErrorMapper.userFriendlyMessage(from: error)
-                ))
+                // The voter is told the round could not be entered, and the
+                // round's helper shares are put back on the sweep: a refused
+                // open is no reason for shares an earlier vote already
+                // delivered to stop being confirmed.
+                return .merge(
+                    resumePendingSharesAfterEntryEnded(roundId: roundId),
+                    .send(.pipelineFailed(
+                        roundId: roundId,
+                        message: VotingErrorMapper.userFriendlyMessage(from: error)
+                    ))
+                )
 
             case let .bundlesSetUp(roundId, layout):
                 return reduceBundlesSetUp(&state, roundId: roundId, layout: layout)
@@ -1038,7 +1051,13 @@ extension VotingCoordFlow {
                 // this exit reports no failure, so nothing else would release
                 // it.
                 mutateSession(&state, roundId: roundId) { $0.liveSession = .none }
-                return .cancel(id: cancelPipelineId)
+                // A wallet too far behind to enter the round is not a wallet
+                // that stops owing its helper shares, and the round's sweep is
+                // the one thing that can still confirm them this visit.
+                return .merge(
+                    .cancel(id: cancelPipelineId),
+                    resumePendingSharesAfterEntryEnded(roundId: roundId)
+                )
 
             case .walletSyncProgressUpdated(let height):
                 state.walletScannedHeight = height
@@ -1928,21 +1947,10 @@ extension VotingCoordFlow {
         // It becomes the round's live session in `reduceRoundSessionOpened`,
         // once the legacy gate has let it through.
         roundSession.liveSession = .opening
-        // The open below is cancellable on `cancelPipelineId`, which is the
-        // flow's id and not this round's, and it cancels in flight -- so
-        // starting it takes the open away from whatever other round had one
-        // running. A cancelled effect reports nothing, so this is the only
-        // place that knows those rounds lost theirs; left claiming an open was
-        // coming, each of them would be skipped by every pending-share sweep
-        // for the rest of the visit. A round that is open, or waiting out a
-        // backoff before its next attempt, has nothing in flight for this to
-        // take and is not touched.
-        let roundIdsLosingTheirOpen = state.roundCache
-            .filter { $0.key != roundId && $0.value.liveSession == .opening }
-            .map(\.key)
-        for stalledRoundId in roundIdsLosingTheirOpen {
-            state.roundCache[stalledRoundId]?.liveSession = .none
-        }
+        // Read before `pendingPipelineRoundId` below is overwritten with this
+        // round, because the round it still names is the one whose open this
+        // entry is about to cancel.
+        let releaseTakenOverOpen = releaseOpenTakenOverByEntry(&state, enteringRoundId: roundId)
         roundSession.lastRunFailureSummary = nil
         roundSession.progress = VotingRoundProgressSnapshot()
         roundSession.delegationProofStatus = ProofStatus.notStarted
@@ -2110,9 +2118,42 @@ extension VotingCoordFlow {
             .cancel(id: cancelShareTrackingReArmId(roundId)),
             .cancel(id: cancelShareTrackingReopenId(roundId)),
             .cancel(id: cancelShareTrackingResumeId(roundId)),
+            releaseTakenOverOpen,
             observeRoute,
             open
         )
+    }
+
+    /// Releases the round whose entry open this one is taking away, and puts it
+    /// back on the pending-share sweep.
+    ///
+    /// The entry open is cancellable on `cancelPipelineId`, which is the flow's
+    /// id and not any one round's, and it cancels in flight -- so starting a new
+    /// entry stops the open of the round that had the pipeline. A cancelled
+    /// effect reports nothing, so this is the only place that knows that round
+    /// lost its open; left claiming one was coming, it would be skipped by every
+    /// pending-share sweep for the rest of the visit.
+    ///
+    /// That one round and no other. ``VotingCoordFlow/State/pendingPipelineRoundId``
+    /// names whose open `cancelPipelineId` belongs to: a round the pending-share
+    /// sweep is opening runs on `cancelShareTrackingResumeId` instead and is not
+    /// stopped by an entry, so releasing it would have the next sweep open a
+    /// second session beside the one it still owns. A round that is open, or
+    /// waiting out a backoff before its next attempt, has nothing in flight for
+    /// an entry to take either.
+    ///
+    /// Whether the released round still owes a helper share is the sweep's
+    /// filtered read to answer, not this tap's.
+    private func releaseOpenTakenOverByEntry(
+        _ state: inout State,
+        enteringRoundId: String
+    ) -> Effect<Action> {
+        guard let previousEntryRoundId = state.pendingPipelineRoundId,
+              previousEntryRoundId != enteringRoundId,
+              state.roundCache[previousEntryRoundId]?.liveSession == .opening
+        else { return .none }
+        state.roundCache[previousEntryRoundId]?.liveSession = .none
+        return resumePendingSharesAfterEntryEnded(roundId: previousEntryRoundId)
     }
 
     /// What a refused open tells the voter.
@@ -3813,6 +3854,42 @@ extension VotingCoordFlow {
         }
         .cancellable(id: cancelRouteObservationId, cancelInFlight: true)
         return .merge(effects + [observeRoute])
+    }
+
+    /// Puts a round back on the pending-share sweep after an entry into it
+    /// ended without a session.
+    ///
+    /// Every one of those exits leaves the round with nothing looking after its
+    /// helper shares: the entry moved the epoch and cancelled the round's
+    /// re-arm timer before the exit was reached, `.onAppear` only re-polls a
+    /// round that has a session, and the sweep itself runs once per initialize.
+    /// So the sidecar's own list is read again and filtered to this round --
+    /// the same single-round re-sweep the legacy-round gate does -- and the
+    /// round is looked after again inside the same visit rather than the next
+    /// one.
+    ///
+    /// The filtered read is also what decides whether anything happens at all:
+    /// a round that owes no share comes back as an empty list, and the sweep
+    /// does nothing with it. Nothing here can come back round, either -- the
+    /// sweep opens no entry pipeline, so none of the exits that call this can
+    /// fire from what it starts.
+    ///
+    /// Refused outright while a wallet teardown is under way: the sidecar this
+    /// would read is the one the reset is deleting, and a flow in that state
+    /// only leaves it through a fresh initialize, which reads the list again
+    /// anyway. On the round's own resume id, so every fence that stands a
+    /// round's tracking down -- leaving the flow, a wallet or route change, the
+    /// vote closing -- takes this with it, and so does a fresh entry into the
+    /// round.
+    private func resumePendingSharesAfterEntryEnded(roundId: String) -> Effect<Action> {
+        guard votingCrypto.teardownGenerationIfIdle() != nil else { return .none }
+        return .run { [votingCrypto] send in
+            let pending = try await votingCrypto.pendingShareRounds()
+            await send(.pendingShareRoundsLoaded(pending.filter { $0.roundId == roundId }))
+        } catch: { error, _ in
+            LoggerProxy.warn("Reading the rounds that still owe helper shares failed: \(error)")
+        }
+        .cancellable(id: cancelShareTrackingResumeId(roundId), cancelInFlight: true)
     }
 
     /// Every round with a live session that could still owe a share, asked to

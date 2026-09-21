@@ -3299,7 +3299,12 @@ extension VotingSharedStateSuites {
                     }
                 )
                 $0.sdkSynchronizer.getTreeState = { _ in Data([0x01]) }
-                $0.votingCrypto.pendingShareRounds = { [pending] }
+                // The sidecar owes nothing at the moment the gate refuses, so
+                // the exit's own re-sweep finds no round to reopen and the
+                // discovery below is the only thing that opens one. What this
+                // test is about is the fact the exit leaves behind, which is
+                // what every later discovery reads.
+                $0.votingCrypto.pendingShareRounds = { [] }
                 $0.votingCrypto.trackShares = { roundId, _ in
                     recorder.record("trackShares:\(roundId)")
                     return AsyncThrowingStream { continuation in
@@ -4160,6 +4165,123 @@ extension VotingSharedStateSuites {
             let opens = recorder.events().filter { $0.hasPrefix("openRoundSession:") }
             #expect(opens.count == 3)
             #expect(opens.allSatisfy { $0 == "openRoundSession:tor" }, "a retry must never fall back to direct")
+        }
+
+        /// An entry that stops at the wallet-sync gate leaves the round with no
+        /// session, and by then everything that used to bring it back is gone:
+        /// the entry moved the epoch and cancelled the round's re-arm timer
+        /// before the gate answered, `.onAppear` only re-polls a round that has
+        /// a session, and the sweep runs once per initialize. So the exit puts
+        /// the round back on the sweep itself, filtered to that one round, and
+        /// its helper shares go on being confirmed inside the same visit.
+        @MainActor
+        @Test func aRoundTheSyncGateRefusedReopensItsTrackingSessionInTheSameVisit() async throws {
+            let recorder = EventRecorder()
+            let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                // Short of the round's snapshot height, and not zero -- zero is
+                // the cold-start case the open re-reads on a real timer.
+                $0.sdkSynchronizer = .mocked(
+                    latestState: {
+                        var latestState = SynchronizerState.zero
+                        latestState.fullyScannedHeight = 100
+                        return latestState
+                    }
+                )
+                $0.sdkSynchronizer.getTreeState = { _ in Data([0x01]) }
+                $0.votingCrypto.pendingShareRounds = {
+                    recorder.record("pendingShareRounds")
+                    return [pending]
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingShareTrackingRunEvent.finished(nothingToTrack))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.shareTrackingStatus == .confirmed }
+
+            #expect(store.state.walletSyncingSheetRoundId == self.activeRoundId)
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .sharesOnly))
+            // Read by the exit itself: no second `.initialize` stands between
+            // the gate and the round being looked after again.
+            #expect(recorder.events().filter { $0 == "pendingShareRounds" } == ["pendingShareRounds"])
+            // One open, and it is the tracking-only one: the entry never got
+            // past the gate to open anything.
+            #expect(recorder.events().filter { $0 == "openRoundSession" } == ["openRoundSession"])
+            #expect(recorder.events().contains("trackShares:\(activeRoundId)"))
+        }
+
+        /// The entry that takes the flow's pipeline takes it from the round that
+        /// had it, and from no other. A round the pending-share sweep is opening
+        /// runs on its own cancel id, so this entry does not stop it -- and a
+        /// round released while it still owns an open in flight is one the next
+        /// sweep would open a second session for, beside the first.
+        @MainActor
+        @Test func enteringARoundLeavesASweepsOwnOpenAlone() async throws {
+            let recorder = EventRecorder()
+            let gate = TestGate()
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            var initialState = pendingShareSweepState()
+            initialState.allRounds.append(
+                RoundListItem(
+                    roundNumber: 2,
+                    session: votingSession(proposalCount: 2, voteEndsIn: 3_600, roundIdByte: 0xBB)
+                )
+            )
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.openRoundSession = { inputs, _, _, _ in
+                    let roundId = inputs.roundParams.voteRoundId
+                    recorder.record("openRoundSession:\(roundId)")
+                    // The sweep's open parks; the entry's answers at once.
+                    guard roundId == self.activeRoundId else { return }
+                    await gate.wait()
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore { recorder.events().contains("openRoundSession:\(self.activeRoundId)") }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .opening)
+
+            // The voter enters the other poll. The reducer answers synchronously,
+            // so this is the whole question.
+            store.send(.startActiveRoundPipeline(roundId: otherRoundId))
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.liveSession == .opening,
+                "an entry must leave an open it is not cancelling alone"
+            )
+            #expect(store.state.roundCache[self.otherRoundId]?.liveSession == .opening)
+
+            await gate.open()
+            // The sweep's open really was still alive: it finishes, and the
+            // round gets the tracking-only session it was opening.
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .sharesOnly)
+            }
+            await waitForStore {
+                store.state.roundCache[self.otherRoundId]?.liveSession == .open(binding: .voting)
+            }
+            #expect(
+                recorder.events().filter { $0 == "openRoundSession:\(self.activeRoundId)" }
+                    == ["openRoundSession:\(activeRoundId)"],
+                "the round the sweep was opening must not be opened a second time"
+            )
         }
 
         /// A tracking-only open and an entry into the same round overlap for as
