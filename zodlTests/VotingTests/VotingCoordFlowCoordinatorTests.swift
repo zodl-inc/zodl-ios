@@ -4162,6 +4162,81 @@ extension VotingSharedStateSuites {
             #expect(opens.allSatisfy { $0 == "openRoundSession:tor" }, "a retry must never fall back to direct")
         }
 
+        /// A tracking-only open and an entry into the same round overlap for as
+        /// long as the anchor read takes, which is exactly the voter who enters
+        /// a partially submitted round seconds after the list loads. The
+        /// registry joins whatever open a round already has, so the one that
+        /// finishes second decides what the round is left holding -- and a
+        /// roster-only session binds no hotkey, so a round left with one while
+        /// its own fact says `.voting` walks the voter into a Confirm that
+        /// cannot sign.
+        @MainActor
+        @Test func anEntryDuringAParkedTrackingOnlyOpenKeepsTheVotingSession() async throws {
+            let recorder = EventRecorder()
+            let gate = TestGate()
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                $0.sdkSynchronizer.getTreeState = { _ in
+                    // The sweep's own anchor read is where it parks. The entry
+                    // reads second and answers at once, so the entry is the open
+                    // that finishes first.
+                    if recorder.recordAndCount("getTreeState") == 1 {
+                        await gate.wait()
+                        recorder.record("getTreeState.resumed")
+                    }
+                    return Data([0x01])
+                }
+                $0.votingCrypto.teardownAllowsOpen = { _ in
+                    // The last thing either open does before it opens anything,
+                    // so a second one of these is the barrier for asking what the
+                    // sweep's open did next.
+                    recorder.record("teardownAllowsOpen")
+                    return true
+                }
+                $0.votingCrypto.openRoundSession = { _, binding, _, _ in
+                    recorder.record(
+                        binding.hotkeySecret == nil ? "openRoundSession.sharesOnly" : "openRoundSession.voting"
+                    )
+                }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            await waitForStore { recorder.events().contains("getTreeState") }
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .opening)
+
+            // The voter enters the round while that open is still parked.
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .voting)
+            }
+            #expect(recorder.events().filter { $0.hasPrefix("openRoundSession") } == ["openRoundSession.voting"])
+
+            await gate.open()
+            // The parked open really did resume and run as far as the last step
+            // before it would open a session, so what it did instead is a fact
+            // about work that finished rather than work that never started.
+            await waitForStore { recorder.events().contains("getTreeState.resumed") }
+            await waitForStore { recorder.events().filter { $0 == "teardownAllowsOpen" }.count == 2 }
+            // And one more full pass through the store and its effects after
+            // that point.
+            store.send(.pollShareStatus(roundId: activeRoundId))
+            await waitForStore { recorder.events().contains("trackShares:\(self.activeRoundId)") }
+
+            #expect(
+                recorder.events().filter { $0.hasPrefix("openRoundSession") } == ["openRoundSession.voting"],
+                "a tracking-only open must not register a session behind the entry that took the round"
+            )
+            #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .voting))
+        }
+
         /// A refusal that says something about the round rather than about the
         /// moment is not waited out: the same call an hour later is the same
         /// call. Driven beside a refusal that *can* pass, so the difference is

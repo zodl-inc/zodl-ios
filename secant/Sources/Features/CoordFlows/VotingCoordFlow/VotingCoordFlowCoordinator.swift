@@ -1855,6 +1855,15 @@ extension VotingCoordFlow {
     /// fixed when a session is opened, and the registry closes the round's
     /// previous session first, so re-entering a round is how the two are
     /// allowed to change.
+    ///
+    /// Fresh means the round's other open has to be gone as well as its previous
+    /// session. The registry joins an open that is already in flight instead of
+    /// starting a second one, so an entry that left the pending-share sweep's
+    /// tracking-only open running would be handed that open's roster-only
+    /// session, or have it registered over this one. Cancelling
+    /// `cancelShareTrackingResumeId` below is what stops that, together with the
+    /// cancellation check the resume effect makes immediately before it opens
+    /// anything.
     func reduceStartActiveRoundPipeline(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let item = state.allRounds.first(where: { $0.id == roundId }),
               item.session.status == .active
@@ -2087,13 +2096,20 @@ extension VotingCoordFlow {
         // round's scheduled tracking pass goes the same way -- it would wake up
         // against a session that has been replaced -- and so does a scheduled
         // reopen, which exists to give the round a session this entry is about
-        // to give it anyway. The pass that may be in flight is left to end on
-        // its own, because cancelling one finishes the session under it and
-        // this open closes that session anyway.
+        // to give it anyway. And so does a tracking-only open already in
+        // flight: the registry joins an open a round already has rather than
+        // starting a second one, so leaving it running would either hand this
+        // entry the roster-only session it is building or register that session
+        // over the one this open makes -- and the round would be left holding a
+        // session that can sign nothing while its own fact says it can. The
+        // pass that may be in flight is left to end on its own, because
+        // cancelling one finishes the session under it and this open closes
+        // that session anyway.
         return .merge(
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelShareTrackingReArmId(roundId)),
             .cancel(id: cancelShareTrackingReopenId(roundId)),
+            .cancel(id: cancelShareTrackingResumeId(roundId)),
             observeRoute,
             open
         )
@@ -3652,6 +3668,12 @@ extension VotingCoordFlow {
     /// a fresh initialize, and that clears
     /// ``VotingCoordFlow/State/hasResumedPendingShareRounds`` and reads the
     /// sidecar again, starting the round's recovery over.
+    ///
+    /// An open started here can still be overtaken: the voter enters the round
+    /// while it is parked in its anchor read. That entry cancels this open, and
+    /// the effect checks the cancellation immediately before it opens anything,
+    /// so the round keeps the session the voter's entry gave it rather than a
+    /// roster-only one registered behind it.
     func reducePendingShareRoundsLoaded(
         _ state: inout State,
         rounds: [VotingPendingShareRound]
@@ -3750,6 +3772,16 @@ extension VotingCoordFlow {
                     await send(.roundEntryAbandoned(roundId: roundId))
                     return
                 }
+                // Entering the round cancels this open, and the read above is
+                // long enough for the voter to do it while this is in flight.
+                // The registry joins an open a round already has, so opening now
+                // would either hand the entry this roster-only session or
+                // register it over the one the entry just made -- leaving the
+                // round with a session that binds no hotkey and a fact that says
+                // it has one that does. Nothing is sent from here on the way
+                // out: a cancelled effect's sends are dropped, and the round's
+                // state is the entry's.
+                try Task.checkCancellation()
                 try await votingCrypto.openRoundSession(
                     inputs,
                     VotingSessionBinding(roster: roster),
