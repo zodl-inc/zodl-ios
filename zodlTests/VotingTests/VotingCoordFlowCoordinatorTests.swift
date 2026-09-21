@@ -2538,6 +2538,69 @@ extension VotingSharedStateSuites {
                 recorder.events().filter { $0.hasPrefix("runRound") }
                     == ["runRound.keystoneStored", "runRound.keystoneStored"]
             )
+
+            // A stale or duplicate delivery of the action the last stored
+            // signature sends must not resume the round a second time.
+            // `.finish()` drains this send's own effects before the count is
+            // read, so the assertion is deterministic rather than a race.
+            await store.send(.keystoneAllBundlesSigned(roundId: activeRoundId)).finish()
+            #expect(recorder.events().filter { $0.hasPrefix("runRound") }.count == 2)
+        }
+
+        /// A late `.keystoneAllBundlesSigned` -- the last stored signature's
+        /// own send, arriving after the voter has already backed out of the
+        /// signing screen -- must not resume the round: the handoff it was
+        /// answering is closed, and nothing is left driving it.
+        @MainActor
+        @Test func anAllBundlesSignedThatArrivesAfterTheVoterBackedOutStartsNothing() async throws {
+            let recorder = EventRecorder()
+            let progressEvent = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let signingReport = try runReport(
+                kind: "needs_delegation_signatures",
+                completedProposals: 0,
+                totalProposals: 2,
+                bundles: [0, 1]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)], isKeystone: true)) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.keystoneDependencies(&$0, recorder: recorder, bundleCount: 2)
+                $0.votingCrypto.runRound = { _, signer, _ in
+                    recorder.record(Self.runRoundEvent(signer))
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.event(progressEvent))
+                        continuation.yield(VotingRoundRunEvent.finished(signingReport))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.pendingKeystoneRequest?.bundleIndex == 0
+            }
+
+            store.send(.delegationRejected(roundId: activeRoundId))
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .idle)
+
+            // A signature-stored effect that was already on its way when Back
+            // was pressed delivers its `.keystoneAllBundlesSigned` late, after
+            // the handoff it belongs to is closed. The guard this exercises is
+            // checked synchronously, before any run effect is created, so
+            // what it leaves untouched can be asserted right after the plain
+            // `send` with no wait: `send` itself runs the reducer to
+            // completion before returning, and an unguarded delivery would
+            // have moved both fields off `.idle`/`false` in that same
+            // synchronous step (`startRoundRun` sets `batchSubmissionStatus`
+            // and `isSubmittingVote` before it ever returns an effect) --
+            // this needs no `.finish()` or poll to be conclusive either way.
+            store.send(.keystoneAllBundlesSigned(roundId: activeRoundId))
+
+            #expect(store.state.roundCache[activeRoundId]?.batchSubmissionStatus == .idle)
+            #expect(store.state.roundCache[activeRoundId]?.isSubmittingVote == false)
         }
 
         // MARK: - Lifecycle fencing

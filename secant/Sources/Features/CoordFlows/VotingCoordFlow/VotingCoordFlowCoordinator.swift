@@ -3886,8 +3886,23 @@ extension VotingCoordFlow {
 
     /// `.keystoneAllBundlesSigned` handler. Every bundle the run asked for is
     /// stored, so the round is driven again — this time reading those rows.
+    ///
+    /// Three sends reach here, all only once nothing is left to sign:
+    /// `reduceStartDelegationProof` and `reduceKeystoneBundleSignatureStored`
+    /// both check that on `keystoneBundlesToSign`/`keystoneSignedBundles`
+    /// before sending it, and `reduceSkipRemainingKeystoneBundles` sends it
+    /// after deleting the bundles it gave up on. None of the three touches
+    /// `batchSubmissionStatus` or `isSubmittingVote`, so all three still find
+    /// the handoff exactly as `reduceCollectSignatures` left it. A delivery
+    /// that does not -- stale, or arriving after the voter backed out and
+    /// `.delegationRejected` rolled the status back -- is not the live
+    /// continuation of that handoff, so it drives nothing.
     func reduceKeystoneAllBundlesSigned(_ state: inout State, roundId: String) -> Effect<Action> {
-        guard state.roundCache[roundId] != nil else { return .none }
+        guard let session = state.roundCache[roundId] else { return .none }
+        guard isOpenKeystoneHandoff(session) else {
+            LoggerProxy.info("Round \(roundId): ignoring a stale or duplicate all-bundles-signed")
+            return .none
+        }
         guard activeSession(in: state, roundId: roundId) != nil else {
             return .send(.batchAuthorizationFailed(
                 roundId: roundId,
@@ -4042,6 +4057,32 @@ extension VotingCoordFlow {
     private func isBatchSubmitting(_ session: RoundSession) -> Bool {
         switch session.batchSubmissionStatus {
         case .authorizing, .submitting:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether `.keystoneAllBundlesSigned` is the live continuation of the
+    /// signing handoff `reduceCollectSignatures` opened, rather than a stale
+    /// or duplicate delivery.
+    ///
+    /// The handoff leaves `batchSubmissionStatus` at `.authorizing` and
+    /// nothing on the signing loop's own path touches it again until either a
+    /// run claims it (`startRoundRun` sets `.authorizing` once more, this
+    /// time with `isSubmittingVote` true) or the voter backs out
+    /// (`.delegationRejected` rolls it back to `.idle`). So a delivery is
+    /// live only while the status still reads that way and no run has
+    /// already claimed it -- read from state alone, deliberately not from
+    /// whether the signing screen is still on the navigation stack:
+    /// `reduceKeystoneBundleSignatureStored` and
+    /// `reduceSkipRemainingKeystoneBundles` both pop it before their own send
+    /// of this action reaches here, so the screen being gone is normal for a
+    /// live delivery too.
+    private func isOpenKeystoneHandoff(_ session: RoundSession) -> Bool {
+        guard !session.isSubmittingVote else { return false }
+        switch session.batchSubmissionStatus {
+        case .authorizing:
             return true
         default:
             return false
