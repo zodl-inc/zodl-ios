@@ -194,13 +194,19 @@ struct RoundSession: Equatable {
     /// state.
     var sessionEpoch: UInt64 = 0
 
-    /// Whether this round has a session the flow can act on right now.
+    /// Whether this round has a session the flow can act on right now, and what
+    /// that session was bound with.
     ///
     /// `VotingCoordFlow.State.openRoundSessionIds` is deliberately a superset --
     /// a round whose open was refused stays on it, because that list is what a
     /// fence closes -- so it answers "which rounds must be fenced", never "which
     /// rounds have a working session". This answers the second question, and it
     /// is the one every caller that is about to *use* a session reads.
+    ///
+    /// ``LiveSessionState/open(binding:)`` on its own is not permission to drive
+    /// the round: a session opened to confirm helper shares holds no hotkey and
+    /// can sign nothing, so anything that leads to a ballot asks for
+    /// ``LiveSessionBinding/voting`` as well.
     var liveSession: LiveSessionState = .none
 
     /// Per-bundle result of the standalone delegation-proof precompute:
@@ -331,23 +337,51 @@ enum KeystoneSigningStatus: Equatable {
 /// Whether a round has a session to act on, and if not, what is being done
 /// about it.
 ///
-/// Only ``open`` licenses a call that needs one -- a tracking pass, a run, the
-/// Polls List walking past the pipeline into a ballot. The other three are the
-/// ways a round can be without one: nothing has been started, an open is in
-/// flight, or an open was refused and another is scheduled. Telling them apart
-/// is what stops a second open being started beside the first, and what stops a
-/// round whose open was refused being treated as though it had succeeded.
+/// ``open(binding:)`` licenses a call that needs a session, on the terms its
+/// binding allows. The other three are the ways a round can be without one:
+/// nothing has been started, an open is in flight, or an open was refused and
+/// another is scheduled. Telling them apart is what stops a second open being
+/// started beside the first, and what stops a round whose open was refused
+/// being treated as though it had succeeded.
 enum LiveSessionState: Equatable {
-    /// No session: never opened, refused for good, fenced, closed, or ended.
+    /// No session: never opened, refused for good, fenced, closed, ended, or
+    /// lost to an open that was cancelled or stopped before it opened anything.
     case none
     /// An open is in flight. Nothing may use the session yet, and nothing may
     /// start a second open.
     case opening
-    /// A session is open and bound to ``RoundSession/sessionEpoch``.
-    case open
+    /// A session is open, bound to ``RoundSession/sessionEpoch``, and can do
+    /// what `binding` says it can.
+    case open(binding: LiveSessionBinding)
     /// An open was refused and the next attempt is waiting out its backoff.
     /// `attempt` counts the refusals so far, from zero.
     case backingOff(attempt: Int)
+
+    /// Whether a session is open at all, whatever it was bound with. What the
+    /// share-tracking paths ask, because confirming a share needs no key.
+    var isOpen: Bool {
+        if case .open = self {
+            return true
+        }
+        return false
+    }
+}
+
+/// What a round's session was bound with when it was opened, and so what it can
+/// be asked to do.
+///
+/// A session's binding is fixed for its whole life, the same way its route and
+/// its generation are: the two open paths pass different bindings and neither
+/// can be upgraded afterwards.
+enum LiveSessionBinding: Equatable {
+    /// The round's roster and nothing else. It can confirm the round's helper
+    /// shares; holding no hotkey, it can sign nothing. What the pending-share
+    /// sweep opens.
+    case sharesOnly
+    /// The voter's hotkey is bound too, so the round can be driven: a ballot
+    /// recorded, a run started, a Keystone loop resumed. What entering the
+    /// round opens.
+    case voting
 }
 
 /// Where a round's helper shares stand.

@@ -340,8 +340,10 @@ struct VotingCoordFlow {
         /// where the events are a narration the SDK may drop.
         case shareTrackingFinished(roundId: String, epoch: UInt64, report: VotingShareTrackingRunReport)
         /// A tracking pass that could not run at all: the round's session went
-        /// away under it, or a run holds the session.
-        case shareTrackingFailed(roundId: String, epoch: UInt64, error: VotingError)
+        /// away under it, or a run holds the session. `sessionGone` tells the
+        /// two apart, because only the first means the round is left with
+        /// nothing to drive.
+        case shareTrackingFailed(roundId: String, epoch: UInt64, error: VotingError, sessionGone: Bool)
         /// The tracking-only session a pending-share round was resumed on is
         /// open. Stamped with the generation it was opened for, so a session
         /// the flow has since fenced cannot claim to be the round's live one.

@@ -596,12 +596,14 @@ extension VotingTestSuite {
     ///
     /// The session is live as well as counted: the open list is a superset a
     /// fence reads, and it is the round's own ``RoundSession/liveSession`` that
-    /// says there is something to drive.
+    /// says there is something to drive. Bound for shares only, which is what a
+    /// round reached this way has -- entering it is the other path, and it
+    /// opens its own.
     func shareTrackingState(voteEndsIn: TimeInterval = 3_600) -> VotingCoordFlow.State {
         var state = sessionFlowState(voteEndsIn: voteEndsIn)
         state.checkingEligibilityRoundId = nil
         state.openRoundSessionIds = [activeRoundId]
-        state.roundCache[activeRoundId]?.liveSession = .open
+        state.roundCache[activeRoundId]?.liveSession = .open(binding: .sharesOnly)
         state.sessionRouteAccess = .direct
         return state
     }
@@ -675,19 +677,6 @@ extension VotingTestSuite {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
-    }
-
-    /// Gives a store's effects several turns to reach the reducer, for the
-    /// assertions that are about nothing happening.
-    ///
-    /// Turns rather than time: an effect that was going to send needs the
-    /// scheduler, not a wall clock, and a test that waited on one would be
-    /// slower and no more certain.
-    @MainActor
-    func settle() async {
-        for _ in 0..<50 {
-            await Task.yield()
-        }
     }
 
     /// Signs whichever bundle the flow has put on screen, the way the voter
@@ -821,6 +810,12 @@ struct RecordingTestClock: Clock {
     typealias Duration = Swift.Duration
 
     let sleeps = LockIsolated<[Swift.Duration]>([])
+    /// How many sleepers are parked on this clock right now.
+    ///
+    /// The one thing that tells a cancelled wait apart from a wait whose
+    /// wake-up a state guard would have rejected: both produce no further work,
+    /// and only this says the effect itself is gone.
+    let pending = LockIsolated<Int>(0)
     let base = TestClock<Swift.Duration>()
 
     var now: Instant { base.now }
@@ -828,6 +823,8 @@ struct RecordingTestClock: Clock {
 
     func sleep(until deadline: Instant, tolerance: Swift.Duration?) async throws {
         sleeps.withValue { $0.append(self.base.now.duration(to: deadline)) }
+        pending.withValue { $0 += 1 }
+        defer { pending.withValue { $0 -= 1 } }
         try await base.sleep(until: deadline, tolerance: tolerance)
     }
 
