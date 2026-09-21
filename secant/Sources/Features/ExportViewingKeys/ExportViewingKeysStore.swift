@@ -252,18 +252,7 @@ struct ExportViewingKeys {
                 detail.qrFailed = false
                 detail.qrRequestID = requestID
                 state.detail = detail
-                return .run { @Sendable [key, requestID, png = viewingKeyQRCode.png] send in
-                    do {
-                        let image = try await png(key)
-                        try Task.checkCancellation()
-                        await send(.qrReady(requestID, .success(image)))
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        await send(.qrReady(requestID, .failure(.generationFailed)))
-                    }
-                }
-                .cancellable(id: CancelID.qr, cancelInFlight: true)
+                return generateQRCode(key: key, requestID: requestID)
 
             case .hideTapped:
                 guard var detail = state.detail else { return .none }
@@ -385,7 +374,18 @@ struct ExportViewingKeys {
 
             case .becameActive:
                 state.isInactive = false
-                return .none
+                guard var detail = state.detail,
+                      detail.isRevealed,
+                      detail.qr == nil,
+                      !detail.qrFailed,
+                      detail.qrRequestID == nil,
+                      let key = detail.key else {
+                    return .none
+                }
+                let requestID = uuid()
+                detail.qrRequestID = requestID
+                state.detail = detail
+                return generateQRCode(key: key, requestID: requestID)
 
             case .enteredBackground, .viewDisappeared:
                 state.isInvalidated = true
@@ -420,5 +420,20 @@ struct ExportViewingKeys {
             detail.sharePayload = nil
         }
         state.detail = detail
+    }
+
+    private func generateQRCode(key: ViewingKeyMaterial, requestID: UUID) -> Effect<Action> {
+        Effect.run { @Sendable [key, requestID, png = viewingKeyQRCode.png] send in
+            do {
+                let image = try await png(key)
+                try Task.checkCancellation()
+                await send(.qrReady(requestID, .success(image)))
+            } catch is CancellationError {
+                return
+            } catch {
+                await send(.qrReady(requestID, .failure(.generationFailed)))
+            }
+        }
+        .cancellable(id: CancelID.qr, cancelInFlight: true)
     }
 }

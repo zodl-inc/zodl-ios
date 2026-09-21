@@ -217,29 +217,111 @@ struct ExportViewingKeysLifecycleTests {
     }
 
     @Test
-    func inactivityMasksAndCancelsUnpresentedWorkWithoutFinishing() async throws {
-        let entered = SignalledRecords<Void>()
-        let gate = ResumableGate()
-        let png = ViewingKeyPNG(data: Data([0x02]))
+    func activeRestartsInterruptedRevealedQRWithAFreshRequest() async throws {
+        let entered = SignalledRecords<Int>()
+        let firstGate = ResumableGate()
+        let secondGate = ResumableGate()
+        let callCount = LockIsolated(0)
+        let firstPNG = ViewingKeyPNG(data: Data([0x01]))
+        let secondPNG = ViewingKeyPNG(data: Data([0x02]))
         let store = try await makeStore(png: { _ in
-            entered.recordCall()
-            await gate.wait()
-            return png
+            let ordinal = callCount.withValue { value in
+                value += 1
+                return value
+            }
+            entered.record(ordinal)
+            if ordinal == 1 {
+                await firstGate.wait()
+                return firstPNG
+            }
+            await secondGate.wait()
+            return secondPNG
         })
-        await enterAndReveal(store)
-        await entered.countReached(1)
+        await store.send(.selectKind(.incoming)) {
+            $0.selectedKind = .incoming
+        }
+        await store.send(.continueTapped) {
+            $0.detail = ExportViewingKeys.State.Detail(kind: .incoming)
+        }
+        await store.send(.selectTab(.keyString)) {
+            $0.detail?.tab = .keyString
+        }
+        let key = store.state.session.key(for: .incoming)
+        await store.send(.revealTapped) {
+            $0.detail?.isRevealed = true
+            $0.detail?.key = key
+            $0.detail?.qrRequestID = UUID(0)
+        }
+        await entered.recorded { $0.contains(1) }
 
         await store.send(.becameInactive) {
             $0.isInactive = true
             $0.detail?.qrRequestID = nil
         }
         #expect(!store.state.isPayloadVisible)
-        gate.open()
+        await store.send(.becameActive) {
+            $0.isInactive = false
+            $0.detail?.qrRequestID = UUID(1)
+        }
+        guard store.state.detail?.qrRequestID == UUID(1) else {
+            firstGate.open()
+            secondGate.open()
+            await store.finish()
+            return
+        }
+        await entered.recorded { $0.contains(2) }
+        #expect(store.state.detail?.tab == .keyString)
+        #expect(store.state.detail?.isRevealed == true)
+
+        await store.send(.qrReady(UUID(0), .success(firstPNG)))
+        #expect(store.state.detail?.qr == nil)
+        secondGate.open()
+        await store.receive(.qrReady(UUID(1), .success(secondPNG))) {
+            $0.detail?.qr = secondPNG
+            $0.detail?.qrRequestID = nil
+        }
+        firstGate.open()
         await store.finish()
+    }
+
+    @Test
+    func activeReusesCompletedQRWithoutRestartingCancelledShare() async throws {
+        let entered = SignalledRecords<Int>()
+        let shareGate = ResumableGate()
+        let callCount = LockIsolated(0)
+        let png = defaultPNG
+        let store = try await makeStore(png: { _ in
+            let ordinal = callCount.withValue { value in
+                value += 1
+                return value
+            }
+            entered.record(ordinal)
+            if ordinal == 2 {
+                await shareGate.wait()
+            }
+            return png
+        })
+        await enterAndReveal(store, receiveQR: true)
+        await store.send(.shareTapped) {
+            $0.detail?.shareRequestID = UUID(1)
+        }
+        await entered.recorded { $0.contains(2) }
+
+        await store.send(.becameInactive) {
+            $0.isInactive = true
+            $0.detail?.shareRequestID = nil
+        }
         await store.send(.becameActive) {
             $0.isInactive = false
         }
-        #expect(store.state.detail?.qr == nil)
+        shareGate.open()
+        await store.finish()
+
+        #expect(entered.values == [1, 2])
+        #expect(store.state.detail?.qr == png)
+        #expect(store.state.detail?.qrRequestID == nil)
+        #expect(store.state.detail?.shareRequestID == nil)
+        #expect(store.state.detail?.sharePayload == nil)
     }
 
     @Test

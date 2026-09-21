@@ -201,7 +201,12 @@ struct ExportViewingKeysTests {
 
     @Test(arguments: ViewingKeyTab.allCases)
     func bothTabsShareTheExactKeyAndPNGAtomically(_ tab: ViewingKeyTab) async throws {
-        let store = try await makeStore()
+        let encodedMaterials = SignalledRecords<ViewingKeyMaterial>()
+        let png = Self.png
+        let store = try await makeStore(png: { material in
+            encodedMaterials.record(material)
+            return png
+        })
         await enterIncomingDetail(store)
         let expectedKey = store.state.session.key(for: .incoming)
         if tab == .keyString {
@@ -216,22 +221,29 @@ struct ExportViewingKeysTests {
             $0.detail?.key = expectedKey
             $0.detail?.qrRequestID = UUID(0)
         }
-        await store.receive(.qrReady(UUID(0), .success(Self.png))) {
-            $0.detail?.qr = Self.png
+        await store.receive(.qrReady(UUID(0), .success(png))) {
+            $0.detail?.qr = png
             $0.detail?.qrRequestID = nil
         }
         await store.send(.shareTapped) {
             $0.detail?.shareRequestID = UUID(1)
         }
         let key = try #require(store.state.detail?.key)
-        let expectedPayload = ViewingKeySharePayload(id: UUID(1), key: key, png: Self.png)
+        let expectedPayload = ViewingKeySharePayload(id: UUID(1), key: key, png: png)
         await store.receive(.shareReady(UUID(1), .success(expectedPayload))) {
             $0.detail?.shareRequestID = nil
             $0.detail?.sharePayload = expectedPayload
         }
         let payload = try #require(store.state.detail?.sharePayload)
+        let encoded = encodedMaterials.values
+        let encodedTwice = encoded.count == 2
+        let revealEncodedCapturedKey = encoded.first?.rawValue == key.rawValue
+        let shareEncodedCapturedKey = encoded.last?.rawValue == key.rawValue
         let keyMatches = payload.key.rawValue == key.rawValue
-        let pngMatches = payload.png == Self.png
+        let pngMatches = payload.png == png
+        #expect(encodedTwice)
+        #expect(revealEncodedCapturedKey)
+        #expect(shareEncodedCapturedKey)
         #expect(keyMatches)
         #expect(pngMatches)
     }
