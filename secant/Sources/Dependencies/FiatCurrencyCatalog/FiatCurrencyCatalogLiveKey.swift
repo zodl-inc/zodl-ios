@@ -8,7 +8,8 @@ import ComposableArchitecture
 extension FiatCurrencyCatalogClient: DependencyKey {
     static let liveValue: FiatCurrencyCatalogClient = {
         let repository = FiatCurrencyCatalogRepository {
-            @Dependency(\.coinMarketCap) var coinMarketCap
+            @Dependency(\.coinMarketCap)
+            var coinMarketCap
             return try await coinMarketCap.fiatCurrencies()
         }
 

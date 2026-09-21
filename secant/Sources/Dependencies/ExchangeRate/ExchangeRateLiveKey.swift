@@ -54,7 +54,8 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
     }
 
     nonisolated func getCMCRate(for currency: CurrencyISO4217 = .usd) async throws -> Double {
-        @Dependency(\.coinMarketCap) var coinMarketCap
+        @Dependency(\.coinMarketCap)
+        var coinMarketCap
         return try await coinMarketCap.price(currency)
     }
 

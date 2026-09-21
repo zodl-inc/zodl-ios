@@ -6,8 +6,10 @@
 import Testing
 @testable import zodl_internal
 
-@Suite struct FiatCurrencyCatalogTests {
-    @Test func successfulInitialLoadIsReusedByLaterLoadsAndObservers() async {
+@Suite
+struct FiatCurrencyCatalogTests {
+    @Test
+    func successfulInitialLoadIsReusedByLaterLoadsAndObservers() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -31,7 +33,8 @@ import Testing
         #expect(await gate.callCount == 1)
     }
 
-    @Test func concurrentEnsureAndRefreshCallsShareOneLoad() async {
+    @Test
+    func concurrentEnsureAndRefreshCallsShareOneLoad() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -51,7 +54,8 @@ import Testing
         #expect(await states.next() == FiatCurrencyCatalogState(currencies: [.usd, .eur], isLoading: false, hasError: false))
     }
 
-    @Test func emptyInitialResultBecomesAnError() async {
+    @Test
+    func emptyInitialResultBecomesAnError() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -68,7 +72,8 @@ import Testing
         #expect(await gate.callCount == 1)
     }
 
-    @Test func initialFailuresCanBeRetriedExplicitlyAndAfterReopening() async {
+    @Test
+    func initialFailuresCanBeRetriedExplicitlyAndAfterReopening() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -99,7 +104,8 @@ import Testing
         #expect(await reopenedStates.next() == FiatCurrencyCatalogState(currencies: [.usd], isLoading: false, hasError: false))
     }
 
-    @Test func successfulRefreshReplacesCachedCurrenciesInProviderOrder() async {
+    @Test
+    func successfulRefreshReplacesCachedCurrenciesInProviderOrder() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -120,7 +126,8 @@ import Testing
         #expect(await states.next() == FiatCurrencyCatalogState(currencies: [.jpy, .gbp], isLoading: false, hasError: false))
     }
 
-    @Test func failedRefreshRetainsCachedCurrenciesWithoutAnError() async {
+    @Test
+    func failedRefreshRetainsCachedCurrenciesWithoutAnError() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let stream = await repository.observe()
@@ -141,7 +148,8 @@ import Testing
         #expect(await states.next() == FiatCurrencyCatalogState(currencies: [.usd, .eur], isLoading: false, hasError: false))
     }
 
-    @Test func observerCancellationDoesNotCancelThePendingRepositoryLoad() async {
+    @Test
+    func observerCancellationDoesNotCancelThePendingRepositoryLoad() async {
         let gate = CatalogLoadGate()
         let repository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let observerStarted = SignalledRecords<Void>()
@@ -174,7 +182,8 @@ import Testing
         #expect(await gate.callCount == 1)
     }
 
-    @Test func newRepositoryStartsWithoutThePreviousRepositoryCache() async {
+    @Test
+    func newRepositoryStartsWithoutThePreviousRepositoryCache() async {
         let gate = CatalogLoadGate()
         let firstRepository = FiatCurrencyCatalogRepository(load: { try await gate.fetch() })
         let firstStream = await firstRepository.observe()

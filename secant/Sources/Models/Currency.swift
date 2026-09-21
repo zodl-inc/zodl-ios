@@ -33,11 +33,6 @@ struct CurrencyISO4217: RawRepresentable, Hashable, Codable, Sendable {
     static let pln = CurrencyISO4217(knownCode: "PLN")
     static let thb = CurrencyISO4217(knownCode: "THB")
 
-    static let allCases: [CurrencyISO4217] = [
-        .usd, .eur, .gbp, .jpy, .cad, .aud, .chf, .cny, .krw, .brl, .inr, .mxn,
-        .sgd, .hkd, .nok, .sek, .dkk, .nzd, .ngn, .zar, .try, .pln, .thb
-    ]
-
     let rawValue: String
 
     var code: String {

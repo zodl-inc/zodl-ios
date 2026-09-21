@@ -8,10 +8,12 @@ import Foundation
 import Testing
 @testable import zodl_internal
 
-@Suite struct CoinMarketCapTests {
+@Suite
+struct CoinMarketCapTests {
     private static let catalogData = Data(#"{"data":[{"id":1,"symbol":"CZK"},{"id":2,"symbol":"USD"}]}"#.utf8)
 
-    @Test func directCatalogRequestIsAuthenticatedAndDecoded() async throws {
+    @Test
+    func directCatalogRequestIsAuthenticatedAndDecoded() async throws {
         let directCalls = LockIsolated(0)
         let api = CoinMarketCapAPI(
             apiKey: { "fixture-key" },
@@ -34,7 +36,8 @@ import Testing
         #expect(directCalls.value == 1)
     }
 
-    @Test func protectedCatalogRequestUsesOnlyTor() async throws {
+    @Test
+    func protectedCatalogRequestUsesOnlyTor() async throws {
         let directCalls = LockIsolated(0)
         let torCalls = LockIsolated(0)
         let api = CoinMarketCapAPI(
@@ -55,7 +58,8 @@ import Testing
         #expect(directCalls.value == 0)
     }
 
-    @Test func protectedTransportErrorNeverFallsBackToDirect() async {
+    @Test
+    func protectedTransportErrorNeverFallsBackToDirect() async {
         let directCalls = LockIsolated(0)
         let torCalls = LockIsolated(0)
         let api = CoinMarketCapAPI(
@@ -78,7 +82,8 @@ import Testing
         #expect(directCalls.value == 0)
     }
 
-    @Test func eachRequestReadsTheCurrentAccessRoute() async throws {
+    @Test
+    func eachRequestReadsTheCurrentAccessRoute() async throws {
         let access = LockIsolated<WalletStorage.SwapAPIAccess>(.direct)
         let directCalls = LockIsolated(0)
         let torCalls = LockIsolated(0)
@@ -103,15 +108,18 @@ import Testing
         #expect(torCalls.value == 1)
     }
 
-    @Test func missingKeyRejectsBeforeChoosingATransport() async {
+    @Test
+    func missingKeyRejectsBeforeChoosingATransport() async {
         await Self.assertMissingKeyIsRejected(nil)
     }
 
-    @Test func whitespaceOnlyKeyRejectsBeforeChoosingATransport() async {
+    @Test
+    func whitespaceOnlyKeyRejectsBeforeChoosingATransport() async {
         await Self.assertMissingKeyIsRejected(" \n\t ")
     }
 
-    @Test func nonHTTPResponseIsRejected() async throws {
+    @Test
+    func nonHTTPResponseIsRejected() async throws {
         let api = Self.api(returning: (Data(), URLResponse(
             url: try #require(URL(string: "https://example.com")),
             mimeType: nil,
@@ -129,7 +137,8 @@ import Testing
         }
     }
 
-    @Test func unsuccessfulHTTPStatusIsRejected() async throws {
+    @Test
+    func unsuccessfulHTTPStatusIsRejected() async throws {
         let url = try #require(URL(string: "https://example.com"))
         let response = try #require(HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil, headerFields: nil))
         let api = Self.api(returning: (Data(), response))
@@ -144,7 +153,8 @@ import Testing
         }
     }
 
-    @Test func malformedCatalogJSONPropagatesDecodingError() async {
+    @Test
+    func malformedCatalogJSONPropagatesDecodingError() async {
         let api = Self.api(returningJSON: #"{"data":[{"id":"invalid","symbol":"USD"}]}"#)
 
         await #expect(throws: DecodingError.self) {
@@ -152,7 +162,8 @@ import Testing
         }
     }
 
-    @Test func emptyFilteredCatalogPropagatesValidationError() async {
+    @Test
+    func emptyFilteredCatalogPropagatesValidationError() async {
         let api = Self.api(returningJSON: #"{"data":[{"id":1,"symbol":"CUP"},{"id":2,"symbol":"ZZZ"}]}"#)
 
         await #expect(throws: CMCFiatMapResponse.ValidationError.self) {
@@ -160,13 +171,15 @@ import Testing
         }
     }
 
-    @Test func unknownProviderFieldsDoNotPreventCatalogDecoding() async throws {
+    @Test
+    func unknownProviderFieldsDoNotPreventCatalogDecoding() async throws {
         let api = Self.api(returningJSON: #"{"data":[{"id":1,"symbol":"USD","name":"United States Dollar"}],"status":{"error_code":0}}"#)
 
         #expect(try await api.fiatCurrencies() == [.usd])
     }
 
-    @Test func priceRequestsTheSelectedCurrencyAndReturnsItsQuote() async throws {
+    @Test
+    func priceRequestsTheSelectedCurrencyAndReturnsItsQuote() async throws {
         let czk = try #require(CurrencyISO4217(rawValue: "CZK"))
         let json = #"{"data":{"ZEC":{"quote":{"USD":{"price":12.5},"CZK":{"price":321.75}}}}}"#
         let api = CoinMarketCapAPI(
@@ -193,7 +206,8 @@ import Testing
         #expect(try await api.price(czk) == 321.75)
     }
 
-    @Test func missingRequestedQuoteDoesNotReturnUSD() async throws {
+    @Test
+    func missingRequestedQuoteDoesNotReturnUSD() async throws {
         let czk = try #require(CurrencyISO4217(rawValue: "CZK"))
         let api = Self.api(returningJSON: #"{"data":{"ZEC":{"quote":{"USD":{"price":12.5}}}}}"#)
 
@@ -207,7 +221,8 @@ import Testing
         }
     }
 
-    @Test func exchangeRateProviderDelegatesTheRequestedCurrency() async throws {
+    @Test
+    func exchangeRateProviderDelegatesTheRequestedCurrency() async throws {
         let czk = try #require(CurrencyISO4217(rawValue: "CZK"))
         let requestedCurrency = LockIsolated<CurrencyISO4217?>(nil)
 

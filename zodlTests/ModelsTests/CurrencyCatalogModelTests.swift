@@ -8,8 +8,10 @@ import Testing
 @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct CurrencyCatalogModelTests {
-    @Test func newCurrencyKeepsTheLegacyStringEncoding() throws {
+@Suite
+struct CurrencyCatalogModelTests {
+    @Test
+    func newCurrencyKeepsTheLegacyStringEncoding() throws {
         let currency = try #require(CurrencyISO4217(rawValue: "CZK"))
 
         #expect(currency.code == "CZK")
@@ -17,7 +19,8 @@ import Testing
         #expect(try JSONDecoder().decode(CurrencyISO4217.self, from: Data(#""CZK""#.utf8)) == currency)
     }
 
-    @Test func oldPreferenceWithoutCurrencyStillDefaultsToUSD() throws {
+    @Test
+    func oldPreferenceWithoutCurrencyStillDefaultsToUSD() throws {
         let data = Data(#"{"manual":true,"automatic":true}"#.utf8)
 
         let saved = try JSONDecoder().decode(UserPreferencesStorage.ExchangeRate.self, from: data)
@@ -34,13 +37,15 @@ import Testing
         #expect(CurrencyISO4217(rawValue: code) == nil)
     }
 
-    @Test func lowercaseCurrencyCodeIsCanonicalized() throws {
+    @Test
+    func lowercaseCurrencyCodeIsCanonicalized() throws {
         let currency = try #require(CurrencyISO4217(rawValue: "czk"))
 
         #expect(currency.rawValue == "CZK")
     }
 
-    @Test func equalityAndHashingUseTheCanonicalCode() throws {
+    @Test
+    func equalityAndHashingUseTheCanonicalCode() throws {
         let uppercase = try #require(CurrencyISO4217(rawValue: "CZK"))
         let lowercase = try #require(CurrencyISO4217(rawValue: "czk"))
 
@@ -48,7 +53,8 @@ import Testing
         #expect(Set([uppercase, lowercase]).count == 1)
     }
 
-    @Test func newCurrencyRoundTripsThroughExchangeRatePreferences() throws {
+    @Test
+    func newCurrencyRoundTripsThroughExchangeRatePreferences() throws {
         let currency = try #require(CurrencyISO4217(rawValue: "CZK"))
         let saved = UserPreferencesStorage.ExchangeRate(manual: true, automatic: false, currency: currency)
 
@@ -59,8 +65,9 @@ import Testing
         #expect(decoded.currency == currency)
     }
 
-    @Test func providerOrderAndThreeExclusionsArePreserved() throws {
-        let rows = ["czk", "CUP", "USD", "IRR", "CZK", "RUB", "KWD", "ZZZ", "US", " USD"]
+    @Test
+    func providerOrderAndThreeExclusionsArePreserved() throws {
+        let rows: [String] = ["czk", "CUP", "USD", "IRR", "CZK", "RUB", "KWD", "ZZZ", "US", " USD"]
         let response = CMCFiatMapResponse(data: rows.enumerated().map {
             CMCFiatMapResponse.Entry(id: $0.offset, symbol: $0.element)
         })
@@ -88,7 +95,8 @@ import Testing
         }
     }
 
-    @Test func extraProviderFieldsAreIgnored() throws {
+    @Test
+    func extraProviderFieldsAreIgnored() throws {
         let json = #"{"data":[{"id":1,"symbol":"USD","name":"United States Dollar"}],"status":{"error_code":0}}"#
 
         let response = try JSONDecoder().decode(CMCFiatMapResponse.self, from: Data(json.utf8))
@@ -101,7 +109,7 @@ import Testing
     @Test(
         "Provider results with no supported currencies fail validation",
         arguments: [
-            [String](),
+            [] as [String],
             ["CUP", "IRR", "RUB"],
             ["ZZZ", "QQQ"]
         ]
@@ -121,7 +129,8 @@ import Testing
         }
     }
 
-    @Test func currencyFormattingUsesISO4217FractionDigits() throws {
+    @Test
+    func currencyFormattingUsesISO4217FractionDigits() throws {
         let amount = Zatoshi(100_000_000)
         let value = 12.3456
         let vnd = try #require(CurrencyISO4217(rawValue: "VND"))
@@ -148,7 +157,8 @@ import Testing
         }
     }
 
-    @Test func legacyCurrencySymbolsArePreserved() {
+    @Test
+    func legacyCurrencySymbolsArePreserved() {
         #expect(CurrencyISO4217.usd.symbol == "$")
         #expect(CurrencyISO4217.eur.symbol == "€")
         #expect(CurrencyISO4217.gbp.symbol == "£")

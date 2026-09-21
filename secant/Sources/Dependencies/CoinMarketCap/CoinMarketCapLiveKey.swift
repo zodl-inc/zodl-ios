@@ -19,12 +19,14 @@ extension CoinMarketCapClient: DependencyKey {
 
 private extension CoinMarketCapAPI {
     static func live() -> CoinMarketCapAPI {
-        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+        @Dependency(\.sdkSynchronizer)
+        var sdkSynchronizer
 
         return CoinMarketCapAPI(
             apiKey: { PartnerKeys.cmcKey },
             access: {
-                @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
+                @Shared(.inMemory(.swapAPIAccess))
+                var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
                 return swapAPIAccess
             },
             direct: { request in
