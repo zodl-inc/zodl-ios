@@ -8,31 +8,37 @@
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
-// Both will be defined in the SDK
-enum CurrencyISO4217: String, CaseIterable, Equatable, Codable {
-    case usd = "USD"
-    case eur = "EUR"
-    case gbp = "GBP"
-    case jpy = "JPY"
-    case cad = "CAD"
-    case aud = "AUD"
-    case chf = "CHF"
-    case cny = "CNY"
-    case krw = "KRW"
-    case brl = "BRL"
-    case inr = "INR"
-    case mxn = "MXN"
-    case sgd = "SGD"
-    case hkd = "HKD"
-    case nok = "NOK"
-    case sek = "SEK"
-    case dkk = "DKK"
-    case nzd = "NZD"
-    case ngn = "NGN"
-    case zar = "ZAR"
-    case `try` = "TRY"
-    case pln = "PLN"
-    case thb = "THB"
+struct CurrencyISO4217: RawRepresentable, Hashable, Codable, Sendable {
+    static let usd = CurrencyISO4217(knownCode: "USD")
+    static let eur = CurrencyISO4217(knownCode: "EUR")
+    static let gbp = CurrencyISO4217(knownCode: "GBP")
+    static let jpy = CurrencyISO4217(knownCode: "JPY")
+    static let cad = CurrencyISO4217(knownCode: "CAD")
+    static let aud = CurrencyISO4217(knownCode: "AUD")
+    static let chf = CurrencyISO4217(knownCode: "CHF")
+    static let cny = CurrencyISO4217(knownCode: "CNY")
+    static let krw = CurrencyISO4217(knownCode: "KRW")
+    static let brl = CurrencyISO4217(knownCode: "BRL")
+    static let inr = CurrencyISO4217(knownCode: "INR")
+    static let mxn = CurrencyISO4217(knownCode: "MXN")
+    static let sgd = CurrencyISO4217(knownCode: "SGD")
+    static let hkd = CurrencyISO4217(knownCode: "HKD")
+    static let nok = CurrencyISO4217(knownCode: "NOK")
+    static let sek = CurrencyISO4217(knownCode: "SEK")
+    static let dkk = CurrencyISO4217(knownCode: "DKK")
+    static let nzd = CurrencyISO4217(knownCode: "NZD")
+    static let ngn = CurrencyISO4217(knownCode: "NGN")
+    static let zar = CurrencyISO4217(knownCode: "ZAR")
+    static let `try` = CurrencyISO4217(knownCode: "TRY")
+    static let pln = CurrencyISO4217(knownCode: "PLN")
+    static let thb = CurrencyISO4217(knownCode: "THB")
+
+    static let allCases: [CurrencyISO4217] = [
+        .usd, .eur, .gbp, .jpy, .cad, .aud, .chf, .cny, .krw, .brl, .inr, .mxn,
+        .sgd, .hkd, .nok, .sek, .dkk, .nzd, .ngn, .zar, .try, .pln, .thb
+    ]
+
+    let rawValue: String
 
     var code: String {
         rawValue
@@ -55,6 +61,32 @@ enum CurrencyISO4217: String, CaseIterable, Equatable, Codable {
 
     var displayName: String {
         Locale.current.localizedString(forCurrencyCode: rawValue) ?? rawValue
+    }
+
+    init?(rawValue: String) {
+        let code = rawValue.uppercased()
+        guard code.utf8.count == 3, code.utf8.allSatisfy({ (65...90).contains($0) }) else {
+            return nil
+        }
+        self.rawValue = code
+    }
+
+    private init(knownCode: String) {
+        rawValue = knownCode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let code = try container.decode(String.self)
+        guard let currency = CurrencyISO4217(rawValue: code) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid currency code")
+        }
+        self = currency
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
