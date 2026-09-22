@@ -39,9 +39,11 @@ struct ExportViewingKeysView: View {
             .applyScreenBackground()
             .zashiSheet(
                 isPresented: consentBinding(isPresented: consentPresented),
+                backgroundColor: Design.Surfaces.bgSecondary.color(colorScheme),
                 onDismiss: { store.send(.consentDismissed) }
             ) {
                 ViewingKeyConsentView(store: store)
+                    .environment(\.colorScheme, colorScheme)
             }
             .alert(
                 String(localizable: .viewing_key_share_failure_title),

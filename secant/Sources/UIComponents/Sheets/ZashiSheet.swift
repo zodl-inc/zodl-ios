@@ -55,6 +55,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
     @Binding var isPresented: Bool
     let horizontalPadding: CGFloat
     let dragIndicatorVisibility: Visibility
+    let backgroundColor: Color?
     let onDismiss: (() -> Void)?
     @State var sheetHeight: CGFloat = .zero
     let sheetContent: () -> SheetContent
@@ -78,7 +79,7 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                             .presentationDetents(measuredDetents)
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .padding(.horizontal, horizontalPadding)
-                            .applySheetBackground()
+                            .applySheetBackground(overrideColor: backgroundColor)
                     } else if #available(iOS 16.4, *) {
                         mainBody()
                             .id(sheetHeight)
@@ -86,18 +87,18 @@ struct ZashiSheetModifier<SheetContent: View>: ViewModifier {
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .presentationCornerRadius(Design.Radius._4xl)
                             .padding(.horizontal, horizontalPadding)
-                            .applySheetBackground()
+                            .applySheetBackground(overrideColor: backgroundColor)
                     } else if #available(iOS 16.0, *) {
                         mainBody()
                             .id(sheetHeight)
                             .presentationDetents(measuredDetents)
                             .presentationDragIndicator(dragIndicatorVisibility)
                             .padding(.horizontal, horizontalPadding)
-                            .applySheetBackground()
+                            .applySheetBackground(overrideColor: backgroundColor)
                     } else {
                         mainBody(stickToBottom: true)
                             .padding(.horizontal, horizontalPadding)
-                            .applySheetBackground()
+                            .applySheetBackground(overrideColor: backgroundColor)
                     }
                 }
             }
@@ -142,6 +143,8 @@ extension View {
         isPresented: Binding<Bool>,
         horizontalPadding: CGFloat = Design.Spacing._3xl,
         dragIndicatorVisibility: Visibility = .visible,
+        // A non-nil color fills the native panel and its safe areas; nil keeps the legacy material.
+        backgroundColor: Color? = nil,
         onDismiss: (() -> Void)? = nil,
         content: @escaping () -> some View
     ) -> some View {
@@ -150,9 +153,21 @@ extension View {
                 isPresented: isPresented,
                 horizontalPadding: horizontalPadding,
                 dragIndicatorVisibility: dragIndicatorVisibility,
+                backgroundColor: backgroundColor,
                 onDismiss: onDismiss,
                 sheetContent: content
             )
         )
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func applySheetBackground(overrideColor: Color?) -> some View {
+        if let overrideColor {
+            modifier(ScreenBackgroundModifier(color: overrideColor))
+        } else {
+            applySheetBackground()
+        }
     }
 }

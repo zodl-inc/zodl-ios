@@ -10,6 +10,7 @@ import SwiftUI
 import Testing
 import UIKit
 import UniformTypeIdentifiers
+import Vision
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
@@ -372,6 +373,142 @@ struct ViewingKeyPresentationTests {
         }
     }
 
+    @Test
+    func consentSheetMatchesReferenceHeightAtStandardSize() async throws {
+        let store = try await makeRenderStore(.consent)
+        let configuration = RenderConfiguration(
+            name: "reference-light",
+            width: 393,
+            height: 852,
+            colorScheme: .light,
+            dynamicTypeSize: .large
+        )
+        let png = try await render(
+            store: store,
+            configuration: configuration,
+            expectsSheet: true,
+            expectedConsentSheetHeight: 480...530
+        )
+        Attachment.record([UInt8](png), named: "consent-reference-light.png")
+    }
+
+    @Test
+    func consentRemainsReachableAtCompactAndAccessibilitySizes() async throws {
+        let configurations = [
+            RenderConfiguration(
+                name: "compact-light",
+                width: 320,
+                height: 568,
+                colorScheme: .light,
+                dynamicTypeSize: .large
+            ),
+            RenderConfiguration(
+                name: "accessibility5-light",
+                width: 393,
+                height: 852,
+                colorScheme: .light,
+                dynamicTypeSize: .accessibility5
+            ),
+            RenderConfiguration(
+                name: "compact-accessibility5-light",
+                width: 320,
+                height: 568,
+                colorScheme: .light,
+                dynamicTypeSize: .accessibility5
+            )
+        ]
+
+        let isSpanish = Locale.preferredLanguages.first?.hasPrefix("es") == true
+        for configuration in configurations {
+            let store = try await makeRenderStore(.checkedConsent)
+            let png = try await render(
+                store: store,
+                configuration: configuration,
+                expectsSheet: true,
+                scrollToBottom: configuration.dynamicTypeSize == .accessibility5
+                    || (isSpanish && configuration.width == 320)
+            )
+            let visibleText = try recognizedText(in: png)
+            #expect(visibleText.localizedCaseInsensitiveContains(isSpanish ? "deshacer" : "undone"))
+            #expect(visibleText.localizedCaseInsensitiveContains(isSpanish ? "Exportar" : "Export"))
+            #expect(
+                visibleText.localizedCaseInsensitiveContains(isSpanish ? "Exportar clave" : "Export key"),
+                "Full export action was not completely visible in \(configuration.name): \(visibleText)"
+            )
+            #expect(store.canExportFull)
+            Attachment.record([UInt8](png), named: "consent-\(configuration.name)-scrolled.png")
+        }
+    }
+
+    @Test
+    func darkConsentTitleRemainsReadableAgainstSheetPanel() async throws {
+        let store = try await makeRenderStore(.consent)
+        let configuration = RenderConfiguration(
+            name: "reference-dark",
+            width: 393,
+            height: 852,
+            colorScheme: .dark,
+            dynamicTypeSize: .large
+        )
+        let png = try await render(store: store, configuration: configuration, expectsSheet: true)
+        let image = try #require(UIImage(data: png)?.cgImage)
+        let context = try #require(
+            CGContext(
+                data: nil,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let data = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        let brightTitlePixels = (400..<460).flatMap { y in
+            (30..<300).map { x in
+                let index = (y * image.width + x) * 4
+                return max(data[index], data[index + 1], data[index + 2]) > 180
+            }
+        }.filter { $0 }.count
+        #expect(brightTitlePixels > 100)
+        Attachment.record([UInt8](png), named: "consent-reference-dark-contrast.png")
+    }
+
+    @Test
+    func checkboxOptInSpacingPreservesSharedDefault() {
+        let defaultToggle = UIHostingController(
+            rootView: ZashiToggle(isOn: .constant(false), label: "I agree")
+        )
+        let consentToggle = UIHostingController(
+            rootView: ZashiToggle(
+                isOn: .constant(false),
+                label: "I agree",
+                checkboxSpacing: 12,
+                checkboxTopPadding: 2,
+                textLineSpacing: 3.05,
+                textVerticalPadding: 1.525,
+                expandsTextVertically: true
+            )
+        )
+        let proposal = CGSize(width: 400, height: 100)
+        let defaultSize = defaultToggle.sizeThatFits(in: proposal)
+        let consentSize = consentToggle.sizeThatFits(in: proposal)
+        print("Checkbox natural sizes: default=\(defaultSize) consent=\(consentSize)")
+        #expect(abs(consentSize.width - defaultSize.width - 4) <= 1)
+        #expect(abs(consentSize.height - 20) <= 1)
+
+        let constrainedDefault = UIHostingController(
+            rootView: ZashiToggle(
+                isOn: .constant(false),
+                label: "I acknowledge the viewing key disclosure"
+            )
+        )
+        let constrainedSize = constrainedDefault.sizeThatFits(in: CGSize(width: 120, height: 20))
+        print("Constrained default checkbox size: \(constrainedSize)")
+        #expect(constrainedSize.height <= 20)
+    }
+
     private func makeRenderStore(_ renderState: RenderState) async throws -> StoreOf<ExportViewingKeys> {
         let vendor: WalletAccount.Vendor = renderState == .keystoneChooser ? .keystone : .zcash
         let account = renderState == .unavailableKey
@@ -513,6 +650,7 @@ struct ViewingKeyPresentationTests {
         store: StoreOf<ExportViewingKeys>,
         configuration: RenderConfiguration,
         expectsSheet: Bool,
+        expectedConsentSheetHeight: ClosedRange<CGFloat>? = nil,
         scrollToBottom: Bool = false,
         scrollToDecodedQRCode expectedQRCode: String? = nil
     ) async throws -> Data {
@@ -526,6 +664,7 @@ struct ViewingKeyPresentationTests {
             transaction.animation = nil
         }
         let controller = UIHostingController(rootView: rootView)
+        controller.overrideUserInterfaceStyle = configuration.colorScheme == .dark ? .dark : .light
         let windowScene = try #require(
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
@@ -547,6 +686,7 @@ struct ViewingKeyPresentationTests {
             window.layoutIfNeeded()
         }
 
+        var presentedSheetView: UIView?
         if expectsSheet {
             let presented = try #require(window.rootViewController?.presentedViewController)
             if let coordinator = presented.transitionCoordinator {
@@ -562,30 +702,47 @@ struct ViewingKeyPresentationTests {
             await nextMainRunLoopTurn()
             window.layoutIfNeeded()
             let presentedView = try #require(presented.presentationController?.presentedView ?? presented.view)
+            presentedSheetView = presentedView
             let visibleFrame = visiblePresentationFrame(view: presentedView, window: window)
             let visibleHeight = visibleFrame.height
+            if configuration.width == 320 && configuration.dynamicTypeSize == .accessibility5 {
+                print("Compact AX host geometry: window=\(window.bounds) presented.frame=\(presentedView.frame) presented.bounds=\(presentedView.bounds) visible=\(visibleFrame) safeArea=\(presentedView.safeAreaInsets)")
+            }
             #expect(
                 visibleHeight >= 400,
                 "Consent sheet visible frame was \(visibleFrame) in window \(window.bounds)"
             )
+            if let expectedConsentSheetHeight {
+                print("Consent geometry: height=\(visibleHeight) safeArea=\(presentedView.safeAreaInsets) AX=\(accessibilityFrames(in: presentedView).count)")
+                #expect(
+                    expectedConsentSheetHeight.contains(visibleHeight),
+                    "Consent sheet visible height was \(visibleHeight) in window \(window.bounds); presented bounds \(presentedView.bounds), safe area \(presentedView.safeAreaInsets), AX \(accessibilityFrames(in: presentedView))"
+                )
+            }
         }
 
 
         var decodedCapture: UIImage?
         var bestQRCodeMargin: CGFloat = -.infinity
         if scrollToBottom || expectedQRCode != nil {
-            let candidates = scrollViews(in: window)
+            let candidates = scrollViews(in: presentedSheetView ?? window)
+            if expectsSheet {
+                let initial = try #require(capture(window: window).pngData())
+                Attachment.record([UInt8](initial), named: "consent-before-scroll-\(configuration.name).png")
+            }
             let scrollView = try #require(
                 candidates
                     .filter {
                         expectsSheet
-                            ? $0.bounds.height >= 200
+                            ? $0.bounds.height > 0
                                 && $0.bounds.width >= window.bounds.width * 0.7
                                 && $0.bounds.width < window.bounds.width * 0.95
+                                && scrollableHeight($0) > 0
                             : $0.bounds.height >= window.bounds.height * 0.5
                                 && $0.bounds.width >= window.bounds.width * 0.95
                     }
-                    .max { scrollableHeight($0) < scrollableHeight($1) }
+                    .max { scrollableHeight($0) < scrollableHeight($1) },
+                "Scroll candidates: \(candidates.map { "\($0.bounds) content=\($0.contentSize)" })"
             )
             let maximumOffset = scrollableHeight(scrollView)
             #expect(maximumOffset > 0)
@@ -626,8 +783,20 @@ struct ViewingKeyPresentationTests {
         return try #require(image.pngData())
     }
 
+    private func recognizedText(in png: Data) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        let handler = VNImageRequestHandler(data: png)
+        try handler.perform([request])
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
+    }
+
     private func capture(window: UIWindow) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
         return renderer.image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
@@ -646,6 +815,24 @@ struct ViewingKeyPresentationTests {
             view.superview?.convert(layer.frame, to: window) ?? layer.frame
         } ?? view.convert(view.bounds, to: window)
         return frame.intersection(window.bounds)
+    }
+
+    private func accessibilityFrames(in view: UIView) -> [(String, CGRect)] {
+        let own = view.isAccessibilityElement && view.accessibilityLabel != nil
+            ? [(view.accessibilityLabel ?? "", view.accessibilityFrame)]
+            : []
+        let elements = (view.accessibilityElements ?? []).compactMap { element -> (String, CGRect)? in
+            guard let element = element as? UIAccessibilityElement,
+                  let label = element.accessibilityLabel else { return nil }
+            return (label, element.accessibilityFrame)
+        }
+        let count = max(0, min(view.accessibilityElementCount(), 100))
+        let containerElements = (0..<count).compactMap { index -> (String, CGRect)? in
+            guard let element = view.accessibilityElement(at: index) as? UIAccessibilityElement,
+                  let label = element.accessibilityLabel else { return nil }
+            return (label, element.accessibilityFrame)
+        }
+        return own + elements + containerElements + view.subviews.flatMap(accessibilityFrames(in:))
     }
 
     private func scrollViews(in view: UIView) -> [UIScrollView] {
