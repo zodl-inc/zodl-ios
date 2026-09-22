@@ -12,6 +12,177 @@ struct CurrencyConversionLoadingTests {
         case failed
     }
 
+    @Test
+    func protectedSaveAfterBackWaitsForSDKAndDisplaysQuoteOnHome() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.swapAPIAccess)) var access: WalletStorage.SwapAPIAccess = .direct
+            $access.withLock { $0 = .protected }
+            let saved = LockIsolated<UserPreferencesStorage.ExchangeRate?>(nil)
+            let sdkReady = LockIsolated(false)
+            let sdkStarted = SignalledRecords<Void>()
+            let sdkGate = ResumableGate()
+            defer { sdkGate.open() }
+            let attempts = SignalledRecords<WalletStorage.SwapAPIAccess>()
+            let directAttempts = LockIsolated(0)
+            let rates = CurrentValueSubject<ExchangeRateClient.EchangeRateEvent, Never>(.value(nil, .eur))
+            let subscribed = SignalledRecords<Void>()
+
+            let settings = Store(initialState: Settings.State()) { Settings() } withDependencies: {
+                $0.userStoredPreferences.setExchangeRate = { saved.setValue($0) }
+                $0.userStoredPreferences.exchangeRate = { saved.value }
+                $0.exchangeRate.refreshExchangeRateUSD = {
+                    @Shared(.inMemory(.swapAPIAccess)) var currentAccess: WalletStorage.SwapAPIAccess = .direct
+                    if currentAccess == .direct {
+                        directAttempts.withValue { $0 += 1 }
+                    }
+                    attempts.record(currentAccess)
+                    if currentAccess == .protected && sdkReady.value {
+                        rates.send(.value(
+                            FiatCurrencyResult(date: Date(), rate: NSDecimalNumber(value: 30), state: .success),
+                            .eur
+                        ))
+                    }
+                }
+                $0.sdkSynchronizer.exchangeRateEnabled = { enabled in
+                    #expect(enabled)
+                    sdkStarted.recordCall()
+                    await sdkGate.wait()
+                    sdkReady.setValue(true)
+                }
+            }
+
+            settings.send(.currencyConversionTapped)
+            guard let id = settings.state.path.ids.last else {
+                Issue.record("Currency conversion settings did not open")
+                return
+            }
+            settings.send(.path(.element(id: id, action: .currencyConversionSetup(.settingsOptionTapped(.optIn)))))
+            settings.send(.path(.element(id: id, action: .currencyConversionSetup(.currencyChanged(.eur)))))
+            let saveTask = settings.send(.path(.element(id: id, action: .currencyConversionSetup(.saveChangesTapped))))
+            await sdkStarted.countReached(1)
+            #expect(saved.value?.automatic == true)
+            #expect(saved.value?.currency == .eur)
+            #expect(attempts.isEmpty)
+            if !attempts.isEmpty {
+                sdkGate.open()
+                await saveTask.finish()
+                return
+            }
+
+            settings.send(.path(.element(id: id, action: .currencyConversionSetup(.backToHomeTapped))))
+            #expect(settings.state.path.isEmpty)
+            let balances = Store(initialState: WalletBalances.State(totalBalance: Zatoshi(100_000_000))) {
+                WalletBalances()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.userStoredPreferences.exchangeRate = { saved.value }
+                $0.sdkSynchronizer = .noOp
+                $0.migrationManager.migrationSnapshotEvents = { _ in Empty().eraseToAnyPublisher() }
+                $0.exchangeRate.exchangeRateEventStream = {
+                    rates.handleEvents(receiveOutput: { _ in subscribed.recordCall() }).eraseToAnyPublisher()
+                }
+            }
+            balances.send(.onAppear)
+            await subscribed.countReached(1)
+            sdkGate.open()
+            await attempts.countReached(1)
+            await subscribed.countReached(2)
+            await saveTask.finish()
+            #expect(attempts.values == [.protected])
+            #expect(directAttempts.value == 0)
+            #expect(balances.state.currencyConversion?.ratio == 30)
+            #expect(!balances.state.currencyValue.isEmpty)
+            balances.send(.onDisappear)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func protectedSaveSkipsObsoleteQuoteAfterPreferenceChanges(disabled: Bool) async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.swapAPIAccess)) var access: WalletStorage.SwapAPIAccess = .direct
+            $access.withLock { $0 = .protected }
+            let saved = LockIsolated<UserPreferencesStorage.ExchangeRate?>(nil)
+            let sdkStarted = SignalledRecords<Void>()
+            let sdkGate = ResumableGate()
+            defer { sdkGate.open() }
+            let refreshes = LockIsolated(0)
+            let store = TestStore(initialState: CurrencyConversionSetup.State(
+                activeSettingsOption: .optOut,
+                currentSettingsOption: .optIn,
+                isSettingsView: true,
+                selectedCurrency: .eur
+            )) { CurrencyConversionSetup() } withDependencies: {
+                $0.userStoredPreferences.setExchangeRate = { saved.setValue($0) }
+                $0.userStoredPreferences.exchangeRate = { saved.value }
+                $0.exchangeRate.refreshExchangeRateUSD = { refreshes.withValue { $0 += 1 } }
+                $0.sdkSynchronizer.exchangeRateEnabled = { enabled in
+                    #expect(enabled)
+                    sdkStarted.recordCall()
+                    await sdkGate.wait()
+                }
+            }
+
+            await store.send(.saveChangesTapped) { $0.activeSettingsOption = .optIn }
+            await store.receive(.settingsOptionChanged(.optIn))
+            await sdkStarted.countReached(1)
+            #expect(refreshes.value == 0)
+            saved.setValue(UserPreferencesStorage.ExchangeRate(
+                manual: true,
+                automatic: !disabled,
+                currency: disabled ? .eur : .usd
+            ))
+            sdkGate.open()
+            await store.receive(.torInitSucceeded)
+            await store.receive(.backToHomeTapped)
+            await store.finish()
+            #expect(refreshes.value == 0)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func protectedEducationEnableQuotesOnlyAfterSDKSuccess(fails: Bool) async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.swapAPIAccess)) var access: WalletStorage.SwapAPIAccess = .direct
+            $access.withLock { $0 = .protected }
+            let saved = LockIsolated<UserPreferencesStorage.ExchangeRate?>(nil)
+            let sdkStarted = SignalledRecords<Void>()
+            let sdkGate = ResumableGate()
+            defer { sdkGate.open() }
+            let refreshes = LockIsolated(0)
+            let store = TestStore(initialState: CurrencyConversionSetup.State(selectedCurrency: .eur)) {
+                CurrencyConversionSetup()
+            } withDependencies: {
+                $0.userStoredPreferences.setExchangeRate = { saved.setValue($0) }
+                $0.userStoredPreferences.exchangeRate = { saved.value }
+                $0.exchangeRate.refreshExchangeRateUSD = { refreshes.withValue { $0 += 1 } }
+                $0.sdkSynchronizer.exchangeRateEnabled = { enabled in
+                    #expect(enabled)
+                    sdkStarted.recordCall()
+                    await sdkGate.wait()
+                    if fails { throw SDKFailure.failed }
+                }
+            }
+
+            await store.send(.enableTapped)
+            await sdkStarted.countReached(1)
+            #expect(refreshes.value == 0)
+            sdkGate.open()
+            if fails {
+                await store.receive(.torInitFailed)
+            } else {
+                await store.receive(.torInitSucceeded)
+            }
+            await store.finish()
+            #expect(refreshes.value == (fails ? 0 : 1))
+        }
+    }
+
     @Test(arguments: [false, true])
     func saveStartsQuoteBeforeSDKFinishes(torOn: Bool) async {
         await withDependencies {
@@ -102,11 +273,11 @@ struct CurrencyConversionLoadingTests {
 
             settings.send(.path(.element(id: id, action: .currencyConversionSetup(.backToHomeTapped))))
             #expect(settings.state.path.isEmpty)
-            await sdkCancelled.countReached(1)
             sdkGate.open()
             await saveTask.finish()
             await sdkFinishedCancelled.countReached(1)
-            #expect(sdkFinishedCancelled.values == [true])
+            #expect(sdkCancelled.isEmpty)
+            #expect(sdkFinishedCancelled.values == [false])
             #expect(refreshes.value == 1)
 
             let balances = Store(initialState: WalletBalances.State(totalBalance: Zatoshi(100_000_000))) {
@@ -175,10 +346,11 @@ struct CurrencyConversionLoadingTests {
                 $0.sdkSynchronizer.exchangeRateEnabled = { enabled in sdkValues.withValue { $0.append(enabled) } }
             }
 
-            await store.send(.saveChangesTapped) { $0.activeSettingsOption = .optOut }
-            await store.receive(.settingsOptionChanged(.optOut)) {
+            await store.send(.saveChangesTapped) {
+                $0.activeSettingsOption = .optOut
                 $0.$currencyConversion.withLock { $0 = nil }
             }
+            await store.receive(.settingsOptionChanged(.optOut))
             await store.receive(.backToHomeTapped)
             await store.finish()
             #expect(saved.value?.automatic == false)

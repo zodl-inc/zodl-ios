@@ -196,12 +196,14 @@ struct CurrencyConversionSetup {
                 try? userStoredPreferences.setExchangeRate(
                     UserPreferencesStorage.ExchangeRate(manual: true, automatic: true, currency: state.selectedCurrency)
                 )
-                exchangeRate.refreshExchangeRateUSD()
+                let update = startExchangeRateUpdate(enabled: true, currency: state.selectedCurrency)
                 return .run { send in
                     do {
-                        try await sdkSynchronizer.exchangeRateEnabled(true)
+                        try await update.value
+                        guard !Task.isCancelled else { return }
                         await send(.torInitSucceeded)
                     } catch {
+                        guard !Task.isCancelled else { return }
                         await send(.torInitFailed)
                     }
                 }
@@ -224,23 +226,22 @@ struct CurrencyConversionSetup {
                 state.initialCurrency = state.selectedCurrency
                 let option = state.currentSettingsOption
                 let enabled = state.currentSettingsOption == .optIn
-                if enabled {
-                    exchangeRate.refreshExchangeRateUSD()
-                }
-                return .run { send in
-                    await send(.settingsOptionChanged(option))
-                    
+                let update = startExchangeRateUpdate(enabled: enabled, currency: state.selectedCurrency)
+                return .concatenate(.send(.settingsOptionChanged(option)), .run { send in
                     do {
-                        try await sdkSynchronizer.exchangeRateEnabled(enabled)
+                        try await update.value
+                        guard !Task.isCancelled else { return }
                         if enabled {
                             await send(.torInitSucceeded)
                         }
                     } catch {
+                        guard !Task.isCancelled else { return }
                         await send(.torInitFailed)
                     }
                     
+                    guard !Task.isCancelled else { return }
                     await send(.backToHomeTapped)
-                }
+                })
 
             case .skipTapped:
                 try? userStoredPreferences.setExchangeRate(.init(manual: false, automatic: false, currency: state.selectedCurrency))
@@ -273,6 +274,31 @@ struct CurrencyConversionSetup {
             case .torInitSucceeded:
                 return .none
             }
+        }
+    }
+
+    private func startExchangeRateUpdate(enabled: Bool, currency: CurrencyISO4217) -> Task<Void, Error> {
+        @Shared(.inMemory(.swapAPIAccess)) var access: WalletStorage.SwapAPIAccess = .direct
+        let waitsForSDK = access != .direct
+        let sdkSynchronizer = self.sdkSynchronizer
+        let exchangeRate = enabled ? self.exchangeRate : nil
+        let userStoredPreferences = enabled ? self.userStoredPreferences : nil
+
+        if enabled && !waitsForSDK {
+            exchangeRate?.refreshExchangeRateUSD()
+        }
+
+        // The saved update must finish even if the settings screen disappears.
+        return Task {
+            try await sdkSynchronizer.exchangeRateEnabled(enabled)
+            guard enabled,
+                  waitsForSDK,
+                  let saved = userStoredPreferences?.exchangeRate(),
+                  saved.automatic,
+                  saved.currency == currency else {
+                return
+            }
+            exchangeRate?.refreshExchangeRateUSD()
         }
     }
 }
