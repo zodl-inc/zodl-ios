@@ -24215,6 +24215,12 @@
             "state" : "translated",
             "value" : "I understand this reveals all my transactions, past and future"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entiendo que esto revela todas mis transacciones, pasadas y futuras"
+          }
         }
       }
     },
@@ -24225,6 +24231,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "I understand this cannot be undone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entiendo que esto no se puede deshacer"
           }
         }
       }
@@ -24237,6 +24249,12 @@
             "state" : "translated",
             "value" : "I trust the party I'm sharing this with"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confío en la persona o entidad con la que comparto esta clave"
+          }
         }
       }
     },
@@ -24247,6 +24265,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Display key string"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar clave en texto"
           }
         }
       }
@@ -24259,6 +24283,12 @@
             "state" : "translated",
             "value" : "Export Viewing Key"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportar clave de visualización"
+          }
         }
       }
     },
@@ -24269,6 +24299,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportar clave"
           }
         }
       }
@@ -24281,6 +24317,12 @@
             "state" : "translated",
             "value" : "Full visibility into all wallet activity. Use for watch-only wallets, auditing, or legal compliance."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibilidad completa de toda la actividad de la billetera. Úsala para billeteras de solo lectura, auditorías o para cumplir con requisitos legales."
+          }
         }
       }
     },
@@ -24291,6 +24333,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only scan in a trusted, private environment"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanea solo en un entorno privado y de confianza"
           }
         }
       }
@@ -24303,6 +24351,12 @@
             "state" : "translated",
             "value" : "This key reveals your full send and receive history. Only share with trusted parties."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave revela todo tu historial de envíos y recepciones. Compártela solo con personas o entidades de confianza."
+          }
         }
       }
     },
@@ -24313,6 +24367,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Full visibility. Handle with care."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibilidad completa. Úsala con cuidado."
           }
         }
       }
@@ -24325,6 +24385,12 @@
             "state" : "translated",
             "value" : "Full Viewing Key"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización completa"
+          }
         }
       }
     },
@@ -24335,6 +24401,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Go back"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volver"
           }
         }
       }
@@ -24347,6 +24419,12 @@
             "state" : "translated",
             "value" : "Viewing key hidden"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización oculta"
+          }
         }
       }
     },
@@ -24357,6 +24435,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ocultar clave"
           }
         }
       }
@@ -24369,6 +24453,12 @@
             "state" : "translated",
             "value" : "Lets others see incoming transactions only. Safe for accountants and payment verification."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite a otros ver solo las transacciones entrantes. Es seguro compartirla con contadores y usarla para verificar pagos."
+          }
         }
       }
     },
@@ -24379,6 +24469,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This key is safe to share with accounting software or watch-only wallets."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave se puede compartir de forma segura con software de contabilidad o billeteras de solo lectura."
           }
         }
       }
@@ -24391,6 +24487,12 @@
             "state" : "translated",
             "value" : "Incoming transactions only."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo transacciones entrantes."
+          }
         }
       }
     },
@@ -24401,6 +24503,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Incoming Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización de transacciones entrantes"
           }
         }
       }
@@ -24413,6 +24521,12 @@
             "state" : "translated",
             "value" : "Sharing a viewing key lets others monitor your **%@** wallet activity. Never share with anyone you don't trust."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compartir una clave de visualización permite a otros ver la actividad de tu billetera **%@**. Nunca la compartas con alguien en quien no confíes."
+          }
         }
       }
     },
@@ -24423,6 +24537,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Key String"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave en texto"
           }
         }
       }
@@ -24435,6 +24555,12 @@
             "state" : "translated",
             "value" : "QR Code"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código QR"
+          }
         }
       }
     },
@@ -24445,6 +24571,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There was a problem generating your QR code. Try switching to key string instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hubo un problema al generar tu código QR. Intenta mostrar la clave en texto."
           }
         }
       }
@@ -24457,6 +24589,12 @@
             "state" : "translated",
             "value" : "Couldn't generate QR code"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo generar el código QR"
+          }
         }
       }
     },
@@ -24467,6 +24605,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reveal key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar clave"
           }
         }
       }
@@ -24479,6 +24623,12 @@
             "state" : "translated",
             "value" : "Scan with any compatible wallet to add as watch-only."
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanea con cualquier billetera compatible para añadirla como billetera de solo lectura."
+          }
         }
       }
     },
@@ -24489,6 +24639,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The QR image couldn't be prepared. Try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo preparar la imagen QR. Inténtalo de nuevo."
           }
         }
       }
@@ -24501,6 +24657,12 @@
             "state" : "translated",
             "value" : "Couldn't share viewing key"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo compartir la clave de visualización"
+          }
         }
       }
     },
@@ -24511,6 +24673,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This viewing key isn't available for this account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave de visualización no está disponible para esta cuenta."
           }
         }
       }
@@ -24523,6 +24691,12 @@
             "state" : "translated",
             "value" : "Viewing key unavailable"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización no disponible"
+          }
         }
       }
     },
@@ -24533,6 +24707,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Anyone with this key can see every transaction you've ever made, and every one you make in the future."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cualquier persona que tenga esta clave puede ver todas las transacciones que hayas realizado y las que realices en el futuro."
           }
         }
       }
@@ -24545,6 +24725,12 @@
             "state" : "translated",
             "value" : "Before you share your Full Viewing Key"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antes de compartir tu clave de visualización completa"
+          }
         }
       }
     },
@@ -24556,6 +24742,12 @@
             "state" : "translated",
             "value" : "Your Full Viewing Key"
           }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu clave de visualización completa"
+          }
         }
       }
     },
@@ -24566,6 +24758,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your Incoming Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu clave de visualización de transacciones entrantes"
           }
         }
       }

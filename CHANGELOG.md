@@ -9,7 +9,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Added
 
-- [MOB-1877] Export incoming or full viewing keys from Advanced Settings to share wallet activity with trusted services, including for Keystone accounts.
+- [MOB-1877] Export incoming or full viewing keys from Advanced Settings to share wallet activity with trusted services, including for Keystone accounts. Available in English and Spanish.
 
 ## [3.14.1] - 2026-09-17
 
