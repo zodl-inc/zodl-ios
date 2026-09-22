@@ -41,8 +41,11 @@ import Foundation
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerAppTooOld("3.5.0")))
     }
 
-    @Test func userRejectedMapsToUserRejected() {
-        #expect(LedgerErrorText.message(for: ZcashError.ledgerUserRejected) == String(localizable: .ledgerErrorUserRejected))
+    // MOB-2020 Phase 3.2: `.ledgerUserRejected` now maps to the vendor-neutral signing copy
+    // (`ledger.error.rejected`), not the old pairing-specific `ledger.error.userRejected` --
+    // see `LedgerErrorText.message(for:)`'s comment on this case.
+    @Test func userRejectedMapsToRejected() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerUserRejected) == String(localizable: .ledgerErrorRejected))
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerUserRejected))
     }
 
@@ -54,6 +57,26 @@ import Foundation
     @Test func deviceMismatchMapsToDeviceMismatch() {
         #expect(LedgerErrorText.message(for: ZcashError.ledgerDeviceMismatch) == String(localizable: .ledgerErrorDeviceMismatch))
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerDeviceMismatch))
+    }
+
+    // MARK: - Signing cases (MOB-2020 Phase 3.2)
+
+    @Test func transactionNotSignableMapsToNotSignable() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerTransactionNotSignable("some SDK reason")) == String(localizable: .ledgerErrorNotSignable))
+        #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerTransactionNotSignable("some SDK reason")))
+        // The SDK's reason text must never reach the user -- only the generic copy.
+        #expect(!LedgerErrorText.message(for: ZcashError.ledgerTransactionNotSignable("some SDK reason")).contains("some SDK reason"))
+    }
+
+    @Test func derivationBudgetExhaustedMapsToDerivationBudget() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerDerivationBudgetExhausted) == String(localizable: .ledgerErrorDerivationBudget))
+        #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerDerivationBudgetExhausted))
+    }
+
+    @Test func capsMismatchMapsToNotSignable() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerCapsMismatch("some SDK reason")) == String(localizable: .ledgerErrorNotSignable))
+        #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerCapsMismatch("some SDK reason")))
+        #expect(!LedgerErrorText.message(for: ZcashError.ledgerCapsMismatch("some SDK reason")).contains("some SDK reason"))
     }
 
     // MARK: - Connection-lost transport failures
@@ -78,23 +101,36 @@ import Foundation
         #expect(LedgerErrorText.isConnectionLost(ZcashError.ledgerBluetoothConnectionFailed(nil)))
     }
 
+    @Test func transportFailedMapsToConnectionLost() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerTransportFailed(UnrelatedError())) == String(localizable: .ledgerErrorConnectionLost))
+        #expect(LedgerErrorText.isConnectionLost(ZcashError.ledgerTransportFailed(UnrelatedError())))
+    }
+
     @Test func notConnectedMapsToConnectionLost() {
         #expect(LedgerErrorText.message(for: LedgerClientError.notConnected) == String(localizable: .ledgerErrorConnectionLost))
         #expect(LedgerErrorText.isConnectionLost(LedgerClientError.notConnected))
+    }
+
+    // MARK: - isRestartable
+
+    @Test func userRejectedIsRestartableButNotConnectionLost() {
+        #expect(LedgerErrorText.isRestartable(ZcashError.ledgerUserRejected))
+        #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerUserRejected))
+    }
+
+    @Test func transportClosedIsRestartableAndConnectionLost() {
+        #expect(LedgerErrorText.isRestartable(ZcashError.ledgerTransportClosed))
+        #expect(LedgerErrorText.isConnectionLost(ZcashError.ledgerTransportClosed))
     }
 
     // MARK: - Generic fallback
 
     @Test func remainingLedgerCasesMapToGeneric() {
         let genericErrors: [Error] = [
-            ZcashError.ledgerDerivationBudgetExhausted,
             ZcashError.ledgerDeviceRefused(0x6901, true),
             ZcashError.ledgerMalformedReply("bad reply"),
             ZcashError.ledgerInternal("internal"),
             ZcashError.ledgerInvalidInput("input"),
-            ZcashError.ledgerCapsMismatch("caps"),
-            ZcashError.ledgerTransactionNotSignable("not signable"),
-            ZcashError.ledgerTransportFailed(UnrelatedError()),
             ZcashError.ledgerDeviceNotFound
         ]
 

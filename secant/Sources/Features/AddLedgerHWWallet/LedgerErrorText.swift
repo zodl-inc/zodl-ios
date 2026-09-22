@@ -26,12 +26,26 @@ enum LedgerErrorText {
             return String(localizable: .ledgerErrorWrongApp)
         case ZcashError.ledgerAppTooOld:
             return String(localizable: .ledgerErrorAppTooOld)
+        // MOB-2020 Phase 3.2: `.ledgerUserRejected` is now also thrown mid-signing (the user
+        // declined the transaction on the device), not only during pairing's viewing-key export
+        // -- `ledger.error.rejected` reads correctly for either, unlike the old pairing-specific
+        // `ledger.error.userRejected` string it replaces here.
         case ZcashError.ledgerUserRejected:
-            return String(localizable: .ledgerErrorUserRejected)
+            return String(localizable: .ledgerErrorRejected)
         case ZcashError.ledgerBluetoothPairingRefused:
             return String(localizable: .ledgerErrorPairingRefused)
         case ZcashError.ledgerDeviceMismatch:
             return String(localizable: .ledgerErrorDeviceMismatch)
+        // MOB-2020 Phase 3.2: signing-only cases -- never reachable from `AddLedgerHWWallet`'s
+        // scan/connect/pair path. The SDK's `reason` text is deliberately never surfaced here (it
+        // can describe the transaction), so both a caps mismatch and an unsignable transaction
+        // share the same generic "can't sign this" copy.
+        case ZcashError.ledgerTransactionNotSignable:
+            return String(localizable: .ledgerErrorNotSignable)
+        case ZcashError.ledgerDerivationBudgetExhausted:
+            return String(localizable: .ledgerErrorDerivationBudget)
+        case ZcashError.ledgerCapsMismatch:
+            return String(localizable: .ledgerErrorNotSignable)
         default:
             if isConnectionLost(error) {
                 return String(localizable: .ledgerErrorConnectionLost)
@@ -48,12 +62,20 @@ enum LedgerErrorText {
         case ZcashError.ledgerTransportClosed,
             ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTimeout,
-            ZcashError.ledgerBluetoothConnectionFailed:
+            ZcashError.ledgerBluetoothConnectionFailed,
+            ZcashError.ledgerTransportFailed:
             return true
         case LedgerClientError.notConnected:
             return true
         default:
             return false
         }
+    }
+
+    /// Whether a fresh attempt at the same Ledger operation could succeed -- wraps the SDK's own
+    /// `ZcashError.ledgerIsRestartable`, `false` for anything that did not come from the Ledger
+    /// integration (`nil` there).
+    static func isRestartable(_ error: Error) -> Bool {
+        (error as? ZcashError)?.ledgerIsRestartable ?? false
     }
 }

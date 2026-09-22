@@ -10373,19 +10373,36 @@
         }
       }
     },
+    "ledger.error.derivationBudget" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close and reopen the Zcash app on your Ledger, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cierra y vuelve a abrir la app de Zcash en tu Ledger, luego inténtalo de nuevo."
+          }
+        }
+      }
+    },
     "ledger.error.deviceMismatch" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The connected Ledger is not the device this account was paired with."
+            "value" : "This isn't the Ledger this account was paired with."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El Ledger conectado no es el dispositivo con el que se vinculó esta cuenta."
+            "value" : "Este no es el Ledger con el que se vinculó esta cuenta."
           }
         }
       }
@@ -10407,6 +10424,23 @@
         }
       }
     },
+    "ledger.error.notSignable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger can't sign this transaction."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger no puede firmar esta transacción."
+          }
+        }
+      }
+    },
     "ledger.error.pairingRefused" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10420,6 +10454,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Se rechazó la vinculación por Bluetooth. Olvida el dispositivo en Ajustes de iOS › Bluetooth e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.error.rejected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You rejected the transaction on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste la transacción en tu Ledger."
           }
         }
       }

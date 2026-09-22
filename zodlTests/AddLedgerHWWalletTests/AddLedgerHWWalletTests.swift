@@ -192,10 +192,10 @@ import ComposableArchitecture
             $0.pairingError = nil
         }
         await store.receive(
-            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: true)
+            .pairingFailed(message: String(localizable: .ledgerErrorRejected), connectionLost: true)
         ) {
             $0.isConnecting = false
-            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
+            $0.pairingError = String(localizable: .ledgerErrorRejected)
             $0.selectedDevice = nil
             $0.devices = []
         }
@@ -228,10 +228,10 @@ import ComposableArchitecture
             $0.isPairing = true
         }
         await store.receive(
-            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: false)
+            .pairingFailed(message: String(localizable: .ledgerErrorRejected), connectionLost: false)
         ) {
             $0.isPairing = false
-            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
+            $0.pairingError = String(localizable: .ledgerErrorRejected)
         }
         await store.finish()
 

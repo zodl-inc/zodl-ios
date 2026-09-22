@@ -58,6 +58,10 @@ struct SendConfirmation {
         var isSending = false
         var isShielding = false
         var isTransparentAddress = false
+        /// MOB-2020 Phase 3.2: the Ledger signing sub-machine `SignWithLedgerView` drives. Reused
+        /// as-is from `pcztResolved` through `createTransactionFromPCZT` -- only the signer
+        /// differs from the Keystone QR machine above.
+        var ledgerSigning = LedgerSigning.State()
         var message: String
         var messageToBeShared: String?
         var orchardWarningShown = false
@@ -146,6 +150,7 @@ struct SendConfirmation {
         case closeTapped
         case confirmationScreenAppeared
         case confirmWithKeystoneTapped
+        case confirmWithLedgerTapped
         case enlargeQRCodeTapped
         case getSignatureTapped
         case goBackTappedFromRequestZec
@@ -188,6 +193,8 @@ struct SendConfirmation {
         case keystoneFirmwareAccepted
         case keystoneFirmwareUpdateCloseTapped
         case keystoneFirmwareUpdateRequired
+        case ledgerSignRequest
+        case ledgerSigning(LedgerSigning.Action)
         case pcztResolved(Pczt)
         case pcztSendFailed(ZcashError?)
         case pcztWithProofsResolved(Pczt)
@@ -216,6 +223,10 @@ struct SendConfirmation {
 
     var body: some Reducer<State, Action> {
         BindingReducer()
+
+        Scope(state: \.ledgerSigning, action: \.ledgerSigning) {
+            LedgerSigning()
+        }
 
         Reduce { state, action in
             switch action {
@@ -517,6 +528,11 @@ struct SendConfirmation {
             case .confirmWithKeystoneTapped:
                 return .none
 
+            case .confirmWithLedgerTapped:
+                // Handled by the coordinators, same as `.confirmWithKeystoneTapped`: they observe
+                // this action to push `SignWithLedgerView` and kick off `.resolvePCZT`.
+                return .none
+
             case .foundPCZT(let pcztWithSigs):
                 guard !state.scanFailedPreScanBinding && !state.scanFailedDuringScanBinding else {
                     return .none
@@ -586,6 +602,14 @@ struct SendConfirmation {
                 
             case .pcztResolved(let pczt):
                 state.pczt = pczt
+                // MOB-2020 Phase 3.2: a Ledger account signs the PCZT the SDK produced directly --
+                // no QR redaction step, since the PCZT never has to leave the app.
+                if state.selectedWalletAccount?.vendor == .ledger {
+                    return .merge(
+                        .send(.addProofsToPczt),
+                        .send(.ledgerSignRequest)
+                    )
+                }
                 return .merge(
                     .send(.redactPCZTForSigner),
                     .send(.addProofsToPczt)
@@ -637,7 +661,46 @@ struct SendConfirmation {
             case .pcztWithProofsResolved(let pcztWithProofs):
                 state.pcztWithProofs = pcztWithProofs
                 return .send(.createTransactionFromPCZT)
-                
+
+                // MARK: - Ledger
+
+            case .ledgerSignRequest:
+                guard let pczt = state.pczt, let account = state.selectedWalletAccount else {
+                    return .run { send in
+                        try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                        await send(.updateFailedData(-795, "ledgerSignRequest failed: no binding", ""))
+                        await send(.pcztSendFailed("ledgerSignRequest failed".toZcashError()))
+                    }
+                }
+                return .run { send in
+                    do {
+                        let binding = try walletStorage.exportLedgerBinding(account.id)
+                        await send(.ledgerSigning(.signRequested(.init(pczt: pczt, accountUUID: account.id, binding: binding))))
+                    } catch {
+                        try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                        await send(.updateFailedData(-795, "ledgerSignRequest failed: no binding", ""))
+                        await send(.pcztSendFailed("ledgerSignRequest failed".toZcashError()))
+                    }
+                }
+
+            case .ledgerSigning(.signed(let pcztWithSigs)):
+                // No Keystone firmware gate here: a Ledger-signed PCZT carries no Keystone stamp.
+                state.pcztWithSigs = pcztWithSigs
+                return .send(.createTransactionFromPCZT)
+
+            case .ledgerSigning(.signingFailed(let message, restartable: false, _)):
+                return .run { send in
+                    try? await mainQueue.sleep(for: .seconds(Constants.delay))
+                    await send(.updateFailedData(-794, message, ""))
+                    await send(.pcztSendFailed("ledger signing failed".toZcashError()))
+                }
+
+            case .ledgerSigning:
+                // Includes a restartable `.signingFailed`: the user stays on `SignWithLedgerView`
+                // to tap Try Again rather than being bounced to the failure screen. Every other
+                // `LedgerSigning.Action` is internal to that sub-machine.
+                return .none
+
             case .sharePCZT:
                 state.pcztToShare = state.pczt
                 return .none
@@ -723,7 +786,11 @@ struct SendConfirmation {
                 state.pcztToShare = nil
                 state.proposal = nil
                 state.redactedPcztForSigner = nil
-                return .none
+                state.ledgerSigning = .init()
+                return .merge(
+                    .cancel(id: LedgerSigning.CancelId.sign),
+                    .cancel(id: LedgerSigning.CancelId.scan)
+                )
             }
         }
     }
