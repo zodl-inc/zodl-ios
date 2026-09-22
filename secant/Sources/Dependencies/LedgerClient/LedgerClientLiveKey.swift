@@ -68,20 +68,45 @@ actor LedgerSession {
             transport = nil
             await previous.close()
         }
-        transport = try await scanner().connect(to: device)
+        LoggerProxy.event("Ledger: connecting to a \(device.model.productName)")
+        do {
+            transport = try await scanner().connect(to: device)
+            LoggerProxy.event("Ledger: connected")
+        } catch {
+            LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
+            throw error
+        }
     }
 
     func pairAccount(_ zip32AccountIndex: Zip32AccountIndex) async throws -> LedgerPairing {
         guard let transport else {
             throw LedgerClientError.notConnected
         }
-        return try await pair(transport, zip32AccountIndex)
+        LoggerProxy.event("Ledger: pairing account \(zip32AccountIndex.index)")
+        do {
+            let pairing = try await pair(transport, zip32AccountIndex)
+            LoggerProxy.event("Ledger: paired (Zcash app \(pairing.appVersion))")
+            return pairing
+        } catch {
+            LoggerProxy.warn("Ledger: pairing failed (\(Self.errorTag(error)))")
+            throw error
+        }
     }
 
     func disconnect() async {
         guard let previous = transport else { return }
         transport = nil
         await previous.close()
+        LoggerProxy.event("Ledger: disconnected")
+    }
+
+    /// The error's stable code (`ZLEDG…`) or type name — never its message, which for a custom
+    /// transport could carry device data.
+    private static func errorTag(_ error: Error) -> String {
+        if let zcashError = error as? ZcashError {
+            return zcashError.code.rawValue
+        }
+        return String(describing: type(of: error))
     }
 }
 
@@ -91,7 +116,9 @@ extension LedgerClient: DependencyKey {
         let networkType = zcashSDKEnvironment.network().networkType
 
         let session = LedgerSession(
-            makeScanner: { LedgerBluetoothScanner() },
+            // The SDK logs connection stages, frame counts and error kinds only — never command,
+            // reply, key or address bytes — so its debug log is safe to keep on.
+            makeScanner: { LedgerBluetoothScanner(logger: OSLogger(logLevel: .debug, category: LoggerConstants.ledgerLogs)) },
             pair: { transport, zip32AccountIndex in
                 let device = LedgerDevice(transport: transport, networkType: networkType)
                 let pairing = try await device.pairAccount(zip32AccountIndex: zip32AccountIndex)
