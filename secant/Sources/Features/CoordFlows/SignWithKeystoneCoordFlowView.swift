@@ -22,15 +22,27 @@ struct SignWithKeystoneCoordFlowView: View {
     var body: some View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
-                SignWithKeystoneView(
-                    store:
-                        store.scope(
-                            state: \.sendConfirmationState,
-                            action: \.sendConfirmation
-                        ),
-                    tokenName: tokenName
-                )
-                .navigationBarHidden(true)
+                if store.sendConfirmationState.selectedWalletAccount?.vendor == .ledger {
+                    SignWithLedgerView(
+                        store:
+                            store.scope(
+                                state: \.sendConfirmationState,
+                                action: \.sendConfirmation
+                            ),
+                        tokenName: tokenName
+                    )
+                    .navigationBarHidden(true)
+                } else {
+                    SignWithKeystoneView(
+                        store:
+                            store.scope(
+                                state: \.sendConfirmationState,
+                                action: \.sendConfirmation
+                            ),
+                        tokenName: tokenName
+                    )
+                    .navigationBarHidden(true)
+                }
             } destination: { store in
                 switch store.case {
                 case let .keystoneFirmwareUpdate(store):
