@@ -11,9 +11,10 @@ import ComposableArchitecture
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
-// `Home.State` carries `@Shared(.inMemory(.selectedWalletAccount))` process-global storage.
-// `.serialized` orders this suite's own tests so the account-vendor tests below cannot race each
-// other; none of the other tests in this file touch that key.
+// `Home.State` carries `@Shared(.inMemory(.selectedWalletAccount))` and
+// `@Shared(.inMemory(.walletAccounts))` process-global storage. `.serialized` orders this
+// suite's own tests so the account-vendor tests below cannot race each other; none of the
+// other tests in this file touch either key.
 @Suite(.serialized) struct HomeTests {
     private static func account(idByte: UInt8, vendor: WalletAccount.Vendor) -> WalletAccount {
         let keySource: String?
@@ -68,6 +69,32 @@ import ComposableArchitecture
         state.$selectedWalletAccount.withLock { $0 = Self.account(idByte: 0x06, vendor: .keystone) }
         #expect(!state.isLedgerAccountActive)
         #expect(state.isSpendingAvailable)
+    }
+
+    // MARK: - canConnectHWWallet
+
+    /// MOB-2020: the `ChooseHWWallet` entry points gate on this instead of the old
+    /// `walletAccounts.count == 1` check — true with zero or one hardware account connected,
+    /// false only once both a Keystone and a Ledger account are connected.
+    @Test func canConnectHWWalletIsTrueWithZeroOrOneHardwareAccountAndFalseWithBoth() {
+        var state = Home.State.initial
+
+        state.$walletAccounts.withLock { $0 = [] }
+        #expect(state.canConnectHWWallet)
+
+        state.$walletAccounts.withLock { $0 = [Self.account(idByte: 0x07, vendor: .keystone)] }
+        #expect(state.canConnectHWWallet)
+
+        state.$walletAccounts.withLock { $0 = [Self.account(idByte: 0x08, vendor: .ledger)] }
+        #expect(state.canConnectHWWallet)
+
+        state.$walletAccounts.withLock {
+            $0 = [
+                Self.account(idByte: 0x09, vendor: .keystone),
+                Self.account(idByte: 0x0A, vendor: .ledger)
+            ]
+        }
+        #expect(!state.canConnectHWWallet)
     }
 
     @MainActor @Test func synchronizerErrorBringsUpAlert() async {

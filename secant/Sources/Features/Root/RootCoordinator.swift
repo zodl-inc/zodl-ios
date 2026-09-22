@@ -178,6 +178,25 @@ extension Root {
                 state.path = .addLedgerHWWalletCoordFlow
                 return .none
 
+                // MARK: - Choose HW Wallet
+
+            case .chooseHWWallet(.keystoneTapped):
+                state.addKeystoneHWWalletCoordFlowState = .initial
+                state.path = .addKeystoneHWWalletCoordFlow
+                return .none
+
+            case .chooseHWWallet(.ledgerTapped):
+                return .send(.addLedgerHWWalletRequested)
+
+            case .chooseHWWallet(.closeTapped):
+                state.path = nil
+                return .none
+
+            case .home(.connectHWWalletTapped):
+                state.chooseHWWalletState = .initial
+                state.path = .chooseHWWallet
+                return .none
+
                 // MARK: - Add Keystone HW Wallet from Settings
 
             case .settings(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):

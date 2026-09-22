@@ -193,6 +193,18 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .chooseHWWallet {
+                                NavigationStack {
+                                    ChooseHWWalletView(
+                                        store:
+                                            store.scope(
+                                                state: \.chooseHWWalletState,
+                                                action: \.chooseHWWallet
+                                            )
+                                    )
+                                }
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .transactionsCoordFlow {
                                 TransactionsCoordFlowView(
                                     store:

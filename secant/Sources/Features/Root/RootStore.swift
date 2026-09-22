@@ -17,6 +17,7 @@ struct Root {
         enum Path {
             case addKeystoneHWWalletCoordFlow
             case addLedgerHWWalletCoordFlow
+            case chooseHWWallet
             case currencyConversionSetup
             case migrationCoordFlow
             case receive
@@ -308,6 +309,7 @@ struct Root {
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var addLedgerHWWalletCoordFlowState = AddLedgerHWWalletCoordFlow.State.initial
+        var chooseHWWalletState = ChooseHWWallet.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
@@ -344,8 +346,8 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
-            case .addKeystoneHWWalletCoordFlow, .addLedgerHWWalletCoordFlow, .currencyConversionSetup, .receive,
-                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+            case .addKeystoneHWWalletCoordFlow, .addLedgerHWWalletCoordFlow, .chooseHWWallet, .currencyConversionSetup,
+                 .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
         }
@@ -496,6 +498,7 @@ struct Root {
         /// `ledgerTapped` arm (Root reacts to it the same way `.home(.addKeystoneHWWalletTapped)`
         /// opens the Keystone flow).
         case addLedgerHWWalletRequested
+        case chooseHWWallet(ChooseHWWallet.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
@@ -693,6 +696,10 @@ struct Root {
 
         Scope(state: \.addLedgerHWWalletCoordFlowState, action: \.addLedgerHWWalletCoordFlow) {
             AddLedgerHWWalletCoordFlow()
+        }
+
+        Scope(state: \.chooseHWWalletState, action: \.chooseHWWallet) {
+            ChooseHWWallet()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {

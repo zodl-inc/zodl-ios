@@ -28,18 +28,12 @@ extension HomeView {
                 }
             }
             
-            if store.walletAccounts.count == 1 {
-                addKeystoneBannerView()
-                    .padding(.top, 8)
-                    .onTapGesture {
-                        store.send(.keystoneBannerTapped)
-                    }
-
+            if store.canConnectHWWallet {
                 ZashiButton(
                     String(localizable: .keystoneConnect),
                     type: .secondary
                 ) {
-                    store.send(.addKeystoneHWWalletTapped)
+                    store.send(.connectHWWalletTapped)
                 }
                 .padding(.top, 32)
                 .padding(.horizontal, 20)
@@ -93,37 +87,6 @@ extension HomeView {
                             .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                     }
                 }
-            }
-        }
-    }
-
-    @ViewBuilder func addKeystoneBannerView() -> some View {
-        WithPerceptionTracking {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(localizable: .keystoneDrawerBannerTitle)
-                        .zFont(.semiBold, size: 18, style: Design.Text.primary)
-                    
-                    Text(localizable: .keystoneDrawerBannerDesc)
-                        .zFont(size: 12, style: Design.Text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .lineSpacing(2)
-                        .padding(.top, 2)
-                        .padding(.trailing, 80)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 24)
-
-                Asset.Assets.Partners.keystonePromo.image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 346, height: 148)
-                    .clipped()
-            }
-            .frame(maxWidth: .infinity)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._4xl)
-                    .fill(Design.Surfaces.bgTertiary.color(colorScheme))
             }
         }
     }
