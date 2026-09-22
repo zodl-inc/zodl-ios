@@ -109,6 +109,96 @@ struct SettingsViewingKeyExportTests {
     }
 
     @Test
+    func fullExportRejectedWhileInactiveCanRestartWithFreshConsent() async throws {
+        let store = try await makeStore(authenticate: { true })
+        let advancedID = try #require(store.state.path.ids.last)
+        await tapExport(store, id: advancedID)
+        await store.receive(\.viewingKeyAuthenticationFinished)
+        let chooserID = try #require(store.state.path.ids.last)
+
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.selectKind(.full)))))
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.continueTapped))))
+        for item in ViewingKeyConsent.allCases {
+            await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.consentChanged(item, true)))))
+        }
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.exportFullTapped))))
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.pendingFullExport == true)
+        await store.send(.viewingKeyBecameInactive)
+        await store.receive(\.path)
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.consentDismissed))))
+        await store.receive { action in
+            guard case let .path(.element(id: id, action: .exportViewingKeys(.delegate(.openDetail(kind))))) = action else {
+                return false
+            }
+            return id == chooserID && kind == .full
+        }
+        #expect(store.state.path.count == 2)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.selectedKind == .full)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.pendingOpenDetail == nil)
+
+        await store.send(.viewingKeyBecameActive)
+        await store.receive(\.path)
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.continueTapped))))
+        #expect(store.state.path.count == 2)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.isConsentPresented == true)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.consent.isEmpty == true)
+        for item in ViewingKeyConsent.allCases {
+            await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.consentChanged(item, true)))))
+        }
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.exportFullTapped))))
+        #expect(store.state.path.count == 2)
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.consentDismissed))))
+        await store.receive { action in
+            guard case let .path(.element(id: id, action: .exportViewingKeys(.delegate(.openDetail(kind))))) = action else {
+                return false
+            }
+            return id == chooserID && kind == .full
+        }
+        #expect(store.state.path.count == 3)
+        #expect(store.state.path.last?.viewingKeyDetail?.detail.kind == .full)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.selectedKind == .full)
+        await store.finish()
+    }
+
+    @Test
+    func incomingRequestRejectedWhileInactiveCanRetryAfterActive() async throws {
+        let store = try await makeStore(authenticate: { true })
+        let advancedID = try #require(store.state.path.ids.last)
+        await tapExport(store, id: advancedID)
+        await store.receive(\.viewingKeyAuthenticationFinished)
+        let chooserID = try #require(store.state.path.ids.last)
+
+        await store.send(.viewingKeyBecameInactive)
+        await store.receive(\.path)
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.selectKind(.incoming)))))
+        // A queued Continue can arrive after the app has already become inactive.
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.continueTapped))))
+        await store.receive { action in
+            guard case let .path(.element(id: id, action: .exportViewingKeys(.delegate(.openDetail(kind))))) = action else {
+                return false
+            }
+            return id == chooserID && kind == .incoming
+        }
+        #expect(store.state.path.count == 2)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.selectedKind == .incoming)
+        #expect(store.state.path[id: chooserID]?.exportViewingKeys?.pendingOpenDetail == nil)
+
+        await store.send(.viewingKeyBecameActive)
+        await store.receive(\.path)
+        await store.send(.path(.element(id: chooserID, action: .exportViewingKeys(.continueTapped))))
+        await store.receive { action in
+            guard case let .path(.element(id: id, action: .exportViewingKeys(.delegate(.openDetail(kind))))) = action else {
+                return false
+            }
+            return id == chooserID && kind == .incoming
+        }
+        #expect(store.state.path.count == 3)
+        #expect(store.state.path.last?.viewingKeyDetail?.detail.kind == .incoming)
+        #expect(store.state.path.last?.viewingKeyDetail?.detail.isRevealed == false)
+        await store.finish()
+    }
+
+    @Test
     func poppingDetailRetainsChooserWhilePoppingChooserRemovesBothRoutes() async throws {
         let store = try await makeStoreWithPreparedShare()
         let detailID = try #require(store.state.path.ids.last)

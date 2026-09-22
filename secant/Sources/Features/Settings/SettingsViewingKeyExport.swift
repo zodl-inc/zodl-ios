@@ -155,7 +155,6 @@ extension Settings {
         guard state.path.ids.last == chooserID,
               let chooser = state.path[id: chooserID]?.exportViewingKeys,
               !chooser.isInvalidated,
-              !state.isViewingKeyInactive,
               chooser.pendingOpenDetail == kind,
               chooser.selectedKind == kind,
               chooser.session.key(for: kind) != nil,
@@ -165,7 +164,9 @@ extension Settings {
               ) else {
             return .none
         }
+        // Consume a valid request even while inactive so Continue can start a fresh attempt.
         state.path[id: chooserID, case: \.exportViewingKeys]?.pendingOpenDetail = nil
+        guard !state.isViewingKeyInactive else { return .none }
         var detail = ViewingKeyDetail.State(session: chooser.session, kind: kind)
         detail.isInactive = state.isViewingKeyInactive
         state.path.append(.viewingKeyDetail(detail))
