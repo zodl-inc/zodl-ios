@@ -14,6 +14,10 @@ import Foundation
 @preconcurrency import ZcashLightClientKit
 
 enum LedgerErrorText {
+    /// Maps a Ledger failure to the message shown for a **pairing/export** failure -- the
+    /// `AddLedgerHWWallet` scan/connect/pair flow. `.ledgerUserRejected` means the user declined
+    /// the viewing-key export on the device here; see `signingMessage(for:)` for the same SDK
+    /// case's *different* meaning once signing exists (declining a transaction).
     static func message(for error: Error) -> String {
         switch error {
         case ZcashError.ledgerBluetoothPoweredOff:
@@ -26,12 +30,8 @@ enum LedgerErrorText {
             return String(localizable: .ledgerErrorWrongApp)
         case ZcashError.ledgerAppTooOld:
             return String(localizable: .ledgerErrorAppTooOld)
-        // MOB-2020 Phase 3.2: `.ledgerUserRejected` is now also thrown mid-signing (the user
-        // declined the transaction on the device), not only during pairing's viewing-key export
-        // -- `ledger.error.rejected` reads correctly for either, unlike the old pairing-specific
-        // `ledger.error.userRejected` string it replaces here.
         case ZcashError.ledgerUserRejected:
-            return String(localizable: .ledgerErrorRejected)
+            return String(localizable: .ledgerErrorUserRejected)
         case ZcashError.ledgerBluetoothPairingRefused:
             return String(localizable: .ledgerErrorPairingRefused)
         case ZcashError.ledgerDeviceMismatch:
@@ -51,6 +51,21 @@ enum LedgerErrorText {
                 return String(localizable: .ledgerErrorConnectionLost)
             }
             return String(localizable: .ledgerErrorGeneric)
+        }
+    }
+
+    /// Maps a Ledger failure to the message shown for a **signing** failure --
+    /// `LedgerSigning`/`SignWithLedgerView`'s ceremony. `.ledgerUserRejected` means the user
+    /// declined the *transaction* on the device here, distinct from `message(for:)`'s
+    /// pairing-time meaning (declining the viewing-key export) -- the two contexts need different
+    /// copy for the same SDK case. Every other case reads correctly in both contexts, so this
+    /// defers to `message(for:)`.
+    static func signingMessage(for error: Error) -> String {
+        switch error {
+        case ZcashError.ledgerUserRejected:
+            return String(localizable: .ledgerErrorRejected)
+        default:
+            return message(for: error)
         }
     }
 

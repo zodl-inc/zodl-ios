@@ -180,7 +180,7 @@ struct LedgerSigning {
                     } catch {
                         await send(
                             .signingFailed(
-                                message: LedgerErrorText.message(for: error),
+                                message: LedgerErrorText.signingMessage(for: error),
                                 restartable: LedgerErrorText.isRestartable(error),
                                 connectionLost: LedgerErrorText.isConnectionLost(error)
                             )

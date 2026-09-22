@@ -41,11 +41,11 @@ import Foundation
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerAppTooOld("3.5.0")))
     }
 
-    // MOB-2020 Phase 3.2: `.ledgerUserRejected` now maps to the vendor-neutral signing copy
-    // (`ledger.error.rejected`), not the old pairing-specific `ledger.error.userRejected` --
-    // see `LedgerErrorText.message(for:)`'s comment on this case.
-    @Test func userRejectedMapsToRejected() {
-        #expect(LedgerErrorText.message(for: ZcashError.ledgerUserRejected) == String(localizable: .ledgerErrorRejected))
+    // `.ledgerUserRejected` means the export was declined during pairing here --
+    // `message(for:)` keeps this pairing-specific copy; `signingMessage(for:)` (below) gives the
+    // same SDK case its distinct signing-time copy instead.
+    @Test func userRejectedMapsToUserRejected() {
+        #expect(LedgerErrorText.message(for: ZcashError.ledgerUserRejected) == String(localizable: .ledgerErrorUserRejected))
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerUserRejected))
     }
 
@@ -77,6 +77,24 @@ import Foundation
         #expect(LedgerErrorText.message(for: ZcashError.ledgerCapsMismatch("some SDK reason")) == String(localizable: .ledgerErrorNotSignable))
         #expect(!LedgerErrorText.isConnectionLost(ZcashError.ledgerCapsMismatch("some SDK reason")))
         #expect(!LedgerErrorText.message(for: ZcashError.ledgerCapsMismatch("some SDK reason")).contains("some SDK reason"))
+    }
+
+    // MARK: - signingMessage(for:)
+
+    // The signing-time meaning of `.ledgerUserRejected` (declined the transaction) differs from
+    // `message(for:)`'s pairing-time meaning (declined the export) -- `signingMessage(for:)`
+    // gives it its own copy instead of deferring.
+    @Test func signingMessageForUserRejectedIsRejected() {
+        #expect(LedgerErrorText.signingMessage(for: ZcashError.ledgerUserRejected) == String(localizable: .ledgerErrorRejected))
+    }
+
+    // Every other case reads correctly in both contexts, so `signingMessage(for:)` just defers
+    // to `message(for:)` -- proven here with `.ledgerDeviceMismatch` as a representative case.
+    @Test func signingMessageForDeviceMismatchMatchesMessage() {
+        #expect(
+            LedgerErrorText.signingMessage(for: ZcashError.ledgerDeviceMismatch)
+            == LedgerErrorText.message(for: ZcashError.ledgerDeviceMismatch)
+        )
     }
 
     // MARK: - Connection-lost transport failures

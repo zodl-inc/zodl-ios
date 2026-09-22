@@ -179,14 +179,18 @@ import ComposableArchitecture
             }
         }
 
+        // Routed through `LedgerErrorText.signingMessage(for:)`, not `message(for:)` -- the two
+        // give `.ledgerUserRejected` different copy (signing-declined vs. pairing-declined).
+        let expectedMessage = LedgerErrorText.signingMessage(for: ZcashError.ledgerUserRejected)
+
         await store.send(.startSigningIfReady) {
             $0.phase = .signing(.identifyingDevice)
         }
         await store.receive(
-            .signingFailed(message: String(localizable: .ledgerErrorRejected), restartable: true, connectionLost: false)
+            .signingFailed(message: expectedMessage, restartable: true, connectionLost: false)
         ) {
             $0.phase = .failed
-            $0.errorMessage = String(localizable: .ledgerErrorRejected)
+            $0.errorMessage = expectedMessage
             $0.isRestartable = true
             $0.isConnectionLost = false
         }
@@ -201,7 +205,7 @@ import ComposableArchitecture
             $0.phase = .signing(.identifyingDevice)
         }
         await store.receive(
-            .signingFailed(message: String(localizable: .ledgerErrorRejected), restartable: true, connectionLost: false)
+            .signingFailed(message: expectedMessage, restartable: true, connectionLost: false)
         ) {
             $0.phase = .failed
         }
