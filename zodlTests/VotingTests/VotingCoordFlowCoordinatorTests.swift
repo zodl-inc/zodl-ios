@@ -4582,6 +4582,122 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .open(binding: .voting))
         }
 
+        /// The same overlap, one suspension later: the tracking-only open is
+        /// already inside the call that builds the session, where the entry's
+        /// cancellation does not reach it. What keeps the round off a session
+        /// that binds no hotkey is then the session registry alone -- it gives
+        /// the parked attempt up rather than hand the entry a session bound for
+        /// somebody else -- so this drives the real registry over a session the
+        /// test owns, instead of a stub that answers whatever it is asked.
+        @MainActor
+        @Test func anEntryWhileRecoveryIsInsideTheRegistryFactoryStillGetsAVotingSession() async throws {
+            let roundId = activeRoundId
+            let recorder = EventRecorder()
+            let events = SignalledRecords<String>()
+            let buildHold = ResumableGate()
+            let recoverySession = FakeSession(roundId: roundId, events: events)
+            let entrySession = FakeSession(roundId: roundId, events: events)
+            let factory = FakeSessionFactory(
+                sessions: [recoverySession, entrySession],
+                hold: buildHold,
+                events: events
+            )
+            let registry = VotingSessionRegistryCore<FakeSession> { inputs, binding, route, epoch in
+                try await factory.make(inputs, binding, route, epoch)
+            }
+            let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: roundId)
+            let store = Store(initialState: pendingShareSweepState()) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in try self.plan(openProposals: [1, 2]) }
+                // The whole point of the test: the flow's session calls go to
+                // the registry the app uses, not to a stub that cannot have the
+                // behaviour being asked about.
+                $0.votingCrypto.openRoundSession = { inputs, binding, route, epoch in
+                    recorder.record("openRoundSession.\(FakeSessionFactory.kind(of: binding))")
+                    try await registry.open(inputs: inputs, binding: binding, route: route, epoch: epoch)
+                }
+                $0.votingCrypto.closeRoundSession = { closing in await registry.close(closing) }
+                $0.votingCrypto.closeAllRoundSessions = { await registry.closeAll() }
+                $0.votingCrypto.cancelRoundSession = { cancelling in await registry.cancel(cancelling) }
+                $0.votingCrypto.trackShares = { roundId, _ in
+                    recorder.record("trackShares:\(roundId)")
+                    return AsyncThrowingStream { $0.finish() }
+                }
+            }
+
+            store.send(.pendingShareRoundsLoaded([pending]))
+            let recoveryEpoch = try #require(store.state.roundCache[roundId]?.sessionEpoch)
+            // Parked where no cancellation reaches it: the build is registered
+            // with the registry and suspended inside it.
+            await waitForStore {
+                events.values.contains(FakeSessionFactory.building(roundId, "sharesOnly", epoch: recoveryEpoch))
+            }
+            #expect(store.state.roundCache[roundId]?.liveSession == .opening)
+
+            // The voter enters the round while that build is still inside.
+            store.send(.startActiveRoundPipeline(roundId: roundId))
+            let entryEpoch = try #require(store.state.roundCache[roundId]?.sessionEpoch)
+            #expect(entryEpoch != recoveryEpoch, "an entry opens on a session epoch of its own")
+            // The registry has given the parked attempt up: the wait for it is
+            // a drain of the registry's, and the entry's own build is behind
+            // it. Nothing is released until that has happened, so the entry
+            // cannot simply be replacing a session recovery had finished.
+            await waitForAnswer("the entry to give up the parked attempt") {
+                await registry.pendingDrainCount == 1
+            }
+            #expect(
+                await factory.calls == 1,
+                "the entry must not build while the attempt it gave up is still inside the SDK"
+            )
+
+            buildHold.open()
+            await waitForStore { store.state.roundCache[roundId]?.liveSession == .open(binding: .voting) }
+
+            // The round's session is the one the entry asked for: built with
+            // the hotkey binding, on the entry's own epoch, after the attempt
+            // it superseded had left the SDK.
+            let recorded = events.values
+            let recoveryBuild = try #require(
+                recorded.firstIndex(of: FakeSessionFactory.building(roundId, "sharesOnly", epoch: recoveryEpoch))
+            )
+            let entryBuild = try #require(
+                recorded.firstIndex(of: FakeSessionFactory.building(roundId, "voting", epoch: entryEpoch))
+            )
+            #expect(recoveryBuild < entryBuild)
+            #expect(await factory.calls == 2)
+            #expect(await registry.openRoundIds == [roundId])
+            let current = try await registry.session(for: roundId)
+            #expect(current === entrySession, "the round holds the session the voter's entry built")
+
+            // The session the superseded attempt built anyway is closed, and
+            // closed by the registry, so nothing of that attempt is left behind
+            // the round the voter is now on.
+            await waitForAnswer("the superseded attempt's session to finish closing") {
+                await registry.pendingDrainCount == 0
+            }
+            #expect(recoverySession.recorded.closesFinished == 1)
+            #expect(entrySession.recorded.closesStarted == 0)
+
+            // One more full pass through the store and its effects, so what the
+            // resumed tracking-only open did is a fact about work that finished
+            // rather than work that never started.
+            store.send(.pollShareStatus(roundId: roundId))
+            await waitForStore { recorder.events().contains("trackShares:\(roundId)") }
+
+            #expect(
+                recorder.events().filter { $0.hasPrefix("openRoundSession") }
+                    == ["openRoundSession.sharesOnly", "openRoundSession.voting"],
+                "each path opened once; neither was handed the other's session"
+            )
+            #expect(
+                store.state.roundCache[roundId]?.liveSession == .open(binding: .voting),
+                "the tracking-only open must not claim the round it was refused"
+            )
+            #expect(store.state.roundCache[roundId]?.sessionEpoch == entryEpoch)
+        }
+
         /// A refusal that says something about the round rather than about the
         /// moment is not waited out: the same call an hour later is the same
         /// call. Driven beside a refusal that *can* pass, so the difference is

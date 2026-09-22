@@ -1899,19 +1899,18 @@ extension VotingCoordFlow {
     /// allowed to change.
     ///
     /// Fresh means the round's other open has to be gone as well as its previous
-    /// session. The registry joins an open that is already in flight instead of
-    /// starting a second one, so an entry that left the pending-share sweep's
-    /// tracking-only open running would be handed that open's roster-only
-    /// session, or have it registered over this one. Cancelling
-    /// `cancelShareTrackingResumeId` below is what stops that, together with the
+    /// session. A pending-share sweep's tracking-only open still running is
+    /// building a session this round is about to stop wanting, so cancelling
+    /// `cancelShareTrackingResumeId` below stops it early, together with the
     /// cancellation check the resume effect makes immediately before it opens
     /// anything.
     ///
-    /// Not for a sweep open that is already inside the SDK call, though: the
-    /// cancellation cannot reach it there, and the registry gives one session
-    /// per round to whoever asks, whatever binding each of them asked for. This
-    /// entry can still be handed that session, and the window lasts as long as
-    /// the SDK's own open does.
+    /// What the round is left holding does not rest on that, though, because the
+    /// cancellation does not reach a sweep open already inside the SDK call. The
+    /// registry refuses to hand an open to a caller that asked for a different
+    /// binding, route or epoch: it gives that attempt up -- closing whatever the
+    /// SDK still answers it with -- and builds what this entry asked for. So the
+    /// round ends up on the session this entry opened either way.
     func reduceStartActiveRoundPipeline(_ state: inout State, roundId: String) -> Effect<Action> {
         guard let item = state.allRounds.first(where: { $0.id == roundId }),
               item.session.status == .active
@@ -2134,14 +2133,12 @@ extension VotingCoordFlow {
         // against a session that has been replaced -- and so does a scheduled
         // reopen, which exists to give the round a session this entry is about
         // to give it anyway. And so does a tracking-only open already in
-        // flight: the registry joins an open a round already has rather than
-        // starting a second one, so leaving it running would either hand this
-        // entry the roster-only session it is building or register that session
-        // over the one this open makes -- and the round would be left holding a
-        // session that can sign nothing while its own fact says it can. The
-        // pass that may be in flight is left to end on its own, because
-        // cancelling one finishes the session under it and this open closes
-        // that session anyway.
+        // flight: the roster-only session it is building is not one this round
+        // will use once this entry has asked for one that can sign, and the
+        // registry closes it unopened rather than hand it over, so running it
+        // to the end buys the round nothing. The pass that may be in flight is
+        // left to end on its own, because cancelling one finishes the session
+        // under it and this open closes that session anyway.
         return .merge(
             .cancel(id: cancelDelegationPrecomputeId),
             .cancel(id: cancelShareTrackingReArmId(roundId)),
@@ -3761,10 +3758,11 @@ extension VotingCoordFlow {
     /// the effect checks the cancellation immediately before it opens anything,
     /// so the round keeps the session the voter's entry gave it rather than a
     /// roster-only one registered behind it. Once this open is inside the SDK
-    /// call the cancellation no longer reaches it, and the registry joins the
-    /// entry's open to this one regardless of the binding either asked for --
-    /// so for as long as that call takes, the round can still end up on the
-    /// roster-only session this opened.
+    /// call the cancellation no longer reaches it, and the registry is what
+    /// keeps the round right from there: an open asking for a different
+    /// binding, route or epoch supersedes this one rather than being joined to
+    /// it, so the entry builds the session it asked for and whatever this open
+    /// still produces is closed without ever registering.
     func reducePendingShareRoundsLoaded(
         _ state: inout State,
         rounds: [VotingPendingShareRound]
@@ -3865,13 +3863,11 @@ extension VotingCoordFlow {
                 }
                 // Entering the round cancels this open, and the read above is
                 // long enough for the voter to do it while this is in flight.
-                // The registry joins an open a round already has, so opening now
-                // would either hand the entry this roster-only session or
-                // register it over the one the entry just made -- leaving the
-                // round with a session that binds no hotkey and a fact that says
-                // it has one that does. Nothing is sent from here on the way
-                // out: a cancelled effect's sends are dropped, and the round's
-                // state is the entry's.
+                // Opening now would build a roster-only session the entry has
+                // already made the round not want, and the registry would close
+                // it again unopened. Nothing is sent from here on the way out
+                // either: a cancelled effect's sends are dropped, and the
+                // round's state is the entry's.
                 try Task.checkCancellation()
                 try await votingCrypto.openRoundSession(
                     inputs,

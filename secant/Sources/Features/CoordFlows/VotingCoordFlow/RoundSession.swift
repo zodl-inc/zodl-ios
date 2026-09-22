@@ -375,19 +375,18 @@ enum LiveSessionState: Equatable {
 /// can be upgraded afterwards.
 ///
 /// Which is only an answer to "what can this round do" because the two opens
-/// are kept from finishing over each other. The registry joins an open a round
-/// already has rather than starting a second one, so an entry that found the
-/// sweep's open still running would be handed a roster-only session -- so
-/// entering a round cancels that open, and the open checks its own cancellation
-/// immediately before it opens anything. What a round is left holding is then
-/// what the path that won asked for.
+/// are kept from finishing over each other. Entering a round cancels the
+/// sweep's open, and that open checks its own cancellation immediately before
+/// it opens anything, so a session the round has stopped wanting is not built
+/// in the first place. What a round is left holding is what the path that won
+/// asked for.
 ///
-/// Up to the SDK call, that is. An open already inside it when the entry
-/// arrives cannot be stopped there, and the registry hands out one session per
-/// round whatever binding each caller asked for -- so that one window can still
-/// leave a round holding a session bound differently from the path that opened
-/// it, and closing it needs the registry to join only an attempt whose binding
-/// matches.
+/// Including when the sweep's open is already inside the SDK call, where no
+/// cancellation reaches it. The registry refuses to hand an open to a caller
+/// that asked for a different binding, route or epoch: it gives that attempt
+/// up, closes whatever the SDK still answers it with, and builds the caller's
+/// own -- so there is no window in which a round is left holding a session
+/// bound differently from the path that opened it.
 enum LiveSessionBinding: Equatable {
     /// The round's roster and nothing else. It can confirm the round's helper
     /// shares; holding no hotkey, it can sign nothing. What the pending-share

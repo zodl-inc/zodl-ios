@@ -685,6 +685,27 @@ extension VotingTestSuite {
         #expect(condition(), "Timed out waiting for store state", sourceLocation: sourceLocation)
     }
 
+    /// The same wait, for a fact only an actor can answer -- a session
+    /// registry's own bookkeeping, say, which no `@MainActor` read reaches.
+    ///
+    /// Still a latched fact read off the thing under test rather than a sleep:
+    /// this returns the moment the condition holds, and the ceiling is only so
+    /// a condition that never comes names itself instead of hanging the suite.
+    func waitForAnswer(
+        _ what: String,
+        timeoutNanoseconds: UInt64 = 60_000_000_000,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        condition: @escaping @Sendable () async -> Bool
+    ) async {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        var held = await condition()
+        while !held, DispatchTime.now().uptimeNanoseconds < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            held = await condition()
+        }
+        #expect(held, "Timed out waiting for \(what)", sourceLocation: sourceLocation)
+    }
+
     /// Signs whichever bundle the flow has put on screen, the way the voter
     /// does it: open the scanner, then hand back the PCZT the device signed.
     @MainActor
