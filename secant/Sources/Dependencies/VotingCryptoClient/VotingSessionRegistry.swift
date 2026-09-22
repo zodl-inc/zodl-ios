@@ -41,14 +41,18 @@ extension VotingRoundSession: VotingRegistrySession {}
 /// has two sessions at once, a session is always closed before it is dropped,
 /// and a session never outlives the store it persists to.
 ///
-/// Opening is single-flight. Building a session suspends twice — closing the
-/// round's previous session, then the SDK call itself — and an actor lets other
-/// work run across a suspension, so two concurrent opens for one round would
-/// otherwise each find nothing, each build a session, and the second would
-/// overwrite the first: two drivers contending for the round's rows, one of
-/// them unreachable and never closed. So the first open registers its attempt
-/// before it suspends and later openers await that attempt instead of starting
-/// their own.
+/// Opening is single-flight per round, for the opens that want the same
+/// session. Building a session suspends twice — closing the round's previous
+/// session, then the SDK call itself — and an actor lets other work run across
+/// a suspension, so two concurrent opens for one round would otherwise each
+/// find nothing, each build a session, and the second would overwrite the
+/// first: two drivers contending for the round's rows, one of them unreachable
+/// and never closed. So the first open registers its attempt before it
+/// suspends, and a later opener awaits that attempt instead of starting its
+/// own — as long as it is asking for the same session. One that asks for a
+/// different binding, route or epoch supersedes the attempt instead of joining
+/// it, because the session being built is not the one it could use; see
+/// ``open(inputs:binding:route:epoch:)``.
 ///
 /// Teardown is owned rather than awaited in place. Closing takes the session
 /// off the books at once and leaves a *drain* behind — the task cancelling and
@@ -76,11 +80,20 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         _ epoch: UInt64
     ) async throws -> Session
 
-    /// One open in flight. The id tells an attempt apart from the one that
-    /// replaced it, so a finishing open only ever clears its own entry.
+    /// One open in flight, with what it was asked for. A second caller joins
+    /// it only when it asks for the same session; the id tells an attempt
+    /// apart from the one that replaced it, so a finishing open only ever
+    /// clears its own entry.
     private struct OpenAttempt {
         let id: UInt64
+        let binding: VotingSessionBinding
+        let route: VotingTransportRoute
+        let epoch: UInt64
         let task: Task<Session, Error>
+
+        func isCompatible(binding: VotingSessionBinding, route: VotingTransportRoute, epoch: UInt64) -> Bool {
+            self.binding == binding && self.route == route && self.epoch == epoch
+        }
     }
 
     /// One piece of teardown still running: a session being closed, or an
@@ -133,8 +146,28 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     /// caller sees its own error rather than a half-opened round.
     ///
     /// A second call for the same round while the first is still building joins
-    /// it: both callers get the one session, or both get the one error. Callers
-    /// for different rounds do not wait for each other.
+    /// it when it asks for the same session — the same binding, route and epoch:
+    /// both callers get the one session, or both get the one error. Callers for
+    /// different rounds do not wait for each other.
+    ///
+    /// A call that asks for anything else supersedes that attempt rather than
+    /// joining it. The two callers do not want the same session: the round's
+    /// share recovery opens with a roster-only binding while the voter's own
+    /// entry carries the voting hotkey, and a voter handed the recovery session
+    /// would have a round that says it can vote and a session that fails every
+    /// cast for a key it never had. The same goes for a route, which a session
+    /// fixes for its whole life, and for the submission epoch. So the attempt is
+    /// abandoned — cancelled, with the wait for it left behind as a drain — and
+    /// this open builds what its caller asked for. The abandoned attempt's own
+    /// fences close any session it still produces; nothing of it registers.
+    ///
+    /// Nothing waits in a circle across that. ``abandonOpen(_:)`` registers the
+    /// drain before this open creates its attempt, so the new attempt inherits
+    /// that drain in its snapshot and waits for it, the drain waits for the
+    /// abandoned attempt, and the abandoned attempt waits for neither: it took
+    /// its own snapshot before the drain existed, or it never started, in which
+    /// case it is already cancelled and leaves at its first fence. The waiting
+    /// runs one way.
     @discardableResult
     func open(
         inputs: VotingSessionInputs,
@@ -145,7 +178,11 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         let roundId = Self.key(inputs.roundParams.voteRoundId)
 
         if let inFlight = opening[roundId] {
-            return try await inFlight.task.value
+            if inFlight.isCompatible(binding: binding, route: route, epoch: epoch) {
+                return try await inFlight.task.value
+            }
+
+            abandonOpen(roundId)
         }
 
         // Registered before the first suspension below, so a concurrent open
@@ -153,6 +190,9 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         nextAttemptId &+= 1
         let attempt = OpenAttempt(
             id: nextAttemptId,
+            binding: binding,
+            route: route,
+            epoch: epoch,
             task: Task { [weak self] in
                 guard let self else {
                     throw VotingSessionError.notOpen(roundId: roundId)
@@ -325,13 +365,16 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
 
     /// Cancel an open still building a session for `key` and leave the wait for
     /// it behind as a drain, so nothing registers after the caller has decided
-    /// the round is closed — and so a closer that arrives later waits for the
+    /// the round is closed — or that the session being built is not the one the
+    /// round should have — and so a closer that arrives later waits for the
     /// attempt too.
     ///
     /// Removing and cancelling happen here, before the drain is registered and
     /// before anything suspends: an attempt that has not started yet would
     /// otherwise find this drain in its own snapshot and wait for a drain that
-    /// is waiting for it.
+    /// is waiting for it. It is also what lets the open that supersedes an
+    /// attempt inherit this drain — the entry is gone and the drain is there by
+    /// the time that open registers an attempt of its own.
     private func abandonOpen(_ key: String) {
         guard let attempt = opening.removeValue(forKey: key) else { return }
 

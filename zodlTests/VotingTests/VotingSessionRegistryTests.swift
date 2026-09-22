@@ -319,7 +319,9 @@ import Testing
 
         let recorded = events.values
         let closed = try #require(recorded.firstIndex(of: "closed(\(roundId))"))
-        let replacementBuilt = try #require(recorded.lastIndex(of: "building(\(roundId))"))
+        let replacementBuilt = try #require(
+            recorded.lastIndex(of: FakeSessionFactory.building(roundId, "sharesOnly", epoch: 0))
+        )
         #expect(closed < replacementBuilt, "the replacement must be built only after the previous close returned")
     }
 
@@ -501,6 +503,365 @@ import Testing
         #expect(await registry.pendingDrainCount == 0)
     }
 
+    // MARK: - An open that asks for a different session than the one being built
+
+    /// The two callers that open a round do not ask for the same session: the
+    /// background share recovery binds no hotkey, the voter's entry into the
+    /// round carries the voting one. An entry arriving while recovery's build
+    /// is still inside the SDK must not be handed recovery's session -- the
+    /// round would then be marked as able to vote while every cast failed for
+    /// a key that session never had. Cancelling the recovery caller does not
+    /// help, because the build runs on a task of the registry's own, so the
+    /// registry is where the parked attempt has to be given up.
+    @Test func anOpenThatAsksForADifferentBindingSupersedesTheParkedAttempt() async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let recoverySession = FakeSession(roundId: roundId, events: events)
+        let votingSession = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(
+            sessions: [recoverySession, votingSession],
+            hold: factoryHold,
+            events: events
+        )
+        let registry = makeFakeRegistry(factory)
+
+        let recovering = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
+        }
+        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
+
+        // Inert by design, and the reason this is the registry's job: the
+        // attempt runs on a task of the registry's own, which no caller holds.
+        recovering.cancel()
+
+        let entering = Task {
+            try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
+                epoch: 11
+            )
+        }
+        // The supersede has happened: the wait for the attempt it gave up is a
+        // drain of this registry, and the entry's own attempt is behind it.
+        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
+        #expect(
+            await factory.calls == 1,
+            "the entry must not build while the attempt it superseded is still inside the SDK"
+        )
+
+        factoryHold.open()
+        let opened = try await entering.value
+
+        #expect(opened === votingSession, "the entry must get the session it asked for")
+        #expect(await factory.calls == 2)
+        #expect(await registry.openRoundIds == [roundId])
+        let current = try await registry.session(for: roundId)
+        #expect(current === votingSession)
+        if case .success = await recovering.result {
+            Issue.record("a superseded open must not hand back a session")
+        }
+
+        let recorded = events.values
+        let recoveryBuild = try #require(
+            recorded.firstIndex(of: FakeSessionFactory.building(roundId, "sharesOnly", epoch: 10))
+        )
+        let entryBuild = try #require(
+            recorded.firstIndex(of: FakeSessionFactory.building(roundId, "voting", epoch: 11))
+        )
+        #expect(
+            recoveryBuild < entryBuild,
+            "the entry's build must wait for the attempt it gave up to leave the SDK"
+        )
+
+        // The session the superseded attempt built anyway is closed, and closed
+        // by the registry: that close is a drain like any other, so the books
+        // settle back to one session and nothing pending.
+        await settle("the superseded attempt's session to finish closing") {
+            await registry.pendingDrainCount == 0
+        }
+        #expect(recoverySession.recorded.closesFinished == 1)
+        #expect(recoverySession.recorded.cancels >= 1)
+        #expect(await registry.openRoundIds == [roundId], "the entry's session survives the supersede")
+    }
+
+    /// Two opens that ask for the same session still share one build. Making
+    /// the second caller build again would open the round twice for nothing,
+    /// and the round would keep the second of the two sessions.
+    @Test func anOpenWithTheSameBindingRouteAndEpochJoinsTheAttempt() async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let session = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(sessions: [session], hold: factoryHold, events: events)
+        let registry = makeFakeRegistry(factory)
+        let binding = VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A]))
+
+        let first = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, binding: binding, route: .tor, epoch: 7)
+        }
+        await settle("the first open to reach the factory") { await factory.calls == 1 }
+
+        let second = Task {
+            // Released from here, as this caller's last act before entering the
+            // registry: the attempt it has to join is still in flight when it
+            // gets there.
+            factoryHold.open()
+            return try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: binding,
+                route: .tor,
+                epoch: 7
+            )
+        }
+
+        let firstSession = try await first.value
+        let secondSession = try await second.value
+
+        #expect(firstSession === session)
+        #expect(secondSession === session, "an open asking for the same session joins the one in flight")
+        #expect(await factory.calls == 1, "a caller asking for the same session must not build a second one")
+        #expect(session.recorded.closesStarted == 0, "nothing was replaced, so nothing was closed")
+        #expect(await registry.openRoundIds == [roundId])
+        #expect(await registry.pendingDrainCount == 0)
+    }
+
+    /// A session's route is fixed for its whole life, so a caller that asked
+    /// for Tor cannot be handed one being built on a direct connection.
+    @Test func anOpenForADifferentRouteSupersedesTheParkedAttempt() async throws {
+        try await expectTheParkedAttemptIsSuperseded(
+            by: VotingSessionBinding(roster: []),
+            route: .tor,
+            epoch: 0
+        )
+    }
+
+    /// A session built against one submission epoch is not the session a caller
+    /// asking for the next one wants.
+    @Test func anOpenForADifferentEpochSupersedesTheParkedAttempt() async throws {
+        try await expectTheParkedAttemptIsSuperseded(
+            by: VotingSessionBinding(roster: []),
+            route: .direct,
+            epoch: 1
+        )
+    }
+
+    /// The session a superseded attempt built anyway is closed on its way out,
+    /// and that close belongs to the registry -- but it is not something the
+    /// caller that superseded it waits for. So the round's session is the one
+    /// that caller asked for even while the other one is still closing, and the
+    /// late result never reaches the books.
+    @Test func aSupersededAttemptsLateResultNeverRegisters() async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let closeHold = ResumableGate()
+        let late = FakeSession(roundId: roundId, events: events, closeHold: closeHold)
+        let entrySession = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(sessions: [late, entrySession], hold: factoryHold, events: events)
+        let registry = makeFakeRegistry(factory)
+
+        let recovering = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
+        }
+        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
+
+        let entering = Task {
+            try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
+                epoch: 10
+            )
+        }
+        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
+
+        factoryHold.open()
+        let opened = try await entering.value
+        await settle("the superseded attempt's session to start closing") { late.isClosing }
+
+        #expect(opened === entrySession)
+        #expect(await registry.openRoundIds == [roundId], "the late result must never register")
+        let current = try await registry.session(for: roundId)
+        #expect(current === entrySession)
+        #expect(
+            late.recorded.closesFinished == 0,
+            "the late session is still closing -- that is what makes this a question"
+        )
+        #expect(await registry.pendingDrainCount == 1, "the late session's close is the only thing still running")
+        if case .success = await recovering.result {
+            Issue.record("a superseded open must not hand back a session")
+        }
+
+        closeHold.open()
+        await settle("the late session's close to finish") { await registry.pendingDrainCount == 0 }
+        #expect(late.recorded.closesFinished == 1)
+        #expect(await registry.openRoundIds == [roundId])
+    }
+
+    /// A wholesale teardown has to wait for the session a superseded attempt
+    /// built, the same as for any other close: returning from `closeAll` is the
+    /// licence to close the sidecar's store and delete its file, and that
+    /// session is still holding it.
+    @Test func aCloseAllWaitsForTheSessionASupersededAttemptBuilt() async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let closeHold = ResumableGate()
+        let superseded = FakeSession(roundId: roundId, events: events, closeHold: closeHold)
+        let entrySession = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(sessions: [superseded, entrySession], hold: factoryHold, events: events)
+        let registry = makeFakeRegistry(factory)
+
+        let recovering = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
+        }
+        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
+
+        let entering = Task {
+            try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
+                epoch: 10
+            )
+        }
+        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
+
+        factoryHold.open()
+        _ = try await entering.value
+        await settle("the superseded attempt's session to start closing") { superseded.isClosing }
+        let generationBefore = await registry.generation
+
+        let draining = Task {
+            await registry.closeAll()
+            events.record("closeAllReturned")
+        }
+        // `closeAll` moves the generation in its synchronous prologue, before it
+        // can suspend, so the bump is the teardown's own proof that it is
+        // inside. Nothing here waits on the clock for it.
+        await settle("the teardown to enter the registry") {
+            await registry.generation == generationBefore + 1
+        }
+        #expect(
+            !events.values.contains("closeAllReturned"),
+            "a teardown must not return while the session a superseded attempt built is still closing"
+        )
+
+        closeHold.open()
+        await draining.value
+
+        #expect(superseded.recorded.closesFinished == 1)
+        #expect(entrySession.recorded.closesFinished == 1)
+        #expect(await registry.pendingDrainCount == 0)
+        #expect(await registry.openRoundIds.isEmpty)
+        _ = await recovering.result
+    }
+
+    /// Superseding is still an open, and an open a teardown overtakes registers
+    /// nothing. The caller is told the round is not open rather than handed a
+    /// session behind a store that is being closed.
+    @Test func supersedingDoesNotBypassTheTeardownFence() async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let parked = FakeSession(roundId: roundId, events: events)
+        let neverBuilt = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(sessions: [parked, neverBuilt], hold: factoryHold, events: events)
+        let registry = makeFakeRegistry(factory)
+        let generationBefore = await registry.generation
+
+        let recovering = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
+        }
+        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
+
+        let entering = Task {
+            try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
+                epoch: 10
+            )
+        }
+        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
+
+        let draining = Task { await registry.closeAll() }
+        // The generation moves in `closeAll`'s synchronous prologue, and what is
+        // opening is given up in that same prologue: seeing the bump means the
+        // entry's own attempt has been cancelled too.
+        await settle("the teardown to enter the registry") {
+            await registry.generation == generationBefore + 1
+        }
+        #expect(
+            await registry.pendingDrainCount == 2,
+            "the superseded attempt and the entry's own are both waited for"
+        )
+
+        factoryHold.open()
+        await draining.value
+
+        await #expect(throws: VotingSessionError.notOpen(roundId: roundId)) {
+            _ = try await entering.value
+        }
+        #expect(await factory.calls == 1, "the entry's attempt must not build across a teardown")
+        #expect(parked.recorded.closesFinished == 1, "the session the superseded attempt built anyway is closed")
+        #expect(await registry.openRoundIds.isEmpty)
+        #expect(await registry.pendingDrainCount == 0)
+        _ = await recovering.result
+    }
+
+    /// Parks an open asking for the roster-only binding, the direct route and
+    /// epoch 0, then checks that an open asking for `binding`, `route` and
+    /// `epoch` replaces that attempt instead of joining it.
+    private func expectTheParkedAttemptIsSuperseded(
+        by binding: VotingSessionBinding,
+        route: VotingTransportRoute,
+        epoch: UInt64,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let roundId = self.roundId
+        let events = SignalledRecords<String>()
+        let factoryHold = ResumableGate()
+        let parked = FakeSession(roundId: roundId, events: events)
+        let superseding = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(sessions: [parked, superseding], hold: factoryHold, events: events)
+        let registry = makeFakeRegistry(factory)
+
+        let first = Task { try await VotingSessionRegistryTests.open(registry, roundId) }
+        await settle("the first open to reach the factory") { await factory.calls == 1 }
+
+        let second = Task {
+            try await VotingSessionRegistryTests.open(
+                registry,
+                roundId,
+                binding: binding,
+                route: route,
+                epoch: epoch
+            )
+        }
+        await settle("the second open to give up the parked attempt") {
+            await registry.pendingDrainCount == 1
+        }
+
+        factoryHold.open()
+        let opened = try await second.value
+
+        #expect(opened === superseding, "the second open must get a session of its own", sourceLocation: sourceLocation)
+        #expect(await factory.calls == 2, "the second open must build its own", sourceLocation: sourceLocation)
+        if case .success = await first.result {
+            Issue.record("a superseded open must not hand back a session", sourceLocation: sourceLocation)
+        }
+
+        await settle("the superseded attempt's session to finish closing") {
+            await registry.pendingDrainCount == 0
+        }
+        #expect(parked.recorded.closesFinished == 1, sourceLocation: sourceLocation)
+        #expect(await registry.openRoundIds == [roundId], sourceLocation: sourceLocation)
+    }
+
     /// Waits until `condition` holds, asking again whenever another task has had
     /// a turn.
     ///
@@ -544,16 +905,21 @@ import Testing
         }
     }
 
+    /// Opens `roundId` the way share recovery does unless a test says
+    /// otherwise: the roster-only binding, the direct route, epoch 0.
     @discardableResult
     private static func open(
         _ registry: VotingSessionRegistryCore<FakeSession>,
-        _ roundId: String
+        _ roundId: String,
+        binding: VotingSessionBinding = VotingSessionBinding(roster: []),
+        route: VotingTransportRoute = .direct,
+        epoch: UInt64 = 0
     ) async throws -> FakeSession {
         try await registry.open(
             inputs: VotingSessionRegistryTests.inputs(roundId: roundId),
-            binding: VotingSessionBinding(roster: []),
-            route: .direct,
-            epoch: 0
+            binding: binding,
+            route: route,
+            epoch: epoch
         )
     }
 
@@ -770,6 +1136,20 @@ private actor FakeSessionFactory {
 
     private(set) var calls = 0
 
+    /// Which kind of session a binding asks for. Share recovery binds no
+    /// hotkey and the voter's own entry does, and a session built for one
+    /// cannot do the other's work -- so this is the difference a test staging
+    /// two overlapping opens has to be able to read back.
+    static func kind(of binding: VotingSessionBinding) -> String {
+        binding.hotkeySecret == nil ? "sharesOnly" : "voting"
+    }
+
+    /// What one build asked for, as a single event, so the recorded history
+    /// says which open a build belongs to rather than only which round.
+    static func building(_ roundId: String, _ kind: String, epoch: UInt64) -> String {
+        "building(\(roundId)|\(kind)|\(epoch))"
+    }
+
     init(
         sessions: [FakeSession] = [],
         refusals: Int = 0,
@@ -794,7 +1174,7 @@ private actor FakeSessionFactory {
     ) async throws -> FakeSession {
         calls += 1
         let key = inputs.roundParams.voteRoundId.lowercased()
-        events.record("building(\(key))")
+        events.record(Self.building(key, Self.kind(of: binding), epoch: epoch))
         if let hold {
             await hold.wait()
         }
