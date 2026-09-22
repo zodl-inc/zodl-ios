@@ -48,15 +48,16 @@ enum ViewingKeyPresentation {
 struct ViewingKeyDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Perception.Bindable var store: StoreOf<ExportViewingKeys>
+    @Perception.Bindable var store: StoreOf<ViewingKeyDetail>
 
-    init(store: StoreOf<ExportViewingKeys>) {
+    init(store: StoreOf<ViewingKeyDetail>) {
         self.store = store
     }
 
     var body: some View {
         WithPerceptionTracking {
-            if let detail = store.detail {
+            let detail = store.detail
+            Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
@@ -85,10 +86,80 @@ struct ViewingKeyDetailView: View {
                     }
                 }
             }
+            .navigationTitle(String(localizable: .viewing_key_export))
+            .navigationBarTitleDisplayMode(.inline)
+            .zashiBack(customDismiss: { _ = withAnimation { store.send(.backTapped) } })
+            .applyScreenBackground()
+            .alert(
+                String(localizable: .viewing_key_share_failure_title),
+                isPresented: sharingErrorBinding(isPresented: store.sharingError)
+            ) {
+                Button(String(localizable: .generalOk)) {
+                    store.send(.dismissError)
+                }
+            } message: {
+                Text(localizable: .viewing_key_share_failure_body)
+            }
+            .sheet(
+                item: nativeShareBinding(nativeShare: eligibleNativeShare(
+                    payload: store.detail.sharePayload,
+                    ownership: store.detail.shareOwnership,
+                    isVisible: store.isPayloadVisible,
+                    isPresented: store.detail.isSharePresented
+                )),
+                onDismiss: { store.send(.shareDismissed) }
+            ) { nativeShare in
+                let items = ViewingKeyShareItems(
+                    payload: nativeShare.payload,
+                    title: String(localizable: .viewing_key_export)
+                )
+                ViewingKeyActivityView(
+                    activityItems: items.activityItems,
+                    ownership: nativeShare.ownership,
+                    onPresented: { store.send(.sharePresented) },
+                    onCompletion: { store.send(.shareDismissed) }
+                )
+            }
         }
     }
 
-    private func detailContent(detail: ExportViewingKeys.State.Detail) -> some View {
+    private func sharingErrorBinding(isPresented: Bool) -> Binding<Bool> {
+        Binding(
+            get: { isPresented },
+            set: { updatedValue in
+                if !updatedValue {
+                    store.send(.dismissError)
+                }
+            }
+        )
+    }
+
+    private func nativeShareBinding(nativeShare: ViewingKeyNativeShare?) -> Binding<ViewingKeyNativeShare?> {
+        Binding(
+            get: { nativeShare },
+            set: { updatedShare in
+                if updatedShare == nil {
+                    store.send(.shareDismissed)
+                }
+            }
+        )
+    }
+
+    private func eligibleNativeShare(
+        payload: ViewingKeySharePayload?,
+        ownership: ViewingKeyShareOwnership?,
+        isVisible: Bool,
+        isPresented: Bool
+    ) -> ViewingKeyNativeShare? {
+        guard let payload,
+              let ownership,
+              ownership.payloadID == payload.id,
+              isVisible || isPresented || ownership.hasNativeOwnership else {
+            return nil
+        }
+        return ViewingKeyNativeShare(payload: payload, ownership: ownership)
+    }
+    private func detailContent(detail: ViewingKeyDetail.State.Detail) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(ViewingKeyPresentation.title(for: detail.kind))
                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
@@ -110,13 +181,13 @@ struct ViewingKeyDetailView: View {
         }
     }
 
-    @ViewBuilder private func footerIfAvailable(detail: ExportViewingKeys.State.Detail) -> some View {
+    @ViewBuilder private func footerIfAvailable(detail: ViewingKeyDetail.State.Detail) -> some View {
         if !(detail.tab == .qrCode && detail.qrFailed) {
             footer(detail: detail)
         }
     }
 
-    @ViewBuilder private func payloadContent(detail: ExportViewingKeys.State.Detail) -> some View {
+    @ViewBuilder private func payloadContent(detail: ViewingKeyDetail.State.Detail) -> some View {
         if detail.tab == .qrCode && detail.qrFailed {
             qrFailure(kind: detail.kind)
         } else {
@@ -229,7 +300,7 @@ struct ViewingKeyDetailView: View {
         .compositingGroup()
     }
 
-    private func footer(detail: ExportViewingKeys.State.Detail) -> some View {
+    private func footer(detail: ViewingKeyDetail.State.Detail) -> some View {
         VStack(spacing: 12) {
             helper(kind: detail.kind, tab: detail.tab)
 
@@ -303,7 +374,7 @@ struct ViewingKeyDetailView: View {
                 minHeight: 48,
                 allowsMultilineTitle: true
             ) {
-                store.send(.backTapped)
+                _ = withAnimation { store.send(.backTapped) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

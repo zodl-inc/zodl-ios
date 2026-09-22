@@ -129,6 +129,8 @@ struct SettingsView: View {
                     CurrencyConversionSetupView(store: store)
                 case let .exportViewingKeys(store):
                     ExportViewingKeysView(store: store)
+                case let .viewingKeyDetail(store):
+                    ViewingKeyDetailView(store: store)
                 case let .exportPrivateData(store):
                     PrivateDataConsentView(store: store)
                 case let .exportTransactionHistory(store):

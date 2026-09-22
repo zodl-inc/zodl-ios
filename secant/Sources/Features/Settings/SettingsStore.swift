@@ -16,6 +16,7 @@ struct Settings {
         case disconnectHWWallet(DisconnectHWWallet)
         case currencyConversionSetup(CurrencyConversionSetup)
         case exportViewingKeys(ExportViewingKeys)
+        case viewingKeyDetail(ViewingKeyDetail)
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
         case migrationRestart(MigrationRestart)

@@ -31,6 +31,21 @@ struct ViewingKeyPresentationTests {
         case unavailableKey
     }
 
+    private enum RenderStore {
+        case chooser(StoreOf<ExportViewingKeys>)
+        case detail(StoreOf<ViewingKeyDetail>)
+
+        var canExportFull: Bool {
+            guard case let .chooser(store) = self else { return false }
+            return store.canExportFull
+        }
+
+        var detailKey: String? {
+            guard case let .detail(store) = self else { return nil }
+            return store.detail.key?.rawValue
+        }
+    }
+
     private struct RenderConfiguration {
         let name: String
         let width: CGFloat
@@ -225,14 +240,14 @@ struct ViewingKeyPresentationTests {
     func hostedSettingsViewForwardsLifecycleNotificationsToViewingKeyFlow() async throws {
         let inactiveHost = try await makeHostedSettingsView()
         #expect(!inactiveHost.store.isViewingKeyInactive)
-        #expect(inactiveHost.store.path.compactMap { $0.exportViewingKeys }.first?.isInactive == false)
+        #expect(inactiveHost.store.path.compactMap { $0.viewingKeyDetail }.first?.isInactive == false)
 
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
         await nextMainRunLoopTurn()
         let inactiveState = (
             inactiveHost.store.isViewingKeyInactive,
-            inactiveHost.store.path.compactMap { $0.exportViewingKeys }.first?.isPayloadVisible,
-            inactiveHost.store.path.compactMap { $0.exportViewingKeys }.count
+            inactiveHost.store.path.compactMap { $0.viewingKeyDetail }.first?.isPayloadVisible,
+            inactiveHost.store.path.compactMap { $0.viewingKeyDetail }.count
         )
         #expect(inactiveState.0)
         #expect(inactiveState.1 == false)
@@ -244,7 +259,7 @@ struct ViewingKeyPresentationTests {
             let host = try await makeHostedSettingsView()
             NotificationCenter.default.post(name: notification, object: nil)
             await nextMainRunLoopTurn()
-            let exportWasRemoved = host.store.path.compactMap { $0.exportViewingKeys }.isEmpty
+            let exportWasRemoved = host.store.path.compactMap { $0.viewingKeyDetail }.isEmpty
             #expect(exportWasRemoved)
             host.window.isHidden = true
             await nextMainRunLoopTurn()
@@ -353,7 +368,7 @@ struct ViewingKeyPresentationTests {
 
         for configuration in configurations {
             let store = try await makeRenderStore(.revealedQRDetail)
-            let expectedKey = try #require(store.detail?.key?.rawValue)
+            let expectedKey = try #require(store.detailKey)
             let png = try await render(
                 store: store,
                 configuration: configuration,
@@ -426,7 +441,7 @@ struct ViewingKeyPresentationTests {
                 configuration: configuration,
                 expectsSheet: true,
                 scrollToBottom: configuration.dynamicTypeSize == .accessibility5
-                    || (isSpanish && configuration.width == 320)
+                    || configuration.width == 320
             )
             let visibleText = try recognizedText(in: png)
             #expect(visibleText.localizedCaseInsensitiveContains(isSpanish ? "deshacer" : "undone"))
@@ -509,71 +524,67 @@ struct ViewingKeyPresentationTests {
         #expect(constrainedSize.height <= 20)
     }
 
-    private func makeRenderStore(_ renderState: RenderState) async throws -> StoreOf<ExportViewingKeys> {
+    private func makeRenderStore(_ renderState: RenderState) async throws -> RenderStore {
         let vendor: WalletAccount.Vendor = renderState == .keystoneChooser ? .keystone : .zcash
         let account = renderState == .unavailableKey
             ? try await ViewingKeyExportFixtures.accountWithoutViewingKeys(vendor: vendor)
             : try await ViewingKeyExportFixtures.account(vendor: vendor)
         let session = ViewingKeyExportSession(id: UUID(), account: account, network: .mainnet)
-        var state = ExportViewingKeys.State(session: session)
-        state.$selectedWalletAccount.withLock { $0 = account }
-        state.$walletAccounts.withLock { $0 = [account] }
 
         switch renderState {
-        case .chooser:
-            break
-        case .selectedChooser, .keystoneChooser:
-            state.selectedKind = .incoming
-        case .consent:
-            state.selectedKind = .full
-            state.isConsentPresented = true
-        case .checkedConsent:
-            state.selectedKind = .full
-            state.consent = Set(ViewingKeyConsent.allCases)
-            state.isConsentPresented = true
-        case .hiddenDetail:
-            state.selectedKind = .incoming
-            state.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-        case .hiddenStringDetail:
-            state.selectedKind = .incoming
-            state.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-            state.detail?.tab = .keyString
-        case .revealedQRDetail:
-            let key = try #require(session.key(for: .incoming))
-            let png = try await ViewingKeyQRCodeClient.liveValue.png(key)
-            state.selectedKind = .incoming
-            state.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-            state.detail?.isRevealed = true
-            state.detail?.key = key
-            state.detail?.qr = png
-        case .revealedStringDetail:
-            let key = try #require(session.key(for: .incoming))
-            let png = try await ViewingKeyQRCodeClient.liveValue.png(key)
-            state.selectedKind = .incoming
-            state.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-            state.detail?.tab = .keyString
-            state.detail?.isRevealed = true
-            state.detail?.key = key
-            state.detail?.qr = png
-        case .qrFailure:
-            state.selectedKind = .full
-            state.detail = ExportViewingKeys.State.Detail(kind: .full)
-            state.detail?.qrFailed = true
-        case .unavailableKey:
-            state.selectedKind = .incoming
-            state.unavailableKey = true
-        }
-
-        if renderState == .revealedQRDetail || renderState == .revealedStringDetail {
-            #expect(state.canShare)
-        }
-
-        return Store(initialState: state) {
-            ExportViewingKeys()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.network = {
-                ZcashNetworkBuilder.network(for: .mainnet)
+        case .hiddenDetail, .hiddenStringDetail, .revealedQRDetail, .revealedStringDetail, .qrFailure:
+            let kind: ViewingKeyKind = renderState == .qrFailure ? .full : .incoming
+            var state = ViewingKeyDetail.State(session: session, kind: kind)
+            state.$selectedWalletAccount.withLock { $0 = account }
+            state.$walletAccounts.withLock { $0 = [account] }
+            if renderState == .hiddenStringDetail || renderState == .revealedStringDetail {
+                state.detail.tab = .keyString
             }
+            if renderState == .revealedQRDetail || renderState == .revealedStringDetail {
+                let key = try #require(session.key(for: .incoming))
+                state.detail.isRevealed = true
+                state.detail.key = key
+                state.detail.qr = try await ViewingKeyQRCodeClient.liveValue.png(key)
+                #expect(state.canShare)
+            }
+            if renderState == .qrFailure {
+                state.detail.qrFailed = true
+            }
+            return .detail(Store(initialState: state) {
+                ViewingKeyDetail()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.network = {
+                    ZcashNetworkBuilder.network(for: .mainnet)
+                }
+            })
+
+        case .chooser, .selectedChooser, .keystoneChooser, .consent, .checkedConsent, .unavailableKey:
+            var state = ExportViewingKeys.State(session: session)
+            state.$selectedWalletAccount.withLock { $0 = account }
+            state.$walletAccounts.withLock { $0 = [account] }
+            switch renderState {
+            case .selectedChooser, .keystoneChooser:
+                state.selectedKind = .incoming
+            case .consent:
+                state.selectedKind = .full
+                state.isConsentPresented = true
+            case .checkedConsent:
+                state.selectedKind = .full
+                state.consent = Set(ViewingKeyConsent.allCases)
+                state.isConsentPresented = true
+            case .unavailableKey:
+                state.selectedKind = .incoming
+                state.unavailableKey = true
+            default:
+                break
+            }
+            return .chooser(Store(initialState: state) {
+                ExportViewingKeys()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.network = {
+                    ZcashNetworkBuilder.network(for: .mainnet)
+                }
+            })
         }
     }
 
@@ -582,38 +593,51 @@ struct ViewingKeyPresentationTests {
         let session = ViewingKeyExportSession(id: UUID(), account: account, network: .mainnet)
         let key = try #require(session.key(for: .incoming))
         let png = try await ViewingKeyQRCodeClient.liveValue.png(key)
-        var flow = ExportViewingKeys.State(session: session)
-        flow.$selectedWalletAccount.withLock { $0 = account }
-        flow.$walletAccounts.withLock { $0 = [account] }
-        flow.selectedKind = .incoming
-        flow.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-        flow.detail?.isRevealed = true
-        flow.detail?.key = key
-        flow.detail?.qr = png
-        flow.isInactive = true
+        var chooser = ExportViewingKeys.State(session: session)
+        chooser.$selectedWalletAccount.withLock { $0 = account }
+        chooser.$walletAccounts.withLock { $0 = [account] }
+        chooser.selectedKind = .incoming
+        chooser.isInactive = true
+        var detail = ViewingKeyDetail.State(session: session, kind: .incoming)
+        detail.$selectedWalletAccount.withLock { $0 = account }
+        detail.$walletAccounts.withLock { $0 = [account] }
+        detail.detail.isRevealed = true
+        detail.detail.key = key
+        detail.detail.qr = png
+        detail.isInactive = true
 
         var state = Settings.State()
         state.isViewingKeyInactive = true
         state.$selectedWalletAccount.withLock { $0 = account }
         state.$walletAccounts.withLock { $0 = [account] }
-        state.path.append(.exportViewingKeys(flow))
+        state.path.append(.exportViewingKeys(chooser))
+        state.path.append(.viewingKeyDetail(detail))
         let store = Store(initialState: state) {
             Reduce<Settings.State, Settings.Action> { state, action in
                 switch action {
                 case .viewingKeyBecameInactive:
                     state.isViewingKeyInactive = true
                     for id in Array(state.path.ids) {
-                        state.path[id: id, case: \.exportViewingKeys]?.isInactive = true
+                        if state.path[id: id]?.exportViewingKeys != nil {
+                            state.path[id: id, case: \.exportViewingKeys]?.isInactive = true
+                        } else if state.path[id: id]?.viewingKeyDetail != nil {
+                            state.path[id: id, case: \.viewingKeyDetail]?.isInactive = true
+                        }
                     }
                     return .none
                 case .viewingKeyBecameActive:
                     state.isViewingKeyInactive = false
                     for id in Array(state.path.ids) {
-                        state.path[id: id, case: \.exportViewingKeys]?.isInactive = false
+                        if state.path[id: id]?.exportViewingKeys != nil {
+                            state.path[id: id, case: \.exportViewingKeys]?.isInactive = false
+                        } else if state.path[id: id]?.viewingKeyDetail != nil {
+                            state.path[id: id, case: \.viewingKeyDetail]?.isInactive = false
+                        }
                     }
                     return .none
                 case .viewingKeyEnteredBackground:
-                    for id in Array(state.path.ids) where state.path[id: id]?.exportViewingKeys != nil {
+                    for id in Array(state.path.ids) where state.path[id: id]?.exportViewingKeys != nil
+                        || state.path[id: id]?.viewingKeyDetail != nil {
                         state.path[id: id] = nil
                     }
                     return .none
@@ -647,7 +671,7 @@ struct ViewingKeyPresentationTests {
     }
 
     private func render(
-        store: StoreOf<ExportViewingKeys>,
+        store: RenderStore,
         configuration: RenderConfiguration,
         expectsSheet: Bool,
         expectedConsentSheetHeight: ClosedRange<CGFloat>? = nil,
@@ -656,7 +680,14 @@ struct ViewingKeyPresentationTests {
     ) async throws -> Data {
         let size = CGSize(width: configuration.width, height: configuration.height)
         let rootView = NavigationStack {
-            ExportViewingKeysView(store: store)
+            Group {
+                switch store {
+                case let .chooser(chooser):
+                    ExportViewingKeysView(store: chooser)
+                case let .detail(detail):
+                    ViewingKeyDetailView(store: detail)
+                }
+            }
         }
         .environment(\.colorScheme, configuration.colorScheme)
         .environment(\.dynamicTypeSize, configuration.dynamicTypeSize)

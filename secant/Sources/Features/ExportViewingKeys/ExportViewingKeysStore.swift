@@ -5,7 +5,6 @@
 
 import ComposableArchitecture
 import Foundation
-import os
 @preconcurrency import ZcashLightClientKit
 
 enum ViewingKeyTab: Equatable, CaseIterable, Sendable {
@@ -19,131 +18,18 @@ enum ViewingKeyConsent: CaseIterable, Equatable, Hashable, Sendable {
     case irreversible
 }
 
-enum QRFailure: Error, Equatable, Sendable {
-    case generationFailed
-}
-
-struct ViewingKeySharePayload: Identifiable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    let id: UUID
-    let key: ViewingKeyMaterial
-    let png: ViewingKeyPNG
-
-    var description: String { "<redacted viewing key share payload>" }
-    var debugDescription: String { description }
-    var customMirror: Mirror {
-        Mirror(self, unlabeledChildren: EmptyCollection<Any>(), displayStyle: .struct)
-    }
-}
-
-final class ViewingKeyShareOwnership: @unchecked Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    private enum Phase: Sendable {
-        case prepared
-        case nativeOwned
-        case cancelled
-        case finished
-    }
-
-    let payloadID: UUID
-    private let phase = OSAllocatedUnfairLock(initialState: Phase.prepared)
-
-    var hasNativeOwnership: Bool {
-        phase.withLock { $0 == .nativeOwned }
-    }
-
-    var wasCancelledBeforeHandoff: Bool {
-        phase.withLock { $0 == .cancelled }
-    }
-
-    var isFinished: Bool {
-        phase.withLock { $0 == .finished }
-    }
-
-    var description: String { "<redacted viewing key share ownership>" }
-    var debugDescription: String { description }
-    var customMirror: Mirror {
-        Mirror(self, unlabeledChildren: EmptyCollection<Any>(), displayStyle: .class)
-    }
-
-    init(payloadID: UUID) {
-        self.payloadID = payloadID
-    }
-
-    func claimNativeOwnership() -> Bool {
-        phase.withLock { phase in
-            guard phase == .prepared else { return false }
-            phase = .nativeOwned
-            return true
-        }
-    }
-
-    func cancelPreparedUnlessNativeOwned() -> Bool {
-        phase.withLock { phase in
-            switch phase {
-            case .prepared:
-                phase = .cancelled
-                return false
-            case .nativeOwned:
-                return true
-            case .cancelled, .finished:
-                return false
-            }
-        }
-    }
-
-    func finish() {
-        phase.withLock { $0 = .finished }
-    }
-
-    static func == (lhs: ViewingKeyShareOwnership, rhs: ViewingKeyShareOwnership) -> Bool {
-        guard lhs !== rhs else { return true }
-        let lhsPhase = lhs.phase.withLock { $0 }
-        let rhsPhase = rhs.phase.withLock { $0 }
-        return lhs.payloadID == rhs.payloadID && lhsPhase == rhsPhase
-    }
-}
-
 @Reducer
 struct ExportViewingKeys {
-    private enum CancelID {
-        case qr
-        case share
-    }
-
     @ObservableState
     struct State: Equatable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-        struct Detail: Equatable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-            let kind: ViewingKeyKind
-            var tab: ViewingKeyTab = .qrCode
-            var isRevealed = false
-            var key: ViewingKeyMaterial?
-            var qr: ViewingKeyPNG?
-            var qrFailed = false
-            var qrRequestID: UUID?
-            var shareRequestID: UUID?
-            var sharePayload: ViewingKeySharePayload?
-            var shareOwnership: ViewingKeyShareOwnership?
-            var isSharePresented = false
-
-            var description: String { "<redacted viewing key detail>" }
-            var debugDescription: String { description }
-            var customMirror: Mirror {
-                Mirror(self, unlabeledChildren: EmptyCollection<Any>(), displayStyle: .struct)
-            }
-
-            init(kind: ViewingKeyKind) {
-                self.kind = kind
-            }
-        }
-
         let session: ViewingKeyExportSession
         var selectedKind: ViewingKeyKind?
         var consent: Set<ViewingKeyConsent> = []
         var isConsentPresented = false
         var pendingFullExport = false
-        var detail: Detail?
+        var pendingOpenDetail: ViewingKeyKind?
         var isInactive = false
         var unavailableKey = false
-        var sharingError = false
         var isInvalidated = false
         var currentNetwork: NetworkType
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -159,18 +45,6 @@ struct ExportViewingKeys {
                 && selectedKind == .full
                 && isConsentPresented
                 && consent == Set(ViewingKeyConsent.allCases)
-        }
-
-        var canShare: Bool {
-            guard isPayloadVisible, let detail else { return false }
-            return detail.key != nil
-                && detail.shareRequestID == nil
-                && detail.sharePayload == nil
-                && detail.shareOwnership == nil
-        }
-
-        var isPayloadVisible: Bool {
-            isSessionValid && !isInactive && detail?.isRevealed == true
         }
 
         var isSessionValid: Bool {
@@ -192,33 +66,20 @@ struct ExportViewingKeys {
             self.currentNetwork = session.network
         }
 
-        /// Ends the app-owned session while respecting a payload already handed to UIKit.
         mutating func invalidateForExit() {
             isInvalidated = true
             isConsentPresented = false
             pendingFullExport = false
+            pendingOpenDetail = nil
             consent = []
             isInactive = false
             unavailableKey = false
-            sharingError = false
-            guard var detail else { return }
-            detail.isRevealed = false
-            detail.key = nil
-            detail.qr = nil
-            detail.qrFailed = false
-            detail.qrRequestID = nil
-            detail.shareRequestID = nil
-            if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
-                detail.sharePayload = nil
-                detail.shareOwnership = nil
-                detail.isSharePresented = false
-            }
-            self.detail = detail
         }
     }
 
     enum Action: Equatable {
         enum Delegate: Equatable {
+            case openDetail(ViewingKeyKind)
             case finished
         }
 
@@ -228,16 +89,6 @@ struct ExportViewingKeys {
         case cancelConsent
         case exportFullTapped
         case consentDismissed
-        case selectTab(ViewingKeyTab)
-        case revealTapped
-        case hideTapped
-        case shareTapped
-        case qrReady(UUID, Result<ViewingKeyPNG, QRFailure>)
-        case shareReady(UUID, Result<ViewingKeySharePayload, QRFailure>)
-        case sharePresented
-        case shareDismissed
-        case dismissError
-        case displayKeyString
         case backTapped
         case becameInactive
         case becameActive
@@ -247,55 +98,42 @@ struct ExportViewingKeys {
         case delegate(Delegate)
     }
 
-    @Dependency(\.viewingKeyQRCode) var viewingKeyQRCode
-    @Dependency(\.uuid) var uuid
     @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     var body: some ReducerOf<Self> {
         Reduce { state, action in
             state.currentNetwork = zcashSDKEnvironment.network().networkType
 
-            if state.isInvalidated {
-                if case .shareDismissed = action {
-                    state.detail?.shareOwnership?.finish()
-                    state.detail?.sharePayload = nil
-                    state.detail?.shareOwnership = nil
-                    state.detail?.isSharePresented = false
-                }
-                return .none
-            }
+            guard !state.isInvalidated else { return .none }
 
-            if !state.isSessionValid {
+            guard state.isSessionValid else {
                 state.invalidateForExit()
-                return .merge(
-                    .cancel(id: CancelID.qr),
-                    .cancel(id: CancelID.share),
-                    .send(.delegate(.finished))
-                )
+                return .send(.delegate(.finished))
             }
 
             switch action {
             case let .selectKind(kind):
-                guard state.isSessionValid else { return .none }
                 state.selectedKind = kind
+                state.pendingOpenDetail = nil
                 state.unavailableKey = state.session.key(for: kind) == nil
                 return .none
 
             case .continueTapped:
-                guard state.canContinue, let selectedKind = state.selectedKind else { return .none }
+                guard state.canContinue, state.pendingOpenDetail == nil,
+                      let kind = state.selectedKind else { return .none }
                 state.unavailableKey = false
-                switch selectedKind {
-                case .incoming:
-                    state.detail = State.Detail(kind: .incoming)
-                case .full:
-                    state.consent = []
-                    state.pendingFullExport = false
-                    state.isConsentPresented = true
+                if kind == .incoming {
+                    state.pendingOpenDetail = .incoming
+                    return .send(.delegate(.openDetail(.incoming)))
                 }
+                state.consent = []
+                state.pendingFullExport = false
+                state.pendingOpenDetail = nil
+                state.isConsentPresented = true
                 return .none
 
             case let .consentChanged(item, isAccepted):
-                guard state.isSessionValid, state.isConsentPresented, state.selectedKind == .full else { return .none }
+                guard state.isConsentPresented, state.selectedKind == .full else { return .none }
                 if isAccepted {
                     state.consent.insert(item)
                 } else {
@@ -308,6 +146,7 @@ struct ExportViewingKeys {
                 state.consent = []
                 state.isConsentPresented = false
                 state.pendingFullExport = false
+                state.pendingOpenDetail = nil
                 return .none
 
             case .exportFullTapped:
@@ -317,222 +156,35 @@ struct ExportViewingKeys {
                 return .none
 
             case .consentDismissed:
-                guard state.isConsentPresented || state.pendingFullExport else {
-                    return .none
-                }
-                if state.pendingFullExport, state.selectedKind == .full {
-                    state.pendingFullExport = false
-                    state.detail = State.Detail(kind: .full)
-                } else {
-                    state.consent = []
+                guard state.pendingFullExport, state.selectedKind == .full else {
                     state.isConsentPresented = false
                     state.pendingFullExport = false
-                }
-                return .none
-
-            case let .selectTab(tab):
-                guard state.detail != nil else { return .none }
-                state.detail?.tab = tab
-                return .none
-
-            case .revealTapped:
-                guard !state.isInactive,
-                      var detail = state.detail,
-                      !detail.isRevealed,
-                      let key = state.session.key(for: detail.kind) else {
+                    state.pendingOpenDetail = nil
+                    state.consent = []
                     return .none
                 }
-                let requestID = uuid()
-                detail.isRevealed = true
-                detail.key = key
-                detail.qr = nil
-                detail.qrFailed = false
-                detail.qrRequestID = requestID
-                state.detail = detail
-                return generateQRCode(key: key, requestID: requestID)
+                state.pendingFullExport = false
+                state.isConsentPresented = false
+                state.consent = []
+                state.pendingOpenDetail = .full
+                return .send(.delegate(.openDetail(.full)))
 
-            case .hideTapped:
-                guard var detail = state.detail else { return .none }
-                detail.isRevealed = false
-                detail.key = nil
-                detail.qr = nil
-                detail.qrFailed = false
-                detail.qrRequestID = nil
-                detail.shareRequestID = nil
-                if detail.shareOwnership?.cancelPreparedUnlessNativeOwned() != true {
-                    detail.sharePayload = nil
-                    detail.shareOwnership = nil
-                    detail.isSharePresented = false
-                }
-                state.detail = detail
-                return .merge(
-                    .cancel(id: CancelID.qr),
-                    .cancel(id: CancelID.share)
-                )
-
-            case .shareTapped:
-                guard state.canShare,
-                      var detail = state.detail,
-                      let key = detail.key else {
-                    return .none
-                }
-                let requestID = uuid()
-                detail.shareRequestID = requestID
-                state.detail = detail
-                return .run { @Sendable [key, requestID, png = viewingKeyQRCode.png] send in
-                    do {
-                        let image = try await png(key)
-                        try Task.checkCancellation()
-                        await send(.shareReady(
-                            requestID,
-                            .success(ViewingKeySharePayload(id: requestID, key: key, png: image))
-                        ))
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        await send(.shareReady(requestID, .failure(.generationFailed)))
-                    }
-                }
-                .cancellable(id: CancelID.share, cancelInFlight: true)
-
-            case let .qrReady(requestID, result):
-                guard var detail = state.detail,
-                      detail.isRevealed,
-                      !state.isInactive,
-                      detail.qrRequestID == requestID else {
-                    return .none
-                }
-                detail.qrRequestID = nil
-                switch result {
-                case let .success(png):
-                    detail.qr = png
-                    detail.qrFailed = false
-                case .failure:
-                    detail.qr = nil
-                    detail.qrFailed = true
-                }
-                state.detail = detail
-                return .none
-
-            case let .shareReady(requestID, result):
-                guard var detail = state.detail,
-                      detail.isRevealed,
-                      !state.isInactive,
-                      detail.shareRequestID == requestID else {
-                    return .none
-                }
-                detail.shareRequestID = nil
-                switch result {
-                case let .success(payload):
-                    detail.sharePayload = payload
-                    detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
-                case .failure:
-                    detail.sharePayload = nil
-                    detail.shareOwnership = nil
-                    state.sharingError = true
-                }
-                state.detail = detail
-                return .none
-
-            case .sharePresented:
-                guard let detail = state.detail,
-                      let payload = detail.sharePayload,
-                      detail.shareOwnership?.payloadID == payload.id,
-                      detail.shareOwnership?.hasNativeOwnership == true else {
-                    return .none
-                }
-                state.detail?.isSharePresented = true
-                return .none
-
-            case .shareDismissed:
-                state.detail?.shareOwnership?.finish()
-                state.detail?.sharePayload = nil
-                state.detail?.shareOwnership = nil
-                state.detail?.isSharePresented = false
-                return .none
-
-            case .dismissError:
-                state.sharingError = false
-                return .none
-
-            case .displayKeyString:
-                guard state.detail != nil else { return .none }
-                state.detail?.tab = .keyString
-                return .none
-
-            case .backTapped:
-                guard state.detail != nil else {
-                    state.invalidateForExit()
-                    return .merge(
-                        .cancel(id: CancelID.qr),
-                        .cancel(id: CancelID.share),
-                        .send(.delegate(.finished))
-                    )
-                }
-                _ = state.detail?.shareOwnership?.cancelPreparedUnlessNativeOwned()
-                state.detail = nil
-                state.sharingError = false
-                return .merge(
-                    .cancel(id: CancelID.qr),
-                    .cancel(id: CancelID.share)
-                )
+            case .backTapped, .enteredBackground, .viewDisappeared:
+                state.invalidateForExit()
+                return .send(.delegate(.finished))
 
             case .becameInactive:
                 state.isInactive = true
-                state.detail?.qrRequestID = nil
-                let nativeOwnsPayload = state.detail?.shareOwnership?.cancelPreparedUnlessNativeOwned() == true
-                if !nativeOwnsPayload {
-                    state.detail?.shareRequestID = nil
-                    state.detail?.sharePayload = nil
-                    state.detail?.shareOwnership = nil
-                    state.detail?.isSharePresented = false
-                }
-                return .merge(
-                    .cancel(id: CancelID.qr),
-                    .cancel(id: CancelID.share)
-                )
+                state.pendingOpenDetail = nil
+                return .none
 
             case .becameActive:
                 state.isInactive = false
-                guard var detail = state.detail,
-                      detail.isRevealed,
-                      detail.qr == nil,
-                      !detail.qrFailed,
-                      detail.qrRequestID == nil,
-                      let key = detail.key else {
-                    return .none
-                }
-                let requestID = uuid()
-                detail.qrRequestID = requestID
-                state.detail = detail
-                return generateQRCode(key: key, requestID: requestID)
-
-            case .enteredBackground, .viewDisappeared:
-                state.invalidateForExit()
-                return .merge(
-                    .cancel(id: CancelID.qr),
-                    .cancel(id: CancelID.share),
-                    .send(.delegate(.finished))
-                )
+                return .none
 
             case .validateSession, .delegate:
                 return .none
             }
         }
-    }
-
-    private func generateQRCode(key: ViewingKeyMaterial, requestID: UUID) -> Effect<Action> {
-        Effect.run { @Sendable [key, requestID, png = viewingKeyQRCode.png] send in
-            do {
-                let image = try await png(key)
-                try Task.checkCancellation()
-                await send(.qrReady(requestID, .success(image)))
-            } catch is CancellationError {
-                return
-            } catch {
-                await send(.qrReady(requestID, .failure(.generationFailed)))
-            }
-        }
-        .cancellable(id: CancelID.qr, cancelInFlight: true)
     }
 }

@@ -12,7 +12,7 @@ import UIKit
 
 @Suite(.serialized, .timeLimit(.minutes(3)))
 @MainActor
-struct ExportViewingKeysLifecycleTests {
+struct ViewingKeyDetailLifecycleTests {
     @Test
     func hidingCancelsSuspendedQRAndLateCompletionCannotRevealData() async throws {
         let entered = SignalledRecords<Void>()
@@ -27,14 +27,14 @@ struct ExportViewingKeysLifecycleTests {
         await entered.countReached(1)
 
         await store.send(.hideTapped) {
-            $0.detail?.isRevealed = false
-            $0.detail?.key = nil
-            $0.detail?.qrRequestID = nil
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qrRequestID = nil
         }
         gate.open()
         await store.finish()
-        #expect(store.state.detail?.key == nil)
-        #expect(store.state.detail?.qr == nil)
+        #expect(store.state.detail.key == nil)
+        #expect(store.state.detail.qr == nil)
     }
 
     @Test
@@ -51,11 +51,15 @@ struct ExportViewingKeysLifecycleTests {
         await entered.countReached(1)
 
         await store.send(.backTapped) {
-            $0.detail = nil
+            $0.isInvalidated = true
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qrRequestID = nil
         }
+        await store.receive(.delegate(.finished))
         gate.open()
         await store.finish()
-        #expect(store.state.selectedKind == .incoming)
+        #expect(store.state.detail.kind == .incoming)
     }
 
     @Test
@@ -74,14 +78,14 @@ struct ExportViewingKeysLifecycleTests {
 
         await store.send(.validateSession) {
             $0.isInvalidated = true
-            $0.detail?.isRevealed = false
-            $0.detail?.key = nil
-            $0.detail?.qrRequestID = nil
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qrRequestID = nil
         }
         await store.receive(.delegate(.finished))
         gate.open()
         await store.finish()
-        #expect(store.state.detail?.qr == nil)
+        #expect(store.state.detail.qr == nil)
     }
 
     @Test
@@ -103,36 +107,36 @@ struct ExportViewingKeysLifecycleTests {
         })
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
         await ordinals.recorded { $0.contains(2) }
         await store.send(.shareTapped)
         #expect(ordinals.values == [1, 2])
 
         await store.send(.hideTapped) {
-            $0.detail?.isRevealed = false
-            $0.detail?.key = nil
-            $0.detail?.qr = nil
-            $0.detail?.shareRequestID = nil
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qr = nil
+            $0.detail.shareRequestID = nil
         }
         gate.open()
         await store.finish()
-        #expect(store.state.detail?.sharePayload == nil)
+        #expect(store.state.detail.sharePayload == nil)
     }
 
     @Test
     func staleQRAndShareResultsAreRejectedIndependentlyOfCancellation() async throws {
         let store = try await makeStore()
         await enterAndReveal(store, receiveQR: true)
-        let key = try #require(store.state.detail?.key)
+        let key = try #require(store.state.detail.key)
         let staleID = UUID()
         let stalePNG = ViewingKeyPNG(data: Data([0x44]))
         let stalePayload = ViewingKeySharePayload(id: staleID, key: key, png: stalePNG)
 
         await store.send(.qrReady(staleID, .success(stalePNG)))
         await store.send(.shareReady(staleID, .success(stalePayload)))
-        #expect(store.state.detail?.qr != stalePNG)
-        #expect(store.state.detail?.sharePayload == nil)
+        #expect(store.state.detail.qr != stalePNG)
+        #expect(store.state.detail.sharePayload == nil)
     }
 
     @Test
@@ -238,48 +242,42 @@ struct ExportViewingKeysLifecycleTests {
             await secondGate.wait()
             return secondPNG
         })
-        await store.send(.selectKind(.incoming)) {
-            $0.selectedKind = .incoming
-        }
-        await store.send(.continueTapped) {
-            $0.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-        }
         await store.send(.selectTab(.keyString)) {
-            $0.detail?.tab = .keyString
+            $0.detail.tab = .keyString
         }
         let key = store.state.session.key(for: .incoming)
         await store.send(.revealTapped) {
-            $0.detail?.isRevealed = true
-            $0.detail?.key = key
-            $0.detail?.qrRequestID = UUID(0)
+            $0.detail.isRevealed = true
+            $0.detail.key = key
+            $0.detail.qrRequestID = UUID(0)
         }
         await entered.recorded { $0.contains(1) }
 
         await store.send(.becameInactive) {
             $0.isInactive = true
-            $0.detail?.qrRequestID = nil
+            $0.detail.qrRequestID = nil
         }
         #expect(!store.state.isPayloadVisible)
         await store.send(.becameActive) {
             $0.isInactive = false
-            $0.detail?.qrRequestID = UUID(1)
+            $0.detail.qrRequestID = UUID(1)
         }
-        guard store.state.detail?.qrRequestID == UUID(1) else {
+        guard store.state.detail.qrRequestID == UUID(1) else {
             firstGate.open()
             secondGate.open()
             await store.finish()
             return
         }
         await entered.recorded { $0.contains(2) }
-        #expect(store.state.detail?.tab == .keyString)
-        #expect(store.state.detail?.isRevealed == true)
+        #expect(store.state.detail.tab == .keyString)
+        #expect(store.state.detail.isRevealed == true)
 
         await store.send(.qrReady(UUID(0), .success(firstPNG)))
-        #expect(store.state.detail?.qr == nil)
+        #expect(store.state.detail.qr == nil)
         secondGate.open()
         await store.receive(.qrReady(UUID(1), .success(secondPNG))) {
-            $0.detail?.qr = secondPNG
-            $0.detail?.qrRequestID = nil
+            $0.detail.qr = secondPNG
+            $0.detail.qrRequestID = nil
         }
         firstGate.open()
         await store.finish()
@@ -304,13 +302,13 @@ struct ExportViewingKeysLifecycleTests {
         })
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
         await entered.recorded { $0.contains(2) }
 
         await store.send(.becameInactive) {
             $0.isInactive = true
-            $0.detail?.shareRequestID = nil
+            $0.detail.shareRequestID = nil
         }
         await store.send(.becameActive) {
             $0.isInactive = false
@@ -319,10 +317,10 @@ struct ExportViewingKeysLifecycleTests {
         await store.finish()
 
         #expect(entered.values == [1, 2])
-        #expect(store.state.detail?.qr == png)
-        #expect(store.state.detail?.qrRequestID == nil)
-        #expect(store.state.detail?.shareRequestID == nil)
-        #expect(store.state.detail?.sharePayload == nil)
+        #expect(store.state.detail.qr == png)
+        #expect(store.state.detail.qrRequestID == nil)
+        #expect(store.state.detail.shareRequestID == nil)
+        #expect(store.state.detail.sharePayload == nil)
     }
 
     @Test
@@ -330,31 +328,31 @@ struct ExportViewingKeysLifecycleTests {
         let store = try await makeStore()
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
-        let key = try #require(store.state.detail?.key)
+        let key = try #require(store.state.detail.key)
         let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
         await store.receive(.shareReady(UUID(1), .success(payload))) {
-            $0.detail?.shareRequestID = nil
-            $0.detail?.sharePayload = payload
-            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+            $0.detail.shareRequestID = nil
+            $0.detail.sharePayload = payload
+            $0.detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
         }
-        let ownership = try #require(store.state.detail?.shareOwnership)
+        let ownership = try #require(store.state.detail.shareOwnership)
         #expect(ownership.claimNativeOwnership())
         await store.send(.sharePresented) {
-            $0.detail?.isSharePresented = true
+            $0.detail.isSharePresented = true
         }
         await store.send(.becameInactive) {
             $0.isInactive = true
         }
-        #expect(store.state.detail?.sharePayload != nil)
+        #expect(store.state.detail.sharePayload != nil)
         await store.send(.becameActive) {
             $0.isInactive = false
         }
         await store.send(.shareDismissed) {
-            $0.detail?.sharePayload = nil
-            $0.detail?.shareOwnership = nil
-            $0.detail?.isSharePresented = false
+            $0.detail.sharePayload = nil
+            $0.detail.shareOwnership = nil
+            $0.detail.isSharePresented = false
         }
         #expect(ownership.isFinished)
     }
@@ -364,16 +362,16 @@ struct ExportViewingKeysLifecycleTests {
         let store = try await makeStore()
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
-        let key = try #require(store.state.detail?.key)
+        let key = try #require(store.state.detail.key)
         let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
         await store.receive(.shareReady(UUID(1), .success(payload))) {
-            $0.detail?.shareRequestID = nil
-            $0.detail?.sharePayload = payload
-            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+            $0.detail.shareRequestID = nil
+            $0.detail.sharePayload = payload
+            $0.detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
         }
-        let ownership = try #require(store.state.detail?.shareOwnership)
+        let ownership = try #require(store.state.detail.shareOwnership)
         var presentationCount = 0
         let controller = ViewingKeyActivityView.makeController(
             activityItems: ["public fixture"],
@@ -387,18 +385,18 @@ struct ExportViewingKeysLifecycleTests {
         await store.send(.becameInactive) {
             $0.isInactive = true
         }
-        #expect(store.state.detail?.sharePayload != nil)
+        #expect(store.state.detail.sharePayload != nil)
 
         controller.beginAppearanceTransition(true, animated: false)
         controller.endAppearanceTransition()
         #expect(presentationCount == 1)
         await store.send(.sharePresented) {
-            $0.detail?.isSharePresented = true
+            $0.detail.isSharePresented = true
         }
         await store.send(.shareDismissed) {
-            $0.detail?.sharePayload = nil
-            $0.detail?.shareOwnership = nil
-            $0.detail?.isSharePresented = false
+            $0.detail.sharePayload = nil
+            $0.detail.shareOwnership = nil
+            $0.detail.isSharePresented = false
         }
         #expect(ownership.isFinished)
     }
@@ -408,21 +406,21 @@ struct ExportViewingKeysLifecycleTests {
         let store = try await makeStore()
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
-        let key = try #require(store.state.detail?.key)
+        let key = try #require(store.state.detail.key)
         let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
         await store.receive(.shareReady(UUID(1), .success(payload))) {
-            $0.detail?.shareRequestID = nil
-            $0.detail?.sharePayload = payload
-            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+            $0.detail.shareRequestID = nil
+            $0.detail.sharePayload = payload
+            $0.detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
         }
-        let ownership = try #require(store.state.detail?.shareOwnership)
+        let ownership = try #require(store.state.detail.shareOwnership)
 
         await store.send(.becameInactive) {
             $0.isInactive = true
-            $0.detail?.sharePayload = nil
-            $0.detail?.shareOwnership = nil
+            $0.detail.sharePayload = nil
+            $0.detail.shareOwnership = nil
         }
         #expect(ownership.wasCancelledBeforeHandoff)
 
@@ -446,9 +444,9 @@ struct ExportViewingKeysLifecycleTests {
 
         await store.send(.enteredBackground) {
             $0.isInvalidated = true
-            $0.detail?.isRevealed = false
-            $0.detail?.key = nil
-            $0.detail?.qr = nil
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qr = nil
         }
         await store.receive(.delegate(.finished))
     }
@@ -458,19 +456,25 @@ struct ExportViewingKeysLifecycleTests {
         let store = try await makeStore()
         await enterAndReveal(store, receiveQR: true)
         await store.send(.shareTapped) {
-            $0.detail?.shareRequestID = UUID(1)
+            $0.detail.shareRequestID = UUID(1)
         }
-        let key = try #require(store.state.detail?.key)
+        let key = try #require(store.state.detail.key)
         let payload = ViewingKeySharePayload(id: UUID(1), key: key, png: defaultPNG)
         await store.receive(.shareReady(UUID(1), .success(payload))) {
-            $0.detail?.shareRequestID = nil
-            $0.detail?.sharePayload = payload
-            $0.detail?.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
+            $0.detail.shareRequestID = nil
+            $0.detail.sharePayload = payload
+            $0.detail.shareOwnership = ViewingKeyShareOwnership(payloadID: payload.id)
         }
-        let ownership = try #require(store.state.detail?.shareOwnership)
+        let ownership = try #require(store.state.detail.shareOwnership)
         await store.send(.backTapped) {
-            $0.detail = nil
+            $0.isInvalidated = true
+            $0.detail.isRevealed = false
+            $0.detail.key = nil
+            $0.detail.qr = nil
+            $0.detail.sharePayload = nil
+            $0.detail.shareOwnership = nil
         }
+        await store.receive(.delegate(.finished))
         #expect(ownership.wasCancelledBeforeHandoff)
         let controller = ViewingKeyActivityView.makeController(
             activityItems: ["public fixture"],
@@ -479,7 +483,7 @@ struct ExportViewingKeysLifecycleTests {
             onCompletion: {}
         )
         #expect(!controller.didTransferPayload)
-        #expect(store.state.selectedKind == .incoming)
+        #expect(store.state.detail.kind == .incoming)
     }
 
     private var defaultPNG: ViewingKeyPNG {
@@ -489,17 +493,18 @@ struct ExportViewingKeysLifecycleTests {
     private func makeStore(
         network: LockIsolated<NetworkType> = LockIsolated(.mainnet),
         png: (@Sendable (ViewingKeyMaterial) async throws -> ViewingKeyPNG)? = nil
-    ) async throws -> TestStoreOf<ExportViewingKeys> {
+    ) async throws -> TestStoreOf<ViewingKeyDetail> {
         let account = try await ViewingKeyExportFixtures.account(vendor: .zcash)
-        let state = ExportViewingKeys.State(
-            session: ViewingKeyExportSession(id: UUID(), account: account, network: .mainnet)
+        let state = ViewingKeyDetail.State(
+            session: ViewingKeyExportSession(id: UUID(), account: account, network: .mainnet),
+            kind: .incoming
         )
         state.$selectedWalletAccount.withLock { $0 = account }
         state.$walletAccounts.withLock { $0 = [account] }
         let fallbackPNG = defaultPNG
         let pngProducer = png ?? { _ in fallbackPNG }
         return TestStore(initialState: state) {
-            ExportViewingKeys()
+            ViewingKeyDetail()
         } withDependencies: {
             $0.uuid = .incrementing
             $0.viewingKeyQRCode = ViewingKeyQRCodeClient(png: pngProducer)
@@ -510,26 +515,20 @@ struct ExportViewingKeysLifecycleTests {
     }
 
     private func enterAndReveal(
-        _ store: TestStoreOf<ExportViewingKeys>,
+        _ store: TestStoreOf<ViewingKeyDetail>,
         receiveQR: Bool = false
     ) async {
-        await store.send(.selectKind(.incoming)) {
-            $0.selectedKind = .incoming
-        }
-        await store.send(.continueTapped) {
-            $0.detail = ExportViewingKeys.State.Detail(kind: .incoming)
-        }
         let expectedKey = store.state.session.key(for: .incoming)
         await store.send(.revealTapped) {
-            $0.detail?.isRevealed = true
-            $0.detail?.key = expectedKey
-            $0.detail?.qrRequestID = UUID(0)
+            $0.detail.isRevealed = true
+            $0.detail.key = expectedKey
+            $0.detail.qrRequestID = UUID(0)
         }
         if receiveQR {
             let png = defaultPNG
             await store.receive(.qrReady(UUID(0), .success(png))) {
-                $0.detail?.qr = png
-                $0.detail?.qrRequestID = nil
+                $0.detail.qr = png
+                $0.detail.qrRequestID = nil
             }
         }
     }

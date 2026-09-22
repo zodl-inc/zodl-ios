@@ -17,60 +17,17 @@ struct ExportViewingKeysView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            let consentPresented = store.isConsentPresented
-            let sharingErrorPresented = store.sharingError
-            let preparedNativeShare = eligibleNativeShare(
-                payload: store.detail?.sharePayload,
-                ownership: store.detail?.shareOwnership,
-                isVisible: store.isPayloadVisible,
-                isPresented: store.detail?.isSharePresented == true
-            )
-
-            Group {
-                if store.detail != nil {
-                    ViewingKeyDetailView(store: store)
-                        .navigationTitle(String(localizable: .viewing_key_export))
-                        .navigationBarTitleDisplayMode(.inline)
-                } else {
-                    chooser
+            chooser
+                .zashiBack(customDismiss: { _ = withAnimation { store.send(.backTapped) } })
+                .applyScreenBackground()
+                .zashiSheet(
+                    isPresented: consentBinding(isPresented: store.isConsentPresented),
+                    backgroundColor: Design.Surfaces.bgSecondary.color(colorScheme),
+                    onDismiss: { _ = withAnimation { store.send(.consentDismissed) } }
+                ) {
+                    ViewingKeyConsentView(store: store)
+                        .environment(\.colorScheme, colorScheme)
                 }
-            }
-            .zashiBack(customDismiss: { store.send(.backTapped) })
-            .applyScreenBackground()
-            .zashiSheet(
-                isPresented: consentBinding(isPresented: consentPresented),
-                backgroundColor: Design.Surfaces.bgSecondary.color(colorScheme),
-                onDismiss: { store.send(.consentDismissed) }
-            ) {
-                ViewingKeyConsentView(store: store)
-                    .environment(\.colorScheme, colorScheme)
-            }
-            .alert(
-                String(localizable: .viewing_key_share_failure_title),
-                isPresented: sharingErrorBinding(isPresented: sharingErrorPresented)
-            ) {
-                Button(String(localizable: .generalOk)) {
-                    store.send(.dismissError)
-                }
-            } message: {
-                Text(localizable: .viewing_key_share_failure_body)
-            }
-            .sheet(
-                item: nativeShareBinding(nativeShare: preparedNativeShare),
-                onDismiss: { store.send(.shareDismissed) }
-            ) { nativeShare in
-                let items = ViewingKeyShareItems(
-                    payload: nativeShare.payload,
-                    title: String(localizable: .viewing_key_export)
-                )
-                ViewingKeyActivityView(
-                    activityItems: items.activityItems,
-                    ownership: nativeShare.ownership,
-                    onPresented: { store.send(.sharePresented) },
-                    onCompletion: { store.send(.shareDismissed) }
-                )
-            }
-
         }
     }
 
@@ -121,7 +78,7 @@ struct ExportViewingKeysView: View {
                 minHeight: 48,
                 allowsMultilineTitle: true
             ) {
-                store.send(.continueTapped)
+                _ = withAnimation { store.send(.continueTapped) }
             }
             .disabled(!store.canContinue)
             .screenHorizontalPadding()
@@ -178,42 +135,7 @@ struct ExportViewingKeysView: View {
         )
     }
 
-    private func sharingErrorBinding(isPresented: Bool) -> Binding<Bool> {
-        Binding(
-            get: { isPresented },
-            set: { updatedValue in
-                if !updatedValue {
-                    store.send(.dismissError)
-                }
-            }
-        )
-    }
 
-    private func nativeShareBinding(nativeShare: ViewingKeyNativeShare?) -> Binding<ViewingKeyNativeShare?> {
-        Binding(
-            get: { nativeShare },
-            set: { updatedShare in
-                if updatedShare == nil {
-                    store.send(.shareDismissed)
-                }
-            }
-        )
-    }
-
-    private func eligibleNativeShare(
-        payload: ViewingKeySharePayload?,
-        ownership: ViewingKeyShareOwnership?,
-        isVisible: Bool,
-        isPresented: Bool
-    ) -> ViewingKeyNativeShare? {
-        guard let payload,
-              let ownership,
-              ownership.payloadID == payload.id,
-              isVisible || isPresented || ownership.hasNativeOwnership else {
-            return nil
-        }
-        return ViewingKeyNativeShare(payload: payload, ownership: ownership)
-    }
 }
 
 private struct ViewingKeyHeaderIcons: View {
