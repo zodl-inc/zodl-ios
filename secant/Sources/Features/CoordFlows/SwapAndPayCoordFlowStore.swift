@@ -16,6 +16,7 @@ struct SwapAndPayCoordFlow {
         case addressBook(AddressBook)
         case addressBookContact(AddressBook)
         case confirmWithKeystone(SendConfirmation)
+        case confirmWithLedger(SendConfirmation)
         case crossPayConfirmation(SwapAndPay)
         case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)

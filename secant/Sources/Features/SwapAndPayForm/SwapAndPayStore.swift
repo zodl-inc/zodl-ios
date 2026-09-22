@@ -334,6 +334,7 @@ struct SwapAndPay {
         case closeSlippageSheetTapped
         case confirmButtonTapped
         case confirmWithKeystoneTapped
+        case confirmWithLedgerTapped
         case customBackRequired
         case dismissRequired
         case dontCancelTapped
@@ -1295,7 +1296,11 @@ struct SwapAndPay {
             case .confirmWithKeystoneTapped:
                 state.isQuotePresented = false
                 return .none
-                
+
+            case .confirmWithLedgerTapped:
+                state.isQuotePresented = false
+                return .none
+
                 // MARK: - CrossPay
 
             case .binding(\.amountAssetText):

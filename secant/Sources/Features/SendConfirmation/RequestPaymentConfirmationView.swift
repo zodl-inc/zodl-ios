@@ -207,6 +207,12 @@ struct RequestPaymentConfirmationView: View {
                     }
                     .screenHorizontalPadding()
                     .padding(.top, 40)
+                } else if let vendor = store.selectedWalletAccount?.vendor, vendor == .ledger {
+                    ZashiButton(String(localizable: .ledgerConfirm)) {
+                        store.send(.confirmWithLedgerTapped)
+                    }
+                    .screenHorizontalPadding()
+                    .padding(.top, 40)
                 } else {
                     if store.isSending {
                         ZashiButton(

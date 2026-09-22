@@ -16,6 +16,7 @@ struct SendCoordFlow {
         case addressBook(AddressBook)
         case addressBookContact(AddressBook)
         case confirmWithKeystone(SendConfirmation)
+        case confirmWithLedger(SendConfirmation)
         case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
         case requestZecConfirmation(SendConfirmation)

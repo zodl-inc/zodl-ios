@@ -450,8 +450,10 @@ extension Root {
                 // MARK: - Keystone
 
             case .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.rejectTapped)))),
                     .signWithKeystoneCoordFlow(.sendConfirmation(.rejectTapped)),
-                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))):
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.rejectTapped)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.rejectTapped)))):
                 state.path = nil
                 return .none
 
@@ -519,7 +521,10 @@ extension Root {
                     .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendFailed(_, true))))),
                     .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
                     .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
-                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendDone)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendPartial)))),
+                    .scanCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendFailed(_, true))))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .scanCoordFlow(.scan(.cancelTapped)):
@@ -574,7 +579,10 @@ extension Root {
                     .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.sendFailed(_, true))))),
                     .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
                     .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
-                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendDone)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendPartial)))),
+                    .sendCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendFailed(_, true))))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .sendCoordFlow(.path(.element(id: _, action: .sendResultSuccess(.closeTapped)))),
@@ -627,7 +635,10 @@ extension Root {
                     .swapAndPayCoordFlow(.sendFailed(_, true)),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
-                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendDone)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendPartial)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithLedger(.sendFailed(_, true))))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .swapToZecSummary(.sentTheFundsButtonTapped)))):

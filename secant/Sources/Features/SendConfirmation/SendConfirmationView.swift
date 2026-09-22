@@ -163,6 +163,12 @@ struct SendConfirmationView: View {
                     }
                     .screenHorizontalPadding()
                     .padding(.bottom, 24)
+                } else if store.selectedWalletAccount?.vendor == .ledger {
+                    ZashiButton(String(localizable: .ledgerConfirm)) {
+                        store.send(.confirmWithLedgerTapped)
+                    }
+                    .screenHorizontalPadding()
+                    .padding(.bottom, 24)
                 } else {
                     if store.isSending {
                         ZashiButton(
@@ -199,7 +205,7 @@ struct SendConfirmationView: View {
                 store.send(.confirmationScreenAppeared)
             }
             .screenTitle(
-                store.selectedWalletAccount?.vendor == .keystone
+                store.selectedWalletAccount?.vendor.isHWWallet() ?? false
                 ? String(localizable: .sendReview)
                 : String(localizable: .sendConfirmationTitle)
             )

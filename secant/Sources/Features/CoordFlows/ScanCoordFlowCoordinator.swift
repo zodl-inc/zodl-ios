@@ -89,12 +89,34 @@ extension ScanCoordFlow {
                 }
                 return .none
 
+            case .path(.element(id: _, action: .sendConfirmation(.confirmWithLedgerTapped))):
+                for element in state.path {
+                    if case .sendConfirmation(let sendConfirmationState) = element {
+                        state.path.append(.confirmWithLedger(sendConfirmationState))
+                        if let last = state.path.ids.last {
+                            return .send(.path(.element(id: last, action: .confirmWithLedger(.resolvePCZT))))
+                        }
+                    }
+                }
+                return .none
+
             case .path(.element(id: _, action: .requestZecConfirmation(.confirmWithKeystoneTapped))):
                 for element in state.path {
                     if case .requestZecConfirmation(let sendConfirmationState) = element {
                         state.path.append(.confirmWithKeystone(sendConfirmationState))
                         if let last = state.path.ids.last {
                             return .send(.path(.element(id: last, action: .confirmWithKeystone(.resolvePCZT))))
+                        }
+                    }
+                }
+                return .none
+
+            case .path(.element(id: _, action: .requestZecConfirmation(.confirmWithLedgerTapped))):
+                for element in state.path {
+                    if case .requestZecConfirmation(let sendConfirmationState) = element {
+                        state.path.append(.confirmWithLedger(sendConfirmationState))
+                        if let last = state.path.ids.last {
+                            return .send(.path(.element(id: last, action: .confirmWithLedger(.resolvePCZT))))
                         }
                     }
                 }
@@ -115,6 +137,19 @@ extension ScanCoordFlow {
                 }
                 return .none
 
+            // MOB-2020: unlike Keystone's `.scan(.foundPCZT)` above, this action already targets
+            // `confirmWithLedger` directly (no cross-element forward needed) -- by the time the
+            // child `SendConfirmation` reducer's own `.ledgerSigning(.signed)` arm runs, the
+            // element already holds the signed PCZT and has started the submit.
+            case .path(.element(id: _, action: .confirmWithLedger(.ledgerSigning(.signed)))):
+                for element in state.path {
+                    if case .confirmWithLedger(let sendConfirmationState) = element {
+                        state.path.append(.sending(sendConfirmationState))
+                        break
+                    }
+                }
+                return .none
+
             case .path(.element(id: _, action: .confirmWithKeystone(.updateResult(let result)))):
                 for element in state.path {
                     if case .confirmWithKeystone(let sendConfirmationState) = element {
@@ -122,7 +157,15 @@ extension ScanCoordFlow {
                     }
                 }
                 return .none
-                
+
+            case .path(.element(id: _, action: .confirmWithLedger(.updateResult(let result)))):
+                for element in state.path {
+                    if case .confirmWithLedger(let sendConfirmationState) = element {
+                        return .send(.resolveSendResult(result, sendConfirmationState))
+                    }
+                }
+                return .none
+
             case .path(.element(id: _, action: .confirmWithKeystone(.pcztSendFailed(let error)))):
                 for element in state.path.reversed() {
                     if element.is(\.sending) {
@@ -135,6 +178,26 @@ extension ScanCoordFlow {
                     } else if element.is(\.scan) || element.is(\.confirmWithKeystone) {
                         for element2 in state.path {
                             if case .confirmWithKeystone(let sendConfirmationState) = element2 {
+                                state.path.append(.preSendingFailure(sendConfirmationState))
+                            }
+                        }
+                        break
+                    }
+                }
+                return .none
+
+            case .path(.element(id: _, action: .confirmWithLedger(.pcztSendFailed(let error)))):
+                for element in state.path.reversed() {
+                    if element.is(\.sending) {
+                        for (id, element2) in zip(state.path.ids, state.path) {
+                            if element2.is(\.confirmWithLedger) {
+                                return .send(.path(.element(id: id, action: .confirmWithLedger(.sendFailed(error?.toZcashError(), true)))))
+                            }
+                        }
+                        break
+                    } else if element.is(\.confirmWithLedger) {
+                        for element2 in state.path {
+                            if case .confirmWithLedger(let sendConfirmationState) = element2 {
                                 state.path.append(.preSendingFailure(sendConfirmationState))
                             }
                         }
@@ -534,6 +597,8 @@ extension ScanCoordFlow {
                     } else if case .requestZecConfirmation(let sendConfirmationState) = element {
                         return .send(.viewTransactionRequested(sendConfirmationState))
                     } else if case .confirmWithKeystone(let sendConfirmationState) = element {
+                        return .send(.viewTransactionRequested(sendConfirmationState))
+                    } else if case .confirmWithLedger(let sendConfirmationState) = element {
                         return .send(.viewTransactionRequested(sendConfirmationState))
                     }
                 }

@@ -74,6 +74,19 @@ extension SwapAndPayCoordFlow {
                 }
                 return .none
 
+                // MARK: - Ledger
+
+            case .swapAndPay(.confirmWithLedgerTapped),
+                    .path(.element(id: _, action: .crossPayConfirmation(.confirmWithLedgerTapped))):
+                var sendConfirmationState = SendConfirmation.State.initial
+                sendConfirmationState.proposal = state.swapAndPayState.proposal
+                sendConfirmationState.type = state.swapAndPayState.isSwapExperienceEnabled ? .swap : .pay
+                state.path.append(.confirmWithLedger(sendConfirmationState))
+                if let last = state.path.ids.last {
+                    return .send(.path(.element(id: last, action: .confirmWithLedger(.resolvePCZT))))
+                }
+                return .none
+
             case .path(.element(id: _, action: .confirmWithKeystone(.getSignatureTapped))):
                 var scanState = Scan.State.initial
                 scanState.checkers = [.keystonePCZTScanChecker]
@@ -85,6 +98,43 @@ extension SwapAndPayCoordFlow {
                     if case .confirmWithKeystone(let sendConfirmationState) = element {
                         state.path.append(.sending(sendConfirmationState))
                         return .send(.path(.element(id: id, action: .confirmWithKeystone(.foundPCZT(pcztWithSigs)))))
+                    }
+                }
+                return .none
+
+            // MOB-2020: the Ledger twin of both `.scan(.foundPCZT)` (push `.sending`) and
+            // `.confirmWithKeystone(.keystoneFirmwareAccepted)` (the swap-metadata write) above,
+            // collapsed into one arm -- a Ledger signature has no firmware gate splitting those
+            // two moments apart, and this action already targets `confirmWithLedger` directly (no
+            // cross-element forward needed), so by the time this runs the element already holds
+            // the signed PCZT and has started the submit.
+            case .path(.element(id: _, action: .confirmWithLedger(.ledgerSigning(.signed)))):
+                let depositAddress = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
+                let crosspay = state.swapAndPayState.isSwapExperienceEnabled
+
+                if let provider = state.swapAndPayState.selectedAsset?.provider {
+                    let totalFees = state.swapAndPayState.totalFees
+                    let totalUSDFees = state.swapAndPayState.totalUSDFees
+                    userMetadataProvider.markTransactionAsSwapFor(
+                        depositAddress,
+                        provider,
+                        totalFees,
+                        totalUSDFees,
+                        state.swapAndPayState.zecAsset?.id ?? "",
+                        state.swapAndPayState.selectedAsset?.id ?? "",
+                        !crosspay,
+                        SwapConstants.pendingDeposit,
+                        state.swapAndPayState.zecToBeSpendInQuoteUSFormat
+                    )
+                    if let account = state.selectedWalletAccount?.account {
+                        try? userMetadataProvider.store(account)
+                    }
+                }
+
+                for element in state.path {
+                    if case .confirmWithLedger(let sendConfirmationState) = element {
+                        state.path.append(.sending(sendConfirmationState))
+                        break
                     }
                 }
                 return .none
@@ -120,7 +170,39 @@ extension SwapAndPayCoordFlow {
                     }
                 }
                 return .none
-                
+
+            case .path(.element(id: _, action: .confirmWithLedger(.updateResult(let result)))):
+                for (_, element) in zip(state.path.ids, state.path) {
+                    if case .confirmWithLedger(let sendConfirmationState) = element {
+                        return .run { send in
+                            await send(.updateTxIdToExpand(sendConfirmationState.txIdToExpand))
+                            await send(
+                                .updateFailedData(
+                                    sendConfirmationState.failedCode,
+                                    sendConfirmationState.failedDescription ?? "",
+                                    sendConfirmationState.failedPcztMsg
+                                )
+                            )
+                            await send(.updatePartialFailureData(
+                                sendConfirmationState.partialFailureTxIds,
+                                sendConfirmationState.partialFailureStatuses
+                            ))
+                            await send(.updatePendingDescription(sendConfirmationState.pendingDescription))
+
+                            switch result {
+                            case .success:
+                                await send(.updateResult(.success))
+                            case .pending:
+                                await send(.updateResult(.pending))
+                            case .failure:
+                                await send(.updateResult(.failure))
+                            default: return
+                            }
+                        }
+                    }
+                }
+                return .none
+
             case .path(.element(id: _, action: .confirmWithKeystone(.pcztSendFailed(let error)))):
                 for element in state.path.reversed() {
                     if element.is(\.sending) {
@@ -133,6 +215,26 @@ extension SwapAndPayCoordFlow {
                     } else if element.is(\.scan) || element.is(\.confirmWithKeystone) {
                         for element2 in state.path {
                             if case .confirmWithKeystone(let sendConfirmationState) = element2 {
+                                state.path.append(.preSendingFailure(sendConfirmationState))
+                            }
+                        }
+                        break
+                    }
+                }
+                return .none
+
+            case .path(.element(id: _, action: .confirmWithLedger(.pcztSendFailed(let error)))):
+                for element in state.path.reversed() {
+                    if element.is(\.sending) {
+                        for (id, element2) in zip(state.path.ids, state.path) {
+                            if element2.is(\.confirmWithLedger) {
+                                return .send(.path(.element(id: id, action: .confirmWithLedger(.sendFailed(error?.toZcashError(), true)))))
+                            }
+                        }
+                        break
+                    } else if element.is(\.confirmWithLedger) {
+                        for element2 in state.path {
+                            if case .confirmWithLedger(let sendConfirmationState) = element2 {
                                 state.path.append(.preSendingFailure(sendConfirmationState))
                             }
                         }
