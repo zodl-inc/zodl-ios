@@ -193,7 +193,10 @@ struct CurrencyConversionSetup {
                 return .none
 
             case .enableTapped:
-                try? userStoredPreferences.setExchangeRate(.init(manual: true, automatic: true, currency: state.selectedCurrency))
+                try? userStoredPreferences.setExchangeRate(
+                    UserPreferencesStorage.ExchangeRate(manual: true, automatic: true, currency: state.selectedCurrency)
+                )
+                exchangeRate.refreshExchangeRateUSD()
                 return .run { send in
                     do {
                         try await sdkSynchronizer.exchangeRateEnabled(true)
@@ -221,6 +224,9 @@ struct CurrencyConversionSetup {
                 state.initialCurrency = state.selectedCurrency
                 let option = state.currentSettingsOption
                 let enabled = state.currentSettingsOption == .optIn
+                if enabled {
+                    exchangeRate.refreshExchangeRateUSD()
+                }
                 return .run { send in
                     await send(.settingsOptionChanged(option))
                     
@@ -265,7 +271,6 @@ struct CurrencyConversionSetup {
                 return .none
                 
             case .torInitSucceeded:
-                exchangeRate.refreshExchangeRateUSD()
                 return .none
             }
         }
