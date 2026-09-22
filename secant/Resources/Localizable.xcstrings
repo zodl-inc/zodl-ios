@@ -10560,6 +10560,23 @@
         }
       }
     },
+    "ledger.send.unsupportedAddress" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger can't send to this address type."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger no puede enviar a este tipo de dirección."
+          }
+        }
+      }
+    },
     "ledger.signSheet.cancel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23893,6 +23910,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pasos alternativos"
+          }
+        }
+      }
+    },
+    "texLedger.warn1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger doesn't currently support transfers to Binance TEX addresses. "
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualmente, Ledger no es compatible con transferencias a direcciones Binance TEX."
           }
         }
       }
