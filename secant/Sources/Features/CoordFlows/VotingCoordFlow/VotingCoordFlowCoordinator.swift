@@ -2135,7 +2135,7 @@ extension VotingCoordFlow {
         // to give it anyway. And so does a tracking-only open already in
         // flight: the roster-only session it is building is not one this round
         // will use once this entry has asked for one that can sign, and the
-        // registry closes it unopened rather than hand it over, so running it
+        // registry closes it without ever handing it over, so running it
         // to the end buys the round nothing. The pass that may be in flight is
         // left to end on its own, because cancelling one finishes the session
         // under it and this open closes that session anyway.
@@ -3865,9 +3865,9 @@ extension VotingCoordFlow {
                 // long enough for the voter to do it while this is in flight.
                 // Opening now would build a roster-only session the entry has
                 // already made the round not want, and the registry would close
-                // it again unopened. Nothing is sent from here on the way out
-                // either: a cancelled effect's sends are dropped, and the
-                // round's state is the entry's.
+                // it without ever handing it over. Nothing is sent from here on
+                // the way out either: a cancelled effect's sends are dropped,
+                // and the round's state is the entry's.
                 try Task.checkCancellation()
                 try await votingCrypto.openRoundSession(
                     inputs,

@@ -4509,12 +4509,14 @@ extension VotingSharedStateSuites {
 
         /// A tracking-only open and an entry into the same round overlap for as
         /// long as the anchor read takes, which is exactly the voter who enters
-        /// a partially submitted round seconds after the list loads. The
-        /// registry joins whatever open a round already has, so the one that
-        /// finishes second decides what the round is left holding -- and a
-        /// roster-only session binds no hotkey, so a round left with one while
-        /// its own fact says `.voting` walks the voter into a Confirm that
-        /// cannot sign.
+        /// a partially submitted round seconds after the list loads. A
+        /// roster-only session binds no hotkey, so a round left holding one
+        /// while its own fact says `.voting` walks the voter into a Confirm that
+        /// cannot sign. This is the earlier half of that window, where the
+        /// entry's cancellation still reaches the sweep's open before it asks
+        /// the registry for anything; the test below covers an open the
+        /// registry already owns, which the registry refuses to hand to a
+        /// caller that asked for a different binding.
         @MainActor
         @Test func anEntryDuringAParkedTrackingOnlyOpenKeepsTheVotingSession() async throws {
             let recorder = EventRecorder()
@@ -4656,16 +4658,17 @@ extension VotingSharedStateSuites {
             await waitForStore { store.state.roundCache[roundId]?.liveSession == .open(binding: .voting) }
 
             // The round's session is the one the entry asked for: built with
-            // the hotkey binding, on the entry's own epoch, after the attempt
-            // it superseded had left the SDK.
+            // the hotkey binding, on the entry's own epoch, and the session the
+            // superseded attempt built was closed. That it was closed *before*
+            // the entry's build is the registry's own guarantee, pinned where a
+            // held close can prove it (`VotingSessionRegistryTests`); this
+            // session closes straight through, so its order here proves less.
             let recorded = events.values
-            let recoveryBuild = try #require(
-                recorded.firstIndex(of: FakeSessionFactory.building(roundId, "sharesOnly", epoch: recoveryEpoch))
-            )
+            let recoveryClosed = try #require(recorded.firstIndex(of: "closed(\(roundId))"))
             let entryBuild = try #require(
                 recorded.firstIndex(of: FakeSessionFactory.building(roundId, "voting", epoch: entryEpoch))
             )
-            #expect(recoveryBuild < entryBuild)
+            #expect(recoveryClosed < entryBuild)
             #expect(await factory.calls == 2)
             #expect(await registry.openRoundIds == [roundId])
             let current = try await registry.session(for: roundId)
