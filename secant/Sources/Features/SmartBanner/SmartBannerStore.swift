@@ -880,6 +880,11 @@ struct SmartBanner {
                 guard state.featureFlags.migration else {
                     return .send(.evaluatePriority3)
                 }
+                // MOB-2020: a Ledger account is out of scope for the Orchard→Ironwood migration
+                // in V0 — no Ledger signing yet.
+                guard state.selectedWalletAccount?.vendor != .ledger else {
+                    return .send(.evaluatePriority3)
+                }
                 return .run { [accountUUID = state.selectedWalletAccount?.id] send in
                     await send(.migrationVariantLoaded(migrationManager.bannerVariant(accountUUID)))
                 }
@@ -1597,6 +1602,8 @@ struct SmartBanner {
         guard let account = state.selectedWalletAccount else {
             return .none
         }
+        // No Ledger signing yet, so no offer.
+        guard account.vendor != .ledger else { return declineEffect }
         guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
             return declineEffect
         }

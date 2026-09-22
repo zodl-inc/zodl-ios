@@ -334,6 +334,12 @@ struct SendConfirmation {
                 guard let proposal = state.proposal else {
                     return .send(.sendFailed("missing proposal".toZcashError(), false))
                 }
+                // MOB-2020: defense in depth — a Ledger account has no ZIP 32 index, so the guard
+                // below already bails, but this makes the rule explicit: software signing derives
+                // a spending key from the wallet's seed, a path a Ledger account never has.
+                guard state.selectedWalletAccount?.vendor == .zcash else {
+                    return .send(.sendFailed("software signing is only available for the Zodl account".toZcashError(), false))
+                }
                 guard let zip32AccountIndex = state.selectedWalletAccount?.zip32AccountIndex else {
                     return .none
                 }

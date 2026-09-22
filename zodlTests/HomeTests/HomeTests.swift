@@ -50,6 +50,26 @@ import ComposableArchitecture
         #expect(!state.isHWWalletAccountActive)
     }
 
+    // MARK: - isSpendingAvailable
+
+    /// MOB-2020: Phase 1 ships a Ledger account as receive-only — Send, Pay and Swap are gated on
+    /// this, Receive is not.
+    @Test func isSpendingAvailableIsFalseForLedgerAndTrueForZodlAndKeystone() {
+        var state = Home.State.initial
+
+        state.$selectedWalletAccount.withLock { $0 = Self.account(idByte: 0x04, vendor: .ledger) }
+        #expect(state.isLedgerAccountActive)
+        #expect(!state.isSpendingAvailable)
+
+        state.$selectedWalletAccount.withLock { $0 = Self.account(idByte: 0x05, vendor: .zcash) }
+        #expect(!state.isLedgerAccountActive)
+        #expect(state.isSpendingAvailable)
+
+        state.$selectedWalletAccount.withLock { $0 = Self.account(idByte: 0x06, vendor: .keystone) }
+        #expect(!state.isLedgerAccountActive)
+        #expect(state.isSpendingAvailable)
+    }
+
     @MainActor @Test func synchronizerErrorBringsUpAlert() async {
         let testError = ZcashError.synchronizerNotPrepared
 

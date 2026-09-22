@@ -26,6 +26,24 @@ import ComposableArchitecture
         )
     }
 
+    /// A real Ledger account never has a ZIP 32 index, but this test deliberately gives it one
+    /// (`Zip32AccountIndex(0)`, like `Self.account()`) so it exercises the NEW `account.vendor ==
+    /// .ledger` guard specifically, rather than the pre-existing nil-index guard a real Ledger
+    /// account would also trip.
+    private static func ledgerAccount() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 10, count: 16)),
+                name: "Ledger",
+                keySource: "ledger",
+                seedFingerprint: nil,
+                hdAccountIndex: Zip32AccountIndex(0),
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     /// A nil proposal must (a) surface as `.nothingToShield`, (b) reset the subject to `.unknown`
     /// so resubscribers do not replay the terminal state, and (c) never touch key material —
     /// deriving a spending key for a shield that cannot happen is pure waste.
@@ -81,6 +99,66 @@ import ComposableArchitecture
             }
             #expect(replayed.withValue { $0.first } == .unknown)
             lateCancellable.cancel()
+        }
+    }
+
+    /// MOB-2020: a Ledger account has no signing path yet (Phase 3) — `shieldFunds` must fail
+    /// before the software lane (wallet export, key derivation) is ever reached.
+    @Test func shieldFundsForALedgerAccountFailsWithoutExportingTheWalletOrDerivingAKey() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount?
+            $selectedWalletAccount.withLock { $0 = Self.ledgerAccount() }
+
+            let states = LockIsolated<[ShieldingProcessorClient.State]>([])
+            let didDeriveKey = LockIsolated(false)
+            let didExportWallet = LockIsolated(false)
+            let (client, cancellable) = withDependencies {
+                $0.derivationTool = .liveValue
+                $0.derivationTool.deriveSpendingKey = { _, _, _ in
+                    didDeriveKey.setValue(true)
+                    throw "unexpected key derivation".toZcashError()
+                }
+                $0.mnemonic = .liveValue
+                $0.walletStorage = .noOp
+                $0.walletStorage.exportWallet = {
+                    didExportWallet.setValue(true)
+                    throw "unexpected wallet export".toZcashError()
+                }
+                $0.zcashSDKEnvironment = .testnet
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.proposeShielding = { _, _, _, _ in nil }
+            } operation: {
+                let client = ShieldingProcessorClient.live()
+                let cancellable = client.observe().sink { state in
+                    states.withValue { $0.append(state) }
+                }
+                client.shieldFunds()
+                return (client, cancellable)
+            }
+
+            func isFailed(_ state: ShieldingProcessorClient.State) -> Bool {
+                if case .failed = state { return true }
+                return false
+            }
+
+            // Wait until the terminal outcome AND its reset have both landed.
+            for _ in 0..<200 {
+                let snapshot = states.withValue { $0 }
+                if snapshot.contains(where: isFailed) && snapshot.last == .unknown {
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            cancellable.cancel()
+
+            let snapshot = states.withValue { $0 }
+            #expect(snapshot.contains(.requested))
+            #expect(snapshot.contains(where: isFailed), "expected a .failed terminal state, got \(snapshot)")
+            #expect(snapshot.last == .unknown, "terminal state must be followed by a reset, got \(snapshot)")
+            #expect(!didExportWallet.value, "no wallet export may happen for a Ledger account")
+            #expect(!didDeriveKey.value, "no spending key may be derived for a Ledger account")
         }
     }
 }

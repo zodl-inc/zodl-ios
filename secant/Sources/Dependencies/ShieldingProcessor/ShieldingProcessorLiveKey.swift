@@ -54,6 +54,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
             return
         }
 
+        if account.vendor == .ledger {
+            subject.sendTerminal(.failed("Shielding from a Ledger account is not available yet".toZcashError()))
+            return
+        }
+
         if account.vendor == .keystone {
             Task { [subject, sdkSynchronizer, zcashSDKEnvironment] in
                 do {

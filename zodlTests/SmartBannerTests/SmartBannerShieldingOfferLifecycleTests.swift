@@ -28,6 +28,21 @@ import ComposableArchitecture
         )
     }
 
+    /// MOB-2020: a Ledger account has no ZIP 32 index in reality; `nil` here matches that.
+    private static func ledgerAccount() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 8, count: 16)),
+                name: "Ledger",
+                keySource: "ledger",
+                seedFingerprint: nil,
+                hdAccountIndex: nil,
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     private static func syncState(
         account: WalletAccount,
         unshielded: Zatoshi,
@@ -361,6 +376,27 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.priorityContent == .priority75)
+        }
+    }
+
+    /// MOB-2020: a Ledger account has no signing path yet (Phase 3) — `shieldingOfferDecision`'s
+    /// vendor guard declines before the reminder/threshold checks even run, so the ladder walks
+    /// straight past priority7 regardless of balance.
+    @Test func ledgerAccountNeverSeatsTheShieldingOffer() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.ledgerAccount()
+            let store = makeStore(account: account, transparentBalance: Self.shieldableBalance)
+            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
+
+            await store.send(.shieldingBalanceFetched(account.id, Self.shieldableBalance))
+            await store.receive(\.evaluatePriority75)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority75)
+            #expect(store.state.priorityContent != .priority7)
         }
     }
 

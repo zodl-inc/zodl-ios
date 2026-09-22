@@ -41,8 +41,15 @@ struct AdvancedSettings {
                     return true
                 }
             }
-            
+
             return false
+        }
+
+        /// MOB-2020: a Ledger account has no signing path yet (Phase 3), so the restart-migration
+        /// row (which restarts a Ledger-excluded run — see `MigrationDerivations.candidateAccountUUIDs`)
+        /// is hidden for one.
+        var isLedgerAccount: Bool {
+            selectedWalletAccount?.vendor == .ledger
         }
 
         init() { }

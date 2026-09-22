@@ -68,7 +68,13 @@ struct Settings {
         var isHWWalletAccount: Bool {
             selectedWalletAccount?.vendor.isHWWallet() ?? false
         }
-        
+
+        /// MOB-2020: a Ledger account has no signing path yet (Phase 3), so it is kept out of the
+        /// Coinholder Polling flow — see `SettingsView`'s row and `.coinholderPollingTapped`.
+        var isLedgerAccount: Bool {
+            selectedWalletAccount?.vendor == .ledger
+        }
+
         init() { }
     }
 
