@@ -131,7 +131,7 @@ struct AddLedgerHWWalletCoordFlowView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            Text(localizable: .keystoneAddHWWalletFailureDesc)
+            Text(localizable: .ledgerAddHWWalletFailureDesc)
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.center)

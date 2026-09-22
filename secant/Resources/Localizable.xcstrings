@@ -10067,6 +10067,23 @@
         }
       }
     },
+    "ledger.addHWWallet.failureDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not connect your Ledger wallet. Your funds are safe. Please check that the Zcash app is open and up to date on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo conectar tu wallet Ledger. Tus fondos están seguros. Verifica que la app de Zcash esté abierta y actualizada en tu Ledger."
+          }
+        }
+      }
+    },
     "ledger.addHWWallet.pair" : {
       "extractionState" : "manual",
       "localizations" : {
