@@ -261,6 +261,43 @@ import ComposableArchitecture
             }
         }
     }
+
+    @Test func aTransportOpenedDuringAFailingCeremonyIsKept() async throws {
+        let transportA = FakeLedgerAPDUTransport(name: "A")
+        let transportB = FakeLedgerAPDUTransport(name: "B")
+        let scanner = FakeLedgerScanning(transportsToReturn: [transportA, transportB])
+        let fixture = try makePairingFixture()
+        let signer = FakeLedgerSigner(outcome: .failWhenReleased(ZcashError.ledgerTransportClosed))
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _ in
+                #expect((receivedTransport as? FakeLedgerAPDUTransport) === transportB)
+                return fixture
+            },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+
+        let deviceA = try await firstDevice(from: scanner)
+        try await session.connect(deviceA)
+
+        let stream = session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding())
+
+        try await eventually { signer.wasCalled }
+
+        let deviceB = try await firstDevice(from: scanner)
+        try await session.connect(deviceB)
+
+        signer.release()
+
+        await #expect(throws: ZcashError.ledgerTransportClosed) {
+            for try await _ in stream {}
+        }
+
+        let pairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(pairing == fixture)
+    }
 }
 
 // MARK: - Fixture
@@ -328,11 +365,13 @@ private func firstDevice(from scanner: FakeLedgerScanning) async throws -> Ledge
     return device
 }
 
-/// Retries `attempt` every 5ms, for up to 2 seconds, until it returns `true` — for observing
-/// cleanup that a cancellation triggers asynchronously (the actor's own bookkeeping), which has no
-/// other completion signal the test can await. Records an issue if `attempt` never returns `true`.
+/// Retries `attempt` every 5ms, for up to 10 seconds (2000 tries), until it returns `true` — for
+/// observing cleanup that runs asynchronously (a cancellation, the actor's own bookkeeping), which
+/// has no other completion signal the test can await. 10 seconds, not less: this repo has lost
+/// sub-10-second wall-clock guards to a cold CI test-runner process before. Records an issue if
+/// `attempt` never returns `true`.
 private func eventually(_ attempt: () async throws -> Bool) async throws {
-    for _ in 0..<400 {
+    for _ in 0..<2000 {
         if try await attempt() {
             return
         }
@@ -423,12 +462,17 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
 
 /// A `sign` fake for `LedgerSession`: records the arguments each call receives, reports a fixed
 /// sequence of stages through the progress callback, and then returns or throws whatever the test
-/// configured — or, for the cancellation test, hangs until the caller cancels it.
+/// configured — or hangs until the caller cancels it or releases it, for the cancellation and
+/// kept-transport tests.
 private final class FakeLedgerSigner: @unchecked Sendable {
     enum Outcome {
         case success(Pczt)
         case failure(Error)
         case hangUntilCancelled
+        /// Polls every 5ms until `release()` is called, then throws `error` — for a test that needs
+        /// to perform other actions (like opening a different transport) while a ceremony is still
+        /// in flight, before letting it fail.
+        case failWhenReleased(Error)
     }
 
     private let stages: [LedgerSigningProgress]
@@ -439,6 +483,7 @@ private final class FakeLedgerSigner: @unchecked Sendable {
     private let _receivedAccountUUID = LockIsolated<AccountUUID?>(nil)
     private let _receivedBinding = LockIsolated<LedgerAccountBinding?>(nil)
     private let _observedCancellation = LockIsolated<Bool>(false)
+    private let _released = LockIsolated<Bool>(false)
 
     init(stages: [LedgerSigningProgress] = [], outcome: Outcome = .failure(SignShouldNotBeCalled())) {
         self.stages = stages
@@ -451,6 +496,11 @@ private final class FakeLedgerSigner: @unchecked Sendable {
     var receivedAccountUUID: AccountUUID? { _receivedAccountUUID.value }
     var receivedBinding: LedgerAccountBinding? { _receivedBinding.value }
     var observedCancellation: Bool { _observedCancellation.value }
+
+    /// Lets a `.failWhenReleased` call that is currently polling proceed to throw its error.
+    func release() {
+        _released.withValue { $0 = true }
+    }
 
     func sign(
         _ transport: any LedgerAPDUTransport,
@@ -483,6 +533,11 @@ private final class FakeLedgerSigner: @unchecked Sendable {
                 _observedCancellation.withValue { $0 = true }
                 throw error
             }
+        case .failWhenReleased(let error):
+            while !_released.value {
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            throw error
         }
     }
 }

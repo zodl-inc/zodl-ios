@@ -143,7 +143,7 @@ actor LedgerSession {
                 } catch {
                     LoggerProxy.warn("Ledger: signing failed (\(Self.errorTag(error)))")
                     if Self.shouldDropTransport(after: error) {
-                        await self.dropTransport()
+                        await self.dropTransport(ifStillOpen: transport)
                     }
                     continuation.finish(throwing: error)
                 }
@@ -155,9 +155,17 @@ actor LedgerSession {
         }
     }
 
-    /// Forgets the open transport — called only after a signing failure the SDK already closed it
-    /// for; never calls `close()` again, since the SDK already did.
-    private func dropTransport() {
+    /// Forgets the open transport after a signing failure the SDK already closed it for — but only
+    /// when the session is still holding the very transport the ceremony used. A `connect()` that
+    /// opened a different transport while this ceremony's failure was still unwinding must not lose
+    /// that newer, live transport to a stale ceremony's cleanup. Compared by reference
+    /// (`LedgerAPDUTransport` is not class-bound, but both the live and fake conformances are
+    /// reference types — `LedgerBluetoothTransport` is an actor), since the protocol does not
+    /// require `Equatable`. Never calls `close()` again on it — the SDK already did.
+    private func dropTransport(ifStillOpen usedTransport: any LedgerAPDUTransport) {
+        guard let current = transport, current as AnyObject === usedTransport as AnyObject else {
+            return
+        }
         transport = nil
     }
 
