@@ -16,6 +16,7 @@ struct Root {
     struct State {
         enum Path {
             case addKeystoneHWWalletCoordFlow
+            case addLedgerHWWalletCoordFlow
             case currencyConversionSetup
             case migrationCoordFlow
             case receive
@@ -306,6 +307,7 @@ struct Root {
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
+        var addLedgerHWWalletCoordFlowState = AddLedgerHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
@@ -342,7 +344,7 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
-            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+            case .addKeystoneHWWalletCoordFlow, .addLedgerHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
@@ -489,6 +491,11 @@ struct Root {
         case welcome(Welcome.Action)
 
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
+        case addLedgerHWWalletCoordFlow(AddLedgerHWWalletCoordFlow.Action)
+        /// A Root-level way into the Ledger connect flow — sent by `ChooseHWWallet`'s
+        /// `ledgerTapped` arm (Root reacts to it the same way `.home(.addKeystoneHWWalletTapped)`
+        /// opens the Keystone flow).
+        case addLedgerHWWalletRequested
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
@@ -682,6 +689,10 @@ struct Root {
         
         Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
             AddKeystoneHWWalletCoordFlow()
+        }
+
+        Scope(state: \.addLedgerHWWalletCoordFlowState, action: \.addLedgerHWWalletCoordFlow) {
+            AddLedgerHWWalletCoordFlow()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {

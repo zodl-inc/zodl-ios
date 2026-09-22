@@ -183,6 +183,16 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .addLedgerHWWalletCoordFlow {
+                                AddLedgerHWWalletCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.addLedgerHWWalletCoordFlowState,
+                                            action: \.addLedgerHWWalletCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .transactionsCoordFlow {
                                 TransactionsCoordFlowView(
                                     store:

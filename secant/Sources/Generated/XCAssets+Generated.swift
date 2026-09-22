@@ -192,6 +192,7 @@ public enum Asset {
       public static let keystoneTitleLogo = ImageAsset(name: "keystoneTitleLogo")
       public static let ledgerLogo = ImageAsset(name: "ledgerLogo")
       public static let ledgerMark = ImageAsset(name: "ledgerMark")
+      public static let ledgerTitleLogo = ImageAsset(name: "ledgerTitleLogo")
       public static let payWithNear = ImageAsset(name: "payWithNear")
       public static let payWithNearDisabled = ImageAsset(name: "payWithNearDisabled")
       public static let swapAndPay = ImageAsset(name: "swapAndPay")
