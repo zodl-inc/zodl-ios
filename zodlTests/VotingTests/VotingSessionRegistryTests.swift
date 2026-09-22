@@ -515,75 +515,42 @@ import Testing
     /// registry is where the parked attempt has to be given up.
     @Test func anOpenThatAsksForADifferentBindingSupersedesTheParkedAttempt() async throws {
         let roundId = self.roundId
-        let events = SignalledRecords<String>()
-        let factoryHold = ResumableGate()
-        let recoverySession = FakeSession(roundId: roundId, events: events)
-        let votingSession = FakeSession(roundId: roundId, events: events)
-        let factory = FakeSessionFactory(
-            sessions: [recoverySession, votingSession],
-            hold: factoryHold,
-            events: events
-        )
-        let registry = makeFakeRegistry(factory)
+        let staged = await stageASupersededOpen(epoch: 11)
 
-        let recovering = Task {
-            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
-        }
-        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
-
-        // Inert by design, and the reason this is the registry's job: the
-        // attempt runs on a task of the registry's own, which no caller holds.
-        recovering.cancel()
-
-        let entering = Task {
-            try await VotingSessionRegistryTests.open(
-                registry,
-                roundId,
-                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
-                epoch: 11
-            )
-        }
-        // The supersede has happened: the wait for the attempt it gave up is a
-        // drain of this registry, and the entry's own attempt is behind it.
-        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
         #expect(
-            await factory.calls == 1,
+            await staged.factory.calls == 1,
             "the entry must not build while the attempt it superseded is still inside the SDK"
         )
 
-        factoryHold.open()
-        let opened = try await entering.value
+        staged.factoryHold.open()
+        let opened = try await staged.superseding.value
 
-        #expect(opened === votingSession, "the entry must get the session it asked for")
-        #expect(await factory.calls == 2)
-        #expect(await registry.openRoundIds == [roundId])
-        let current = try await registry.session(for: roundId)
-        #expect(current === votingSession)
-        if case .success = await recovering.result {
+        #expect(opened === staged.supersedingSession, "the entry must get the session it asked for")
+        #expect(await staged.factory.calls == 2)
+        #expect(await staged.registry.openRoundIds == [roundId])
+        let current = try await staged.registry.session(for: roundId)
+        #expect(current === staged.supersedingSession)
+        if case .success = await staged.parked.result {
             Issue.record("a superseded open must not hand back a session")
         }
 
-        let recorded = events.values
-        let recoveryBuild = try #require(
-            recorded.firstIndex(of: FakeSessionFactory.building(roundId, "sharesOnly", epoch: 10))
+        let recorded = staged.events.values
+        #expect(
+            recorded.contains(FakeSessionFactory.building(roundId, "sharesOnly", epoch: 10)),
+            "the attempt that was given up is the one share recovery started"
         )
+        // A round never has two sessions at once: the one the superseded attempt
+        // built anyway is closed, all the way, before the entry's is built.
+        let supersededClosed = try #require(recorded.firstIndex(of: "closed(\(roundId))"))
         let entryBuild = try #require(
             recorded.firstIndex(of: FakeSessionFactory.building(roundId, "voting", epoch: 11))
         )
-        #expect(
-            recoveryBuild < entryBuild,
-            "the entry's build must wait for the attempt it gave up to leave the SDK"
-        )
+        #expect(supersededClosed < entryBuild)
 
-        // The session the superseded attempt built anyway is closed, and closed
-        // by the registry: that close is a drain like any other, so the books
-        // settle back to one session and nothing pending.
-        await settle("the superseded attempt's session to finish closing") {
-            await registry.pendingDrainCount == 0
-        }
-        #expect(recoverySession.recorded.closesFinished == 1)
-        #expect(recoverySession.recorded.cancels >= 1)
-        #expect(await registry.openRoundIds == [roundId], "the entry's session survives the supersede")
+        #expect(staged.parkedSession.recorded.closesFinished == 1)
+        #expect(staged.parkedSession.recorded.cancels >= 1)
+        #expect(await staged.registry.pendingDrainCount == 0)
+        #expect(await staged.registry.openRoundIds == [roundId], "the entry's session survives the supersede")
     }
 
     /// Two opens that ask for the same session still share one build. Making
@@ -616,14 +583,19 @@ import Testing
                 epoch: 7
             )
         }
+        _ = await first.result
+        _ = await second.result
 
-        let firstSession = try await first.value
-        let secondSession = try await second.value
-
-        #expect(firstSession === session)
-        #expect(secondSession === session, "an open asking for the same session joins the one in flight")
+        // Read before either outcome is unwrapped: a second build is the thing
+        // this test exists to rule out, and it has to be reported as itself
+        // rather than as whatever the second caller ended up with.
         #expect(await factory.calls == 1, "a caller asking for the same session must not build a second one")
         #expect(session.recorded.closesStarted == 0, "nothing was replaced, so nothing was closed")
+
+        let firstSession = try #require(try? await first.value)
+        let secondSession = try #require(try? await second.value)
+        #expect(firstSession === session)
+        #expect(secondSession === session, "an open asking for the same session joins the one in flight")
         #expect(await registry.openRoundIds == [roundId])
         #expect(await registry.pendingDrainCount == 0)
     }
@@ -634,7 +606,7 @@ import Testing
         try await expectTheParkedAttemptIsSuperseded(
             by: VotingSessionBinding(roster: []),
             route: .tor,
-            epoch: 0
+            epoch: 10
         )
     }
 
@@ -644,95 +616,68 @@ import Testing
         try await expectTheParkedAttemptIsSuperseded(
             by: VotingSessionBinding(roster: []),
             route: .direct,
-            epoch: 1
+            epoch: 11
         )
     }
 
-    /// The session a superseded attempt built anyway is closed on its way out,
-    /// and that close belongs to the registry -- but it is not something the
-    /// caller that superseded it waits for. So the round's session is the one
-    /// that caller asked for even while the other one is still closing, and the
-    /// late result never reaches the books.
+    /// An open the SDK is still inside cannot be cancelled out of it, so a
+    /// superseded attempt can still come back with a session. That session is
+    /// closed rather than registered, and the open that superseded the attempt
+    /// waits for that close: until it finishes, the round would otherwise hold
+    /// two sessions contending for its rows in the sidecar.
     @Test func aSupersededAttemptsLateResultNeverRegisters() async throws {
         let roundId = self.roundId
-        let events = SignalledRecords<String>()
-        let factoryHold = ResumableGate()
         let closeHold = ResumableGate()
-        let late = FakeSession(roundId: roundId, events: events, closeHold: closeHold)
-        let entrySession = FakeSession(roundId: roundId, events: events)
-        let factory = FakeSessionFactory(sessions: [late, entrySession], hold: factoryHold, events: events)
-        let registry = makeFakeRegistry(factory)
+        let staged = await stageASupersededOpen(parkedSessionCloseHold: closeHold)
 
-        let recovering = Task {
-            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
-        }
-        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
+        staged.factoryHold.open()
+        await settle("the superseded attempt's session to start closing") { staged.parkedSession.isClosing }
 
-        let entering = Task {
-            try await VotingSessionRegistryTests.open(
-                registry,
-                roundId,
-                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
-                epoch: 10
-            )
-        }
-        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
-
-        factoryHold.open()
-        let opened = try await entering.value
-        await settle("the superseded attempt's session to start closing") { late.isClosing }
-
-        #expect(opened === entrySession)
-        #expect(await registry.openRoundIds == [roundId], "the late result must never register")
-        let current = try await registry.session(for: roundId)
-        #expect(current === entrySession)
         #expect(
-            late.recorded.closesFinished == 0,
-            "the late session is still closing -- that is what makes this a question"
+            await staged.registry.pendingDrainCount == 2,
+            "the attempt that was given up and the close of the session it built are both still running"
         )
-        #expect(await registry.pendingDrainCount == 1, "the late session's close is the only thing still running")
-        if case .success = await recovering.result {
+        #expect(
+            !staged.events.values.contains(FakeSessionFactory.building(roundId, "voting", epoch: 10)),
+            "the superseding open must not build while the session it displaced is still closing"
+        )
+        #expect(await staged.factory.calls == 1)
+        #expect(await staged.registry.openRoundIds.isEmpty, "the late result must never register")
+
+        closeHold.open()
+        let opened = try await staged.superseding.value
+
+        #expect(opened === staged.supersedingSession)
+        #expect(await staged.registry.openRoundIds == [roundId])
+        let current = try await staged.registry.session(for: roundId)
+        #expect(current === staged.supersedingSession, "the round's session is the one the superseding open asked for")
+        #expect(staged.parkedSession.recorded.closesFinished == 1)
+        #expect(await staged.registry.pendingDrainCount == 0)
+        if case .success = await staged.parked.result {
             Issue.record("a superseded open must not hand back a session")
         }
 
-        closeHold.open()
-        await settle("the late session's close to finish") { await registry.pendingDrainCount == 0 }
-        #expect(late.recorded.closesFinished == 1)
-        #expect(await registry.openRoundIds == [roundId])
+        let recorded = staged.events.values
+        let closed = try #require(recorded.firstIndex(of: "closed(\(roundId))"))
+        let built = try #require(
+            recorded.firstIndex(of: FakeSessionFactory.building(roundId, "voting", epoch: 10))
+        )
+        #expect(closed < built)
     }
 
     /// A wholesale teardown has to wait for the session a superseded attempt
     /// built, the same as for any other close: returning from `closeAll` is the
     /// licence to close the sidecar's store and delete its file, and that
-    /// session is still holding it.
+    /// session is still holding it -- as is the open waiting behind it.
     @Test func aCloseAllWaitsForTheSessionASupersededAttemptBuilt() async throws {
         let roundId = self.roundId
-        let events = SignalledRecords<String>()
-        let factoryHold = ResumableGate()
         let closeHold = ResumableGate()
-        let superseded = FakeSession(roundId: roundId, events: events, closeHold: closeHold)
-        let entrySession = FakeSession(roundId: roundId, events: events)
-        let factory = FakeSessionFactory(sessions: [superseded, entrySession], hold: factoryHold, events: events)
-        let registry = makeFakeRegistry(factory)
+        let staged = await stageASupersededOpen(parkedSessionCloseHold: closeHold)
+        let registry = staged.registry
+        let events = staged.events
 
-        let recovering = Task {
-            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
-        }
-        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
-
-        let entering = Task {
-            try await VotingSessionRegistryTests.open(
-                registry,
-                roundId,
-                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
-                epoch: 10
-            )
-        }
-        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
-
-        factoryHold.open()
-        _ = try await entering.value
-        await settle("the superseded attempt's session to start closing") { superseded.isClosing }
+        staged.factoryHold.open()
+        await settle("the superseded attempt's session to start closing") { staged.parkedSession.isClosing }
         let generationBefore = await registry.generation
 
         let draining = Task {
@@ -749,15 +694,25 @@ import Testing
             !events.values.contains("closeAllReturned"),
             "a teardown must not return while the session a superseded attempt built is still closing"
         )
+        #expect(
+            await registry.pendingDrainCount == 3,
+            "both attempts given up and the close still running are all the teardown's to wait for"
+        )
 
         closeHold.open()
         await draining.value
 
-        #expect(superseded.recorded.closesFinished == 1)
-        #expect(entrySession.recorded.closesFinished == 1)
+        #expect(staged.parkedSession.recorded.closesFinished == 1)
         #expect(await registry.pendingDrainCount == 0)
         #expect(await registry.openRoundIds.isEmpty)
-        _ = await recovering.result
+        #expect(await staged.factory.calls == 1, "the superseding open must not build across a teardown")
+
+        let recorded = events.values
+        let closed = try #require(recorded.firstIndex(of: "closed(\(roundId))"))
+        let closeAllReturned = try #require(recorded.firstIndex(of: "closeAllReturned"))
+        #expect(closed < closeAllReturned)
+        _ = await staged.parked.result
+        _ = await staged.superseding.result
     }
 
     /// Superseding is still an open, and an open a teardown overtakes registers
@@ -765,56 +720,40 @@ import Testing
     /// session behind a store that is being closed.
     @Test func supersedingDoesNotBypassTheTeardownFence() async throws {
         let roundId = self.roundId
-        let events = SignalledRecords<String>()
-        let factoryHold = ResumableGate()
-        let parked = FakeSession(roundId: roundId, events: events)
-        let neverBuilt = FakeSession(roundId: roundId, events: events)
-        let factory = FakeSessionFactory(sessions: [parked, neverBuilt], hold: factoryHold, events: events)
-        let registry = makeFakeRegistry(factory)
+        let staged = await stageASupersededOpen()
+        let registry = staged.registry
         let generationBefore = await registry.generation
-
-        let recovering = Task {
-            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
-        }
-        await settle("the share recovery open to reach the factory") { await factory.calls == 1 }
-
-        let entering = Task {
-            try await VotingSessionRegistryTests.open(
-                registry,
-                roundId,
-                binding: VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
-                epoch: 10
-            )
-        }
-        await settle("the entry to give up the parked attempt") { await registry.pendingDrainCount == 1 }
 
         let draining = Task { await registry.closeAll() }
         // The generation moves in `closeAll`'s synchronous prologue, and what is
         // opening is given up in that same prologue: seeing the bump means the
-        // entry's own attempt has been cancelled too.
+        // superseding attempt has been cancelled too.
         await settle("the teardown to enter the registry") {
             await registry.generation == generationBefore + 1
         }
         #expect(
             await registry.pendingDrainCount == 2,
-            "the superseded attempt and the entry's own are both waited for"
+            "the superseded attempt and the superseding one are both waited for"
         )
 
-        factoryHold.open()
+        staged.factoryHold.open()
         await draining.value
 
         await #expect(throws: VotingSessionError.notOpen(roundId: roundId)) {
-            _ = try await entering.value
+            _ = try await staged.superseding.value
         }
-        #expect(await factory.calls == 1, "the entry's attempt must not build across a teardown")
-        #expect(parked.recorded.closesFinished == 1, "the session the superseded attempt built anyway is closed")
+        #expect(await staged.factory.calls == 1, "the superseding attempt must not build across a teardown")
+        #expect(
+            staged.parkedSession.recorded.closesFinished == 1,
+            "the session the superseded attempt built anyway is closed"
+        )
         #expect(await registry.openRoundIds.isEmpty)
         #expect(await registry.pendingDrainCount == 0)
-        _ = await recovering.result
+        _ = await staged.parked.result
     }
 
     /// Parks an open asking for the roster-only binding, the direct route and
-    /// epoch 0, then checks that an open asking for `binding`, `route` and
+    /// epoch 10, then checks that an open asking for `binding`, `route` and
     /// `epoch` replaces that attempt instead of joining it.
     private func expectTheParkedAttemptIsSuperseded(
         by binding: VotingSessionBinding,
@@ -823,17 +762,102 @@ import Testing
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let roundId = self.roundId
+        let staged = await stageASupersededOpen(
+            binding: binding,
+            route: route,
+            epoch: epoch,
+            sourceLocation: sourceLocation
+        )
+
+        staged.factoryHold.open()
+        let opened = try await staged.superseding.value
+
+        #expect(
+            opened === staged.supersedingSession,
+            "the second open must get a session of its own",
+            sourceLocation: sourceLocation
+        )
+        #expect(await staged.factory.calls == 2, "the second open must build its own", sourceLocation: sourceLocation)
+        if case .success = await staged.parked.result {
+            Issue.record("a superseded open must not hand back a session", sourceLocation: sourceLocation)
+        }
+        #expect(staged.parkedSession.recorded.closesFinished == 1, sourceLocation: sourceLocation)
+        #expect(await staged.registry.openRoundIds == [roundId], sourceLocation: sourceLocation)
+        #expect(await staged.registry.pendingDrainCount == 0, sourceLocation: sourceLocation)
+
+        let recorded = staged.events.values
+        let closed = try #require(recorded.firstIndex(of: "closed(\(roundId))"), sourceLocation: sourceLocation)
+        // The last build is the second open's: when it asks for the same
+        // binding and epoch on another route, the two builds record the same
+        // event.
+        let supersedingBuild = try #require(
+            recorded.lastIndex(of: FakeSessionFactory.building(roundId, FakeSessionFactory.kind(of: binding), epoch: epoch)),
+            sourceLocation: sourceLocation
+        )
+        #expect(
+            closed < supersedingBuild,
+            "the superseded attempt's session is closed before the second open builds",
+            sourceLocation: sourceLocation
+        )
+    }
+
+    /// What every question about a supersede starts from: a share recovery open
+    /// parked inside the factory with its session queued behind it, the caller
+    /// that started it cancelled, and a second open that has already given that
+    /// attempt up and is waiting behind the drain the supersede left.
+    ///
+    /// The second open asks for the voter's binding -- the roster plus a hotkey
+    /// -- at epoch 10 on the direct route unless a caller says otherwise, which
+    /// is how the cases that pin the route and the epoch instead vary one field
+    /// each against the parked open's roster-only, direct, epoch 10.
+    private struct SupersededOpens {
+        let events: SignalledRecords<String>
+        /// Held shut until a test lets the parked build out of the factory.
+        let factoryHold: ResumableGate
+        /// Queued first, so the parked attempt is the one that gets it.
+        let parkedSession: FakeSession
+        /// Queued second, for the open that superseded the parked attempt.
+        let supersedingSession: FakeSession
+        let factory: FakeSessionFactory
+        let registry: VotingSessionRegistryCore<FakeSession>
+        let parked: Task<FakeSession, Error>
+        let superseding: Task<FakeSession, Error>
+    }
+
+    private func stageASupersededOpen(
+        binding: VotingSessionBinding = VotingSessionBinding(roster: [], hotkeySecret: Data([0x5A])),
+        route: VotingTransportRoute = .direct,
+        epoch: UInt64 = 10,
+        parkedSessionCloseHold: ResumableGate? = nil,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async -> SupersededOpens {
+        let roundId = self.roundId
         let events = SignalledRecords<String>()
         let factoryHold = ResumableGate()
-        let parked = FakeSession(roundId: roundId, events: events)
-        let superseding = FakeSession(roundId: roundId, events: events)
-        let factory = FakeSessionFactory(sessions: [parked, superseding], hold: factoryHold, events: events)
+        let parkedSession = FakeSession(roundId: roundId, events: events, closeHold: parkedSessionCloseHold)
+        let supersedingSession = FakeSession(roundId: roundId, events: events)
+        let factory = FakeSessionFactory(
+            sessions: [parkedSession, supersedingSession],
+            hold: factoryHold,
+            events: events
+        )
         let registry = makeFakeRegistry(factory)
 
-        let first = Task { try await VotingSessionRegistryTests.open(registry, roundId) }
-        await settle("the first open to reach the factory") { await factory.calls == 1 }
+        let parked = Task {
+            try await VotingSessionRegistryTests.open(registry, roundId, epoch: 10)
+        }
+        await settle(
+            "the share recovery open to reach the factory",
+            until: { await factory.calls == 1 },
+            sourceLocation: sourceLocation
+        )
 
-        let second = Task {
+        // Inert by design, and the reason the supersede is the registry's job:
+        // the attempt runs on a task of the registry's own, which no caller of
+        // `open` holds, so cancelling the caller leaves the build running.
+        parked.cancel()
+
+        let superseding = Task {
             try await VotingSessionRegistryTests.open(
                 registry,
                 roundId,
@@ -842,24 +866,24 @@ import Testing
                 epoch: epoch
             )
         }
-        await settle("the second open to give up the parked attempt") {
-            await registry.pendingDrainCount == 1
-        }
+        // The supersede has happened: the wait for the attempt it gave up is a
+        // drain of this registry, and the second open's own attempt is behind it.
+        await settle(
+            "the second open to give up the parked attempt",
+            until: { await registry.pendingDrainCount == 1 },
+            sourceLocation: sourceLocation
+        )
 
-        factoryHold.open()
-        let opened = try await second.value
-
-        #expect(opened === superseding, "the second open must get a session of its own", sourceLocation: sourceLocation)
-        #expect(await factory.calls == 2, "the second open must build its own", sourceLocation: sourceLocation)
-        if case .success = await first.result {
-            Issue.record("a superseded open must not hand back a session", sourceLocation: sourceLocation)
-        }
-
-        await settle("the superseded attempt's session to finish closing") {
-            await registry.pendingDrainCount == 0
-        }
-        #expect(parked.recorded.closesFinished == 1, sourceLocation: sourceLocation)
-        #expect(await registry.openRoundIds == [roundId], sourceLocation: sourceLocation)
+        return SupersededOpens(
+            events: events,
+            factoryHold: factoryHold,
+            parkedSession: parkedSession,
+            supersedingSession: supersedingSession,
+            factory: factory,
+            registry: registry,
+            parked: parked,
+            superseding: superseding
+        )
     }
 
     /// Waits until `condition` holds, asking again whenever another task has had

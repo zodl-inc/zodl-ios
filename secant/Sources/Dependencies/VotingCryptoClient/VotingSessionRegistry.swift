@@ -51,8 +51,10 @@ extension VotingRoundSession: VotingRegistrySession {}
 /// suspends, and a later opener awaits that attempt instead of starting its
 /// own — as long as it is asking for the same session. One that asks for a
 /// different binding, route or epoch supersedes the attempt instead of joining
-/// it, because the session being built is not the one it could use; see
-/// ``open(inputs:binding:route:epoch:)``.
+/// it, because the session being built is not the one it could use, and then
+/// waits for whatever that attempt still comes back with to be closed before it
+/// builds — which is how a round stays on one session across a supersede too;
+/// see ``open(inputs:binding:route:epoch:)``.
 ///
 /// Teardown is owned rather than awaited in place. Closing takes the session
 /// off the books at once and leaves a *drain* behind — the task cancelling and
@@ -159,15 +161,26 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     /// fixes for its whole life, and for the submission epoch. So the attempt is
     /// abandoned — cancelled, with the wait for it left behind as a drain — and
     /// this open builds what its caller asked for. The abandoned attempt's own
-    /// fences close any session it still produces; nothing of it registers.
+    /// fences close any session it still produces, all the way, before this open
+    /// builds: nothing of it registers, and the round is never on two sessions
+    /// at once.
+    ///
+    /// A caller that had joined the abandoned attempt shares its outcome to the
+    /// end, so it is told the round is not open rather than handed a session. It
+    /// is left holding nothing by that: an open hands its session back, but a
+    /// caller here reads the round's session through ``session(for:)`` when it
+    /// needs it, so what such a caller loses is its own open — and the session
+    /// the round ends up on is the one the superseding caller asked for.
     ///
     /// Nothing waits in a circle across that. ``abandonOpen(_:)`` registers the
     /// drain before this open creates its attempt, so the new attempt inherits
     /// that drain in its snapshot and waits for it, the drain waits for the
-    /// abandoned attempt, and the abandoned attempt waits for neither: it took
-    /// its own snapshot before the drain existed, or it never started, in which
-    /// case it is already cancelled and leaves at its first fence. The waiting
-    /// runs one way.
+    /// abandoned attempt, and the abandoned attempt waits for one thing only:
+    /// the close of the session it built anyway, which waits on the session and
+    /// never on an open. It waits for nothing else — it took its own snapshot
+    /// before the abandoning drain existed, or it never started, in which case
+    /// it is already cancelled and leaves at its first fence. The waiting runs
+    /// one way.
     @discardableResult
     func open(
         inputs: VotingSessionInputs,
@@ -351,11 +364,22 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         // caller told the round is not open. That close is a drain of its own,
         // so a teardown still waiting sees it rather than returning in front of
         // a session it never knew about.
+        //
+        // And this attempt waits for it before it leaves. An open that
+        // superseded this one is waiting for this task, through the drain that
+        // gave this one up, and the session it is about to build is for the same
+        // round: finishing here while this one is still closing would leave two
+        // sessions on the round, contending for its rows in the sidecar. The
+        // wait cannot close a cycle — this drain waits on the session's own
+        // close and on nothing else, never on an open — so the chain runs one
+        // way: the superseding attempt, the drain that gave this one up, this
+        // attempt, this close, done.
         guard generation == generationAtStart, !Task.isCancelled else {
-            startDrain(roundId) {
+            let closing = startDrain(roundId) {
                 session.cancel()
                 await session.close()
             }
+            await closing.value
             throw VotingSessionError.notOpen(roundId: roundId)
         }
 
@@ -398,8 +422,11 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     }
 
     /// Registers `work` as a drain of `key` before anything suspends, so the
-    /// very next caller into the actor already sees it.
-    private func startDrain(_ key: String, _ work: @escaping @Sendable () async -> Void) {
+    /// very next caller into the actor already sees it, and hands back the task
+    /// running it — for the one caller that has to wait for this piece of
+    /// teardown by itself rather than through ``awaitDrains(of:)``.
+    @discardableResult
+    private func startDrain(_ key: String, _ work: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
         nextDrainId &+= 1
         let id = nextDrainId
         let task = Task { [weak self] in
@@ -407,6 +434,8 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
             await self?.finishDrain(id)
         }
         drains[id] = Drain(key: key, task: task)
+
+        return task
     }
 
     private func finishDrain(_ id: UInt64) {
