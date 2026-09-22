@@ -97,7 +97,7 @@ struct AdvancedSettingsView: View {
                             }
                         }
 
-                        if store.isKeystoneConnected {
+                        if store.isHWWalletConnected {
                             ActionRow(
                                 icon: Asset.Assets.Icons.hardDrive.image,
                                 title: String(localizable: .disconnectHWWalletCta),

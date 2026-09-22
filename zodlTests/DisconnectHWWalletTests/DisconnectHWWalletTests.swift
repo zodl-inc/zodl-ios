@@ -5,6 +5,11 @@
 //  More tests — hardware wallet. Covers DisconnectHWWallet state machine + support routing
 //  (Features/DisconnectHWWallet/DisconnectHWWalletStore.swift).
 //
+//  MOB-2020 Phase 2: the flow learns the Ledger vendor alongside Keystone -- `selectedVendor`
+//  replaces the old "always the Keystone account" assumption, `connectedHWVendors` lists which
+//  cards the screen shows (keystone before ledger), and a Ledger disconnect additionally drops
+//  its keychain binding, its encryption keys, and closes the Bluetooth link.
+//
 
 import Testing
 import ComposableArchitecture
@@ -13,11 +18,18 @@ import ComposableArchitecture
 
 @Suite(.serialized) struct DisconnectHWWalletTests {
     @MainActor @Test func disconnectTappedShowsSheetAndProcesses() async {
-        let store = TestStore(initialState: DisconnectHWWallet.State()) { DisconnectHWWallet() }
+        var state = DisconnectHWWallet.State()
+        state.selectedVendor = .keystone
+        let store = TestStore(initialState: state) { DisconnectHWWallet() }
         await store.send(.disconnectTapped) {
             $0.isSheetUp = true
             $0.isProcessing = true
         }
+    }
+
+    @MainActor @Test func disconnectTappedWithoutASelectionIsNoOp() async {
+        let store = TestStore(initialState: DisconnectHWWallet.State()) { DisconnectHWWallet() }
+        await store.send(.disconnectTapped)
     }
 
     @MainActor @Test func disconnectFailedShowsFailureSheet() async {
@@ -44,9 +56,57 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - connectedHWVendors / onAppear preselection
+
+    @Test func connectedHWVendorsListsKeystoneThenLedger() {
+        var state = DisconnectHWWallet.State()
+
+        state.$walletAccounts.withLock { $0 = [] }
+        #expect(state.connectedHWVendors == [])
+
+        state.$walletAccounts.withLock { $0 = [ledgerAccount()] }
+        #expect(state.connectedHWVendors == [.ledger])
+
+        state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
+        #expect(state.connectedHWVendors == [.keystone])
+
+        // Keystone first regardless of the underlying array's order.
+        state.$walletAccounts.withLock { $0 = [ledgerAccount(), keystoneAccount()] }
+        #expect(state.connectedHWVendors == [.keystone, .ledger])
+    }
+
+    @MainActor @Test func onAppearPreselectsTheOnlyConnectedVendor() async {
+        var keystoneOnly = DisconnectHWWallet.State()
+        keystoneOnly.$walletAccounts.withLock { $0 = [keystoneAccount()] }
+        let keystoneStore = TestStore(initialState: keystoneOnly) { DisconnectHWWallet() }
+        keystoneStore.exhaustivity = .off
+        await keystoneStore.send(.onAppear)
+        #expect(keystoneStore.state.selectedVendor == .keystone)
+
+        var ledgerOnly = DisconnectHWWallet.State()
+        ledgerOnly.$walletAccounts.withLock { $0 = [ledgerAccount()] }
+        let ledgerStore = TestStore(initialState: ledgerOnly) { DisconnectHWWallet() }
+        ledgerStore.exhaustivity = .off
+        await ledgerStore.send(.onAppear)
+        #expect(ledgerStore.state.selectedVendor == .ledger)
+    }
+
+    @MainActor @Test func onAppearLeavesNothingSelectedWhenBothAreConnected() async {
+        var state = DisconnectHWWallet.State()
+        state.$walletAccounts.withLock { $0 = [keystoneAccount(), ledgerAccount()] }
+        let store = TestStore(initialState: state) { DisconnectHWWallet() }
+        store.exhaustivity = .off
+        await store.send(.onAppear)
+        #expect(store.state.selectedVendor == nil)
+    }
+
+    // MARK: - disconnectConfirmed
+
     @MainActor @Test func disconnectConfirmedWithoutKeystoneIsNoOp() async {
         var state = DisconnectHWWallet.State()
         state.isSheetUp = true
+        // Selected, but not actually among the connected accounts -- still a no-op.
+        state.selectedVendor = .keystone
         state.$walletAccounts.withLock { $0 = [] }
         let store = TestStore(initialState: state) { DisconnectHWWallet() }
         await store.send(.disconnectConfirmed) { $0.isSheetUp = false }
@@ -55,6 +115,7 @@ import ComposableArchitecture
     @MainActor @Test func disconnectConfirmedWithKeystoneDeletesAccount() async {
         var state = DisconnectHWWallet.State(isProcessing: true)
         state.isSheetUp = true
+        state.selectedVendor = .keystone
         state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
         let store = TestStore(initialState: state) {
             DisconnectHWWallet()
@@ -64,6 +125,108 @@ import ComposableArchitecture
         store.exhaustivity = .off
         await store.send(.disconnectConfirmed)
         await store.receive(\.disconnectFinished)
+        #expect(!store.state.isProcessing)
+    }
+
+    @MainActor @Test func disconnectConfirmedWithKeystoneOnlyDeletesTheAccount() async {
+        var state = DisconnectHWWallet.State(isProcessing: true)
+        state.isSheetUp = true
+        state.selectedVendor = .keystone
+        state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
+
+        let deletedAccountId = LockIsolated<AccountUUID?>(nil)
+        let bindingDeleteCount = LockIsolated(0)
+        let keysClearCount = LockIsolated(0)
+        let ledgerDisconnectCount = LockIsolated(0)
+
+        let store = TestStore(initialState: state) {
+            DisconnectHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer.deleteAccount = { id in deletedAccountId.setValue(id) }
+            $0.walletStorage = .noOp
+            $0.walletStorage.deleteLedgerBinding = { _ in bindingDeleteCount.withValue { $0 += 1 } }
+            $0.walletStorage.clearEncryptionKeys = { _ in keysClearCount.withValue { $0 += 1 } }
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.disconnect = { ledgerDisconnectCount.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.disconnectConfirmed)
+        await store.receive(\.disconnectFinished)
+        await store.finish()
+
+        #expect(deletedAccountId.value == keystoneAccount().id)
+        #expect(bindingDeleteCount.value == 0)
+        #expect(keysClearCount.value == 0)
+        #expect(ledgerDisconnectCount.value == 0)
+    }
+
+    @MainActor @Test func disconnectConfirmedWithLedgerDeletesTheAccountItsBindingAndItsKeysAndClosesTheLink() async {
+        var state = DisconnectHWWallet.State(isProcessing: true)
+        state.isSheetUp = true
+        state.selectedVendor = .ledger
+        state.$walletAccounts.withLock { $0 = [ledgerAccount()] }
+
+        let deletedAccountId = LockIsolated<AccountUUID?>(nil)
+        let deletedBindingId = LockIsolated<AccountUUID?>(nil)
+        let clearedKeysAccount = LockIsolated<Account?>(nil)
+        let ledgerDisconnectCount = LockIsolated(0)
+
+        let store = TestStore(initialState: state) {
+            DisconnectHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer.deleteAccount = { id in deletedAccountId.setValue(id) }
+            $0.walletStorage = .noOp
+            $0.walletStorage.deleteLedgerBinding = { id in deletedBindingId.setValue(id) }
+            $0.walletStorage.clearEncryptionKeys = { account in clearedKeysAccount.setValue(account) }
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.disconnect = { ledgerDisconnectCount.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.disconnectConfirmed)
+        await store.receive(\.disconnectFinished)
+        await store.finish()
+
+        let expected = ledgerAccount()
+        #expect(deletedAccountId.value == expected.id)
+        #expect(deletedBindingId.value == expected.id)
+        #expect(clearedKeysAccount.value == expected.account)
+        #expect(ledgerDisconnectCount.value == 1)
+    }
+
+    @MainActor @Test func disconnectFailedForLedgerLeavesTheBindingInPlace() async {
+        struct DeleteAccountFailure: Error { }
+
+        var state = DisconnectHWWallet.State(isProcessing: true)
+        state.isSheetUp = true
+        state.selectedVendor = .ledger
+        state.$walletAccounts.withLock { $0 = [ledgerAccount()] }
+
+        let bindingDeleteCount = LockIsolated(0)
+        let keysClearCount = LockIsolated(0)
+        let ledgerDisconnectCount = LockIsolated(0)
+
+        let store = TestStore(initialState: state) {
+            DisconnectHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer.deleteAccount = { _ in throw DeleteAccountFailure() }
+            $0.walletStorage = .noOp
+            $0.walletStorage.deleteLedgerBinding = { _ in bindingDeleteCount.withValue { $0 += 1 } }
+            $0.walletStorage.clearEncryptionKeys = { _ in keysClearCount.withValue { $0 += 1 } }
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.disconnect = { ledgerDisconnectCount.withValue { $0 += 1 } }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.disconnectConfirmed)
+        await store.receive(\.disconnectFailed)
+        await store.finish()
+
+        #expect(bindingDeleteCount.value == 0)
+        #expect(keysClearCount.value == 0)
+        #expect(ledgerDisconnectCount.value == 0)
+        #expect(store.state.isFailureSheetUp)
         #expect(!store.state.isProcessing)
     }
 
@@ -98,6 +261,18 @@ import ComposableArchitecture
             keySource: String(localizable: .accountsKeystone).lowercased(),
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
             hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
+    private func ledgerAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Ledger",
+            keySource: "ledger",
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
             ufvk: nil,
             uivk: nil
         ))

@@ -6319,6 +6319,23 @@
         }
       }
     },
+    "connectedHWInfoLedger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you disconnect now, your Ledger will no longer be paired with your Zodl wallet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si desconectas ahora, tu Ledger dejará de estar vinculado con tu billetera Zodl."
+          }
+        }
+      }
+    },
     "crosspay.help.desc1" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6929,6 +6946,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Desconectar Keystone"
+          }
+        }
+      }
+    },
+    "deleteLedgerTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disconnect Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desconectar Ledger"
           }
         }
       }
@@ -10420,6 +10454,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Abre la app de Zcash en tu Ledger e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledgerHW" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger Hardware"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hardware Ledger"
           }
         }
       }

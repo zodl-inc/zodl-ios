@@ -35,14 +35,8 @@ struct AdvancedSettings {
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        var isKeystoneConnected: Bool {
-            for account in walletAccounts {
-                if account.vendor == .keystone {
-                    return true
-                }
-            }
-
-            return false
+        var isHWWalletConnected: Bool {
+            walletAccounts.contains { $0.vendor.isHWWallet() }
         }
 
         /// MOB-2020: a Ledger account has no signing path yet (Phase 3), so the restart-migration

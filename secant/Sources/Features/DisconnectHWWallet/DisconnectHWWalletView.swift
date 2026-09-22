@@ -20,7 +20,7 @@ struct DisconnectHWWalletView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
-                Text(localizable: .deleteKeystoneTitle)
+                headingText()
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 40)
 
@@ -41,8 +41,8 @@ struct DisconnectHWWalletView: View {
                     .padding(.top, 4)
 
                 Spacer()
-                
-                keystoneBadge()
+
+                connectedHWWalletCards()
                     .padding(.bottom, Design.Spacing._3xl)
 
                 if store.isProcessing {
@@ -60,6 +60,7 @@ struct DisconnectHWWalletView: View {
                     ) {
                         store.send(.disconnectTapped)
                     }
+                    .disabled(store.selectedVendor == nil)
                     .padding(.bottom, 24)
                 }
 
@@ -92,64 +93,157 @@ struct DisconnectHWWalletView: View {
         .screenTitle(String(localizable: .disconnectHWWalletTitle))
     }
 
-    @ViewBuilder func keystoneBadge() -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 0) {
-                Asset.Assets.Partners.keystoneSeekLogo.image
-                    .resizable()
-                    .frame(width: 44, height: 44)
-                    .overlay {
-                        Circle()
-                            .fill(Design.Avatars.status.color(colorScheme))
-                            .frame(width: 14, height: 14)
-                            .offset(x: 18, y: 18)
-                            .background {
-                                Circle()
-                                    .fill(Design.Surfaces.fgPrimary.color(colorScheme))
-                                    .frame(width: 18, height: 18)
-                                    .offset(x: 18, y: 18)
-                            }
-                    }
-                    .padding(.trailing, Design.Spacing._xl)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(localizable: .keystoneHW)
-                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                    
-                    Text(localizable: .currentlyConnected)
-                        .zFont(size: 14, style: Design.Text.primary)
-                }
-                
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, Design.Spacing._2xl)
-            .padding(.vertical, Design.Spacing._xl)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._xl)
-                    .fill(Design.Surfaces.fgPrimary.color(colorScheme))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                            .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-                    }
-            }
+    /// "Disconnect Keystone" / "Disconnect Ledger" once a card is picked, the vendor-agnostic
+    /// "Disconnect Hardware" while nothing is selected yet (single-vendor screens land here for a
+    /// beat until `onAppear`'s preselection lands; a both-connected screen stays here until the
+    /// user taps a card).
+    @ViewBuilder private func headingText() -> some View {
+        switch store.selectedVendor {
+        case .keystone:
+            Text(localizable: .deleteKeystoneTitle)
+        case .ledger:
+            Text(localizable: .deleteLedgerTitle)
+        case .zcash, nil:
+            Text(localizable: .disconnectHWWalletCta)
+        }
+    }
 
-            HStack(alignment: .top, spacing: 0) {
-                Asset.Assets.infoOutline.image
-                    .zImage(size: 16, style: Design.Text.tertiary)
-                    .padding(.trailing, 12)
-                
-                Text(localizable: .connectedHWInfo)
-                    .zFont(size: 12, style: Design.Text.tertiary)
+    /// One card per connected hardware vendor, same visual as the single badge this replaces.
+    /// The selection checkbox only appears once there's an actual choice to make (both
+    /// connected) -- a single connected vendor is preselected on `onAppear` and its card has
+    /// nothing to disambiguate. The info line mirrors the selection and is hidden until there
+    /// is one.
+    @ViewBuilder func connectedHWWalletCards() -> some View {
+        WithPerceptionTracking {
+            let vendors = store.connectedHWVendors
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(vendors, id: \.self) { vendor in
+                    hwWalletCard(vendor)
+                        .padding(.bottom, vendor == vendors.last ? 0 : Design.Spacing._md)
+                }
+
+                if store.selectedVendor != nil {
+                    HStack(alignment: .top, spacing: 0) {
+                        Asset.Assets.infoOutline.image
+                            .zImage(size: 16, style: Design.Text.tertiary)
+                            .padding(.trailing, 12)
+
+                        connectedHWInfoText()
+                            .zFont(size: 12, style: Design.Text.tertiary)
+                    }
+                    .padding(Design.Spacing._md)
+                }
             }
             .padding(Design.Spacing._md)
+            .background {
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+            }
+            .frame(maxWidth: .infinity)
         }
-        .padding(Design.Spacing._md)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+    }
+
+    @ViewBuilder private func hwWalletCard(_ vendor: WalletAccount.Vendor) -> some View {
+        WithPerceptionTracking {
+            Button {
+                store.send(.vendorTapped(vendor))
+            } label: {
+                HStack(spacing: 0) {
+                    vendorMark(vendor)
+                        .padding(.trailing, Design.Spacing._xl)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        vendorNameText(vendor)
+                            .zFont(.semiBold, size: 16, style: Design.Text.primary)
+
+                        Text(localizable: .currentlyConnected)
+                            .zFont(size: 14, style: Design.Text.primary)
+                    }
+
+                    Spacer()
+
+                    // Only worth disambiguating when there's more than one card -- a single
+                    // connected vendor is already preselected and unambiguous.
+                    if store.connectedHWVendors.count > 1 {
+                        selectionCheckbox(isOn: store.selectedVendor == vendor)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Design.Spacing._2xl)
+                .padding(.vertical, Design.Spacing._xl)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Design.Surfaces.fgPrimary.color(colorScheme))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                                .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                        }
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private func vendorMark(_ vendor: WalletAccount.Vendor) -> some View {
+        let mark = vendor == .ledger
+        ? Asset.Assets.Partners.ledgerLogo.image
+        : Asset.Assets.Partners.keystoneSeekLogo.image
+
+        mark
+            .resizable()
+            .frame(width: 44, height: 44)
+            .overlay {
+                Circle()
+                    .fill(Design.Avatars.status.color(colorScheme))
+                    .frame(width: 14, height: 14)
+                    .offset(x: 18, y: 18)
+                    .background {
+                        Circle()
+                            .fill(Design.Surfaces.fgPrimary.color(colorScheme))
+                            .frame(width: 18, height: 18)
+                            .offset(x: 18, y: 18)
+                    }
+            }
+    }
+
+    @ViewBuilder private func vendorNameText(_ vendor: WalletAccount.Vendor) -> some View {
+        switch vendor {
+        case .ledger:
+            Text(localizable: .ledgerHW)
+        case .keystone, .zcash:
+            Text(localizable: .keystoneHW)
+        }
+    }
+
+    @ViewBuilder private func connectedHWInfoText() -> some View {
+        switch store.selectedVendor {
+        case .ledger:
+            Text(localizable: .connectedHWInfoLedger)
+        case .keystone, .zcash, nil:
+            Text(localizable: .connectedHWInfo)
+        }
+    }
+
+    /// Same square checkbox `AccountsSelectionView`'s selected row uses (`ZashiToggle` ->
+    /// `CheckboxToggleStyle`), drawn directly since selection here is one `Vendor?` on `State`
+    /// rather than a per-row `Bool` binding a `Toggle` could drive.
+    @ViewBuilder private func selectionCheckbox(isOn: Bool) -> some View {
+        if isOn {
+            RoundedRectangle(cornerRadius: Design.Radius._xs)
+                .fill(Design.Checkboxes.onBg.color(colorScheme))
+                .frame(width: 16, height: 16)
+                .overlay {
+                    Asset.Assets.check.image
+                        .zImage(size: 12, style: Design.Checkboxes.onFg)
+                }
+        } else {
+            RoundedRectangle(cornerRadius: Design.Radius._xs)
+                .fill(Design.Checkboxes.offBg.color(colorScheme))
+                .frame(width: 16, height: 16)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xs)
+                        .stroke(Design.Checkboxes.offStroke.color(colorScheme))
+                }
+        }
     }
     
     @ViewBuilder func bulletPointText(_ text: String) -> some View {

@@ -16,6 +16,7 @@ struct DisconnectHWWallet {
         var isProcessing = false
         var isFailureSheetUp = false
         var isSheetUp = false
+        var selectedVendor: WalletAccount.Vendor?
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
 
         // support
@@ -23,6 +24,20 @@ struct DisconnectHWWallet {
         var errMsg = ""
         var messageToBeShared: String?
         var supportData: SupportData?
+
+        /// The connected hardware vendors, keystone before ledger — the fixed order both the
+        /// card list and `onAppear`'s single-vendor preselection rely on. `.zcash` (the default,
+        /// non-hardware vendor) never appears here.
+        var connectedHWVendors: [WalletAccount.Vendor] {
+            var vendors: [WalletAccount.Vendor] = []
+            if walletAccounts.contains(where: { $0.vendor == .keystone }) {
+                vendors.append(.keystone)
+            }
+            if walletAccounts.contains(where: { $0.vendor == .ledger }) {
+                vendors.append(.ledger)
+            }
+            return vendors
+        }
 
         init(isProcessing: Bool = false) {
             self.isProcessing = isProcessing
@@ -41,8 +56,10 @@ struct DisconnectHWWallet {
         case sendSupportMailFinished
         case shareFinished
         case tryAgain
+        case vendorTapped(WalletAccount.Vendor)
     }
 
+    @Dependency(\.ledgerClient) var ledgerClient
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
 
@@ -56,36 +73,55 @@ struct DisconnectHWWallet {
             case .onAppear:
                 // TCA Store is @MainActor; reducer body always runs on main.
                 state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
+                // Only one hardware vendor connected -> nothing to choose, preselect it. With
+                // both connected the user picks a card (`vendorTapped`), so nothing is preselected.
+                if state.connectedHWVendors.count == 1 {
+                    state.selectedVendor = state.connectedHWVendors.first
+                }
                 return .none
 
             case .binding:
                 return .none
 
+            case .vendorTapped(let vendor):
+                state.selectedVendor = vendor
+                return .none
+
             case .disconnectTapped:
+                guard state.selectedVendor != nil else {
+                    return .none
+                }
                 state.isSheetUp = true
                 state.isProcessing = true
                 return .none
 
             case .disconnectConfirmed:
                 state.isSheetUp = false
-                var keystoneAccount: AccountUUID? = nil
-                state.walletAccounts.forEach { account in
-                    if account.vendor == .keystone {
-                        keystoneAccount = account.id
-                    }
+                guard let selectedVendor = state.selectedVendor else {
+                    return .none
                 }
-                guard let keystoneAccount else {
+                guard let account = state.walletAccounts.first(where: { $0.vendor == selectedVendor }) else {
                     return .none
                 }
                 return .run { send in
                     do {
-                        try await sdkSynchronizer.deleteAccount(keystoneAccount)
+                        try await sdkSynchronizer.deleteAccount(account.id)
+                        // Ledger carries state Keystone doesn't: the keychain binding (device
+                        // identity + ZIP 32 index) and per-account encryption keys, and an open
+                        // Bluetooth link. Only unwind those once the account delete itself has
+                        // actually gone through -- a failed delete must leave the binding in place
+                        // so `tryAgain` still has something to retry against.
+                        if selectedVendor == .ledger {
+                            try? walletStorage.deleteLedgerBinding(account.id)
+                            try? walletStorage.clearEncryptionKeys(account.account)
+                            await ledgerClient.disconnect()
+                        }
                         await send(.disconnectFinished)
                     } catch {
                         await send(.disconnectFailed(error.localizedDescription))
                     }
                 }
-                
+
             case .disconnectFailed(let errMsg):
                 state.isProcessing = false
                 state.isFailureSheetUp = true

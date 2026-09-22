@@ -50,12 +50,15 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @Test func isKeystoneConnectedReflectsWalletAccounts() {
+    @Test func isHWWalletConnectedReflectsWalletAccounts() {
         var state = AdvancedSettings.State()
         state.$walletAccounts.withLock { $0 = [] }
-        #expect(!state.isKeystoneConnected)
+        #expect(!state.isHWWalletConnected)
         state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
-        #expect(state.isKeystoneConnected)
+        #expect(state.isHWWalletConnected)
+        // MOB-2020: the row -- and the gate it feeds -- is no longer Keystone-only.
+        state.$walletAccounts.withLock { $0 = [ledgerAccount()] }
+        #expect(state.isHWWalletConnected)
     }
 
     private func keystoneAccount() -> WalletAccount {
@@ -65,6 +68,18 @@ import ComposableArchitecture
             keySource: String(localizable: .accountsKeystone).lowercased(),
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
             hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
+    private func ledgerAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Ledger",
+            keySource: "ledger",
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
             ufvk: nil,
             uivk: nil
         ))
