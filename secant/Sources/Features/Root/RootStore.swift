@@ -626,8 +626,25 @@ struct Root {
 
     init() { }
     
+    /// `core` is split into three opaque `some Reducer` chunks on purpose (MOB-2020). One
+    /// `@ReducerBuilder` with 35+ statements nests the builder's `_Sequence` types so deep that the
+    /// Swift runtime's type demangler overflows the 1 MB main-thread stack of a physical iPhone
+    /// while it instantiates the reducer's metadata on the first `send` — a Debug build crashed at
+    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator survived on
+    /// its 8 MB stack. Every opaque property is a metadata boundary (the outer name refers to the
+    /// opaque type, not its expansion), so keep each chunk well under 20 statements and put a new
+    /// scope into the smallest one rather than appending here.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
+        screenScopes
+
+        flowScopes
+
+        reducers
+    }
+
+    @ReducerBuilder<State, Action>
+    private var screenScopes: some Reducer<State, Action> {
         BindingReducer()
         
         Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
@@ -689,7 +706,10 @@ struct Root {
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()
         }
-        
+    }
+
+    @ReducerBuilder<State, Action>
+    private var flowScopes: some Reducer<State, Action> {
         Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
             AddKeystoneHWWalletCoordFlow()
         }
@@ -729,7 +749,10 @@ struct Root {
         Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
             IronwoodAnnouncement()
         }
+    }
 
+    @ReducerBuilder<State, Action>
+    private var reducers: some Reducer<State, Action> {
         initializationReduce()
 
         destinationReduce()
