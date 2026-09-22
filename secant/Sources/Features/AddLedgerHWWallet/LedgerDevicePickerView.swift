@@ -3,7 +3,11 @@
 //  Zashi
 //
 //  MOB-2020 Phase 1.3: the Bluetooth device list AddLedgerHWWalletCoordFlow pushes once the
-//  instructions screen's CTA is tapped. Row styling mirrors AccountsSelectionView's account row.
+//  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this is now
+//  the one screen that finds, selects, connects and pairs the Ledger — there is no separate
+//  "Approve on your Ledger" screen; the export prompt is explained in place via the status line
+//  below the list. Row styling mirrors AccountsSelectionView's account row; the busy Connect
+//  button mirrors KeystoneDeviceReadyView's accessoryView pattern.
 //
 
 import SwiftUI
@@ -21,6 +25,12 @@ struct LedgerDevicePickerView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
+                Asset.Assets.Partners.ledgerTitleLogo.image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 32)
+                    .padding(.top, 16)
+
                 Text(localizable: .ledgerDevicePickerTitle)
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 24)
@@ -56,7 +66,36 @@ struct LedgerDevicePickerView: View {
                     .padding(.top, 24)
                 }
 
+                if store.isPairing {
+                    Text(localizable: .ledgerDevicePickerConfirmOnDevice)
+                        .zFont(size: 14, style: Design.Text.tertiary)
+                        .lineSpacing(1.5)
+                        .padding(.top, 16)
+                } else if let pairingError = store.pairingError {
+                    Text(pairingError)
+                        .zFont(size: 14, style: Design.Utility.ErrorRed._700)
+                        .lineSpacing(1.5)
+                        .padding(.top, 16)
+                }
+
                 Spacer()
+
+                if store.isConnecting || store.isPairing {
+                    ZashiButton(
+                        String(localizable: .keystoneAddHWWalletConnect),
+                        accessoryView: ProgressView()
+                    ) {
+                        store.send(.connectDeviceTapped)
+                    }
+                    .disabled(true)
+                    .padding(.bottom, 24)
+                } else {
+                    ZashiButton(String(localizable: .keystoneAddHWWalletConnect)) {
+                        store.send(.connectDeviceTapped)
+                    }
+                    .disabled(store.selectedDevice == nil)
+                    .padding(.bottom, 24)
+                }
             }
             .screenHorizontalPadding()
             .onAppear { store.send(.startScanning) }
@@ -95,9 +134,12 @@ struct LedgerDevicePickerView: View {
 
                 Spacer()
 
-                if store.isConnecting && store.selectedDevice == device {
-                    ProgressView()
-                }
+                ZashiToggle(
+                    isOn: Binding(
+                        get: { store.selectedDevice == device },
+                        set: { _ in store.send(.deviceTapped(device)) }
+                    )
+                )
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -106,6 +148,5 @@ struct LedgerDevicePickerView: View {
                     .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
             }
         }
-        .disabled(store.isConnecting)
     }
 }

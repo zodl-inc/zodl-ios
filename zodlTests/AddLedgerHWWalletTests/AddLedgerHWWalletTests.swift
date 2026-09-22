@@ -72,66 +72,53 @@ import ComposableArchitecture
 
     // MARK: - deviceTapped
 
-    @MainActor @Test func deviceTappedConnectsAndReportsSuccess() async {
+    @MainActor @Test func deviceTappedOnlySelectsTheDevice() async {
         let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
-        let connectedDevice = LockIsolated<LedgerBluetoothDevice?>(nil)
-        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+        var state = AddLedgerHWWallet.State()
+        // A stale error from a previous attempt must be cleared by a fresh selection.
+        state.pairingError = "stale error"
+        // No ledgerClient override: deviceTapped must never touch the transport, or a call to
+        // `connect`/`pairAccount` would trip "has no test implementation".
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
-        } withDependencies: {
-            $0.ledgerClient.connect = { device in connectedDevice.setValue(device) }
         }
 
         await store.send(.deviceTapped(device)) {
             $0.selectedDevice = device
-            $0.isConnecting = true
-            $0.scanError = nil
+            $0.pairingError = nil
         }
-        await store.receive(\.deviceConnected) {
-            $0.isConnecting = false
-        }
-        await store.finish()
-
-        #expect(connectedDevice.value == device)
     }
 
-    @MainActor @Test func deviceTappedReportsAConnectionFailure() async {
+    // MARK: - connectDeviceTapped
+
+    @MainActor @Test func connectDeviceTappedConnectsThenPairsAndReportsThePairing() async throws {
         let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
-        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
-            AddLedgerHWWallet()
-        } withDependencies: {
-            $0.ledgerClient.connect = { _ in throw ZcashError.ledgerBluetoothConnectionFailed(nil) }
-        }
-
-        await store.send(.deviceTapped(device)) {
-            $0.selectedDevice = device
-            $0.isConnecting = true
-            $0.scanError = nil
-        }
-        await store.receive(.deviceConnectionFailed(String(localizable: .ledgerErrorConnectionLost))) {
-            $0.isConnecting = false
-            $0.scanError = String(localizable: .ledgerErrorConnectionLost)
-        }
-        await store.finish()
-    }
-
-    // MARK: - startPairing
-
-    @MainActor @Test func startPairingStoresThePairingAndDerivedAddress() async throws {
         let fixture = try Self.makePairingFixture()
-        let fixedAddress = UnifiedAddress(validatedEncoding: "u1ledgerpairingfixture", networkType: .mainnet)
+        let callOrder = LockIsolated<[String]>([])
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
 
-        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
+            $0.ledgerClient.connect = { connectedDevice in
+                #expect(connectedDevice == device)
+                callOrder.withValue { $0.append("connect") }
+            }
             $0.ledgerClient.pairAccount = { zip32AccountIndex in
                 #expect(zip32AccountIndex == Zip32AccountIndex(0))
+                callOrder.withValue { $0.append("pairAccount") }
                 return fixture
             }
         }
 
-        await store.send(.startPairing) {
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.pairingError = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
             $0.isPairing = true
-            $0.scanError = nil
         }
         await store.receive(.pairingSucceeded(fixture)) {
             $0.isPairing = false
@@ -139,51 +126,117 @@ import ComposableArchitecture
         }
         await store.finish()
 
-        // `pairedAddress` resolves its own `@Dependency(\.derivationTool)` inline (same technique
-        // as AddKeystoneHWWallet.State.keystoneAddress), so exercising it needs its own
-        // withDependencies scope — matching AddKeystoneHWWalletCoordFlowTests'
-        // sendSupportMailFinishedClearsSupportData, which reads WalletStorage the same way.
-        let derivedAddress = withDependencies {
-            $0.derivationTool.deriveUnifiedAddressFrom = { ufvk, _ in
-                #expect(ufvk == "utest1fixture")
-                return fixedAddress
-            }
-        } operation: {
-            store.state.pairedAddress
-        }
-        #expect(derivedAddress == fixedAddress.stringEncoded)
+        #expect(callOrder.value == ["connect", "pairAccount"])
     }
 
-    @MainActor @Test func pairingFailureFlagsConnectionLossOnlyForTransportErrors() async {
-        let transportStore = TestStore(initialState: AddLedgerHWWallet.State()) {
+    @MainActor @Test func connectDeviceTappedIsIgnoredWithoutASelection() async {
+        // selectedDevice is nil; no ledgerClient override, so a reach into connect/pairAccount
+        // would trip "has no test implementation" and fail the test.
+        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.connectDeviceTapped)
+        await store.finish()
+    }
+
+    @MainActor @Test func connectDeviceTappedIsIgnoredWhileBusy() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+
+        var connectingState = AddLedgerHWWallet.State()
+        connectingState.selectedDevice = device
+        connectingState.isConnecting = true
+        let connectingStore = TestStore(initialState: connectingState) {
+            AddLedgerHWWallet()
+        }
+        await connectingStore.send(.connectDeviceTapped)
+        await connectingStore.finish()
+
+        var pairingState = AddLedgerHWWallet.State()
+        pairingState.selectedDevice = device
+        pairingState.isPairing = true
+        let pairingStore = TestStore(initialState: pairingState) {
+            AddLedgerHWWallet()
+        }
+        await pairingStore.send(.connectDeviceTapped)
+        await pairingStore.finish()
+    }
+
+    @MainActor @Test func connectFailureIsReportedAsConnectionLostAndRescans() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
-            $0.ledgerClient.pairAccount = { _ in throw ZcashError.ledgerTimeout }
+            // A device-refusal-shaped error thrown from `connect` (rather than `pairAccount`)
+            // proves a connect failure is always reported as connection-lost, regardless of how
+            // LedgerErrorText.isConnectionLost would otherwise classify this same error.
+            $0.ledgerClient.connect = { _ in throw ZcashError.ledgerUserRejected }
+            // The rescan this failure triggers calls scanDevices() for real; overriding only
+            // `connect` above leaves every other endpoint (including this one) resolving to the
+            // live, CoreBluetooth-backed implementation -- same reasoning as the other
+            // ledgerClient overrides in this file. An immediately-finishing stream keeps the
+            // rescan from touching real Bluetooth and from emitting a follow-up devicesUpdated/
+            // scanFailed action this test isn't asserting against.
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.finish()
+                }
+            }
         }
-        await transportStore.send(.startPairing) {
-            $0.isPairing = true
+
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.pairingError = nil
+        }
+        await store.receive(
+            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: true)
+        ) {
+            $0.isConnecting = false
+            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
+            $0.selectedDevice = nil
+            $0.devices = []
+        }
+        await store.receive(\.startScanning) {
+            $0.isScanning = true
             $0.scanError = nil
         }
-        await transportStore.receive(.pairingFailed(message: String(localizable: .ledgerErrorConnectionLost), connectionLost: true)) {
-            $0.isPairing = false
-            $0.scanError = String(localizable: .ledgerErrorConnectionLost)
-        }
-        await transportStore.finish()
+        await store.finish()
+    }
 
-        let refusalStore = TestStore(initialState: AddLedgerHWWallet.State()) {
+    @MainActor @Test func deviceRefusalKeepsTheSelectionAndShowsTheMessage() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.devices = [device]
+
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
+            $0.ledgerClient.connect = { _ in }
             $0.ledgerClient.pairAccount = { _ in throw ZcashError.ledgerUserRejected }
         }
-        await refusalStore.send(.startPairing) {
+
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.pairingError = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
             $0.isPairing = true
-            $0.scanError = nil
         }
-        await refusalStore.receive(.pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: false)) {
+        await store.receive(
+            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: false)
+        ) {
             $0.isPairing = false
-            $0.scanError = String(localizable: .ledgerErrorUserRejected)
+            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
         }
-        await refusalStore.finish()
+        await store.finish()
+
+        #expect(store.state.selectedDevice == device)
+        #expect(store.state.devices == [device])
     }
 
     // MARK: - unlockTapped

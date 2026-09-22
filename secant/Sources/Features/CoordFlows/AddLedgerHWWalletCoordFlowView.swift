@@ -73,8 +73,6 @@ struct AddLedgerHWWalletCoordFlowView: View {
                     WalletBirthdayEstimateDateView(store: store)
                 case let .estimatedBirthday(store):
                     WalletBirthdayEstimatedHeightView(store: store)
-                case let .pairing(store):
-                    LedgerPairingView(store: store)
                 case let .restoreInfo(store):
                     RestoreInfoView(store: store)
                 case let .walletBirthday(store):

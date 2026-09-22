@@ -17,14 +17,16 @@ struct AddLedgerHWWallet {
     struct State: Equatable {
         var devices: [LedgerBluetoothDevice] = []
         var isScanning = false
-        /// The current screen's status/error line: a scan failure while `devicePicker` is on
-        /// screen, or a pairing failure while `pairing` is on screen. Each pushed screen owns a
-        /// separate `AddLedgerHWWallet.State`, so the two never collide.
+        /// The Bluetooth scan's own error line, shown while no device is selected yet.
         var scanError: String? = nil
         var selectedDevice: LedgerBluetoothDevice? = nil
         var isConnecting = false
         var pairing: LedgerPairing? = nil
         var isPairing = false
+        /// A connect/pairing failure surfaced after `connectDeviceTapped`, once a device is
+        /// selected. Cleared whenever a device is (re-)selected. The device picker is now the
+        /// only screen that connects and pairs — see AddLedgerHWWalletCoordFlowCoordinator.
+        var pairingError: String? = nil
         var isAccountSelected = false
         var isImportingAccount = false
         var isHelpSheetPresented = false
@@ -67,9 +69,9 @@ struct AddLedgerHWWallet {
         case backToHomeTapped
         case binding(BindingAction<AddLedgerHWWallet.State>)
         case closeTapped
+        case connectDeviceTapped
         case connectTapped
         case deviceConnected
-        case deviceConnectionFailed(String)
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
@@ -79,10 +81,8 @@ struct AddLedgerHWWallet {
         case onAppear
         case pairingFailed(message: String, connectionLost: Bool)
         case pairingSucceeded(LedgerPairing)
-        case retryPairingTapped
         case scanFailed(String)
         case setBirthdayTapped
-        case startPairing
         case startScanning
         case stopScanning
         case unlockTapped(BlockHeight?)
@@ -151,30 +151,33 @@ struct AddLedgerHWWallet {
 
             case let .deviceTapped(device):
                 state.selectedDevice = device
+                state.pairingError = nil
+                return .none
+
+            case .connectDeviceTapped:
+                guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
+                    return .none
+                }
                 state.isConnecting = true
-                state.scanError = nil
+                state.pairingError = nil
                 return .run { send in
                     do {
                         try await ledgerClient.connect(device)
-                        await send(.deviceConnected)
                     } catch {
-                        await send(.deviceConnectionFailed(LedgerErrorText.message(for: error)))
+                        // A connect failure always leaves the transport unusable, so it is
+                        // reported as connection-lost even when LedgerErrorText.isConnectionLost
+                        // would classify the underlying error differently.
+                        await send(
+                            .pairingFailed(
+                                message: LedgerErrorText.message(for: error),
+                                connectionLost: true
+                            )
+                        )
+                        return
                     }
-                }
 
-            case .deviceConnected:
-                state.isConnecting = false
-                return .cancel(id: CancelId.scan)
+                    await send(.deviceConnected)
 
-            case let .deviceConnectionFailed(message):
-                state.isConnecting = false
-                state.scanError = message
-                return .none
-
-            case .startPairing:
-                state.isPairing = true
-                state.scanError = nil
-                return .run { send in
                     do {
                         let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
                         await send(.pairingSucceeded(pairing))
@@ -188,18 +191,28 @@ struct AddLedgerHWWallet {
                     }
                 }
 
+            case .deviceConnected:
+                state.isConnecting = false
+                state.isPairing = true
+                return .cancel(id: CancelId.scan)
+
             case let .pairingSucceeded(pairing):
                 state.isPairing = false
                 state.pairing = pairing
                 return .none
 
-            case let .pairingFailed(message, _):
+            case let .pairingFailed(message, connectionLost):
+                state.isConnecting = false
                 state.isPairing = false
-                state.scanError = message
-                return .none
-
-            case .retryPairingTapped:
-                return .send(.startPairing)
+                state.pairingError = message
+                guard connectionLost else { return .none }
+                // A device refusal leaves the transport open and the selection in place so the
+                // user can tap Connect again (the live client's `connect` closes the previous
+                // link and reconnects, which is fine). A transport failure can't be retried on
+                // the same link, so drop the selection and the stale device list and rescan.
+                state.selectedDevice = nil
+                state.devices = []
+                return .send(.startScanning)
 
             case .accountTapped:
                 state.isAccountSelected.toggle()

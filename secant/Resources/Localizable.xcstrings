@@ -10186,19 +10186,36 @@
         }
       }
     },
+    "ledger.devicePicker.confirmOnDevice" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm the viewing-key export on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma la exportación de la clave de visualización en tu Ledger."
+          }
+        }
+      }
+    },
     "ledger.devicePicker.desc" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Keep the Zcash app open on the device while Zodl connects."
+            "value" : "Select the Ledger device you'd like to connect."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Mantén la app de Zcash abierta en el dispositivo mientras Zodl se conecta."
+            "value" : "Selecciona el dispositivo Ledger que deseas conectar."
           }
         }
       }
@@ -10226,13 +10243,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose your Ledger"
+            "value" : "Select Your Device"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Elige tu Ledger"
+            "value" : "Selecciona tu dispositivo"
           }
         }
       }
@@ -10403,40 +10420,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Abre la app de Zcash en tu Ledger e inténtalo de nuevo."
-          }
-        }
-      }
-    },
-    "ledger.pairing.desc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zodl is asking your Ledger for this account's viewing key. Confirm the export on the device to continue."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zodl está solicitando a tu Ledger la clave de visualización de esta cuenta. Confirma la exportación en el dispositivo para continuar."
-          }
-        }
-      }
-    },
-    "ledger.pairing.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Approve on your Ledger"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aprueba en tu Ledger"
           }
         }
       }

@@ -4,8 +4,9 @@
 //
 //  MOB-2020 Phase 1.3. Mirrors AddKeystoneHWWalletCoordFlowStore's shape: the instructions
 //  screen is the flow's root (`addLedgerHWWalletState`, not a `Path` element), and the path
-//  covers device selection, pairing, account confirmation, the birthday sub-flow (shared,
-//  vendor-neutral screens), and the success screen.
+//  covers the device picker (which finds, selects, connects and pairs the Ledger — there is no
+//  separate pairing screen), account confirmation, the birthday sub-flow (shared, vendor-neutral
+//  screens), and the success screen.
 //
 
 import SwiftUI
@@ -23,7 +24,6 @@ struct AddLedgerHWWalletCoordFlow {
         case deviceReady(AddLedgerHWWallet)
         case estimateBirthdaysDate(WalletBirthday)
         case estimatedBirthday(WalletBirthday)
-        case pairing(AddLedgerHWWallet)
         case restoreInfo(RestoreInfo)
         case walletBirthday(WalletBirthday)
     }
@@ -50,9 +50,6 @@ struct AddLedgerHWWalletCoordFlow {
         case binding(BindingAction<AddLedgerHWWalletCoordFlow.State>)
         case cancelFailureTapped
         case closeHelpSheetTapped
-        /// A pairing transport failure, deferred one cycle past the `.pairing` element's own
-        /// `.pairingFailed` handling — see the coordinator's comment on this arm.
-        case connectionLostWhilePairing
         case contactSupportTapped
         case path(StackActionOf<Path>)
         case sendSupportMailFinished

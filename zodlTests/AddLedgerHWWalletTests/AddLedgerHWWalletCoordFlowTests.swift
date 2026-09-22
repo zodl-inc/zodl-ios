@@ -3,9 +3,11 @@
 //  zodlTests
 //
 //  Mirrors AddKeystoneHWWalletCoordFlowTests: navigation pushes/pops driven by the element
-//  screens' own actions, the failure sheet (show / suppress-behind-success / clear a pending
-//  RestoreInfo spinner), and a connection-lost pairing failure popping back to the device
-//  picker (Features/CoordFlows/AddLedgerHWWalletCoordFlow*.swift).
+//  screens' own actions, and the failure sheet (show / suppress-behind-success / clear a
+//  pending RestoreInfo spinner). The device picker now finds, selects, connects and pairs the
+//  Ledger on its own screen — a connection-lost failure there just rescans in place, so it has
+//  no coordinator-level navigation of its own to cover here; see AddLedgerHWWalletTests for that
+//  behavior (Features/CoordFlows/AddLedgerHWWalletCoordFlow*.swift).
 //
 //  AddLedgerHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState),
 //  so these tests drive a plain Store and read state directly after sending actions -- the same
@@ -33,42 +35,14 @@ import ComposableArchitecture
 
     // MARK: - Device Picker
 
-    @Test func deviceConnectedPushesPairingAndStartsPairing() async throws {
+    @Test func pairingSucceededOnThePickerPushesTheAccountScreen() async throws {
         var initialState = AddLedgerHWWalletCoordFlow.State()
         initialState.path.append(.devicePicker(AddLedgerHWWallet.State.initial))
-        let pairCallCount = LockIsolated(0)
-        // A device refusal (not a transport failure) so this test's own pairAccount call can't
-        // also trigger the connection-lost pop-to-picker arm covered separately below.
-        let store = makeStore(initialState: initialState) {
-            $0.ledgerClient.pairAccount = { _ in
-                pairCallCount.withValue { $0 += 1 }
-                throw ZcashError.ledgerUserRejected
-            }
-        }
-        let devicePickerId = store.state.path.ids.first!
-
-        store.send(.path(.element(id: devicePickerId, action: .devicePicker(.deviceConnected))))
-
-        for _ in 0..<50 {
-            if pairCallCount.value > 0 { break }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-
-        #expect(pairCallCount.value == 1)
-        #expect(store.state.path.count == 2)
-        #expect(isPairing(store.state.path.last))
-    }
-
-    // MARK: - Pairing
-
-    @Test func pairingSucceededPushesAccountCarryingThePairing() async throws {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.pairing(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
         let fixture = try Self.makePairingFixture()
 
-        store.send(.path(.element(id: id, action: .pairing(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .devicePicker(.pairingSucceeded(fixture)))))
 
         #expect(store.state.path.count == 2)
         if case .account(let accountState) = store.state.path.last {
@@ -76,39 +50,6 @@ import ComposableArchitecture
         } else {
             Issue.record("expected .account to be pushed carrying the pairing")
         }
-    }
-
-    @Test func pairingFailureWithConnectionLostPopsBackToDevicePicker() async throws {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.devicePicker(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.pairing(AddLedgerHWWallet.State.initial))
-        let store = makeStore(initialState: initialState)
-        let pairingId = store.state.path.ids.last!
-
-        store.send(.path(.element(id: pairingId, action: .pairing(.pairingFailed(message: "lost", connectionLost: true)))))
-
-        // The pop is deferred one cycle past `.connectionLostWhilePairing` (see the coordinator);
-        // poll until it lands or give up.
-        for _ in 0..<50 {
-            if store.state.path.count == 1 { break }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-
-        #expect(store.state.path.count == 1)
-        #expect(isDevicePicker(store.state.path.first))
-    }
-
-    @Test func pairingFailureWithoutConnectionLostStaysOnPairing() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.devicePicker(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.pairing(AddLedgerHWWallet.State.initial))
-        let store = makeStore(initialState: initialState)
-        let pairingId = store.state.path.ids.last!
-
-        store.send(.path(.element(id: pairingId, action: .pairing(.pairingFailed(message: "refused", connectionLost: false)))))
-
-        #expect(store.state.path.count == 2)
-        #expect(isPairing(store.state.path.last))
     }
 
     // MARK: - Account
@@ -325,11 +266,6 @@ import ComposableArchitecture
 
     private func isDevicePicker(_ element: AddLedgerHWWalletCoordFlow.Path.State?) -> Bool {
         if case .devicePicker = element { return true }
-        return false
-    }
-
-    private func isPairing(_ element: AddLedgerHWWalletCoordFlow.Path.State?) -> Bool {
-        if case .pairing = element { return true }
         return false
     }
 

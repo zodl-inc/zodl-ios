@@ -21,44 +21,11 @@ extension AddLedgerHWWalletCoordFlow {
 
                 // MARK: - Device Picker
 
-            case .path(.element(id: _, action: .devicePicker(.deviceConnected))):
+            case .path(.element(id: _, action: .devicePicker(.pairingSucceeded(let pairing)))):
                 for element in state.path {
-                    if case .devicePicker(let devicePickerState) = element {
-                        state.path.append(.pairing(devicePickerState))
-                    }
-                }
-                guard let pairingId = state.path.ids.last else { return .none }
-                return .send(.path(.element(id: pairingId, action: .pairing(.startPairing))))
-
-                // MARK: - Pairing
-
-            case .path(.element(id: _, action: .pairing(.pairingSucceeded(let pairing)))):
-                for element in state.path {
-                    if case .pairing(var pairingState) = element {
-                        pairingState.pairing = pairing
-                        state.path.append(.account(pairingState))
-                    }
-                }
-                return .none
-
-            case .path(.element(id: _, action: .pairing(.pairingFailed(_, let connectionLost)))):
-                // A device refusal leaves the transport open (LedgerPairingView's own "Try
-                // again" retries on it); only a transport failure sends the user back to pick a
-                // device again, which rescans on appear.
-                guard connectionLost else { return .none }
-                // Deferred to `.connectionLostWhilePairing` rather than popping inline here:
-                // `coordinatorReduce()` runs before the `.forEach` that routes this SAME action to
-                // the `.pairing` element's own reducer (which clears `isPairing`/sets `scanError`).
-                // Popping the element synchronously in this arm would make that later routing land
-                // on an already-missing element ("forEach ... received an action for a missing
-                // element"). Deferring to a follow-up action lets this dispatch finish first.
-                return .send(.connectionLostWhilePairing)
-
-            case .connectionLostWhilePairing:
-                for (id, element) in zip(state.path.ids, state.path) {
-                    if element.is(\.devicePicker) {
-                        state.path.pop(to: id)
-                        break
+                    if case .devicePicker(var devicePickerState) = element {
+                        devicePickerState.pairing = pairing
+                        state.path.append(.account(devicePickerState))
                     }
                 }
                 return .none
