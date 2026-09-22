@@ -37,6 +37,20 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
             self != .zcash
         }
 
+        /// The leading brandmark `ReceiveView`'s address blocks show for a hardware account —
+        /// `keystoneSeekLogo` for Keystone, the Ledger partner logo for Ledger, and the Zashi
+        /// square mark as the non-hardware fallback (mirrors `icon()`'s `.zcash` case).
+        func addressBlockIcon() -> Image {
+            switch self {
+            case .keystone:
+                return Asset.Assets.Partners.keystoneSeekLogo.image
+            case .ledger:
+                return Asset.Assets.Partners.ledgerLogo.image
+            case .zcash:
+                return Asset.Assets.Icons.zashiLogoSq.image
+            }
+        }
+
         func name() -> String {
             switch self {
             case .keystone:

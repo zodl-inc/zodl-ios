@@ -33,8 +33,8 @@ struct Home {
             smartBannerState.isOpen
         }
 
-        var isKeystoneAccountActive: Bool {
-            selectedWalletAccount?.vendor == .keystone
+        var isHWWalletAccountActive: Bool {
+            selectedWalletAccount?.vendor.isHWWallet() ?? false
         }
         
         var isKeystoneConnected: Bool {

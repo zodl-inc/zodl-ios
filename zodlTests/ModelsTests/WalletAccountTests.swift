@@ -89,6 +89,15 @@ import Foundation
         #expect(sorted.map(\.vendor) == [.zcash, .keystone, .ledger])
     }
 
+    // MARK: - addressBlockIcon
+
+    /// `Vendor` is not `CaseIterable`, so the three cases are named explicitly rather than via
+    /// `Vendor.allCases`.
+    @Test(arguments: [WalletAccount.Vendor.keystone, .zcash, .ledger])
+    func addressBlockIconIsCallableForEveryVendor(_ vendor: WalletAccount.Vendor) {
+        _ = vendor.addressBlockIcon()
+    }
+
     @Test func sortedByVendorIsStableForAccountsSharingAVendor() {
         let firstZodl = WalletAccount(account(keySource: nil, idByte: 0x01))
         let secondZodl = WalletAccount(account(keySource: nil, idByte: 0x02))

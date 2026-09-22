@@ -252,7 +252,7 @@ extension Settings {
             case .coinholderPollingTapped:
                 guard let account = state.selectedWalletAccount else { return .none }
                 var votingState = VotingCoordFlow.State()
-                votingState.isKeystoneUser = state.isKeystoneAccount
+                votingState.isKeystoneUser = state.isHWWalletAccount
                 votingState.walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
                 state.votingCoordFlow = votingState
                 return .none
