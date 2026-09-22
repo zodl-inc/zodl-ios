@@ -345,7 +345,11 @@ struct SDKSynchronizerClient: Sendable {
     var createAndSubmitTransactionFromPCZT: @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult
     var urEncoderForPCZT: @Sendable (Pczt) -> UREncoder?
     var redactPCZTForSigner: @Sendable (Pczt) async throws  -> Pczt
-    
+    /// Forwards to the SDK's `signPCZTWithLedger(pczt:accountUUID:binding:transport:progress:)`.
+    /// The caller owns `transport` — opening, closing and reusing it across attempts is the
+    /// caller's job, not this closure's.
+    var signPCZTWithLedger: @Sendable (Pczt, AccountUUID, LedgerAccountBinding, any LedgerAPDUTransport, (@Sendable (LedgerSigningProgress) -> Void)?) async throws -> Pczt
+
     // Search
     var fetchTxidsWithMemoContaining: @Sendable (String) async throws -> [Data]
     

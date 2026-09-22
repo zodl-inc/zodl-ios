@@ -16,7 +16,7 @@ import ComposableArchitecture
 @Suite struct LedgerSessionTests {
     @Test func pairAccountWithoutConnectThrowsNotConnected() async throws {
         let scanner = FakeLedgerScanning(transportsToReturn: [])
-        let session = LedgerSession(makeScanner: { scanner }, pair: { _, _ in throw PairShouldNotBeCalled() })
+        let session = makeSession(makeScanner: { scanner })
 
         await #expect(throws: LedgerClientError.notConnected) {
             try await session.pairAccount(Zip32AccountIndex(0))
@@ -28,7 +28,7 @@ import ComposableArchitecture
         let transportA = FakeLedgerAPDUTransport(name: "A", log: log)
         let transportB = FakeLedgerAPDUTransport(name: "B", log: log)
         let scanner = FakeLedgerScanning(transportsToReturn: [transportA, transportB], log: log)
-        let session = LedgerSession(makeScanner: { scanner }, pair: { _, _ in throw PairShouldNotBeCalled() })
+        let session = makeSession(makeScanner: { scanner })
         let device = try await firstDevice(from: scanner)
 
         try await session.connect(device)
@@ -44,7 +44,7 @@ import ComposableArchitecture
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
         let fixture = try makePairingFixture()
 
-        let session = LedgerSession(
+        let session = makeSession(
             makeScanner: { scanner },
             pair: { receivedTransport, zip32AccountIndex in
                 #expect(zip32AccountIndex == Zip32AccountIndex(0))
@@ -64,7 +64,7 @@ import ComposableArchitecture
     @Test func pairAccountKeepsTheTransportOpenWhenPairingFails() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
-        let session = LedgerSession(makeScanner: { scanner }, pair: { _, _ in throw PairingFailure() })
+        let session = makeSession(makeScanner: { scanner }, pair: { _, _ in throw PairingFailure() })
         let device = try await firstDevice(from: scanner)
         try await session.connect(device)
 
@@ -77,7 +77,7 @@ import ComposableArchitecture
     @Test func disconnectClosesTheTransportAndForgetsIt() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
-        let session = LedgerSession(makeScanner: { scanner }, pair: { _, _ in throw PairShouldNotBeCalled() })
+        let session = makeSession(makeScanner: { scanner })
         let device = try await firstDevice(from: scanner)
         try await session.connect(device)
 
@@ -91,7 +91,7 @@ import ComposableArchitecture
 
     @Test func scanDevicesForwardsTheScannerStream() async throws {
         let scanner = FakeLedgerScanning(transportsToReturn: [])
-        let session = LedgerSession(makeScanner: { scanner }, pair: { _, _ in throw PairShouldNotBeCalled() })
+        let session = makeSession(makeScanner: { scanner })
 
         var received: [[LedgerBluetoothDevice]] = []
         for try await batch in session.scanDevices() {
@@ -108,12 +108,11 @@ import ComposableArchitecture
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
         let device = try await firstDevice(from: scanner)
 
-        let session = LedgerSession(
+        let session = makeSession(
             makeScanner: {
                 creationLog.append("created")
                 return scanner
-            },
-            pair: { _, _ in throw PairShouldNotBeCalled() }
+            }
         )
 
         #expect(creationLog.events.count == 0)
@@ -123,6 +122,144 @@ import ComposableArchitecture
 
         try await session.connect(device)
         #expect(creationLog.events.count == 1)
+    }
+
+    @Test func signPCZTWithoutAConnectionFailsWithNotConnected() async throws {
+        let scanner = FakeLedgerScanning(transportsToReturn: [])
+        let signer = FakeLedgerSigner()
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+
+        #expect(!signer.wasCalled)
+    }
+
+    @Test func signPCZTForwardsTheArgumentsAndYieldsEveryStageThenTheSignedPczt() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signedPczt = Pczt([0xAB, 0xCD])
+        let signer = FakeLedgerSigner(
+            stages: [.identifyingDevice, .streaming(sent: 0, total: 2), .awaitingReviewOnDevice, .signing, .complete],
+            outcome: .success(signedPczt)
+        )
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let accountUUID = makeAccountUUID()
+        let binding = try makeBinding()
+        let inputPczt = Pczt([0x01])
+
+        var events: [LedgerSigningEvent] = []
+        for try await event in session.signPCZT(inputPczt, accountUUID: accountUUID, binding: binding) {
+            events.append(event)
+        }
+
+        #expect(events == [
+            .progress(.identifyingDevice),
+            .progress(.streaming(sent: 0, total: 2)),
+            .progress(.awaitingReviewOnDevice),
+            .progress(.signing),
+            .progress(.complete),
+            .signed(signedPczt)
+        ])
+        #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === transport)
+        #expect(signer.receivedPczt == inputPczt)
+        #expect(signer.receivedAccountUUID == accountUUID)
+        #expect(signer.receivedBinding == binding)
+    }
+
+    @Test func aDeviceRejectionIsTheStreamsFailureAndKeepsTheTransport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .failure(ZcashError.ledgerUserRejected))
+        let fixture = try makePairingFixture()
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { _, _ in fixture },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        await #expect(throws: ZcashError.ledgerUserRejected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+
+        let pairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(pairing == fixture)
+    }
+
+    @Test func aClosedTransportIsDroppedAfterTheFailure() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .failure(ZcashError.ledgerTransportClosed))
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        await #expect(throws: ZcashError.ledgerTransportClosed) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+
+        await #expect(throws: LedgerClientError.notConnected) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+    }
+
+    @Test func cancellingTheStreamCancelsTheSignerAndDropsTheTransport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .hangUntilCancelled)
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let accountUUID = makeAccountUUID()
+        let binding = try makeBinding()
+        let consumer = Task {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: accountUUID, binding: binding) {}
+        }
+
+        try await eventually { signer.wasCalled }
+        consumer.cancel()
+        _ = try? await consumer.value
+
+        try await eventually { signer.observedCancellation }
+        try await eventually {
+            do {
+                _ = try await session.pairAccount(Zip32AccountIndex(0))
+                return false
+            } catch is LedgerClientError {
+                return true
+            } catch {
+                return false
+            }
+        }
     }
 }
 
@@ -143,6 +280,38 @@ private func makePairingFixture() throws -> LedgerPairing {
 
 private struct PairingFailure: Error, Equatable {}
 private struct PairShouldNotBeCalled: Error {}
+private struct SignShouldNotBeCalled: Error {}
+
+/// A fixed, valid `AccountUUID` for tests that never inspect its bytes.
+private func makeAccountUUID() -> AccountUUID {
+    AccountUUID(id: [UInt8](repeating: 0xAB, count: 16))
+}
+
+/// Builds a `LedgerAccountBinding` the way `makePairingFixture()` does: the device identity is
+/// `tpk0-` plus 64 lowercase hex digits, validated through the linked FFI.
+private func makeBinding(zip32AccountIndex: Zip32AccountIndex = Zip32AccountIndex(0)) throws -> LedgerAccountBinding {
+    LedgerAccountBinding(
+        deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "a", count: 64)),
+        zip32AccountIndex: zip32AccountIndex
+    )
+}
+
+/// Builds a session with fakes that fail the test if reached, unless a test overrides them --
+/// `pair` and `sign` default to throwing, so only the tests that care about pairing or signing
+/// need to pass their own.
+private func makeSession(
+    makeScanner: @escaping @Sendable () -> any LedgerScanning,
+    pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing = { _, _ in
+        throw PairShouldNotBeCalled()
+    },
+    sign: @escaping @Sendable (
+        any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
+    ) async throws -> Pczt = { _, _, _, _, _ in
+        throw SignShouldNotBeCalled()
+    }
+) -> LedgerSession {
+    LedgerSession(makeScanner: makeScanner, pair: pair, sign: sign)
+}
 
 // MARK: - Fakes
 
@@ -157,6 +326,19 @@ private func firstDevice(from scanner: FakeLedgerScanning) async throws -> Ledge
         throw NoDeviceFromFakeScanner()
     }
     return device
+}
+
+/// Retries `attempt` every 5ms, for up to 2 seconds, until it returns `true` — for observing
+/// cleanup that a cancellation triggers asynchronously (the actor's own bookkeeping), which has no
+/// other completion signal the test can await. Records an issue if `attempt` never returns `true`.
+private func eventually(_ attempt: () async throws -> Bool) async throws {
+    for _ in 0..<400 {
+        if try await attempt() {
+            return
+        }
+        try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    Issue.record("Condition never became true within the time budget")
 }
 
 /// Records the order fake Ledger calls happen in, for the connect/close ordering and
@@ -236,5 +418,71 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
 
         log?.append("connect-\(index)")
         return transportsToReturn[index]
+    }
+}
+
+/// A `sign` fake for `LedgerSession`: records the arguments each call receives, reports a fixed
+/// sequence of stages through the progress callback, and then returns or throws whatever the test
+/// configured — or, for the cancellation test, hangs until the caller cancels it.
+private final class FakeLedgerSigner: @unchecked Sendable {
+    enum Outcome {
+        case success(Pczt)
+        case failure(Error)
+        case hangUntilCancelled
+    }
+
+    private let stages: [LedgerSigningProgress]
+    private let outcome: Outcome
+    private let _callCount = LockIsolated<Int>(0)
+    private let _receivedTransport = LockIsolated<(any LedgerAPDUTransport)?>(nil)
+    private let _receivedPczt = LockIsolated<Pczt?>(nil)
+    private let _receivedAccountUUID = LockIsolated<AccountUUID?>(nil)
+    private let _receivedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+    private let _observedCancellation = LockIsolated<Bool>(false)
+
+    init(stages: [LedgerSigningProgress] = [], outcome: Outcome = .failure(SignShouldNotBeCalled())) {
+        self.stages = stages
+        self.outcome = outcome
+    }
+
+    var wasCalled: Bool { _callCount.value > 0 }
+    var receivedTransport: (any LedgerAPDUTransport)? { _receivedTransport.value }
+    var receivedPczt: Pczt? { _receivedPczt.value }
+    var receivedAccountUUID: AccountUUID? { _receivedAccountUUID.value }
+    var receivedBinding: LedgerAccountBinding? { _receivedBinding.value }
+    var observedCancellation: Bool { _observedCancellation.value }
+
+    func sign(
+        _ transport: any LedgerAPDUTransport,
+        _ pczt: Pczt,
+        _ accountUUID: AccountUUID,
+        _ binding: LedgerAccountBinding,
+        _ progress: @escaping @Sendable (LedgerSigningProgress) -> Void
+    ) async throws -> Pczt {
+        _callCount.withValue { $0 += 1 }
+        _receivedTransport.withValue { $0 = transport }
+        _receivedPczt.withValue { $0 = pczt }
+        _receivedAccountUUID.withValue { $0 = accountUUID }
+        _receivedBinding.withValue { $0 = binding }
+
+        for stage in stages {
+            progress(stage)
+        }
+
+        switch outcome {
+        case .success(let signed):
+            return signed
+        case .failure(let error):
+            throw error
+        case .hangUntilCancelled:
+            do {
+                while true {
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                }
+            } catch {
+                _observedCancellation.withValue { $0 = true }
+                throw error
+            }
+        }
     }
 }
