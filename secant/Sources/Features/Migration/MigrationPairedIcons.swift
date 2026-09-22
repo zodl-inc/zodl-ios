@@ -79,6 +79,8 @@ struct MigrationPairedIcons: View {
             return Asset.Assets.Partners.keystone.image
         case .zcash:
             return Asset.Assets.zashiLogoWithBackground.image
+        case .ledger:
+            return Asset.Assets.Partners.ledgerLogo.image
         }
     }
 }
@@ -102,5 +104,10 @@ struct MigrationPairedIcons: View {
 
 #Preview("Keystone vendor") {
     MigrationPairedIcons(vendor: .keystone)
+        .padding()
+}
+
+#Preview("Ledger vendor") {
+    MigrationPairedIcons(vendor: .ledger)
         .padding()
 }

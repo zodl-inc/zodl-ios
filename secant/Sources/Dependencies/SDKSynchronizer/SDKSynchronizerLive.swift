@@ -426,8 +426,8 @@ extension SDKSynchronizerClient: DependencyKey {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
                 }
 
-                // Put the Zashi account to the top
-                let sortedWalletAccounts = walletAccounts.sorted { $0.vendor.rawValue > $1.vendor.rawValue }
+                // Put the Zashi account to the top, then Keystone, then Ledger.
+                let sortedWalletAccounts = WalletAccount.sortedByVendor(walletAccounts)
 
                 return sortedWalletAccounts
             },

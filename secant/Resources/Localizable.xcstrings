@@ -236,6 +236,23 @@
         }
       }
     },
+    "accounts.ledger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger"
+          }
+        }
+      }
+    },
     "accounts.sendingFrom" : {
       "extractionState" : "manual",
       "localizations" : {
