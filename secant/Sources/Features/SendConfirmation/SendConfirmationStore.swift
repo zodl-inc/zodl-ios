@@ -216,6 +216,7 @@ struct SendConfirmation {
     enum CancelId {
         case resolvePCZT
         case addProofs
+        case ledgerSignRequest
     }
 
     @Dependency(\.addressBook) var addressBook
@@ -543,9 +544,15 @@ struct SendConfirmation {
                 // push a separate screen), this flow's host presents `LedgerSignSheetView` as a
                 // sheet over the confirmation screen -- no coordinator push. The guard makes a
                 // second tap while the sheet is already up a no-op.
+                //
+                // MOB-2020 audit: `.ledgerSigning(.onAppear)` starts here, not from the sheet's own
+                // `.onAppear` -- see `LedgerSignSheetView` for why.
                 guard !state.isLedgerSignSheetPresented else { return .none }
                 state.isLedgerSignSheetPresented = true
-                return .send(.resolvePCZT)
+                return .merge(
+                    .send(.resolvePCZT),
+                    .send(.ledgerSigning(.onAppear))
+                )
 
             case .foundPCZT(let pcztWithSigs):
                 guard !state.scanFailedPreScanBinding && !state.scanFailedDuringScanBinding else {
@@ -698,6 +705,7 @@ struct SendConfirmation {
                         await send(.pcztSendFailed("ledgerSignRequest failed".toZcashError()))
                     }
                 }
+                .cancellable(id: CancelId.ledgerSignRequest, cancelInFlight: true)
 
             case .ledgerSigning(.signed(let pcztWithSigs)):
                 // No Keystone firmware gate here: a Ledger-signed PCZT carries no Keystone stamp.
@@ -732,6 +740,7 @@ struct SendConfirmation {
                 return .merge(
                     .cancel(id: CancelId.resolvePCZT),
                     .cancel(id: CancelId.addProofs),
+                    .cancel(id: CancelId.ledgerSignRequest),
                     .cancel(id: LedgerSigning.CancelId.sign),
                     .cancel(id: LedgerSigning.CancelId.scan)
                 )

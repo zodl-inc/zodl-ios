@@ -57,9 +57,9 @@ struct LedgerSignSheetView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
-            .onAppear {
-                store.send(.ledgerSigning(.onAppear))
-            }
+            // No `.onAppear` here: on iOS 16.4-25 `ZashiSheetModifier` re-identifies this content
+            // on every height change (the status block below switches shape), which would refire
+            // `.onAppear` mid-ceremony -- `.confirmWithLedgerTapped` starts it once instead.
             .interactiveDismissDisabled()
         }
     }

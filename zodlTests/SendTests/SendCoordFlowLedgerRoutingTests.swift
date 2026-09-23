@@ -34,6 +34,18 @@ import ComposableArchitecture
         )
     }
 
+    /// MOB-2020 audit: a validated `LedgerDeviceIdentity`, same well-formed non-secret placeholder
+    /// `SendConfirmationLedgerSigningTests.swift` uses. A test that now also starts the Ledger
+    /// ceremony (`.confirmWithLedgerTapped` -> `.ledgerSigning(.onAppear)`) needs this so
+    /// `.ledgerSignRequest` doesn't throw and reset `isLedgerSignSheetPresented` back to `false`
+    /// out from under the polling assertion below.
+    private static func ledgerAccountBinding() throws -> LedgerAccountBinding {
+        LedgerAccountBinding(
+            deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "a", count: 64)),
+            zip32AccountIndex: Zip32AccountIndex(0)
+        )
+    }
+
     @Test func aLedgerSignatureOnTheSendConfirmationPushesSending() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -158,6 +170,7 @@ import ComposableArchitecture
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
+            let binding = try Self.ledgerAccountBinding()
             var initialState = SwapAndPayCoordFlow.State()
             initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
             initialState.$selectedWalletAccount.withLock { $0 = Self.ledgerAccount() }
@@ -168,11 +181,18 @@ import ComposableArchitecture
             } withDependencies: {
                 $0.mainQueue = .immediate
                 $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in binding }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
                     pcztCreated.setValue(true)
                     return Pczt([0x01])
                 }
+                // MOB-2020 audit: `.confirmWithLedgerTapped` also starts the Ledger ceremony
+                // (`.ledgerSigning(.onAppear)`), which reaches `ledgerClient.scanDevices`. The
+                // binding above keeps `.ledgerSignRequest` from throwing and cascading to
+                // `.pcztSendFailed`, which would reset `isLedgerSignSheetPresented` back to
+                // `false` out from under the polling assertion below.
+                $0.ledgerClient = .noOp
             }
 
             store.send(.swapAndPay(.confirmWithLedgerTapped))
@@ -197,6 +217,7 @@ import ComposableArchitecture
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
+            let binding = try Self.ledgerAccountBinding()
             var initialState = SwapAndPayCoordFlow.State()
             initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
             initialState.path.append(.crossPayConfirmation(initialState.swapAndPayState))
@@ -209,11 +230,18 @@ import ComposableArchitecture
             } withDependencies: {
                 $0.mainQueue = .immediate
                 $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in binding }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
                     pcztCreated.setValue(true)
                     return Pczt([0x01])
                 }
+                // MOB-2020 audit: `.confirmWithLedgerTapped` also starts the Ledger ceremony
+                // (`.ledgerSigning(.onAppear)`), which reaches `ledgerClient.scanDevices`. The
+                // binding above keeps `.ledgerSignRequest` from throwing and cascading to
+                // `.pcztSendFailed`, which would reset `isLedgerSignSheetPresented` back to
+                // `false` out from under the polling assertion below.
+                $0.ledgerClient = .noOp
             }
 
             // No sheet is up over `CrossPayConfirmationView` -- unlike the quote-sheet case, this

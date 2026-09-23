@@ -293,6 +293,9 @@ import ComposableArchitecture
                     resolveCount.withValue { $0 += 1 }
                     return Pczt([0x06])
                 }
+                // MOB-2020 audit: `.confirmWithLedgerTapped` now also starts the Ledger ceremony
+                // (`.ledgerSigning(.onAppear)`), which reaches `ledgerClient.scanDevices`.
+                $0.ledgerClient = .noOp
             }
             store.exhaustivity = .off
 
@@ -312,6 +315,41 @@ import ComposableArchitecture
 
             #expect(resolveCount.value == 1)
             #expect(store.state.isLedgerSignSheetPresented == true)
+        }
+    }
+
+    @Test func confirmWithLedgerTappedStartsTheLedgerCeremony() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let binding = try Self.ledgerAccountBinding()
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in binding }
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Pczt([0x06]) }
+                // A stream that finishes immediately -- no devices, no error, no auto-connect.
+                $0.ledgerClient = .noOp
+            }
+            store.exhaustivity = .off
+
+            // MOB-2020 audit: the ceremony now starts from the reducer, alongside `.resolvePCZT`,
+            // rather than from `LedgerSignSheetView`'s own `.onAppear` (which would refire on
+            // every status-block height change and reset an in-flight ceremony -- see
+            // `LedgerSignSheet.swift`).
+            await store.send(.confirmWithLedgerTapped) {
+                $0.isLedgerSignSheetPresented = true
+            }
+            await store.receive(\.ledgerSigning.onAppear)
+            await store.receive(\.ledgerSigning.startScanning)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
         }
     }
 
@@ -387,6 +425,9 @@ import ComposableArchitecture
                 $0.walletStorage.exportLedgerBinding = { _ in binding }
                 $0.sdkSynchronizer = .noOp
                 $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Pczt([0x07]) }
+                // MOB-2020 audit: the following `.confirmWithLedgerTapped` also restarts the
+                // Ledger ceremony (`.ledgerSigning(.onAppear)`), which reaches this dependency.
+                $0.ledgerClient = .noOp
             }
             store.exhaustivity = .off
 
