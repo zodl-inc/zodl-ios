@@ -22,10 +22,7 @@ struct WalletBirthdayView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 if store.isKeystoneFlow {
-                    Asset.Assets.Partners.keystoneTitleLogo.image
-                        .resizable()
-                        .frame(width: 193, height: 32)
-                        .padding(.top, 16)
+                    WalletBirthdayTitleLogo(vendor: store.hardwareWalletVendor)
                 }
                 
                 Text(localizable: .importWalletBirthdayTitle)

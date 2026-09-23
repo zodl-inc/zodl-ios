@@ -9283,6 +9283,23 @@
         }
       }
     },
+    "keepZodlOpenWarningLedger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "^[Warning:](style: 'boldPrimary') Your Zodl funds cannot be spent until your Ledger wallet is synced."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "^[Advertencia:](style: 'boldPrimary') No podrás usar tus fondos de Zodl hasta que tu billetera Ledger esté sincronizada."
+          }
+        }
+      }
+    },
     "keepZodlOpenWarningRestore" : {
       "extractionState" : "manual",
       "localizations" : {

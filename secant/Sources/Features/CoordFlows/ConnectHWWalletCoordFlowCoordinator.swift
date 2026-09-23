@@ -94,6 +94,7 @@ extension ConnectHWWalletCoordFlow {
             case .path(.element(id: _, action: .keystoneDeviceReady(.setBirthdayTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
+                birthdayState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.estimateBirthdaysDate(birthdayState))
                 return .none
 
@@ -129,6 +130,7 @@ extension ConnectHWWalletCoordFlow {
             case .path(.element(id: _, action: .ledgerDeviceReady(.setBirthdayTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
+                birthdayState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.estimateBirthdaysDate(birthdayState))
                 return .none
 
@@ -172,6 +174,7 @@ extension ConnectHWWalletCoordFlow {
             case .path(.element(id: _, action: .estimateBirthdaysDate(.enterManuallyTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
+                birthdayState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.walletBirthday(birthdayState))
                 return .none
 
@@ -194,6 +197,7 @@ extension ConnectHWWalletCoordFlow {
             case .path(.element(id: _, action: .estimatedBirthday(.enterManuallyTapped))):
                 var birthdayState = WalletBirthday.State.initial
                 birthdayState.isKeystoneFlow = true
+                birthdayState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.walletBirthday(birthdayState))
                 return .none
 
@@ -205,6 +209,7 @@ extension ConnectHWWalletCoordFlow {
                 }
                 var restoreInfoState = RestoreInfo.State.initial
                 restoreInfoState.isKeystoneFlow = true
+                restoreInfoState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.restoreInfo(restoreInfoState))
                 return .none
 
@@ -218,6 +223,7 @@ extension ConnectHWWalletCoordFlow {
                 }
                 var restoreInfoState = RestoreInfo.State.initial
                 restoreInfoState.isKeystoneFlow = true
+                restoreInfoState.hardwareWalletVendor = hardwareWalletVendor(on: state.path)
                 state.path.append(.restoreInfo(restoreInfoState))
                 return .none
 
@@ -248,5 +254,22 @@ extension ConnectHWWalletCoordFlow {
             default: return .none
             }
         }
+    }
+
+    /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerDevicePicker`,
+    /// `.ledgerAccount`, `.ledgerDeviceReady` or `.ledgerConnected`) is anywhere on `path`, else
+    /// `.keystone` -- the same "is a Ledger element on the path" rule as
+    /// `ConnectHWWalletCoordFlowView.isLedgerFailure`. Used to stamp `hardwareWalletVendor` on
+    /// every `WalletBirthday.State`/`RestoreInfo.State` this coordinator pushes.
+    private func hardwareWalletVendor(on path: StackState<ConnectHWWalletCoordFlow.Path.State>) -> WalletAccount.Vendor {
+        for element in path {
+            switch element {
+            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+                return .ledger
+            default:
+                continue
+            }
+        }
+        return .keystone
     }
 }

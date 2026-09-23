@@ -11,6 +11,9 @@ import ComposableArchitecture
 struct RestoreInfo {
     @ObservableState
     struct State: Equatable {
+        /// The hardware wallet this `isKeystoneFlow` flow is connecting, which picks the warning
+        /// copy below; read only when `isKeystoneFlow`.
+        var hardwareWalletVendor: WalletAccount.Vendor = .keystone
         var isAcknowledged = true
         var isKeystoneFlow = false
         var isProcessing = false

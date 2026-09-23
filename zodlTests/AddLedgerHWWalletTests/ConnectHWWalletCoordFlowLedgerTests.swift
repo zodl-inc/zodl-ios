@@ -318,6 +318,106 @@ import ComposableArchitecture
         #expect(store.state.errMsg.isEmpty)
     }
 
+    // MARK: - hardwareWalletVendor (MOB-2020: Keystone-branding fix)
+
+    @Test func ledgerBirthdayAndRestoreScreensCarryTheLedgerVendor() async {
+        // .ledgerDeviceReady(.setBirthdayTapped) pushes a birthday state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            let store = makeStore(initialState: initialState)
+            let deviceReadyId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: deviceReadyId, action: .ledgerDeviceReady(.setBirthdayTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .estimateBirthdaysDate(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .estimateBirthdaysDate to be pushed")
+            }
+        }
+
+        // .estimateBirthdaysDate(.enterManuallyTapped) pushes a manual birthday state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimateBirthdaysDate(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let estimateId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimateId, action: .estimateBirthdaysDate(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+
+        // .walletBirthday(.restoreTapped) pushes a restore-info state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.walletBirthday(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let walletBirthdayId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: walletBirthdayId, action: .walletBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.restoreTapped), from an .estimatedBirthday element that already
+        // carries .ledger, pushes a restore-info state carrying .ledger.
+        do {
+            var estimatedBirthdayState = WalletBirthday.State.initial
+            estimatedBirthdayState.hardwareWalletVendor = .ledger
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(estimatedBirthdayState))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.enterManuallyTapped), from an .estimatedBirthday element that
+        // already carries .ledger, pushes a birthday state carrying .ledger.
+        do {
+            var estimatedBirthdayState = WalletBirthday.State.initial
+            estimatedBirthdayState.hardwareWalletVendor = .ledger
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(estimatedBirthdayState))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeStore(
