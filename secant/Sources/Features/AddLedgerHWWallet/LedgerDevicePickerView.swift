@@ -7,7 +7,8 @@
 //  the one screen that finds, selects, connects and pairs the Ledger — there is no separate
 //  "Approve on your Ledger" screen; the export prompt is explained in place via the status line
 //  below the list. Row styling mirrors AccountsSelectionView's account row; the busy Connect
-//  button mirrors KeystoneDeviceReadyView's accessoryView pattern.
+//  button mirrors KeystoneDeviceReadyView's accessoryView pattern. A scan/connect/pair failure
+//  also shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen.
 //
 
 import SwiftUI
@@ -40,21 +41,25 @@ struct LedgerDevicePickerView: View {
                     .lineSpacing(1.5)
                     .padding(.top, 8)
 
-                if let scanError = store.scanError {
-                    Text(scanError)
-                        .zFont(size: 14, style: Design.Utility.ErrorRed._700)
-                        .lineSpacing(1.5)
-                        .padding(.top, 24)
-                } else if store.devices.isEmpty {
-                    VStack(spacing: 0) {
-                        ProgressView()
-                            .padding(.bottom, 12)
+                if store.devices.isEmpty {
+                    if !store.isScanning {
+                        if let issue = store.issue {
+                            Text(issue.message(in: .connect))
+                                .zFont(size: 14, style: Design.Utility.ErrorRed._700)
+                                .lineSpacing(1.5)
+                                .padding(.top, 24)
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            ProgressView()
+                                .padding(.bottom, 12)
 
-                        Text(localizable: .ledgerDevicePickerScanning)
-                            .zFont(size: 14, style: Design.Text.tertiary)
+                            Text(localizable: .ledgerDevicePickerScanning)
+                                .zFont(size: 14, style: Design.Text.tertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 48)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 48)
                 } else {
                     ScrollView {
                         VStack(spacing: 8) {
@@ -71,8 +76,8 @@ struct LedgerDevicePickerView: View {
                         .zFont(size: 14, style: Design.Text.tertiary)
                         .lineSpacing(1.5)
                         .padding(.top, 16)
-                } else if let pairingError = store.pairingError {
-                    Text(pairingError)
+                } else if !store.devices.isEmpty, let issue = store.issue {
+                    Text(issue.message(in: .connect))
                         .zFont(size: 14, style: Design.Utility.ErrorRed._700)
                         .lineSpacing(1.5)
                         .padding(.top, 16)
@@ -89,6 +94,11 @@ struct LedgerDevicePickerView: View {
                     }
                     .disabled(true)
                     .padding(.bottom, 24)
+                } else if store.canRescan {
+                    ZashiButton(String(localizable: .ledgerIssueTryAgain)) {
+                        store.send(.startScanning)
+                    }
+                    .padding(.bottom, 24)
                 } else {
                     ZashiButton(String(localizable: .keystoneAddHWWalletConnect)) {
                         store.send(.connectDeviceTapped)
@@ -103,8 +113,22 @@ struct LedgerDevicePickerView: View {
             .zashiBackV2(background: false) {
                 store.send(.forgetThisDeviceTapped)
             }
+            .zashiSheet(isPresented: $store.isIssueSheetPresented) {
+                issueSheetContent()
+            }
         }
         .applyScreenBackground()
+    }
+
+    // `zashiSheet`'s `content` closure isn't `@ViewBuilder`-attributed (unlike SwiftUI's own
+    // `.sheet`), so the `if let` below needs its own `@ViewBuilder` function rather than sitting
+    // directly in that trailing closure.
+    @ViewBuilder private func issueSheetContent() -> some View {
+        if let issue = store.issue {
+            LedgerIssueSheetContent(issue: issue, context: .connect) {
+                store.send(.issuePrimaryTapped)
+            }
+        }
     }
 
     @ViewBuilder private func deviceRow(_ device: LedgerBluetoothDevice) -> some View {

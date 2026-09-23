@@ -15,7 +15,9 @@ import ComposableArchitecture
 
 // `AddLedgerHWWallet.State` carries `@Shared(.inMemory(...))` process-global storage, same as
 // AddKeystoneHWWalletTests — `.serialized` keeps this suite's own tests from racing each other.
-@Suite(.serialized) struct AddLedgerHWWalletTests {
+// `.timeLimit` is SignalledClock's own backstop (TestSupport/SignalledClock.swift): a wait that
+// genuinely never fires is recorded as a failure here instead of hanging the run.
+@Suite(.serialized, .timeLimit(.minutes(1))) struct AddLedgerHWWalletTests {
     // MARK: - startScanning
 
     @MainActor @Test func startScanningForwardsDeviceBatches() async {
@@ -24,6 +26,7 @@ import ComposableArchitecture
         let store = TestStore(initialState: AddLedgerHWWallet.State()) {
             AddLedgerHWWallet()
         } withDependencies: {
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient.scanDevices = {
                 AsyncThrowingStream { continuation in
                     continuation.yield([deviceA])
@@ -35,7 +38,7 @@ import ComposableArchitecture
 
         await store.send(.startScanning) {
             $0.isScanning = true
-            $0.scanError = nil
+            $0.issue = nil
             $0.devices = []
         }
         await store.receive(\.devicesUpdated) {
@@ -47,10 +50,11 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @MainActor @Test func scanFailureMapsToTheLedgerErrorText() async {
+    @MainActor @Test func scanFailureShowsItsIssueSheet() async {
         let store = TestStore(initialState: AddLedgerHWWallet.State()) {
             AddLedgerHWWallet()
         } withDependencies: {
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient.scanDevices = {
                 AsyncThrowingStream { continuation in
                     continuation.finish(throwing: ZcashError.ledgerBluetoothPoweredOff)
@@ -60,13 +64,79 @@ import ComposableArchitecture
 
         await store.send(.startScanning) {
             $0.isScanning = true
-            $0.scanError = nil
+            $0.issue = nil
             $0.devices = []
         }
-        await store.receive(.scanFailed(String(localizable: .ledgerErrorBluetoothOff))) {
+        await store.receive(.scanFailed(.bluetoothOff)) {
             $0.isScanning = false
-            $0.scanError = String(localizable: .ledgerErrorBluetoothOff)
+            $0.issue = .bluetoothOff
+            $0.isIssueSheetPresented = true
         }
+        await store.finish()
+    }
+
+    @MainActor @Test func scanTimeoutShowsNoDevicesFound() async {
+        let clock = SignalledClock()
+        let (scanStream, scanContinuation) = AsyncThrowingStream<[LedgerBluetoothDevice], Error>.makeStream()
+        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient.scanDevices = { scanStream }
+        }
+
+        await store.send(.startScanning) {
+            $0.isScanning = true
+            $0.issue = nil
+            $0.devices = []
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its `addTask`.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.noDevicesFoundTimeout)
+        await store.receive(\.scanTimedOut) {
+            $0.isScanning = false
+            $0.issue = .noDevicesFound
+            $0.isIssueSheetPresented = true
+        }
+        // The timed-out state above already returns `.cancel`, which ends the still-parked scan
+        // task's `for await` on its own (a cancelled consumer's iteration ends the sequence).
+        // Finishing the continuation here too is redundant but harmless, and avoids leaving it
+        // dangling once the test's scope ends.
+        scanContinuation.finish()
+        await store.finish()
+    }
+
+    @MainActor @Test func scanTimeoutIsIgnoredOnceADeviceWasFound() async {
+        let clock = SignalledClock()
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let (scanStream, scanContinuation) = AsyncThrowingStream<[LedgerBluetoothDevice], Error>.makeStream()
+        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient.scanDevices = { scanStream }
+        }
+
+        await store.send(.startScanning) {
+            $0.isScanning = true
+            $0.issue = nil
+            $0.devices = []
+        }
+        scanContinuation.yield([device])
+        await store.receive(\.devicesUpdated) {
+            $0.devices = [device]
+        }
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.noDevicesFoundTimeout)
+        // No trailing closure: `.scanTimedOut` is a no-op once a device has turned up, so no
+        // state change is expected here.
+        await store.receive(\.scanTimedOut)
+
+        await store.send(.stopScanning) {
+            $0.isScanning = false
+        }
+        scanContinuation.finish()
         await store.finish()
     }
 
@@ -75,8 +145,10 @@ import ComposableArchitecture
     @MainActor @Test func deviceTappedOnlySelectsTheDevice() async {
         let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
         var state = AddLedgerHWWallet.State()
-        // A stale error from a previous attempt must be cleared by a fresh selection.
-        state.pairingError = "stale error"
+        // A stale issue (and its sheet) from a previous attempt must be cleared by a fresh
+        // selection.
+        state.issue = .requestRejected
+        state.isIssueSheetPresented = true
         // No ledgerClient override: deviceTapped must never touch the transport, or a call to
         // `connect`/`pairAccount` would trip "has no test implementation".
         let store = TestStore(initialState: state) {
@@ -85,7 +157,8 @@ import ComposableArchitecture
 
         await store.send(.deviceTapped(device)) {
             $0.selectedDevice = device
-            $0.pairingError = nil
+            $0.issue = nil
+            $0.isIssueSheetPresented = false
         }
     }
 
@@ -114,7 +187,7 @@ import ComposableArchitecture
 
         await store.send(.connectDeviceTapped) {
             $0.isConnecting = true
-            $0.pairingError = nil
+            $0.issue = nil
         }
         await store.receive(\.deviceConnected) {
             $0.isConnecting = false
@@ -171,37 +244,22 @@ import ComposableArchitecture
             AddLedgerHWWallet()
         } withDependencies: {
             // A device-refusal-shaped error thrown from `connect` (rather than `pairAccount`)
-            // proves a connect failure is always reported as connection-lost, regardless of how
-            // LedgerErrorText.isConnectionLost would otherwise classify this same error.
+            // proves a connect failure is always reported as needing a new connection, regardless
+            // of how `LedgerIssue(error).retryNeedsNewConnection` would otherwise classify this
+            // same underlying error.
             $0.ledgerClient.connect = { _ in throw ZcashError.ledgerUserRejected }
-            // The rescan this failure triggers calls scanDevices() for real; overriding only
-            // `connect` above leaves every other endpoint (including this one) resolving to the
-            // live, CoreBluetooth-backed implementation -- same reasoning as the other
-            // ledgerClient overrides in this file. An immediately-finishing stream keeps the
-            // rescan from touching real Bluetooth and from emitting a follow-up devicesUpdated/
-            // scanFailed action this test isn't asserting against.
-            $0.ledgerClient.scanDevices = {
-                AsyncThrowingStream { continuation in
-                    continuation.finish()
-                }
-            }
         }
 
         await store.send(.connectDeviceTapped) {
             $0.isConnecting = true
-            $0.pairingError = nil
+            $0.issue = nil
         }
-        await store.receive(
-            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: true)
-        ) {
+        await store.receive(.pairingFailed(issue: .requestRejected, connectionLost: true)) {
             $0.isConnecting = false
-            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
+            $0.issue = .requestRejected
+            $0.isIssueSheetPresented = true
             $0.selectedDevice = nil
             $0.devices = []
-        }
-        await store.receive(\.startScanning) {
-            $0.isScanning = true
-            $0.scanError = nil
         }
         await store.finish()
     }
@@ -221,22 +279,141 @@ import ComposableArchitecture
 
         await store.send(.connectDeviceTapped) {
             $0.isConnecting = true
-            $0.pairingError = nil
+            $0.issue = nil
         }
         await store.receive(\.deviceConnected) {
             $0.isConnecting = false
             $0.isPairing = true
         }
-        await store.receive(
-            .pairingFailed(message: String(localizable: .ledgerErrorUserRejected), connectionLost: false)
-        ) {
+        await store.receive(.pairingFailed(issue: .requestRejected, connectionLost: false)) {
             $0.isPairing = false
-            $0.pairingError = String(localizable: .ledgerErrorUserRejected)
+            $0.issue = .requestRejected
+            $0.isIssueSheetPresented = true
         }
         await store.finish()
 
         #expect(store.state.selectedDevice == device)
         #expect(store.state.devices == [device])
+    }
+
+    @MainActor @Test func pairingFailureThatLosesTheConnectionDropsTheSelectionAndStopsScanning() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.devices = [device]
+        state.isConnecting = true
+        state.isScanning = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.pairingFailed(issue: .disconnected, connectionLost: true)) {
+            $0.isConnecting = false
+            $0.issue = .disconnected
+            $0.isIssueSheetPresented = true
+            $0.selectedDevice = nil
+            $0.devices = []
+            $0.isScanning = false
+        }
+        await store.finish()
+    }
+
+    // MARK: - issuePrimaryTapped
+
+    @MainActor @Test func retryAfterAScanFailureRescans() async {
+        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.finish(throwing: ZcashError.ledgerBluetoothPoweredOff)
+                }
+            }
+        }
+
+        await store.send(.startScanning) {
+            $0.isScanning = true
+            $0.issue = nil
+            $0.devices = []
+        }
+        await store.receive(.scanFailed(.bluetoothOff)) {
+            $0.isScanning = false
+            $0.issue = .bluetoothOff
+            $0.isIssueSheetPresented = true
+        }
+
+        // No selected device: the sheet's Try again re-scans instead of reconnecting.
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        await store.receive(\.startScanning) {
+            $0.isScanning = true
+            $0.issue = nil
+        }
+        await store.receive(.scanFailed(.bluetoothOff)) {
+            $0.isScanning = false
+            $0.issue = .bluetoothOff
+            $0.isIssueSheetPresented = true
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func retryAfterADeviceRefusalReconnectsTheSelectedDevice() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let fixture = try Self.makePairingFixture()
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.issue = .requestRejected
+        state.isIssueSheetPresented = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            // Overridden so the run below finishes instead of tripping "has no test
+            // implementation" once `.issuePrimaryTapped` re-sends `.connectDeviceTapped`.
+            $0.ledgerClient.connect = { _ in }
+            $0.ledgerClient.pairAccount = { _ in fixture }
+        }
+
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        // A device refusal kept the open connection and the selection, so this reconnects the
+        // selected device instead of scanning again.
+        await store.receive(\.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
+            $0.isPairing = true
+        }
+        await store.receive(.pairingSucceeded(fixture)) {
+            $0.isPairing = false
+            $0.pairing = fixture
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func openSettingsOnlyClosesTheSheet() async {
+        var state = AddLedgerHWWallet.State()
+        state.issue = .bluetoothUnauthorized
+        state.isIssueSheetPresented = true
+
+        // No ledgerClient override: `.bluetoothUnauthorized`'s primary action is `.openSettings`,
+        // not `.tryAgain`, so `.issuePrimaryTapped` must only dismiss the sheet here -- the view,
+        // not the reducer, is what opens Settings. A reach into connect/pairAccount/scanDevices
+        // would trip "has no test implementation" and fail the test.
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        await store.finish()
     }
 
     // MARK: - unlockTapped
