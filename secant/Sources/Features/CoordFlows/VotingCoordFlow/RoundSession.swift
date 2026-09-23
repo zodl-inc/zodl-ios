@@ -183,6 +183,11 @@ struct RoundSession: Equatable {
     /// session's event stream.
     var progress = VotingRoundProgressSnapshot()
 
+    /// What the current submission has measured, as the Confirm screen shows
+    /// it. Fresh for every submission the voter starts; kept across the
+    /// automatic re-runs the flow schedules on its own.
+    var submissionProgress = VotingSubmissionProgress()
+
     /// Which session generation this cached state belongs to. The registry
     /// moves it on every time the round's session is reopened, so a run report
     /// or event arriving from a session that has since been replaced can be
@@ -264,7 +269,9 @@ enum BatchSubmissionStatus: Equatable {
     /// with a spinner.
     case requested
     case authorizing
-    case submitting(currentIndex: Int, totalCount: Int, currentProposalId: UInt32)
+    /// A run is driving the round and has reported at least one event. What
+    /// it has measured lives in `RoundSession.submissionProgress`.
+    case submitting
     case completed(successCount: Int)
     case authorizationFailed(error: String)
     case submissionFailed(error: String, submittedCount: Int, totalCount: Int)

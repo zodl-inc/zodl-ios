@@ -2907,11 +2907,7 @@ extension VotingCoordFlow {
             session.delegationProofStatus = ProofStatus.complete
         }
         guard session.progress.totalProposals > 0 else { return }
-        session.batchSubmissionStatus = .submitting(
-            currentIndex: Int(session.progress.completedProposals),
-            totalCount: Int(session.progress.totalProposals),
-            currentProposalId: session.submittingProposalId ?? 0
-        )
+        session.batchSubmissionStatus = .submitting
     }
 
     /// The voting failure an arbitrary error describes.

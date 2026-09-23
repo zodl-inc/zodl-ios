@@ -667,7 +667,7 @@ extension VotingSharedStateSuites {
             session.keystoneSignedBundles = [0]
             session.currentKeystoneBundleIndex = 1
             session.keystoneSigningStatus = .awaitingSignature
-            session.batchSubmissionStatus = .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7)
+            session.batchSubmissionStatus = .submitting
             session.isSubmittingVote = true
             var state = VotingCoordFlow.State()
             state.isKeystoneUser = true
@@ -682,7 +682,7 @@ extension VotingSharedStateSuites {
 
             let updated = tryUnwrap(state.roundCache[roundId])
             // The duplicate-submission guard: a live run keeps the status it set.
-            #expect(updated.batchSubmissionStatus == .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7))
+            #expect(updated.batchSubmissionStatus == .submitting)
             // The signing loop itself is still stood down and the screen is
             // still popped -- only the submission status is left alone.
             #expect(updated.keystoneSignedBundles == Set([0]))

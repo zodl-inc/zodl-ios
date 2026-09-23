@@ -13,11 +13,11 @@ import ZcashLightClientKit
 ///   • `.idle` — Poll/Memo card + Confirm CTA
 ///   • `.requested` — same chrome as `.idle`, with the Confirm CTA disabled
 ///     behind a spinner while local auth (and any remaining prep) runs
-///   • `.authorizing` / `.submitting` — Poll/VotingPower card + monotonic
-///     progress bar + disabled CTA reflecting the current sub-step
+///   • `.authorizing` / `.submitting` — Poll/VotingPower card + progress card
+///     (`ConfirmSubmissionDisplay`) + disabled CTA repeating its title
 ///   • `.completed` — Poll/VotingPower card + green-check icon + Done CTA
-/// `.authorizationFailed` / `.submissionFailed` keep the in-progress chrome
-/// underneath while a `votingSheet` drives retry/cancel.
+/// `.authorizationFailed` / `.submissionFailed` say so in the header and keep
+/// the progress card underneath while a `votingSheet` drives retry/cancel.
 struct ConfirmSubmissionView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.dismiss) private var dismiss
@@ -43,7 +43,7 @@ struct ConfirmSubmissionView: View {
             // shares never reached the helper servers — see
             // `RoundSession.hasPendingSubmissionWork`.
             let hasPendingSubmissionWork = session?.hasPendingSubmissionWork ?? false
-            let delegationStatus = session?.delegationProofStatus ?? .notStarted
+            let submission = session?.submissionProgress ?? VotingSubmissionProgress()
             let isKeystoneUser = store.isKeystoneUser
 
             VStack(spacing: 0) {
@@ -68,7 +68,7 @@ struct ConfirmSubmissionView: View {
 
                 bottomSection(
                     status: status,
-                    delegationStatus: delegationStatus,
+                    submission: submission,
                     hasPendingSubmissionWork: hasPendingSubmissionWork,
                     submittedVotes: submittedVotes,
                     bundleCount: bundleCount
@@ -85,7 +85,7 @@ struct ConfirmSubmissionView: View {
             .votingSheet(
                 isPresented: authorizationFailedBinding(status: status),
                 title: String(localizable: .coinVoteConfirmSubmissionAuthorizationFailedTitle),
-                message: failureMessage(
+                message: ConfirmSubmissionDisplay.failureMessage(
                     status: status,
                     fallback: String(localizable: .coinVoteConfirmSubmissionAuthorizationFailedMessage)
                 ),
@@ -100,7 +100,7 @@ struct ConfirmSubmissionView: View {
             .votingSheet(
                 isPresented: submissionFailedBinding(status: status),
                 title: String(localizable: .coinVoteConfirmSubmissionSubmissionFailedTitle),
-                message: failureMessage(
+                message: ConfirmSubmissionDisplay.failureMessage(
                     status: status,
                     fallback: String(localizable: .coinVoteConfirmSubmissionSubmissionFailedMessage)
                 ),
@@ -128,6 +128,7 @@ struct ConfirmSubmissionView: View {
 
     @ViewBuilder
     private func headerSection(status: BatchSubmissionStatus) -> some View {
+        let header = ConfirmSubmissionDisplay.header(status: status, isKeystone: store.isKeystoneUser)
         VStack(alignment: .leading, spacing: 8) {
             VotingHeaderIcons(
                 isKeystone: store.isKeystoneUser,
@@ -136,11 +137,11 @@ struct ConfirmSubmissionView: View {
             .padding(.top, 12)
             .padding(.bottom, 24)
 
-            Text(headerTitle(status: status))
+            Text(header.title)
                 .zFont(.semiBold, size: 24, style: Design.Text.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(headerSubtitle(status: status))
+            Text(header.subtitle)
                 .zFont(size: 14, style: Design.Text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -155,103 +156,18 @@ struct ConfirmSubmissionView: View {
         }
     }
 
-    private func headerTitle(status: BatchSubmissionStatus) -> String {
-        switch status {
-        case .idle, .requested:
-            return String(localizable: .coinVoteConfirmSubmissionHeaderTitleIdle)
-        case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
-            return String(localizable: .coinVoteConfirmSubmissionHeaderTitleSubmitting)
-        case .completed:
-            return String(localizable: .coinVoteConfirmSubmissionHeaderTitleCompleted)
-        }
-    }
-
-    private func headerSubtitle(status: BatchSubmissionStatus) -> String {
-        switch status {
-        case .idle, .requested:
-            if store.isKeystoneUser {
-                return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleIdleKeystone)
-            }
-            return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleIdle)
-        case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
-            return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleSubmitting)
-        case .completed:
-            return String(localizable: .coinVoteConfirmSubmissionHeaderSubtitleCompleted)
-        }
-    }
-
-    // MARK: - Progress
-
-    /// Authorization gets its own label until it finishes; submission then
-    /// drives the bar from the (currentIndex, totalCount) pair. The 30%
-    /// reservation for the delegation phase keeps the bar monotonic when
-    /// the screen flips from authorizing to submitting mid-flight.
-    private func submissionProgress(
-        status: BatchSubmissionStatus,
-        delegationStatus: ProofStatus
-    ) -> (progress: Double, title: String) {
-        let delegationWeight = 0.3
-
-        switch status {
-        case .authorizing:
-            let proof: Double
-            switch delegationStatus {
-            case .generating(let value): proof = value
-            case .complete: proof = 1.0
-            default: proof = 0
-            }
-            return (
-                proof * delegationWeight,
-                String(localizable: .coinVoteStoreSubmissionAuthorizingVote)
-            )
-
-        case let .submitting(currentIndex, totalCount, _):
-            let offset = delegationStatus == .complete ? delegationWeight : 0.0
-            let fraction = Double(currentIndex + 1) / Double(max(totalCount, 1))
-            let overall = min(1.0, offset + fraction * (1.0 - offset))
-            return (
-                overall,
-                String(
-                    localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount(
-                        String(currentIndex + 1),
-                        String(totalCount)
-                    )
-                )
-            )
-
-        case .authorizationFailed:
-            return (0, String(localizable: .coinVoteStoreSubmissionAuthorizingVote))
-
-        case let .submissionFailed(_, submittedCount, totalCount):
-            let fraction = Double(submittedCount) / Double(max(totalCount, 1))
-            let overall = min(1.0, delegationWeight + fraction * (1.0 - delegationWeight))
-            return (
-                overall,
-                String(
-                    localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount(
-                        String(submittedCount),
-                        String(totalCount)
-                    )
-                )
-            )
-
-        default:
-            return (0, "")
-        }
-    }
-
     // MARK: - Bottom Section
 
     @ViewBuilder
     private func bottomSection(
         status: BatchSubmissionStatus,
-        delegationStatus: ProofStatus,
+        submission: VotingSubmissionProgress,
         hasPendingSubmissionWork: Bool,
         submittedVotes: [UInt32: VoteChoice],
         bundleCount: UInt32
     ) -> some View {
-        switch status {
-        case .idle:
+        switch ConfirmSubmissionDisplay.bottom(status: status, submission: submission) {
+        case .confirm:
             ZashiButton(
                 store.isKeystoneUser
                     ? String(localizable: .coinVoteConfirmSubmissionConfirmWithKeystone)
@@ -261,7 +177,7 @@ struct ConfirmSubmissionView: View {
             }
             .disabled(!hasPendingSubmissionWork || bundleCount == 0)
 
-        case .requested:
+        case .confirmInProgress:
             // Same CTA as `.idle`, visibly working: the tap must register
             // instantly even though local auth hasn't resolved yet. Disabled
             // so re-taps can't spawn extra auth prompts.
@@ -273,18 +189,14 @@ struct ConfirmSubmissionView: View {
             ) {}
             .disabled(true)
 
-        case .authorizing, .submitting, .authorizationFailed, .submissionFailed:
+        case let .progress(value, title):
             // Progress card stays on screen while the error sheets (driven
             // by the `authorizationFailed` / `submissionFailed` bindings)
             // own retry / cancel.
-            let progressInfo = submissionProgress(
-                status: status,
-                delegationStatus: delegationStatus
-            )
             VStack(spacing: Design.Spacing._lg) {
                 VStack(alignment: .leading, spacing: Design.Spacing._lg) {
                     VStack(alignment: .leading, spacing: Design.Spacing._xs) {
-                        Text(progressInfo.title)
+                        Text(title)
                             .zFont(.semiBold, size: 15, style: Design.Text.primary)
 
                         Text(localizable: .coinVoteConfirmSubmissionProgressExplainer)
@@ -298,8 +210,8 @@ struct ConfirmSubmissionView: View {
                                 .fill(Design.Surfaces.bgTertiary.color(colorScheme))
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(Design.Text.primary.color(colorScheme))
-                                .frame(width: geo.size.width * progressInfo.progress)
-                                .animation(.easeInOut(duration: 0.3), value: progressInfo.progress)
+                                .frame(width: geo.size.width * value)
+                                .animation(.easeInOut(duration: 0.3), value: value)
                         }
                     }
                     .frame(height: 8)
@@ -308,11 +220,11 @@ struct ConfirmSubmissionView: View {
                 .background(Design.Surfaces.bgSecondary.color(colorScheme))
                 .clipShape(RoundedRectangle(cornerRadius: Design.Radius._xl))
 
-                ZashiButton(progressInfo.title) {}
+                ZashiButton(title) {}
                     .disabled(true)
             }
 
-        case .completed:
+        case .done:
             ZashiButton(String(localizable: .coinVoteCommonDone)) {
                 store.send(.submissionDoneTapped(roundId: roundId))
             }
@@ -347,24 +259,6 @@ struct ConfirmSubmissionView: View {
                 }
             }
         )
-    }
-
-    /// The reducer pre-maps backend errors through `VotingErrorMapper` before
-    /// storing them in `BatchSubmissionStatus`, so when a specific user-friendly
-    /// string is available (e.g. the "nullifier already spent" → "wallet already
-    /// registered" copy) it lives directly on the status. Fall back to the
-    /// generic sheet copy only when no error string was carried.
-    private func failureMessage(status: BatchSubmissionStatus, fallback: String) -> String {
-        let storedError: String
-        switch status {
-        case .authorizationFailed(let error):
-            storedError = error
-        case .submissionFailed(let error, _, _):
-            storedError = error
-        default:
-            return fallback
-        }
-        return storedError.isEmpty ? fallback : storedError
     }
 
     // MARK: - Helpers
