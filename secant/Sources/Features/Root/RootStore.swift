@@ -329,11 +329,17 @@ struct Root {
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
         }
 
-        /// True while the user is inside a flow that can contain a payment or vote.
-        /// This is computed from live navigation state so a deferred candidate is
+        /// True while `LedgerSignSheetView` is up over Home for a Ledger shield.
+        var isLedgerShieldingSheetPresented: Bool {
+            signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented
+        }
+
+        /// True while the user is inside a flow that can contain a payment or vote, or either the
+        /// Keystone signing popover or the Ledger shielding sheet is up over Home with no `path`
+        /// of its own. This is computed from live navigation state so a deferred candidate is
         /// reconsidered as soon as the user leaves the flow.
         var isSensitiveFlowActive: Bool {
-            if signWithKeystoneCoordFlowBinding { return true }
+            if signWithKeystoneCoordFlowBinding || isLedgerShieldingSheetPresented { return true }
             guard let path else { return false }
             switch path {
             case .settings:
@@ -378,8 +384,8 @@ struct Root {
         /// transactions, receive, request-ZEC, currency conversion, Tor setup, server switch,
         /// wallet backup, and the Keystone add flow — so the remaining terms only need to cover
         /// the presentation states that are NOT `Path` cases: the Keystone signing popover, the
-        /// Server Setup full-screen cover, a background task in flight, and any alert already
-        /// on screen.
+        /// Ledger shielding sheet, the Server Setup full-screen cover, a background task in
+        /// flight, and any alert already on screen.
         ///
         /// Home's own informational sheets (e.g. the smart banner) are deliberately NOT gated
         /// here: enumerating `Home.State`'s bindings would be brittle, and the cost of losing
@@ -390,6 +396,7 @@ struct Root {
             destinationState.destination == .home
                 && path == nil
                 && !signWithKeystoneCoordFlowBinding
+                && !isLedgerShieldingSheetPresented
                 && !serverSetupViewBinding
                 && bgTask == nil
                 && alert == nil

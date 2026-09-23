@@ -179,6 +179,42 @@ import ComposableArchitecture
 
         #expect(store.state.signWithKeystoneCoordFlowBinding == false)
     }
+
+    // MARK: - Audit follow-up: Root's other safety gates (MOB-2020)
+
+    /// `isSensitiveFlowActive`/`canApplyAutoServerSwitch` are pure computed properties over
+    /// `Root.State` -- no store or reducer drive needed, just constructing the state directly.
+    /// Only the flag-on -> `canApplyAutoServerSwitch == false` direction is asserted: with the
+    /// flag off, `canApplyAutoServerSwitch` also depends on unrelated terms (e.g.
+    /// `isSynchronizerIdleForSwitch`, `nil` on a fresh `.initial`) that are not this test's
+    /// concern -- `isSensitiveFlowActive` alone is asserted both ways.
+    @Test func theLedgerShieldingSheetCountsAsASensitiveFlow() {
+        var state = Root.State.initial
+        state.signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented = true
+
+        #expect(state.isSensitiveFlowActive == true)
+        #expect(state.canApplyAutoServerSwitch == false)
+
+        state.signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented = false
+
+        #expect(state.isSensitiveFlowActive == false)
+    }
+
+    /// `canPresentIronwoodAnnouncement` is likewise pure. The state is built the way
+    /// `UtilTests/RootIronwoodAnnouncementGateTests.swift`'s `makeState()` builds one where the
+    /// gate would otherwise read `true` (`destinationState.destination = .home`,
+    /// `splashAppeared = true`, every other term left at its `.initial` default).
+    @Test func theLedgerShieldingSheetHoldsBackTheIronwoodAnnouncement() {
+        var state = Root.State.initial
+        state.destinationState.destination = .home
+        state.splashAppeared = true
+
+        state.signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented = true
+        #expect(state.canPresentIronwoodAnnouncement == false)
+
+        state.signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented = false
+        #expect(state.canPresentIronwoodAnnouncement == true)
+    }
 }
 
 /// Shared no-op dependency baseline for every test in this file. Kept as a private, file-scoped
