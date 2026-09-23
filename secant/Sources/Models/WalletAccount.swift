@@ -14,6 +14,10 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
         case zcash
         case ledger = 2
 
+        /// A vendor's mark, meant to be drawn by the caller on its own `Design.Surfaces.bgAlt`
+        /// circle — the same construction the Zodl and Keystone marks already use. This is not the
+        /// full circular logo; `Partners.ledgerLogo` is the disc-plus-mark asset for places that draw
+        /// the Ledger logo on its own.
         func icon() -> Image {
             switch self {
             case .keystone:
@@ -21,7 +25,7 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
             case .zcash:
                 return Asset.Assets.Icons.zashiLogoSq.image
             case .ledger:
-                return Asset.Assets.Partners.ledgerLogo.image
+                return Asset.Assets.Partners.ledgerMark.image
             }
         }
 

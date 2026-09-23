@@ -3,6 +3,16 @@
     {
       "filename" : "ledgerLogo.svg",
       "idiom" : "universal"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "ledgerLogoDark.svg",
+      "idiom" : "universal"
     }
   ],
   "info" : {
