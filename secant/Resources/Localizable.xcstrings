@@ -10560,6 +10560,57 @@
         }
       }
     },
+    "ledger.signSheet.cancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cancelar transacción"
+          }
+        }
+      }
+    },
+    "ledger.signSheet.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm the transaction on your Ledger device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma la transacción en tu dispositivo Ledger."
+          }
+        }
+      }
+    },
+    "ledger.signSheet.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar transacción"
+          }
+        }
+      }
+    },
     "ledger.signWith.connecting" : {
       "extractionState" : "manual",
       "localizations" : {

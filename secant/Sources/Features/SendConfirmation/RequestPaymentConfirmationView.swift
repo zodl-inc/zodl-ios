@@ -258,6 +258,7 @@ struct RequestPaymentConfirmationView: View {
         .padding(.vertical, 1)
         .applyScreenBackground()
         .zashiBack(hidden: true)
+        .ledgerSignSheet(store: store)
     }
 }
 

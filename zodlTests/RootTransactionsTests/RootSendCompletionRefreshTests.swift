@@ -186,36 +186,6 @@ import ComposableArchitecture
         #expect(fetchedAccounts.value.contains(account.id))
     }
 
-    /// MOB-2020 Phase 3.2: the Ledger twin of `sendDoneInSendFlowRefetchesTransactions` -- proves
-    /// the `confirmWithLedger` refetch pattern added to `RootCoordinator.swift` actually fires.
-    @Test func ledgerSendDoneInSendFlowRefetchesTransactions() async throws {
-        let account = Self.walletAccount(idByte: 93)
-        let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
-        let refetchSignal = AsyncStream.makeStream(of: Void.self)
-
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = account }
-        initialState.sendCoordFlowState.path.append(.confirmWithLedger(SendConfirmation.State.initial))
-
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
-                fetchedAccounts.withValue { $0.append(accountUUID) }
-                refetchSignal.continuation.yield(())
-                return []
-            }
-        }
-
-        let elementId = try #require(store.state.sendCoordFlowState.path.ids.first)
-        store.send(.sendCoordFlow(.path(.element(id: elementId, action: .confirmWithLedger(.sendDone)))))
-
-        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
-
-        #expect(fetchedAccounts.value.contains(account.id))
-    }
-
     // MARK: - Scan Coord Flow
 
     @Test func scanFlowSendDoneRefetchesTransactions() async throws {
@@ -240,35 +210,6 @@ import ComposableArchitecture
 
         let elementId = try #require(store.state.scanCoordFlowState.path.ids.first)
         store.send(.scanCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.sendDone)))))
-
-        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
-
-        #expect(fetchedAccounts.value.contains(account.id))
-    }
-
-    /// MOB-2020 Phase 3.2: the Ledger twin of `scanFlowSendDoneRefetchesTransactions`.
-    @Test func ledgerSendDoneInScanFlowRefetchesTransactions() async throws {
-        let account = Self.walletAccount(idByte: 94)
-        let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
-        let refetchSignal = AsyncStream.makeStream(of: Void.self)
-
-        var initialState = Root.State.initial
-        initialState.$selectedWalletAccount.withLock { $0 = account }
-        initialState.scanCoordFlowState.path.append(.confirmWithLedger(SendConfirmation.State.initial))
-
-        let store = Store(initialState: initialState) {
-            Root()
-        } withDependencies: {
-            baseNoOpDependencies(&$0)
-            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
-                fetchedAccounts.withValue { $0.append(accountUUID) }
-                refetchSignal.continuation.yield(())
-                return []
-            }
-        }
-
-        let elementId = try #require(store.state.scanCoordFlowState.path.ids.first)
-        store.send(.scanCoordFlow(.path(.element(id: elementId, action: .confirmWithLedger(.sendDone)))))
 
         await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 
@@ -364,15 +305,16 @@ import ComposableArchitecture
         #expect(fetchedAccounts.value.contains(account.id))
     }
 
-    /// MOB-2020 Phase 3.2: the Ledger twin of `swapFlowKeystoneSendDoneRefetchesTransactions`.
-    @Test func swapFlowLedgerSendDoneRefetchesTransactions() async throws {
+    /// MOB-2020 UI round 2: the Ledger twin of `swapFlowKeystoneSendDoneRefetchesTransactions` --
+    /// unlike Keystone, a Ledger swap confirmation is a scoped child (`ledgerConfirmationState`),
+    /// not a path element, so this dispatches the coordinator action directly.
+    @Test func swapFlowLedgerSendDoneRefetchesTransactions() async {
         let account = Self.walletAccount(idByte: 95)
         let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
         let refetchSignal = AsyncStream.makeStream(of: Void.self)
 
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = account }
-        initialState.swapAndPayCoordFlowState.path.append(.confirmWithLedger(SendConfirmation.State.initial))
 
         let store = Store(initialState: initialState) {
             Root()
@@ -385,8 +327,7 @@ import ComposableArchitecture
             }
         }
 
-        let elementId = try #require(store.state.swapAndPayCoordFlowState.path.ids.first)
-        store.send(.swapAndPayCoordFlow(.path(.element(id: elementId, action: .confirmWithLedger(.sendDone)))))
+        store.send(.swapAndPayCoordFlow(.ledgerConfirmation(.sendDone)))
 
         await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
 

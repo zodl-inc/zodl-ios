@@ -53,6 +53,8 @@ struct SendConfirmation {
         var feeRequired: Zatoshi
         var isAddressExpanded = false
         var isKeystoneCodeFound = false
+        /// MOB-2020: `LedgerSignSheetView` is up over the confirmation screen while the Ledger signs.
+        var isLedgerSignSheetPresented = false
         var isOrchardWarningPresented = false
         var isQRCodeEnlarged = false
         var isSending = false
@@ -193,6 +195,7 @@ struct SendConfirmation {
         case keystoneFirmwareAccepted
         case keystoneFirmwareUpdateCloseTapped
         case keystoneFirmwareUpdateRequired
+        case ledgerSignCancelTapped
         case ledgerSignRequest
         case ledgerSigning(LedgerSigning.Action)
         case pcztResolved(Pczt)
@@ -206,6 +209,13 @@ struct SendConfirmation {
         
         // Swap
         case checkStatusTapped
+    }
+
+    // Not `private`: Keystone shares the `resolvePCZT`/`addProofsToPczt` effects these cancel --
+    // the IDs alone do not change Keystone's own behavior, only `.ledgerSignCancelTapped` cancels.
+    enum CancelId {
+        case resolvePCZT
+        case addProofs
     }
 
     @Dependency(\.addressBook) var addressBook
@@ -529,9 +539,13 @@ struct SendConfirmation {
                 return .none
 
             case .confirmWithLedgerTapped:
-                // Handled by the coordinators, same as `.confirmWithKeystoneTapped`: they observe
-                // this action to push `SignWithLedgerView` and kick off `.resolvePCZT`.
-                return .none
+                // MOB-2020: unlike `.confirmWithKeystoneTapped` (which the coordinators observe to
+                // push a separate screen), this flow's host presents `LedgerSignSheetView` as a
+                // sheet over the confirmation screen -- no coordinator push. The guard makes a
+                // second tap while the sheet is already up a no-op.
+                guard !state.isLedgerSignSheetPresented else { return .none }
+                state.isLedgerSignSheetPresented = true
+                return .send(.resolvePCZT)
 
             case .foundPCZT(let pcztWithSigs):
                 guard !state.scanFailedPreScanBinding && !state.scanFailedDuringScanBinding else {
@@ -599,7 +613,8 @@ struct SendConfirmation {
                         await send(.pcztSendFailed("resolvePCZT createPCZTFromProposal failed".toZcashError()))
                     }
                 }
-                
+                .cancellable(id: CancelId.resolvePCZT, cancelInFlight: true)
+
             case .pcztResolved(let pczt):
                 state.pczt = pczt
                 // MOB-2020 Phase 3.2: a Ledger account signs the PCZT the SDK produced directly --
@@ -657,7 +672,8 @@ struct SendConfirmation {
                         await send(.pcztSendFailed("addProofsToPczt failed".toZcashError()))
                     }
                 }
-                
+                .cancellable(id: CancelId.addProofs, cancelInFlight: true)
+
             case .pcztWithProofsResolved(let pcztWithProofs):
                 state.pcztWithProofs = pcztWithProofs
                 return .send(.createTransactionFromPCZT)
@@ -685,6 +701,7 @@ struct SendConfirmation {
 
             case .ledgerSigning(.signed(let pcztWithSigs)):
                 // No Keystone firmware gate here: a Ledger-signed PCZT carries no Keystone stamp.
+                state.isLedgerSignSheetPresented = false
                 state.pcztWithSigs = pcztWithSigs
                 return .send(.createTransactionFromPCZT)
 
@@ -700,6 +717,24 @@ struct SendConfirmation {
                 // to tap Try Again rather than being bounced to the failure screen. Every other
                 // `LedgerSigning.Action` is internal to that sub-machine.
                 return .none
+
+            case .ledgerSignCancelTapped:
+                // MOB-2020: `LedgerSignSheetView`'s "Cancel Transaction" -- closes the sheet and
+                // drops the in-flight PCZT machinery, but keeps `proposal` so a following
+                // `.confirmWithLedgerTapped` can start over from the same confirmation screen.
+                state.isLedgerSignSheetPresented = false
+                state.pczt = nil
+                state.pcztWithProofs = nil
+                state.pcztWithSigs = nil
+                state.pcztToShare = nil
+                state.redactedPcztForSigner = nil
+                state.ledgerSigning = .init()
+                return .merge(
+                    .cancel(id: CancelId.resolvePCZT),
+                    .cancel(id: CancelId.addProofs),
+                    .cancel(id: LedgerSigning.CancelId.sign),
+                    .cancel(id: LedgerSigning.CancelId.scan)
+                )
 
             case .sharePCZT:
                 state.pcztToShare = state.pczt
@@ -774,6 +809,7 @@ struct SendConfirmation {
 
             case .pcztSendFailed:
                 state.isSending = false
+                state.isLedgerSignSheetPresented = false
                 return .none
 
             case .backFromPCZTFailureTapped:

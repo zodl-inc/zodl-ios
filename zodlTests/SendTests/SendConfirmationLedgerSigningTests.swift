@@ -270,4 +270,147 @@ import ComposableArchitecture
             await store.finish()
         }
     }
+
+    // MARK: - Ledger sign sheet (MOB-2020 UI round 2)
+
+    @Test func confirmWithLedgerTappedPresentsTheSheetAndResolvesThePcztOnce() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let binding = try Self.ledgerAccountBinding()
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+
+            let resolveCount = LockIsolated(0)
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in binding }
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
+                    resolveCount.withValue { $0 += 1 }
+                    return Pczt([0x06])
+                }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.confirmWithLedgerTapped) {
+                $0.isLedgerSignSheetPresented = true
+            }
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(resolveCount.value == 1)
+
+            // A second tap while the sheet is already up is a no-op: the guard blocks it before
+            // `.resolvePCZT` (and therefore `createPCZTFromProposal`) fires again.
+            await store.send(.confirmWithLedgerTapped)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(resolveCount.value == 1)
+            #expect(store.state.isLedgerSignSheetPresented == true)
+        }
+    }
+
+    @Test func aSignedPcztClosesTheSheet() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+            }
+            store.exhaustivity = .off
+
+            // `pcztWithProofs` is nil, so `createTransactionFromPCZT`'s guard makes the rest of
+            // the cascade a no-op -- only the sheet-closing side effect is under test here.
+            await store.send(.ledgerSigning(.signed(Pczt([0xAB]))))
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.isLedgerSignSheetPresented == false)
+        }
+    }
+
+    @Test func aPcztSendFailureClosesTheSheet() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+            initialState.isSending = true
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+            }
+
+            await store.send(.pcztSendFailed(nil)) {
+                $0.isSending = false
+                $0.isLedgerSignSheetPresented = false
+            }
+            await store.finish()
+        }
+    }
+
+    @Test func ledgerSignCancelTappedClosesTheSheetAndKeepsTheProposal() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.ledgerAccount()
+            let binding = try Self.ledgerAccountBinding()
+            let proposal = Proposal.testOnlyFakeProposal(totalFee: 10_000)
+
+            var initialState = makeState(account: account)
+            initialState.proposal = proposal
+            initialState.isLedgerSignSheetPresented = true
+            initialState.pczt = Pczt([0x01])
+            initialState.pcztWithProofs = Pczt([0x02])
+            initialState.pcztWithSigs = Pczt([0x03])
+            initialState.pcztToShare = Pczt([0x04])
+            initialState.redactedPcztForSigner = Pczt([0x05])
+            initialState.ledgerSigning.phase = .signing(.awaitingReviewOnDevice)
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in binding }
+                $0.sdkSynchronizer = .noOp
+                $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Pczt([0x07]) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.ledgerSignCancelTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.pczt = nil
+                $0.pcztWithProofs = nil
+                $0.pcztWithSigs = nil
+                $0.pcztToShare = nil
+                $0.redactedPcztForSigner = nil
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+            await store.finish()
+
+            #expect(store.state.proposal == proposal)
+
+            // A following `.confirmWithLedgerTapped` presents the sheet again and sends
+            // `.resolvePCZT` again -- the cancel above kept `proposal` around for exactly this.
+            await store.send(.confirmWithLedgerTapped) {
+                $0.isLedgerSignSheetPresented = true
+            }
+            await store.receive(\.resolvePCZT)
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+        }
+    }
 }

@@ -75,8 +75,6 @@ struct SwapAndPayCoordFlowView: View {
                         AddressBookContactView(store: store)
                     case let .confirmWithKeystone(store):
                         SignWithKeystoneView(store: store, tokenName: tokenName)
-                    case let .confirmWithLedger(store):
-                        SignWithLedgerView(store: store, tokenName: tokenName)
                     case let .crossPayConfirmation(store):
                         CrossPayConfirmationView(store: store, tokenName: tokenName)
                     case let .keystoneFirmwareUpdate(store):
@@ -109,6 +107,7 @@ struct SwapAndPayCoordFlowView: View {
                 ) {
                     helpSheetContent()
                 }
+                .ledgerSignSheet(store: store.scope(state: \.ledgerConfirmationState, action: \.ledgerConfirmation))
                 .sheet(isPresented: $store.isInAppBrowserOn) {
                     if let url = store.helpArticleURL {
                         InAppBrowserView(url: url)

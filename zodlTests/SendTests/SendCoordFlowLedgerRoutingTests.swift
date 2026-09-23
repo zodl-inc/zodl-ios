@@ -2,9 +2,11 @@
 //  SendCoordFlowLedgerRoutingTests.swift
 //  zodlTests
 //
-//  MOB-2020 Phase 3.2: coordinator-level routing for a Ledger account's send/scan/swap confirm --
-//  the `confirmWithLedgerTapped` push and the `confirmWithLedger(.ledgerSigning(.signed))` ->
-//  `.sending` push, across the three coordinators that gained a `confirmWithLedger` path case
+//  MOB-2020 UI round 2: coordinator-level routing for a Ledger account's send/scan/swap confirm,
+//  now that `LedgerSignSheetView` presents as a sheet over `sendConfirmation`/`requestZecConfirmation`
+//  (or, for swap, the scoped `ledgerConfirmationState`) instead of a separate pushed
+//  `confirmWithLedger` path element -- `.ledgerSigning(.signed)` -> `.sending` and
+//  `.pcztSendFailed` -> `.sendFailed`/`.preSendingFailure` across the three coordinators
 //  (SendCoordFlowCoordinator, ScanCoordFlowCoordinator, SwapAndPayCoordFlowCoordinator). Mirrors
 //  `KeystoneFirmwareCoordFlowTests.swift`'s pattern: CoordFlow `State` is not `Equatable`, so these
 //  tests drive a plain `Store` and poll for the expected path shape, each isolated via
@@ -32,53 +34,13 @@ import ComposableArchitecture
         )
     }
 
-    @Test func confirmWithLedgerTappedPushesTheLedgerScreenAndResolvesThePczt() async throws {
+    @Test func aLedgerSignatureOnTheSendConfirmationPushesSending() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            var sendConfirmationState = SendConfirmation.State.initial
-            sendConfirmationState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
-            sendConfirmationState.$selectedWalletAccount.withLock { $0 = Self.ledgerAccount() }
-
             var initialState = SendCoordFlow.State()
-            initialState.path.append(.sendConfirmation(sendConfirmationState))
+            initialState.path.append(.sendConfirmation(SendConfirmation.State.initial))
             let sendConfirmationId = try #require(initialState.path.ids.first)
-
-            let pcztCreated = LockIsolated(false)
-            let store = Store(initialState: initialState) {
-                SendCoordFlow()
-            } withDependencies: {
-                $0.mainQueue = .immediate
-                $0.walletStorage = .noOp
-                $0.sdkSynchronizer = .noOp
-                $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in
-                    pcztCreated.setValue(true)
-                    return Pczt([0x01])
-                }
-            }
-
-            store.send(.path(.element(id: sendConfirmationId, action: .sendConfirmation(.confirmWithLedgerTapped))))
-
-            // `path.count == 2` alone is satisfied synchronously by the push -- `resolvePCZT`'s
-            // `.run` effect (which calls `createPCZTFromProposal`) is still in flight at that
-            // point, so wait on the PCZT creation too.
-            await waitForCoordFlowStore {
-                store.state.path.count == 2 && pcztCreated.value
-            }
-
-            #expect(store.state.path.count == 2)
-            #expect(store.state.path.last?.is(\.confirmWithLedger) == true)
-            #expect(pcztCreated.value)
-        }
-    }
-
-    @Test func aLedgerSignedPcztPushesSending() async throws {
-        try await withDependencies {
-            $0.defaultInMemoryStorage = InMemoryStorage()
-        } operation: {
-            var initialState = SendCoordFlow.State()
-            initialState.path.append(.confirmWithLedger(SendConfirmation.State.initial))
-            let confirmId = try #require(initialState.path.ids.first)
 
             let store = Store(initialState: initialState) {
                 SendCoordFlow()
@@ -86,7 +48,7 @@ import ComposableArchitecture
 
             store.send(
                 .path(
-                    .element(id: confirmId, action: .confirmWithLedger(.ledgerSigning(.signed(Pczt([0xAB])))))
+                    .element(id: sendConfirmationId, action: .sendConfirmation(.ledgerSigning(.signed(Pczt([0xAB])))))
                 )
             )
 
@@ -99,7 +61,100 @@ import ComposableArchitecture
         }
     }
 
-    @Test func theSwapFlowRoutesALedgerConfirmTheSameWay() async throws {
+    @Test func aPreSigningFailureOnTheSendConfirmationPushesPreSendingFailure() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = SendCoordFlow.State()
+            initialState.path.append(.sendConfirmation(SendConfirmation.State.initial))
+            let sendConfirmationId = try #require(initialState.path.ids.first)
+
+            let store = Store(initialState: initialState) {
+                SendCoordFlow()
+            }
+
+            // No `.sending` on the path yet -- this is a pre-signing failure (e.g. `resolvePCZT`
+            // or `addProofsToPczt` failed before a signature was ever obtained).
+            store.send(
+                .path(
+                    .element(id: sendConfirmationId, action: .sendConfirmation(.pcztSendFailed(nil)))
+                )
+            )
+
+            await waitForCoordFlowStore {
+                store.state.path.count == 2
+            }
+
+            #expect(store.state.path.count == 2)
+            #expect(store.state.path.last?.is(\.preSendingFailure) == true)
+        }
+    }
+
+    @Test func aFailureAfterSendingIsForwardedAsSendFailed() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = SendCoordFlow.State()
+            initialState.path.append(.sendConfirmation(SendConfirmation.State.initial))
+            let sendConfirmationId = try #require(initialState.path.ids.first)
+            // `.sending` is already on the path -- a `.pcztSendFailed` arriving now is a stale
+            // race (the submit already started), so it must be forwarded as `.sendFailed` on the
+            // `sendConfirmation` element rather than pushing a second failure screen.
+            initialState.path.append(.sending(SendConfirmation.State.initial))
+
+            let store = Store(initialState: initialState) {
+                SendCoordFlow()
+            } withDependencies: {
+                $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+                $0.mainQueue = .immediate
+            }
+
+            store.send(
+                .path(
+                    .element(id: sendConfirmationId, action: .sendConfirmation(.pcztSendFailed(nil)))
+                )
+            )
+
+            // `.sendFailed(_, true)` (the coordinator hardcodes `isTxIdPresentInTheDB: true`)
+            // cascades through `SendConfirmation`'s own reducer to `.updateResult(.pending)`,
+            // which the coordinator observes to push `.sendResultPending`.
+            await waitForCoordFlowStore {
+                store.state.path.count == 3
+            }
+
+            #expect(store.state.path.count == 3)
+            #expect(store.state.path.last?.is(\.sendResultPending) == true)
+        }
+    }
+
+    @Test func theScanFlowRoutesALedgerSignatureTheSameWay() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = ScanCoordFlow.State()
+            initialState.path.append(.sendConfirmation(SendConfirmation.State.initial))
+            let sendConfirmationId = try #require(initialState.path.ids.first)
+
+            let store = Store(initialState: initialState) {
+                ScanCoordFlow()
+            }
+
+            store.send(
+                .path(
+                    .element(id: sendConfirmationId, action: .sendConfirmation(.ledgerSigning(.signed(Pczt([0xAB])))))
+                )
+            )
+
+            await waitForCoordFlowStore {
+                store.state.path.count == 2
+            }
+
+            #expect(store.state.path.count == 2)
+            #expect(store.state.path.last?.is(\.sending) == true)
+        }
+    }
+
+    @Test func theSwapQuotePresentsTheLedgerSheetOnlyAfterItCloses() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
@@ -122,31 +177,35 @@ import ComposableArchitecture
 
             store.send(.swapAndPay(.confirmWithLedgerTapped))
 
+            // iOS cannot present a second sheet while the quote sheet is still animating out --
+            // `.confirmWithLedgerTapped` only stages `ledgerConfirmationState` and waits.
+            #expect(store.state.ledgerConfirmationState.isLedgerSignSheetPresented == false)
+            #expect(pcztCreated.value == false)
+
+            store.send(.swapAndPay(.quoteSheetDismissed))
+
             await waitForCoordFlowStore {
-                !store.state.path.filter { $0.is(\.confirmWithLedger) }.isEmpty && pcztCreated.value
+                store.state.ledgerConfirmationState.isLedgerSignSheetPresented && pcztCreated.value
             }
 
-            #expect(store.state.path.last?.is(\.confirmWithLedger) == true)
+            #expect(store.state.ledgerConfirmationState.isLedgerSignSheetPresented == true)
             #expect(pcztCreated.value)
         }
     }
 
-    @Test func theScanFlowRoutesALedgerConfirmTheSameWay() async throws {
+    @Test func theCrossPayConfirmationPresentsTheLedgerSheetImmediately() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            var initialState = ScanCoordFlow.State()
+            var initialState = SwapAndPayCoordFlow.State()
+            initialState.swapAndPayState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
+            initialState.path.append(.crossPayConfirmation(initialState.swapAndPayState))
+            let crossPayId = try #require(initialState.path.ids.first)
             initialState.$selectedWalletAccount.withLock { $0 = Self.ledgerAccount() }
-
-            var sendConfirmationState = SendConfirmation.State.initial
-            sendConfirmationState.proposal = .testOnlyFakeProposal(totalFee: 10_000)
-            sendConfirmationState.$selectedWalletAccount.withLock { $0 = Self.ledgerAccount() }
-            initialState.path.append(.sendConfirmation(sendConfirmationState))
-            let sendConfirmationId = try #require(initialState.path.ids.first)
 
             let pcztCreated = LockIsolated(false)
             let store = Store(initialState: initialState) {
-                ScanCoordFlow()
+                SwapAndPayCoordFlow()
             } withDependencies: {
                 $0.mainQueue = .immediate
                 $0.walletStorage = .noOp
@@ -157,15 +216,39 @@ import ComposableArchitecture
                 }
             }
 
-            store.send(.path(.element(id: sendConfirmationId, action: .sendConfirmation(.confirmWithLedgerTapped))))
+            // No sheet is up over `CrossPayConfirmationView` -- unlike the quote-sheet case, this
+            // presents immediately with no dismissal to wait for.
+            store.send(
+                .path(
+                    .element(id: crossPayId, action: .crossPayConfirmation(.confirmWithLedgerTapped))
+                )
+            )
 
             await waitForCoordFlowStore {
-                store.state.path.count == 2 && pcztCreated.value
+                store.state.ledgerConfirmationState.isLedgerSignSheetPresented && pcztCreated.value
             }
 
-            #expect(store.state.path.count == 2)
-            #expect(store.state.path.last?.is(\.confirmWithLedger) == true)
+            #expect(store.state.ledgerConfirmationState.isLedgerSignSheetPresented == true)
             #expect(pcztCreated.value)
+        }
+    }
+
+    @Test func aLedgerSignedSwapPushesSending() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let store = Store(initialState: SwapAndPayCoordFlow.State()) {
+                SwapAndPayCoordFlow()
+            }
+
+            store.send(.ledgerConfirmation(.ledgerSigning(.signed(Pczt([0xAB])))))
+
+            await waitForCoordFlowStore {
+                store.state.path.count == 1
+            }
+
+            #expect(store.state.path.count == 1)
+            #expect(store.state.path.last?.is(\.sending) == true)
         }
     }
 }

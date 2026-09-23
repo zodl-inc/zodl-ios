@@ -217,6 +217,7 @@ struct SendConfirmationView: View {
         .navigationBarBackButtonHidden()
         .padding(.vertical, 1)
         .applyScreenBackground()
+        .ledgerSignSheet(store: store)
     }
 }
 

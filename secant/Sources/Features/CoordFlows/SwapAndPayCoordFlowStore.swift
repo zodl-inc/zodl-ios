@@ -16,7 +16,6 @@ struct SwapAndPayCoordFlow {
         case addressBook(AddressBook)
         case addressBookContact(AddressBook)
         case confirmWithKeystone(SendConfirmation)
-        case confirmWithLedger(SendConfirmation)
         case crossPayConfirmation(SwapAndPay)
         case keystoneFirmwareUpdate(SendConfirmation)
         case preSendingFailure(SendConfirmation)
@@ -44,9 +43,17 @@ struct SwapAndPayCoordFlow {
         var failedPcztMsg: String?
         var isHelpSheetPresented = false
         var isInAppBrowserOn = false
+        /// MOB-2020: set while `.swapAndPay(.confirmWithLedgerTapped)` waits for the quote sheet
+        /// (`SwapForm`'s `isQuotePresented`) to finish dismissing -- iOS cannot present the Ledger
+        /// sheet while another sheet is still animating out.
+        var isLedgerConfirmationAwaitingQuoteDismissal = false
         var isSwapExperience = true
         var learnMoreRequested = false
         var isSwapToZecExperience = false
+        /// MOB-2020: the Ledger counterpart to `confirmWithKeystone`/`crossPayConfirmation` -- a
+        /// scoped child, not a path element, so `LedgerSignSheetView` can present over whichever
+        /// screen triggered it (the swap quote sheet or `CrossPayConfirmationView`).
+        var ledgerConfirmationState = SendConfirmation.State.initial
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []
         var pendingDescription: String?
@@ -90,6 +97,7 @@ struct SwapAndPayCoordFlow {
         case helpSheetDismissed
         case helpSheetRequested
         case learnMoreTapped
+        case ledgerConfirmation(SendConfirmation.Action)
         case onAppear
         case path(StackActionOf<Path>)
         case sendDone
@@ -124,7 +132,11 @@ struct SwapAndPayCoordFlow {
         coordinatorReduce()
 
         BindingReducer()
-        
+
+        Scope(state: \.ledgerConfirmationState, action: \.ledgerConfirmation) {
+            SendConfirmation()
+        }
+
         Scope(state: \.swapAndPayState, action: \.swapAndPay) {
             SwapAndPay()
         }
