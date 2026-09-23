@@ -146,4 +146,23 @@ import ComposableArchitecture
 
         await store.finish()
     }
+
+    @MainActor @Test func connectHWWalletTappedDismissesBothSheets() async {
+        var initialState = Home.State.initial
+        initialState.accountSwitchRequest = true
+        initialState.moreRequest = true
+
+        let store = TestStore(
+            initialState: initialState
+        ) {
+            Home()
+        }
+
+        await store.send(.connectHWWalletTapped) {
+            $0.accountSwitchRequest = false
+            $0.moreRequest = false
+        }
+
+        await store.finish()
+    }
 }

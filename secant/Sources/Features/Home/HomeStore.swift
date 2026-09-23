@@ -432,7 +432,11 @@ struct Home {
                 return .none
 
             case .connectHWWalletTapped:
-                // Root consumes this to open `ChooseHWWallet`.
+                // Root consumes this to open `ChooseHWWallet`; this arm dismisses whichever
+                // sheet sent it (the Wallets & Hardware sheet or the More sheet) so the chooser
+                // is not presented under it.
+                state.accountSwitchRequest = false
+                state.moreRequest = false
                 return .none
 
             case .walletAccountTapped:
