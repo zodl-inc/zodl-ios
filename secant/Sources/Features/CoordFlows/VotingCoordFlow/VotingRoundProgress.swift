@@ -26,8 +26,8 @@ extension VotingRoundProgressSnapshot {
     mutating func apply(_ event: VotingRoundDriveEvent) {
         switch event.kind {
         case .planRefreshed:
-            // The tally is the run's own count of what it started owing, so it
-            // replaces the snapshot's counts rather than accumulating.
+            // The tally is the run's own count of the voter's selected choices,
+            // so it replaces the snapshot's counts rather than accumulating.
             guard let tally = event.tally else { return }
             completedProposals = tally.completedProposals
             totalProposals = tally.totalProposals
