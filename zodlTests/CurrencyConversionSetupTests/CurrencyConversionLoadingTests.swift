@@ -92,6 +92,11 @@ struct CurrencyConversionLoadingTests {
             await saveTask.finish()
             #expect(attempts.values == [.protected])
             #expect(directAttempts.value == 0)
+            if balances.state.currencyConversion?.ratio != 30 {
+                for await state in balances.publisher.values where state.currencyConversion?.ratio == 30 {
+                    break
+                }
+            }
             #expect(balances.state.currencyConversion?.ratio == 30)
             #expect(!balances.state.currencyValue.isEmpty)
             balances.send(.onDisappear)

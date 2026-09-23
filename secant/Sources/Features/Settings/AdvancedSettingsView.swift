@@ -51,6 +51,14 @@ struct AdvancedSettingsView: View {
                         .accessibilityIdentifier(AccessibilityID.AdvancedSettings.exportPrivateData)
 
                         ActionRow(
+                            icon: Asset.Assets.Icons.search.image,
+                            title: String(localizable: .viewing_key_export)
+                        ) {
+                            store.send(.operationAccessCheck(.exportViewingKey))
+                        }
+                        .accessibilityIdentifier(AccessibilityID.AdvancedSettings.exportViewingKey)
+
+                        ActionRow(
                             icon: Asset.Assets.Icons.file.image,
                             title: String(localizable: .taxExportTaxFile)
                         ) {
