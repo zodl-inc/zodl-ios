@@ -500,6 +500,9 @@ struct Root {
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
+        /// MOB-2020 UI round 2: `LedgerSignSheetView`'s `onDismiss`, sent from `RootView`'s
+        /// `.ledgerSignSheet` next to the Keystone popover -- see `RootCoordinator`'s arm.
+        case ledgerShieldingSheetDismissed
         case swapAndPayCoordFlow(SwapAndPayCoordFlow.Action)
         case transactionsCoordFlow(TransactionsCoordFlow.Action)
         case walletBackupCoordFlow(WalletBackupCoordFlow.Action)

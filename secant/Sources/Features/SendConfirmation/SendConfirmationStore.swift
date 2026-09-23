@@ -60,7 +60,7 @@ struct SendConfirmation {
         var isSending = false
         var isShielding = false
         var isTransparentAddress = false
-        /// MOB-2020 Phase 3.2: the Ledger signing sub-machine `SignWithLedgerView` drives. Reused
+        /// MOB-2020 Phase 3.2: the Ledger signing sub-machine `LedgerSignSheetView` drives. Reused
         /// as-is from `pcztResolved` through `createTransactionFromPCZT` -- only the signer
         /// differs from the Keystone QR machine above.
         var ledgerSigning = LedgerSigning.State()
@@ -721,7 +721,7 @@ struct SendConfirmation {
                 }
 
             case .ledgerSigning:
-                // Includes a restartable `.signingFailed`: the user stays on `SignWithLedgerView`
+                // Includes a restartable `.signingFailed`: the user stays on `LedgerSignSheetView`
                 // to tap Try Again rather than being bounced to the failure screen. Every other
                 // `LedgerSigning.Action` is internal to that sub-machine.
                 return .none

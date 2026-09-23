@@ -23,15 +23,17 @@ struct SignWithKeystoneCoordFlowView: View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
                 if store.sendConfirmationState.selectedWalletAccount?.vendor == .ledger {
-                    SignWithLedgerView(
-                        store:
-                            store.scope(
-                                state: \.sendConfirmationState,
-                                action: \.sendConfirmation
-                            ),
-                        tokenName: tokenName
-                    )
-                    .navigationBarHidden(true)
+                    // MOB-2020 UI round 2: `RootCoordinator`'s `.signWithKeystoneRequested` never
+                    // presents the popover this stack lives in for a Ledger account until it has
+                    // already pushed `.sending` (on a completed signature) or `.preSendingFailure`
+                    // (on a pre-signing failure) onto `path` -- the Ledger ceremony itself runs in
+                    // `LedgerSignSheetView`, presented as a sheet over the screen where the user
+                    // tapped Shield (see `RootView`). This root is therefore never actually seen;
+                    // it stays a blank placeholder rather than flashing stale Keystone-flavoured
+                    // chrome for an instant.
+                    Color.clear
+                        .applyScreenBackground()
+                        .navigationBarHidden(true)
                 } else {
                     SignWithKeystoneView(
                         store:

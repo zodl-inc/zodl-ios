@@ -55,7 +55,7 @@ enum LedgerErrorText {
     }
 
     /// Maps a Ledger failure to the message shown for a **signing** failure --
-    /// `LedgerSigning`/`SignWithLedgerView`'s ceremony. `.ledgerUserRejected` means the user
+    /// `LedgerSigning`/`LedgerSignSheetView`'s ceremony. `.ledgerUserRejected` means the user
     /// declined the *transaction* on the device here, distinct from `message(for:)`'s
     /// pairing-time meaning (declining the viewing-key export) -- the two contexts need different
     /// copy for the same SDK case. Every other case reads correctly in both contexts, so this
