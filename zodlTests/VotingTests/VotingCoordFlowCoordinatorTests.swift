@@ -1979,6 +1979,160 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
         }
 
+        /// A run that stopped because bundles failed on the network is run again
+        /// on its own, redoing only those bundles, without a second prompt.
+        @MainActor
+        @Test func aTransportFailureRerunsTheFailedBundlesAndCompletes() async throws {
+            let recorder = EventRecorder()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? failed : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 2)
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+        }
+
+        /// A network failure that does not clear is still bounded: after the
+        /// ladder's re-runs the voter sees the failure's own message.
+        @MainActor
+        @Test func aTransportFailureThatPersistsShowsItsOwnMessage() async throws {
+            let recorder = EventRecorder()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(failed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 4)
+            #expect(store.state.roundCache[self.activeRoundId]?.runRetryCount == 3)
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .submissionFailed(
+                    error: VotingErrorMapper.userFriendlyMessage(from: "connection reset"),
+                    submittedCount: 0,
+                    totalCount: 2
+                )
+            )
+            #expect(store.state.roundCache[self.activeRoundId]?.submissionProgress.isRetrying == false)
+        }
+
+        /// While the re-run waits, the Confirm card says the flow is reconnecting.
+        @MainActor
+        @Test func theVoterSeesTheFlowReconnectWhileATransportRerunWaits() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? failed : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+
+            await waitForStore { clock.sleeps.value.contains(Swift.Duration.seconds(2)) }
+            let waiting = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(waiting.submissionProgress.isRetrying)
+            #expect(
+                ConfirmSubmissionDisplay.bottom(status: waiting.batchSubmissionStatus, submission: waiting.submissionProgress)
+                    == ConfirmSubmissionDisplay.Bottom.progress(
+                        value: ConfirmSubmissionDisplay.authorizationWeight,
+                        title: String(localizable: .coinVoteConfirmSubmissionProgressRetrying)
+                    )
+            )
+
+            await clock.advance(by: .seconds(2))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+            #expect(store.state.roundCache[self.activeRoundId]?.submissionProgress.isRetrying == false)
+        }
+
         /// Every event a run narrates moves the Confirm screen's measurement, and
         /// the first one says a run is submitting.
         @Test func aRunsNarrationMovesTheConfirmProgress() throws {

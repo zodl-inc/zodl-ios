@@ -2633,6 +2633,18 @@ extension VotingCoordFlow {
                 ))
             }
 
+        case let .rerunFailedBundles(message, seconds):
+            LoggerProxy.info("Round \(roundId) re-runs the bundles a transient failure stopped: \(message)")
+            return scheduleRunRetry(&state, roundId: roundId, seconds: seconds) {
+                LoggerProxy.error("Round \(roundId) still failed after \(Self.maxRunRetries) re-runs: \(message)")
+                return .send(.batchSubmissionFailed(
+                    roundId: roundId,
+                    error: VotingErrorMapper.userFriendlyMessage(from: message),
+                    submittedCount: completedCount,
+                    totalCount: totalCount
+                ))
+            }
+
         case let .failed(message, retryable):
             LoggerProxy.error("Round \(roundId) run failed (retryable: \(retryable)): \(message)")
             return .send(.batchSubmissionFailed(
