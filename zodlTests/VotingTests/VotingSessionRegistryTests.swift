@@ -92,9 +92,10 @@ import Testing
 
     /// Staged rather than timed. The overlap this is about is the window
     /// between an open registering its attempt and its session arriving, and
-    /// the factory holds that window open until the second caller is on its way
-    /// in — where a sleep would close it early under load and fail the
-    /// assertion on correct behaviour.
+    /// the factory holds that window open until the second caller has joined
+    /// the attempt — where a sleep, or a release from the second caller's own
+    /// task, would close it early under load and fail the assertion on
+    /// correct behaviour.
     @Test func twoConcurrentOpensForOneRoundBuildOneSessionAndShareItsOutcome() async throws {
         let factory = SlowFactory()
         let registry = VotingSessionRegistry { inputs, binding, route, epoch in
@@ -115,17 +116,20 @@ import Testing
         await wait(for: factory.entered, "the first open to reach the factory")
 
         let second = Task {
-            // Released from here, as this caller's last act before entering the
-            // registry: the attempt it has to join is provably still in flight
-            // when it gets there.
-            await factory.released.open()
-            return try await registry.open(
+            try await registry.open(
                 inputs: inputs,
                 binding: VotingSessionBinding(roster: []),
                 route: .direct,
                 epoch: 0
             )
         }
+        // The factory stays shut until the second caller has joined the
+        // attempt: released any earlier, the first open's refusal could clear
+        // the attempt before the second reached the registry, which would then
+        // build a second one — correct registry behaviour that this test's
+        // one-call assertion would report as the defect it rules out.
+        await settle("the second open to join the attempt in flight") { await registry.joinedOpenCount == 1 }
+        await factory.released.open()
 
         let outcomes = [await first.result, await second.result]
 
