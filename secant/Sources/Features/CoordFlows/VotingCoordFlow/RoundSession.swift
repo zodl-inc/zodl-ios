@@ -76,15 +76,6 @@ struct RoundSession: Equatable {
 
     // MARK: - Submission pipeline state (Stage 5)
 
-    /// On-chain authorization (ZKP #1) readiness, as the Confirm Submission
-    /// screen's progress bar reads it.
-    ///
-    /// A projection of ``progress`` rather than a second account of the same
-    /// thing: the run narrates its delegation work through the progress
-    /// snapshot, and `applySubmissionProgress` folds that into the shape the
-    /// bar wants. Reset with the snapshot, for the same reason.
-    var delegationProofStatus: ProofStatus = .notStarted
-
     /// Zashi-only optimization: precompute PIR proof material in the
     /// background while the user is still choosing votes, so when they hit
     /// Submit the ZKP doesn't start from cold.
@@ -104,13 +95,6 @@ struct RoundSession: Equatable {
     /// True while a vote commitment build/submit cycle is in-flight. Gates
     /// re-entrant vote submissions during round polling re-triggers.
     var isSubmittingVote: Bool = false
-
-    /// Which note bundle the vote-submission loop is currently processing
-    /// (0-based). Nil when no vote is in-flight. Used for UI progress.
-    var currentVoteBundleIndex: UInt32?
-
-    /// Proposal id currently being submitted. Nil when idle.
-    var submittingProposalId: UInt32?
 
     /// State of the Keystone QR signing loop. Idle for Zashi users.
     var keystoneSigningStatus: KeystoneSigningStatus = .idle

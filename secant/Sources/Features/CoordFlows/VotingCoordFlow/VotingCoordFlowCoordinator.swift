@@ -1798,6 +1798,13 @@ extension VotingCoordFlow {
     /// the app doing nothing, so it is bounded and then reported.
     static let maxRunRetries = 3
 
+    /// How every round run is driven: the SDK's defaults, measured against the
+    /// voter's selected choices rather than against what one run started owing.
+    /// The Android app drives its runs the same way, so a re-run continues the
+    /// count instead of starting a new one ("1 of 1" for the last question
+    /// left), and both platforms count alike.
+    static let roundRunPolicy = VotingRoundDrivePolicy(progressBaseline: VotingProgressBaseline.selectedChoices)
+
     /// How long the flow waits before driving a round again after a run refused
     /// to start for a reason the crate itself called retryable. Short, because
     /// such a refusal is a contention -- a session another pass is holding, a
@@ -1950,7 +1957,7 @@ extension VotingCoordFlow {
         let releaseTakenOverOpen = releaseOpenTakenOverByEntry(&state, enteringRoundId: roundId)
         roundSession.lastRunFailureSummary = nil
         roundSession.progress = VotingRoundProgressSnapshot()
-        roundSession.delegationProofStatus = ProofStatus.notStarted
+        roundSession.submissionProgress = VotingSubmissionProgress()
         roundSession.precomputeStatus.removeAll()
         roundSession.delegationPrecomputeStatus = .notStarted
         roundSession.isDelegationPrecomputeInFlight = false
@@ -2409,8 +2416,10 @@ extension VotingCoordFlow {
     ) -> Effect<Action> {
         mutateSession(&state, roundId: roundId) { roundSession in
             switch event {
-            case .progress(let progress):
-                roundSession.progress.apply(progress)
+            case .progress:
+                // A warm-up's narration has no reader: the run that follows
+                // reuses the proof and narrates its own progress.
+                break
             case .finished(let status):
                 roundSession.precomputeStatus[bundleIndex] = status
             }
@@ -2435,15 +2444,13 @@ extension VotingCoordFlow {
         case .event(let driveEvent):
             mutateSession(&state, roundId: roundId) { roundSession in
                 roundSession.progress.apply(driveEvent)
+                roundSession.submissionProgress.apply(driveEvent)
                 if let plan = driveEvent.plan {
                     roundSession.roundPlan = plan
                 }
-                // A run overlaps bundles, so an event that names no proposal
-                // leaves the last named one on screen rather than blanking it.
-                if let proposalId = driveEvent.progress?.proposalId ?? driveEvent.step?.proposalId {
-                    roundSession.submittingProposalId = proposalId
-                }
-                Self.applySubmissionProgress(&roundSession)
+                // From the first event on, a run is driving the round; what it
+                // has measured is the submission progress's to say.
+                roundSession.batchSubmissionStatus = .submitting
             }
             return .none
 
@@ -2455,8 +2462,6 @@ extension VotingCoordFlow {
             // whatever the stream managed to deliver.
             updated.progress.completedProposals = report.tally.completedProposals
             updated.progress.totalProposals = report.tally.totalProposals
-            updated.progress.stage = .done
-            updated.progress.proofFraction = nil
             if let plan = report.plan {
                 updated.roundPlan = plan
                 if !plan.delegationStatuses.isEmpty {
@@ -2535,6 +2540,9 @@ extension VotingCoordFlow {
             return exhausted()
         }
         state.roundCache[roundId]?.runRetryCount += 1
+        // The voter sees the flow reconnecting, with the bar it had, until the
+        // re-run's first event.
+        state.roundCache[roundId]?.submissionProgress.isRetrying = true
         state.pendingBatchSubmission = true
         return .run { [continuousClock] send in
             try await continuousClock.sleep(for: .seconds(seconds))
@@ -2879,37 +2887,6 @@ extension VotingCoordFlow {
         }
     }
 
-    /// Keeps the confirmation screen's own progress shape in step with the
-    /// run's, so a voter watching it sees the round move rather than a spinner
-    /// that never changes.
-    ///
-    /// `delegationProofStatus` is one of those shapes rather than state of its
-    /// own: the Confirm screen reserves the bar's first 30 % for the delegation
-    /// proof, which is the longest thing a software wallet waits on, and the
-    /// only live account of it is the run's progress. Derived here rather than
-    /// written by the proof itself, so the two cannot disagree.
-    private static func applySubmissionProgress(_ session: inout RoundSession) {
-        session.currentVoteBundleIndex = session.progress.activeBundleIndex
-        switch session.progress.stage {
-        case .idle:
-            break
-        case .proving:
-            if let fraction = session.progress.proofFraction {
-                session.delegationProofStatus = ProofStatus.generating(progress: fraction)
-            } else if session.delegationProofStatus == ProofStatus.notStarted {
-                // A proving step the crate reports no fraction for — the vote
-                // commitment's own proof, which follows the delegation. Showing
-                // it as started is honest; dropping the bar back to nothing
-                // would not be.
-                session.delegationProofStatus = ProofStatus.generating(progress: 0)
-            }
-        case .submitting, .confirming, .deliveringShares, .done:
-            session.delegationProofStatus = ProofStatus.complete
-        }
-        guard session.progress.totalProposals > 0 else { return }
-        session.batchSubmissionStatus = .submitting
-    }
-
     /// The voting failure an arbitrary error describes.
     ///
     /// Most of these already are one; the rest come from the app's own
@@ -3082,7 +3059,7 @@ extension VotingCoordFlow {
         else { return .none }
         state.pendingBatchSubmission = false
         guard activeSession(in: state, roundId: roundId) != nil else { return .none }
-        return startRoundRun(&state, roundId: roundId)
+        return startRoundRun(&state, roundId: roundId, keepsSubmissionProgress: isResume)
     }
 
     /// Puts the round into "a run is driving it" and starts one.
@@ -3090,7 +3067,11 @@ extension VotingCoordFlow {
     /// Both wallets come through here, including a Keystone round resuming after
     /// its signing loop: the round the voter authorised is driven the same way
     /// either way, and only the signer differs.
-    private func startRoundRun(_ state: inout State, roundId: String) -> Effect<Action> {
+    ///
+    /// `keepsSubmissionProgress` is true for the automatic re-runs the flow
+    /// schedules on its own, which continue the submission the voter started;
+    /// any other run is a submission of its own and its bar starts over.
+    private func startRoundRun(_ state: inout State, roundId: String, keepsSubmissionProgress: Bool) -> Effect<Action> {
         guard let session = state.roundCache[roundId] else { return .none }
         // An older build's unconfirmed submission makes this round display-only;
         // see `reduceRoundSessionOpened`. Belt-and-suspenders: the round's own
@@ -3105,11 +3086,11 @@ extension VotingCoordFlow {
             roundSession.batchVoteErrors = [:]
             roundSession.isSubmittingVote = true
             roundSession.lastRunFailureSummary = nil
-            // The bar's delegation share is folded out of the progress
-            // snapshot, so it starts over with it rather than carrying the
-            // previous run's answer into a run that has not proved anything yet.
+            // The snapshot is per run: this run's tally, not the last one's.
             roundSession.progress = VotingRoundProgressSnapshot()
-            roundSession.delegationProofStatus = ProofStatus.notStarted
+            if !keepsSubmissionProgress {
+                roundSession.submissionProgress = VotingSubmissionProgress()
+            }
         }
 
         return .merge(
@@ -3173,7 +3154,7 @@ extension VotingCoordFlow {
                 signer = VotingDelegationSigner.software(seed: seed)
             }
 
-            for try await event in votingCrypto.runRound(roundId, signer, VotingRoundDrivePolicy.default) {
+            for try await event in votingCrypto.runRound(roundId, signer, Self.roundRunPolicy) {
                 await send(.roundRunEvent(roundId: roundId, epoch: epoch, event: event))
             }
         } catch: { error, send in
@@ -3993,8 +3974,7 @@ extension VotingCoordFlow {
         let submittedOrOutstandingCount = submittedVoteCount + outstandingDraftCount
 
         session.isSubmittingVote = false
-        session.submittingProposalId = nil
-        session.currentVoteBundleIndex = nil
+        session.submissionProgress.isRetrying = false
 
         if failCount > 0 || persistedFailureCount > 0 {
             let error = session.batchVoteErrors.values.first
@@ -4067,8 +4047,7 @@ extension VotingCoordFlow {
     ) -> Effect<Action> {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isSubmittingVote = false
-            roundSession.submittingProposalId = nil
-            roundSession.currentVoteBundleIndex = nil
+            roundSession.submissionProgress.isRetrying = false
             roundSession.batchSubmissionStatus = .authorizationFailed(error: error)
         }
         return .none
@@ -4083,8 +4062,7 @@ extension VotingCoordFlow {
     ) -> Effect<Action> {
         mutateSession(&state, roundId: roundId) { roundSession in
             roundSession.isSubmittingVote = false
-            roundSession.submittingProposalId = nil
-            roundSession.currentVoteBundleIndex = nil
+            roundSession.submissionProgress.isRetrying = false
             roundSession.batchSubmissionStatus = .submissionFailed(
                 error: error,
                 submittedCount: submittedCount,
@@ -4288,7 +4266,7 @@ extension VotingCoordFlow {
         }
         return .merge(
             .cancel(id: cancelDelegationProofId),
-            startRoundRun(&state, roundId: roundId)
+            startRoundRun(&state, roundId: roundId, keepsSubmissionProgress: false)
         )
     }
 
