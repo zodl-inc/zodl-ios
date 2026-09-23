@@ -65,6 +65,7 @@ struct CurrencyConversionSetup {
 
         var activeSettingsOption: SettingsOptions?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
+        var catalog = FiatCurrencyCatalogState()
         var currentSettingsOption = SettingsOptions.optOut
         var initialCurrency: CurrencyISO4217 = .usd
         var isCurrencyPickerSheetPresented = false
@@ -94,13 +95,17 @@ struct CurrencyConversionSetup {
     enum Action: BindableAction, Equatable {
         case binding(BindingAction<CurrencyConversionSetup.State>)
         case backToHomeTapped
+        case currencyCatalogUpdated(FiatCurrencyCatalogState)
         case currencyChanged(CurrencyISO4217)
+        case currencyPickerDismissed
+        case currencyPickerTask
         case currencyPickerTapped
         case delayedDismisalRequested
         case enableTapped
         case enableTorTapped
         case laterTapped
         case onAppear
+        case retryCurrenciesTapped
         case saveChangesTapped
         case settingsOptionChanged(State.SettingsOptions)
         case settingsOptionTapped(State.SettingsOptions)
@@ -109,7 +114,13 @@ struct CurrencyConversionSetup {
         case torInitSucceeded
     }
 
+    private enum CancelID {
+        case catalogObservation
+    }
+
     @Dependency(\.exchangeRate) var exchangeRate
+    @Dependency(\.fiatCurrencyCatalog)
+    var fiatCurrencyCatalog
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
@@ -138,16 +149,44 @@ struct CurrencyConversionSetup {
                 state.initialCurrency = currency
                 return .none
 
+            case .retryCurrenciesTapped:
+                return .run { _ in
+                    await fiatCurrencyCatalog.refresh()
+                }
+
             case .backToHomeTapped:
                 return .none
 
+            case .binding(\.isCurrencyPickerSheetPresented):
+                return state.isCurrencyPickerSheetPresented
+                    ? .none
+                    : .cancel(id: CancelID.catalogObservation)
+
             case .binding:
+                return .none
+
+            case .currencyCatalogUpdated(let snapshot):
+                state.catalog = snapshot
                 return .none
 
             case .currencyChanged(let currency):
                 state.selectedCurrency = currency
                 state.isCurrencyPickerSheetPresented = false
-                return .none
+                return .cancel(id: CancelID.catalogObservation)
+
+            case .currencyPickerDismissed:
+                state.isCurrencyPickerSheetPresented = false
+                return .cancel(id: CancelID.catalogObservation)
+
+            case .currencyPickerTask:
+                return .run { send in
+                    let snapshots = await fiatCurrencyCatalog.observe()
+                    await fiatCurrencyCatalog.ensureLoaded()
+                    for await snapshot in snapshots {
+                        await send(.currencyCatalogUpdated(snapshot))
+                    }
+                }
+                .cancellable(id: CancelID.catalogObservation, cancelInFlight: true)
 
             case .currencyPickerTapped:
                 state.isCurrencyPickerSheetPresented = true
