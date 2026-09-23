@@ -573,6 +573,9 @@ struct SettingsViewingKeyExportTests {
                 #expect(ownership.wasCancelledBeforeHandoff)
                 return nil
             }
+            // The reset drains the voting sessions before it wipes; nothing
+            // here has a session to close.
+            $0.votingCrypto.closeDatabase = { }
             $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
