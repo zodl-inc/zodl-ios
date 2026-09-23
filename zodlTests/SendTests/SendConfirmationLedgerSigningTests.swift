@@ -201,11 +201,20 @@ import ComposableArchitecture
         }
     }
 
-    @Test func aNonRestartableSigningFailureRoutesToPcztSendFailed() async throws {
+    // MOB-2020: renamed from `aNonRestartableSigningFailureRoutesToPcztSendFailed` -- this is a
+    // genuine behaviour change, not just a field rename, so the old name would now lie. A
+    // signing failure with no `.sign`-context retry button no longer bounces the user to the
+    // generic PCZT failure screen: `LedgerSignSheetView` renders `LedgerIssueSheetContent` for
+    // every `.failed` phase (see `LedgerSignSheet.swift`), so the sheet stays up with its own
+    // Cancel Transaction as the only way out, and `updateFailedData`/`pcztSendFailed` never fire.
+    @Test func aNonRetryableSigningFailureStaysOnTheSheet() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
-            let store = TestStore(initialState: makeState(account: Self.ledgerAccount())) {
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+
+            let store = TestStore(initialState: initialState) {
                 SendConfirmation()
             } withDependencies: {
                 $0.mainQueue = .immediate
@@ -214,25 +223,26 @@ import ComposableArchitecture
 
             // The `Scope`'d `LedgerSigning` child reducer sees this action too (it runs before
             // the parent's own `Reduce`), so the send itself already moves the sub-machine to
-            // `.failed` -- independently of the parent's `updateFailedData`/`pcztSendFailed`
-            // cascade asserted below via final state (mirrors `MultiServerSubmitPCZTRoutingTests`'
-            // `.off` + final-assertions idiom used elsewhere in this file).
+            // `.failed` -- the parent's catch-all `case .ledgerSigning:` does nothing further,
+            // asserted below via final state (mirrors `MultiServerSubmitPCZTRoutingTests`' `.off`
+            // + final-assertions idiom used elsewhere in this file).
             await store.send(
                 .ledgerSigning(
-                    .signingFailed(
-                        message: String(localizable: .ledgerErrorNotSignable),
-                        restartable: false,
-                        connectionLost: false
-                    )
+                    .signingFailed(issue: .transactionNotSignable, connectionLost: false)
                 )
             )
             await store.finish()
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.ledgerSigning.phase == .failed)
-            #expect(store.state.failedCode == -794)
-            #expect(store.state.failedDescription == String(localizable: .ledgerErrorNotSignable))
+            #expect(store.state.ledgerSigning.issue == .transactionNotSignable)
+            // `.transactionNotSignable` has no `.sign`-context retry button -- Cancel Transaction
+            // is the only way out, straight from the sheet `LedgerSignSheetView` still shows.
+            #expect(store.state.ledgerSigning.failedPrimaryAction == .none)
+            #expect(store.state.isLedgerSignSheetPresented == true)
             #expect(store.state.isSending == false)
+            #expect(store.state.failedCode == nil)
+            #expect(store.state.failedDescription == nil)
         }
     }
 
@@ -296,6 +306,8 @@ import ComposableArchitecture
                 // MOB-2020 audit: `.confirmWithLedgerTapped` now also starts the Ledger ceremony
                 // (`.ledgerSigning(.onAppear)`), which reaches `ledgerClient.scanDevices`.
                 $0.ledgerClient = .noOp
+                // ... and, through `.ledgerSigning(.startScanning)`, the no-devices timer.
+                $0.continuousClock = SignalledClock()
             }
             store.exhaustivity = .off
 
@@ -336,6 +348,10 @@ import ComposableArchitecture
                 $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Pczt([0x06]) }
                 // A stream that finishes immediately -- no devices, no error, no auto-connect.
                 $0.ledgerClient = .noOp
+                // The scan's sibling no-devices timer needs a driveable clock, or the race to
+                // reach `clock.sleep` before the scan's stream finishes trips "has no test
+                // implementation".
+                $0.continuousClock = SignalledClock()
             }
             store.exhaustivity = .off
 
@@ -428,6 +444,8 @@ import ComposableArchitecture
                 // MOB-2020 audit: the following `.confirmWithLedgerTapped` also restarts the
                 // Ledger ceremony (`.ledgerSigning(.onAppear)`), which reaches this dependency.
                 $0.ledgerClient = .noOp
+                // ... and, through `.ledgerSigning(.startScanning)`, the no-devices timer.
+                $0.continuousClock = SignalledClock()
             }
             store.exhaustivity = .off
 

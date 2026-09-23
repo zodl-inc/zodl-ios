@@ -81,6 +81,9 @@ import ComposableArchitecture
             $0.walletStorage.exportLedgerBinding = { _ in binding }
             $0.sdkSynchronizer.createPCZTFromProposal = { _, _ in Pczt([0x06]) }
             $0.ledgerClient = .noOp
+            // `.confirmWithLedgerTapped` starts the Ledger ceremony (`.ledgerSigning(.onAppear)`
+            // -> `.startScanning`), which now also arms a no-devices timer alongside the scan.
+            $0.continuousClock = SignalledClock()
         }
 
         store.send(.signWithKeystoneRequested)

@@ -193,6 +193,8 @@ import ComposableArchitecture
                 // `.pcztSendFailed`, which would reset `isLedgerSignSheetPresented` back to
                 // `false` out from under the polling assertion below.
                 $0.ledgerClient = .noOp
+                // ... and, through `.ledgerSigning(.startScanning)`, the no-devices timer.
+                $0.continuousClock = SignalledClock()
             }
 
             store.send(.swapAndPay(.confirmWithLedgerTapped))
@@ -242,6 +244,8 @@ import ComposableArchitecture
                 // `.pcztSendFailed`, which would reset `isLedgerSignSheetPresented` back to
                 // `false` out from under the polling assertion below.
                 $0.ledgerClient = .noOp
+                // ... and, through `.ledgerSigning(.startScanning)`, the no-devices timer.
+                $0.continuousClock = SignalledClock()
             }
 
             // No sheet is up over `CrossPayConfirmationView` -- unlike the quote-sheet case, this
