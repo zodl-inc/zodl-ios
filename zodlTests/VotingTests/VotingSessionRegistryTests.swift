@@ -571,18 +571,14 @@ import Testing
         await settle("the first open to reach the factory") { await factory.calls == 1 }
 
         let second = Task {
-            // Released from here, as this caller's last act before entering the
-            // registry: the attempt it has to join is still in flight when it
-            // gets there.
-            factoryHold.open()
-            return try await VotingSessionRegistryTests.open(
-                registry,
-                roundId,
-                binding: binding,
-                route: .tor,
-                epoch: 7
-            )
+            try await VotingSessionRegistryTests.open(registry, roundId, binding: binding, route: .tor, epoch: 7)
         }
+        // The factory stays shut until the second caller has joined the
+        // attempt: released any earlier, the first open could finish and clear
+        // its entry before the second reached the registry, which would then
+        // build a second session and pass the join off as a replacement.
+        await settle("the second open to join the attempt in flight") { await registry.joinedOpenCount == 1 }
+        factoryHold.open()
         _ = await first.result
         _ = await second.result
 

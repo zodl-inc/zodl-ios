@@ -136,6 +136,12 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         drains.count
     }
 
+    /// How many callers are waiting on an attempt another caller started, for
+    /// tests and diagnostics. Counted before the wait begins, so a test that
+    /// holds an attempt's factory shut can know a second caller has joined it
+    /// rather than guess from the order two tasks happened to run in.
+    private(set) var joinedOpenCount = 0
+
     init(makeSession: @escaping Factory) {
         self.makeSession = makeSession
     }
@@ -192,6 +198,8 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
 
         if let inFlight = opening[roundId] {
             if inFlight.isCompatible(binding: binding, route: route, epoch: epoch) {
+                joinedOpenCount += 1
+                defer { joinedOpenCount -= 1 }
                 return try await inFlight.task.value
             }
 
