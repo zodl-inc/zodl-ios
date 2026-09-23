@@ -46,11 +46,11 @@ extension Root {
                     .cancel(id: state.CancelFlexaId)
                 )
 
-                // MARK: - Add Keystone HW Wallet Coord Flow
+                // MARK: - Connect HW Wallet Coord Flow
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpenMutable = false
-                for element in state.addKeystoneHWWalletCoordFlowState.path {
+                for element in state.connectHWWalletCoordFlowState.path {
                     if case .restoreInfo(let restoreInfoState) = element {
                         leavesScreenOpenMutable = restoreInfoState.isAcknowledged
                     }
@@ -59,27 +59,32 @@ extension Root {
                 userDefaults.setValue(leavesScreenOpen, Constants.udLeavesScreenOpen)
                 return .run { _ in await autolockHandler.value(leavesScreenOpen) }
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.forgetThisDeviceTapped)))),
-                .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.forgetThisDeviceTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDevicePicker(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerAccount(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDeviceReady(.forgetThisDeviceTapped)))):
                 state.path = nil
                 return .none
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded)))):
-                // `AddHWWalletStore`'s `.loadedWalletAccounts` handler (fired immediately before
-                // this action, within the SAME `.run` effect as `.accountImported`) writes
-                // `state.selectedWalletAccount` directly with no Root-visible "switch" action of
-                // its own -- this is the earliest point Root can react to that write, so the
-                // transaction/balance reactions fire here rather than waiting for the user to
-                // dismiss the "Keystone Connected" confirmation screen (`.keystoneConnected(.closeTapped)`
-                // below still runs its own refetch afterward too -- redundant but harmless once the
-                // provenance guard on `.fetchedTransactions` is in place). Navigation (pushing
-                // `.keystoneConnected`) is owned by `AddKeystoneHWWalletCoordFlowCoordinator`, so this
-                // arm leaves `state.path` untouched. The metadata reload merged in below matters here
-                // just as much as the transaction/balance reactions: the fetched list gets decorated
-                // from `userMetadataProvider`, which holds a single in-memory state for whichever
-                // account was loaded last, and a freshly imported Keystone account has no metadata
-                // encryption keys yet -- `.resolveMetadataEncryptionKeys` provisions them for every
-                // account in `state.walletAccounts`, which `.loadedWalletAccounts` has just
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDeviceReady(.accountImportSucceeded)))):
+                // `AddHWWalletStore`/`AddLedgerHWWalletStore`'s `.loadedWalletAccounts` handler
+                // (fired immediately before this action, within the SAME `.run` effect as
+                // `.accountImported`) writes `state.selectedWalletAccount` directly with no
+                // Root-visible "switch" action of its own -- this is the earliest point Root can
+                // react to that write, so the transaction/balance reactions fire here rather than
+                // waiting for the user to dismiss the "Connected" confirmation screen (the
+                // `.closeTapped` arm below still runs its own refetch afterward too -- redundant
+                // but harmless once the provenance guard on `.fetchedTransactions` is in place).
+                // Navigation (pushing `.keystoneConnected`/`.ledgerConnected`) is owned by
+                // `ConnectHWWalletCoordFlowCoordinator`, so this arm leaves `state.path` untouched.
+                // The metadata reload merged in below matters here just as much as the
+                // transaction/balance reactions: the fetched list gets decorated from
+                // `userMetadataProvider`, which holds a single in-memory state for whichever
+                // account was loaded last, and a freshly imported account has no metadata
+                // encryption keys yet -- `.resolveMetadataEncryptionKeys` provisions them for
+                // every account in `state.walletAccounts`, which `.loadedWalletAccounts` has just
                 // repopulated, before `.loadUserMetadata` reloads the in-memory state for the new
                 // account.
                 let switchedEffect = accountSwitchedEffect(state: &state)
@@ -92,7 +97,7 @@ extension Root {
                     )
                 )
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
                 state.path = nil
                 let switchedEffect = accountSwitchedEffect(state: &state)
                 return .merge(
@@ -104,60 +109,8 @@ extension Root {
                     )
                 )
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneConnected(.closeTapped)))):
-                state.path = nil
-                state.autoUpdateSwapCandidates.removeAll()
-                return .merge(
-                    .send(.loadContacts),
-                    .concatenate(
-                        .send(.resolveMetadataEncryptionKeys),
-                        .send(.loadUserMetadata)
-                    ),
-                    .send(.fetchTransactionsForTheSelectedAccount)
-                )
-                
-            case .addKeystoneHWWalletCoordFlow(.addKeystoneHWWallet(.backToHomeTapped)):
-                state.path = nil
-                return .none
-
-                // MARK: - Add Ledger HW Wallet Coord Flow
-
-            case .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
-                var leavesScreenOpenMutable = false
-                for element in state.addLedgerHWWalletCoordFlowState.path {
-                    if case .restoreInfo(let restoreInfoState) = element {
-                        leavesScreenOpenMutable = restoreInfoState.isAcknowledged
-                    }
-                }
-                let leavesScreenOpen = leavesScreenOpenMutable
-                userDefaults.setValue(leavesScreenOpen, Constants.udLeavesScreenOpen)
-                return .run { _ in await autolockHandler.value(leavesScreenOpen) }
-
-            case .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .devicePicker(.forgetThisDeviceTapped)))),
-                .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .account(.forgetThisDeviceTapped)))),
-                .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .deviceReady(.forgetThisDeviceTapped)))):
-                state.path = nil
-                return .none
-
-            case .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .deviceReady(.accountImportSucceeded)))):
-                // Mirrors `.addKeystoneHWWalletCoordFlow(.path(.element(id: _, action:
-                // .keystoneDeviceReady(.accountImportSucceeded))))` above: `AddLedgerHWWallet`'s
-                // `.loadedWalletAccounts` handler already wrote `state.selectedWalletAccount`
-                // directly, within the same `.run` effect as `.accountImported`, before this
-                // action fires -- this is the earliest point Root can react. Navigation (pushing
-                // `.connected`) is owned by `AddLedgerHWWalletCoordFlowCoordinator`, so this arm
-                // leaves `state.path` untouched.
-                let switchedEffect = accountSwitchedEffect(state: &state)
-                return .merge(
-                    switchedEffect,
-                    .send(.loadContacts),
-                    .concatenate(
-                        .send(.resolveMetadataEncryptionKeys),
-                        .send(.loadUserMetadata)
-                    )
-                )
-
-            case .addLedgerHWWalletCoordFlow(.path(.element(id: _, action: .connected(.closeTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneConnected(.closeTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerConnected(.closeTapped)))):
                 state.path = nil
                 state.autoUpdateSwapCandidates.removeAll()
                 return .merge(
@@ -169,32 +122,15 @@ extension Root {
                     .send(.fetchTransactionsForTheSelectedAccount)
                 )
 
-            case .addLedgerHWWalletCoordFlow(.addLedgerHWWallet(.backToHomeTapped)):
-                state.path = nil
-                return .none
-
-            case .addLedgerHWWalletRequested:
-                state.addLedgerHWWalletCoordFlowState = .initial
-                state.path = .addLedgerHWWalletCoordFlow
-                return .none
-
-                // MARK: - Choose HW Wallet
-
-            case .chooseHWWallet(.keystoneTapped):
-                state.addKeystoneHWWalletCoordFlowState = .initial
-                state.path = .addKeystoneHWWalletCoordFlow
-                return .none
-
-            case .chooseHWWallet(.ledgerTapped):
-                return .send(.addLedgerHWWalletRequested)
-
-            case .chooseHWWallet(.closeTapped):
+            case .connectHWWalletCoordFlow(.chooseHWWallet(.closeTapped)),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .addKeystoneHWWallet(.backToHomeTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .addLedgerHWWallet(.backToHomeTapped)))):
                 state.path = nil
                 return .none
 
             case .home(.connectHWWalletTapped):
-                state.chooseHWWalletState = .initial
-                state.path = .chooseHWWallet
+                state.connectHWWalletCoordFlowState = .initial
+                state.path = .connectHWWalletCoordFlow
                 return .none
 
                 // MARK: - Add Keystone HW Wallet from Settings
@@ -300,8 +236,9 @@ extension Root {
                 return .send(.flexaOpenRequest)
                 
             case .home(.addKeystoneHWWalletTapped):
-                state.addKeystoneHWWalletCoordFlowState = .initial
-                state.path = .addKeystoneHWWalletCoordFlow
+                state.connectHWWalletCoordFlowState = .initial
+                state.connectHWWalletCoordFlowState.path.append(.addKeystoneHWWallet(AddKeystoneHWWallet.State.initial))
+                state.path = .connectHWWalletCoordFlow
                 return .none
                 
             case .home(.swapWithNearTapped):

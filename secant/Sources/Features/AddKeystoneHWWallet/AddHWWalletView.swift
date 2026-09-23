@@ -87,9 +87,7 @@ struct AddKeystoneHWWalletView: View {
             }
             .screenHorizontalPadding()
             .onAppear { store.send(.onAppear) }
-            .zashiBack() {
-                store.send(.backToHomeTapped)
-            }
+            .zashiBack()
             .zashiSheet(isPresented: $store.isHelpSheetPresented) {
                 helpSheetContent()
             }

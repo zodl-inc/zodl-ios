@@ -173,36 +173,14 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
-                            } else if path == .addKeystoneHWWalletCoordFlow {
-                                AddKeystoneHWWalletCoordFlowView(
+                            } else if path == .connectHWWalletCoordFlow {
+                                ConnectHWWalletCoordFlowView(
                                     store:
                                         store.scope(
-                                            state: \.addKeystoneHWWalletCoordFlowState,
-                                            action: \.addKeystoneHWWalletCoordFlow),
+                                            state: \.connectHWWalletCoordFlowState,
+                                            action: \.connectHWWalletCoordFlow),
                                     tokenName: tokenName
                                 )
-                                .transition(.move(edge: .trailing))
-                                .zIndex(1)
-                            } else if path == .addLedgerHWWalletCoordFlow {
-                                AddLedgerHWWalletCoordFlowView(
-                                    store:
-                                        store.scope(
-                                            state: \.addLedgerHWWalletCoordFlowState,
-                                            action: \.addLedgerHWWalletCoordFlow),
-                                    tokenName: tokenName
-                                )
-                                .transition(.move(edge: .trailing))
-                                .zIndex(1)
-                            } else if path == .chooseHWWallet {
-                                NavigationStack {
-                                    ChooseHWWalletView(
-                                        store:
-                                            store.scope(
-                                                state: \.chooseHWWalletState,
-                                                action: \.chooseHWWallet
-                                            )
-                                    )
-                                }
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
                             } else if path == .transactionsCoordFlow {

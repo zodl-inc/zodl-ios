@@ -1,17 +1,21 @@
 //
-//  AddLedgerHWWalletCoordFlowTests.swift
+//  ConnectHWWalletCoordFlowLedgerTests.swift
 //  zodlTests
 //
-//  Mirrors AddKeystoneHWWalletCoordFlowTests: navigation pushes/pops driven by the element
+//  Mirrors ConnectHWWalletCoordFlowKeystoneTests: navigation pushes/pops driven by the element
 //  screens' own actions, and the failure sheet (show / suppress-behind-success / clear a
-//  pending RestoreInfo spinner). The device picker now finds, selects, connects and pairs the
-//  Ledger on its own screen — a connection-lost failure there just rescans in place, so it has
-//  no coordinator-level navigation of its own to cover here; see AddLedgerHWWalletTests for that
-//  behavior (Features/CoordFlows/AddLedgerHWWalletCoordFlow*.swift).
+//  pending RestoreInfo spinner), now exercised through the merged `ConnectHWWalletCoordFlow`
+//  (MOB-2020 UI round 2 -- the flow's root is the vendor chooser, and the Ledger instructions
+//  screen that used to be the old AddLedgerHWWalletCoordFlow's own root, along with the device
+//  picker/account/device-ready/connected screens, are `Path` elements with the `ledger`-prefixed
+//  case names). The device picker finds, selects, connects and pairs the Ledger on its own
+//  screen -- a connection-lost failure there just rescans in place, so it has no coordinator-level
+//  navigation of its own to cover here; see AddLedgerHWWalletTests for that behavior
+//  (Features/CoordFlows/ConnectHWWalletCoordFlow*.swift).
 //
-//  AddLedgerHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState),
-//  so these tests drive a plain Store and read state directly after sending actions -- the same
-//  approach AddKeystoneHWWalletCoordFlowTests uses.
+//  ConnectHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState), so
+//  these tests drive a plain Store and read state directly after sending actions -- the same
+//  approach ConnectHWWalletCoordFlowKeystoneTests uses.
 //
 
 import Testing
@@ -20,35 +24,38 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized) @MainActor struct AddLedgerHWWalletCoordFlowTests {
+@Suite(.serialized) @MainActor struct ConnectHWWalletCoordFlowLedgerTests {
 
-    // MARK: - Self: connectTapped
+    // MARK: - Self: connectTapped (the instructions screen, now a path element)
 
     @Test func connectTappedPushesDevicePicker() async {
-        let store = makeStore()
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.first!
 
-        store.send(.addLedgerHWWallet(.connectTapped))
+        store.send(.path(.element(id: id, action: .addLedgerHWWallet(.connectTapped))))
 
-        #expect(store.state.path.count == 1)
-        #expect(isDevicePicker(store.state.path.first))
+        #expect(store.state.path.count == 2)
+        #expect(isDevicePicker(store.state.path.last))
     }
 
     // MARK: - Device Picker
 
     @Test func pairingSucceededOnThePickerPushesTheAccountScreen() async throws {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.devicePicker(AddLedgerHWWallet.State.initial))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
         let fixture = try Self.makePairingFixture()
 
-        store.send(.path(.element(id: id, action: .devicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
 
         #expect(store.state.path.count == 2)
-        if case .account(let accountState) = store.state.path.last {
+        if case .ledgerAccount(let accountState) = store.state.path.last {
             #expect(accountState.pairing == fixture)
         } else {
-            Issue.record("expected .account to be pushed carrying the pairing")
+            Issue.record("expected .ledgerAccount to be pushed carrying the pairing")
         }
     }
 
@@ -57,30 +64,30 @@ import ComposableArchitecture
     @Test func nextTappedPushesDeviceReadyCarryingTheAccountState() async {
         var accountState = AddLedgerHWWallet.State.initial
         accountState.isAccountSelected = true
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.account(accountState))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerAccount(accountState))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .account(.nextTapped))))
+        store.send(.path(.element(id: id, action: .ledgerAccount(.nextTapped))))
 
         #expect(store.state.path.count == 2)
-        if case .deviceReady(let deviceReadyState) = store.state.path.last {
+        if case .ledgerDeviceReady(let deviceReadyState) = store.state.path.last {
             #expect(deviceReadyState.isAccountSelected == true)
         } else {
-            Issue.record("expected .deviceReady to be pushed carrying the account state")
+            Issue.record("expected .ledgerDeviceReady to be pushed carrying the account state")
         }
     }
 
     // MARK: - Device Ready: accountImportSucceeded
 
     @Test func accountImportSucceededPushesConnectedScreen() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.deviceReady(AddLedgerHWWallet.State.initial))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .deviceReady(.accountImportSucceeded))))
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountImportSucceeded))))
 
         #expect(store.state.path.count == 2)
         #expect(isConnected(store.state.path.last))
@@ -89,25 +96,25 @@ import ComposableArchitecture
     // MARK: - Device Ready: accountImportFailed
 
     @Test func accountImportFailedShowsFailureSheet() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.deviceReady(AddLedgerHWWallet.State.initial))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .deviceReady(.accountImportFailed("boom")))))
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountImportFailed("boom")))))
 
         #expect(store.state.isFailureSheetPresented == true)
         #expect(store.state.errMsg == "boom")
     }
 
     @Test func accountImportFailedAfterSuccessScreenIsIgnored() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.deviceReady(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.connected(AddLedgerHWWallet.State.initial))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerConnected(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .deviceReady(.accountImportFailed("duplicate")))))
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountImportFailed("duplicate")))))
 
         #expect(store.state.isFailureSheetPresented == false)
         #expect(store.state.errMsg.isEmpty)
@@ -119,14 +126,14 @@ import ComposableArchitecture
         var restoreInfoState = RestoreInfo.State.initial
         restoreInfoState.isKeystoneFlow = true
         restoreInfoState.isProcessing = true
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.deviceReady(AddLedgerHWWallet.State.initial))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
         initialState.path.append(.restoreInfo(restoreInfoState))
-        initialState.path.append(.connected(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerConnected(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .deviceReady(.accountImportFailed("duplicate")))))
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountImportFailed("duplicate")))))
 
         #expect(store.state.isFailureSheetPresented == false)
         #expect(store.state.errMsg.isEmpty)
@@ -139,7 +146,7 @@ import ComposableArchitecture
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         let store = makeStore(initialState: initialState)
 
@@ -151,7 +158,7 @@ import ComposableArchitecture
     // MARK: - contactSupportTapped
 
     @Test func contactSupportTappedWithMailCapabilitySetsSupportData() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         initialState.canSendMail = true
         initialState.errMsg = "ZLEDG0002: some ledger error"
@@ -164,7 +171,7 @@ import ComposableArchitecture
     }
 
     @Test func contactSupportTappedWithoutMailSetsMessageToBeShared() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         initialState.canSendMail = false
         initialState.errMsg = "ZLEDG0002: some ledger error"
@@ -179,7 +186,7 @@ import ComposableArchitecture
     // MARK: - Mail / share cleanup
 
     @Test func sendSupportMailFinishedClearsSupportData() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         // generate() reads walletStorage; this call runs in test code, outside the store's
         // dependency scope, so it needs its own override.
         initialState.supportData = withDependencies {
@@ -195,7 +202,7 @@ import ComposableArchitecture
     }
 
     @Test func shareFinishedClearsMessageToBeShared() async {
-        var initialState = AddLedgerHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.messageToBeShared = "some message"
         let store = makeStore(initialState: initialState)
 
@@ -210,13 +217,13 @@ import ComposableArchitecture
         let fixture = try Self.makePairingFixture()
         var deviceReadyState = AddLedgerHWWallet.State.initial
         deviceReadyState.pairing = fixture
-        var initialState = AddLedgerHWWalletCoordFlow.State()
-        initialState.path.append(.deviceReady(deviceReadyState))
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(deviceReadyState))
 
         let importCount = LockIsolated(0)
         let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
         let store = Store(initialState: initialState) {
-            AddLedgerHWWalletCoordFlow()
+            ConnectHWWalletCoordFlow()
         } withDependencies: {
             $0.walletStorage = .noOp
             $0.ledgerClient = .noOp
@@ -230,7 +237,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .deviceReady(.unlockTapped(nil)))))
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.unlockTapped(nil)))))
 
         // Effects chain asynchronously (unlockTapped -> accountImported -> accountImportSucceeded
         // -> the coordinator's push); poll until the success screen lands or we give up.
@@ -248,11 +255,11 @@ import ComposableArchitecture
     // MARK: - Helpers
 
     private func makeStore(
-        initialState: AddLedgerHWWalletCoordFlow.State = AddLedgerHWWalletCoordFlow.State(),
+        initialState: ConnectHWWalletCoordFlow.State = ConnectHWWalletCoordFlow.State(),
         withDependencies extra: (@Sendable (inout DependencyValues) -> Void)? = nil
-    ) -> StoreOf<AddLedgerHWWalletCoordFlow> {
+    ) -> StoreOf<ConnectHWWalletCoordFlow> {
         Store(initialState: initialState) {
-            AddLedgerHWWalletCoordFlow()
+            ConnectHWWalletCoordFlow()
         } withDependencies: {
             $0.walletStorage = .noOp
             // LedgerClient has no test/preview value (Phase 0 only registered `liveValue`), so
@@ -264,13 +271,13 @@ import ComposableArchitecture
         }
     }
 
-    private func isDevicePicker(_ element: AddLedgerHWWalletCoordFlow.Path.State?) -> Bool {
-        if case .devicePicker = element { return true }
+    private func isDevicePicker(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
+        if case .ledgerDevicePicker = element { return true }
         return false
     }
 
-    private func isConnected(_ element: AddLedgerHWWalletCoordFlow.Path.State?) -> Bool {
-        if case .connected = element { return true }
+    private func isConnected(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
+        if case .ledgerConnected = element { return true }
         return false
     }
 

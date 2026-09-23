@@ -1,34 +1,49 @@
 //
-//  AddLedgerHWWalletCoordFlowView.swift
+//  ConnectHWWalletCoordFlowView.swift
 //  Zashi
 //
-//  MOB-2020 Phase 1.3. Mirrors AddKeystoneHWWalletCoordFlowView: the birthday-explainer help
-//  sheet is the same shared, vendor-neutral content; the failure sheet reuses the Keystone
-//  coord flow's own strings verbatim (none of this phase's new copy covers it — see the brief).
+//  MOB-2020 UI round 2. Merges AddKeystoneHWWalletCoordFlowView and
+//  AddLedgerHWWalletCoordFlowView: the chooser (`ChooseHWWalletView`) is now the stack's root,
+//  and both vendors' instructions screens are push destinations reached from it, so the default
+//  Back on either one pops to the chooser instead of leaving no way to pick the other vendor.
 //
 
 import SwiftUI
 import ComposableArchitecture
 
-struct AddLedgerHWWalletCoordFlowView: View {
+struct ConnectHWWalletCoordFlowView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    @Perception.Bindable var store: StoreOf<AddLedgerHWWalletCoordFlow>
+    @Perception.Bindable var store: StoreOf<ConnectHWWalletCoordFlow>
     let tokenName: String
 
-    init(store: StoreOf<AddLedgerHWWalletCoordFlow>, tokenName: String) {
+    init(store: StoreOf<ConnectHWWalletCoordFlow>, tokenName: String) {
         self.store = store
         self.tokenName = tokenName
+    }
+
+    /// Whether a Ledger element is anywhere on the path -- used only to pick the vendor-correct
+    /// failure description below (the title and everything else in the sheet is shared verbatim).
+    private var isLedgerFailure: Bool {
+        for element in store.path {
+            switch element {
+            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+                return true
+            default:
+                continue
+            }
+        }
+        return false
     }
 
     var body: some View {
         WithPerceptionTracking {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
-                AddLedgerHWWalletView(
+                ChooseHWWalletView(
                     store:
                         store.scope(
-                            state: \.addLedgerHWWalletState,
-                            action: \.addLedgerHWWallet
+                            state: \.chooseHWWalletState,
+                            action: \.chooseHWWallet
                         )
                 )
                 .zashiSheet(isPresented: $store.isHelpSheetPresented) {
@@ -61,14 +76,26 @@ struct AddLedgerHWWalletCoordFlowView: View {
                 }
             } destination: { store in
                 switch store.case {
-                case let .account(store):
-                    LedgerAccountView(store: store)
-                case let .connected(store):
-                    LedgerConnectedView(store: store)
-                case let .devicePicker(store):
+                case let .addKeystoneHWWallet(store):
+                    AddKeystoneHWWalletView(store: store)
+                case let .scan(store):
+                    ScanView(store: store)
+                case let .accountHWWalletSelection(store):
+                    AccountsSelectionView(store: store)
+                case let .keystoneDeviceReady(store):
+                    KeystoneDeviceReadyView(store: store)
+                case let .keystoneConnected(store):
+                    KeystoneConnectedView(store: store)
+                case let .addLedgerHWWallet(store):
+                    AddLedgerHWWalletView(store: store)
+                case let .ledgerDevicePicker(store):
                     LedgerDevicePickerView(store: store)
-                case let .deviceReady(store):
+                case let .ledgerAccount(store):
+                    LedgerAccountView(store: store)
+                case let .ledgerDeviceReady(store):
                     LedgerDeviceReadyView(store: store)
+                case let .ledgerConnected(store):
+                    LedgerConnectedView(store: store)
                 case let .estimateBirthdaysDate(store):
                     WalletBirthdayEstimateDateView(store: store)
                 case let .estimatedBirthday(store):
@@ -129,7 +156,7 @@ struct AddLedgerHWWalletCoordFlowView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            Text(localizable: .ledgerAddHWWalletFailureDesc)
+            Text(localizable: isLedgerFailure ? .ledgerAddHWWalletFailureDesc : .keystoneAddHWWalletFailureDesc)
                 .zFont(size: 14, style: Design.Text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.center)
@@ -157,20 +184,20 @@ struct AddLedgerHWWalletCoordFlowView: View {
 
 #Preview {
     NavigationView {
-        AddLedgerHWWalletCoordFlowView(store: AddLedgerHWWalletCoordFlow.placeholder, tokenName: "ZEC")
+        ConnectHWWalletCoordFlowView(store: ConnectHWWalletCoordFlow.placeholder, tokenName: "ZEC")
     }
 }
 
 // MARK: - Placeholders
 
-extension AddLedgerHWWalletCoordFlow.State {
-    static var initial: AddLedgerHWWalletCoordFlow.State { AddLedgerHWWalletCoordFlow.State() }
+extension ConnectHWWalletCoordFlow.State {
+    static var initial: ConnectHWWalletCoordFlow.State { ConnectHWWalletCoordFlow.State() }
 }
 
-extension AddLedgerHWWalletCoordFlow {
-    @MainActor static let placeholder = StoreOf<AddLedgerHWWalletCoordFlow>(
+extension ConnectHWWalletCoordFlow {
+    @MainActor static let placeholder = StoreOf<ConnectHWWalletCoordFlow>(
         initialState: .initial
     ) {
-        AddLedgerHWWalletCoordFlow()
+        ConnectHWWalletCoordFlow()
     }
 }

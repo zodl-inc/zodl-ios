@@ -1,12 +1,13 @@
 //
-//  AddLedgerHWWalletCoordFlowStore.swift
+//  ConnectHWWalletCoordFlowStore.swift
 //  Zashi
 //
-//  MOB-2020 Phase 1.3. Mirrors AddKeystoneHWWalletCoordFlowStore's shape: the instructions
-//  screen is the flow's root (`addLedgerHWWalletState`, not a `Path` element), and the path
-//  covers the device picker (which finds, selects, connects and pairs the Ledger — there is no
-//  separate pairing screen), account confirmation, the birthday sub-flow (shared, vendor-neutral
-//  screens), and the success screen.
+//  MOB-2020 UI round 2: merges AddKeystoneHWWalletCoordFlow and AddLedgerHWWalletCoordFlow into
+//  one flow whose root is the vendor chooser (`ChooseHWWallet`) instead of jumping straight into
+//  a single vendor's instructions. Both vendors' screens are now `Path` elements reached from
+//  that root, so Back from either vendor's instructions screen pops to the chooser instead of
+//  leaving no way to pick the other vendor. See ConnectHWWalletCoordFlowCoordinator.swift for the
+//  merged navigation.
 //
 
 import SwiftUI
@@ -15,13 +16,22 @@ import ComposableArchitecture
 @preconcurrency import MessageUI
 
 @Reducer
-struct AddLedgerHWWalletCoordFlow {
+struct ConnectHWWalletCoordFlow {
     @Reducer
     enum Path {
-        case account(AddLedgerHWWallet)
-        case connected(AddLedgerHWWallet)
-        case devicePicker(AddLedgerHWWallet)
-        case deviceReady(AddLedgerHWWallet)
+        // Keystone
+        case addKeystoneHWWallet(AddKeystoneHWWallet)
+        case scan(Scan)
+        case accountHWWalletSelection(AddKeystoneHWWallet)
+        case keystoneDeviceReady(AddKeystoneHWWallet)
+        case keystoneConnected(AddKeystoneHWWallet)
+        // Ledger
+        case addLedgerHWWallet(AddLedgerHWWallet)
+        case ledgerDevicePicker(AddLedgerHWWallet)
+        case ledgerAccount(AddLedgerHWWallet)
+        case ledgerDeviceReady(AddLedgerHWWallet)
+        case ledgerConnected(AddLedgerHWWallet)
+        // Shared
         case estimateBirthdaysDate(WalletBirthday)
         case estimatedBirthday(WalletBirthday)
         case restoreInfo(RestoreInfo)
@@ -30,7 +40,7 @@ struct AddLedgerHWWalletCoordFlow {
 
     @ObservableState
     struct State {
-        var addLedgerHWWalletState = AddLedgerHWWallet.State.initial
+        var chooseHWWalletState = ChooseHWWallet.State.initial
         var birthday: BlockHeight? = nil
         var isFailureSheetPresented = false
         var isHelpSheetPresented = false
@@ -46,15 +56,17 @@ struct AddLedgerHWWalletCoordFlow {
     }
 
     enum Action: BindableAction {
-        case addLedgerHWWallet(AddLedgerHWWallet.Action)
-        case binding(BindingAction<AddLedgerHWWalletCoordFlow.State>)
+        case binding(BindingAction<ConnectHWWalletCoordFlow.State>)
         case cancelFailureTapped
+        case chooseHWWallet(ChooseHWWallet.Action)
         case closeHelpSheetTapped
         case contactSupportTapped
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
         case shareFinished
     }
+
+    @Dependency(\.audioServices) var audioServices
 
     init() { }
 
@@ -63,8 +75,8 @@ struct AddLedgerHWWalletCoordFlow {
 
         BindingReducer()
 
-        Scope(state: \.addLedgerHWWalletState, action: \.addLedgerHWWallet) {
-            AddLedgerHWWallet()
+        Scope(state: \.chooseHWWalletState, action: \.chooseHWWallet) {
+            ChooseHWWallet()
         }
 
         Reduce { state, action in
@@ -74,11 +86,23 @@ struct AddLedgerHWWalletCoordFlow {
                 return .none
 
             case .cancelFailureTapped:
-                // Close the sheet and leave the whole add-Ledger flow. Root observes
-                // `backToHomeTapped` and tears the flow down (path = nil), so the user is never
-                // stranded on the connection screen.
+                // Close the sheet and leave the whole connect flow. The vendor instructions
+                // element (whichever one is on the path) disconnects its own transport as needed
+                // (the Ledger one disconnects the Ledger in its own reducer; Keystone's is a
+                // no-op) and Root observes `backToHomeTapped` and tears the flow down
+                // (path = nil), so the user is never stranded on the connection screen.
                 state.isFailureSheetPresented = false
-                return .send(.addLedgerHWWallet(.backToHomeTapped))
+                for id in state.path.ids {
+                    switch state.path[id: id] {
+                    case .addKeystoneHWWallet:
+                        return .send(.path(.element(id: id, action: .addKeystoneHWWallet(.backToHomeTapped))))
+                    case .addLedgerHWWallet:
+                        return .send(.path(.element(id: id, action: .addLedgerHWWallet(.backToHomeTapped))))
+                    default:
+                        continue
+                    }
+                }
+                return .none
 
             case .contactSupportTapped:
                 state.isFailureSheetPresented = false

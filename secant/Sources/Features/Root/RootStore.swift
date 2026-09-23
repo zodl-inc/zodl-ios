@@ -15,9 +15,7 @@ struct Root {
     @ObservableState
     struct State {
         enum Path {
-            case addKeystoneHWWalletCoordFlow
-            case addLedgerHWWalletCoordFlow
-            case chooseHWWallet
+            case connectHWWalletCoordFlow
             case currencyConversionSetup
             case migrationCoordFlow
             case receive
@@ -307,9 +305,7 @@ struct Root {
         // enriching swap metadata in the background; not the curated offering.
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
-        var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
-        var addLedgerHWWalletCoordFlowState = AddLedgerHWWalletCoordFlow.State.initial
-        var chooseHWWalletState = ChooseHWWallet.State.initial
+        var connectHWWalletCoordFlowState = ConnectHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
@@ -346,7 +342,7 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
-            case .addKeystoneHWWalletCoordFlow, .addLedgerHWWalletCoordFlow, .chooseHWWallet, .currencyConversionSetup,
+            case .connectHWWalletCoordFlow, .currencyConversionSetup,
                  .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
@@ -492,13 +488,7 @@ struct Root {
         case walletConfigLoaded(WalletConfig)
         case welcome(Welcome.Action)
 
-        case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
-        case addLedgerHWWalletCoordFlow(AddLedgerHWWalletCoordFlow.Action)
-        /// A Root-level way into the Ledger connect flow — sent by `ChooseHWWallet`'s
-        /// `ledgerTapped` arm (Root reacts to it the same way `.home(.addKeystoneHWWalletTapped)`
-        /// opens the Keystone flow).
-        case addLedgerHWWalletRequested
-        case chooseHWWallet(ChooseHWWallet.Action)
+        case connectHWWalletCoordFlow(ConnectHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
@@ -710,16 +700,8 @@ struct Root {
 
     @ReducerBuilder<State, Action>
     private var flowScopes: some Reducer<State, Action> {
-        Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
-            AddKeystoneHWWalletCoordFlow()
-        }
-
-        Scope(state: \.addLedgerHWWalletCoordFlowState, action: \.addLedgerHWWalletCoordFlow) {
-            AddLedgerHWWalletCoordFlow()
-        }
-
-        Scope(state: \.chooseHWWalletState, action: \.chooseHWWallet) {
-            ChooseHWWallet()
+        Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
+            ConnectHWWalletCoordFlow()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
