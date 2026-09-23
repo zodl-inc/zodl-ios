@@ -14,6 +14,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 ### Fixed
 
 - [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+- [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
 
 ## [3.14.1] - 2026-09-17
 
