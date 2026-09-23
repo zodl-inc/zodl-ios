@@ -157,6 +157,16 @@ extension ConnectHWWalletCoordFlow {
                 state.isFailureSheetPresented = true
                 return .none
 
+            case .path(.element(id: _, action: .ledgerDeviceReady(.accountAlreadyImported(let account)))):
+                for id in state.path.ids {
+                    if case .restoreInfo = state.path[id: id] {
+                        state.path[id: id, case: \.restoreInfo]?.isProcessing = false
+                    }
+                }
+                state.alreadyAddedAccount = account
+                state.isAccountAlreadyAddedSheetPresented = true
+                return .none
+
                 // MARK: - Estimate Birthday's Date (shared entry point)
 
             case .path(.element(id: _, action: .estimateBirthdaysDate(.enterManuallyTapped))):

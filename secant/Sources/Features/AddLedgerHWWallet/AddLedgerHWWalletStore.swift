@@ -69,6 +69,7 @@ struct AddLedgerHWWallet {
     }
 
     enum Action: BindableAction, Equatable {
+        case accountAlreadyImported(WalletAccount?)
         case accountImported(AccountUUID)
         case accountImportFailed(String)
         case accountImportSucceeded
@@ -284,6 +285,7 @@ struct AddLedgerHWWallet {
                     return .none
                 }
                 state.isImportingAccount = true
+                let walletAccounts = state.walletAccounts
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -309,12 +311,23 @@ struct AddLedgerHWWallet {
                         }
                         await send(.accountImported(uuid))
                     } catch {
+                        // A viewing-key collision (the Ledger matches an account already in the
+                        // wallet) is not surfaced as a generic import failure -- it has its own
+                        // sheet. Every other `importAccount` failure keeps today's behavior.
+                        if LedgerAccountCollision.isCollision(error) {
+                            await send(.accountAlreadyImported(LedgerAccountCollision.collidingAccount(in: error, among: walletAccounts)))
+                            return
+                        }
                         // Surface only the SDK error's localizedDescription (a static code +
                         // message); the raw Rust error string is never included, so no
                         // UFVK/binding/device-identity data can leak.
                         await send(.accountImportFailed(error.localizedDescription))
                     }
                 }
+
+            case .accountAlreadyImported:
+                state.isImportingAccount = false
+                return .none
 
             case let .accountImported(uuid):
                 return .run { send in

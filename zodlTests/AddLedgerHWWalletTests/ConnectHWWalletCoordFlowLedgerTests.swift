@@ -143,6 +143,21 @@ import ComposableArchitecture
         #expect(restoreInfoIsProcessing == false)
     }
 
+    // MARK: - Device Ready: accountAlreadyImported
+
+    @Test func accountAlreadyImportedShowsTheAccountAlreadyAddedSheet() async {
+        let account = Self.walletAccount(idByte: 0x0f)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountAlreadyImported(account)))))
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        #expect(store.state.alreadyAddedAccount == account)
+    }
+
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
@@ -153,6 +168,57 @@ import ComposableArchitecture
         store.send(.cancelFailureTapped)
 
         #expect(store.state.isFailureSheetPresented == false)
+    }
+
+    // MARK: - accountAlreadyAddedCancelTapped / goToExistingAccountTapped
+
+    @Test func accountAlreadyAddedCancelLeavesTheFlow() async throws {
+        let disconnected = LockIsolated(false)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.isAccountAlreadyAddedSheetPresented = true
+        initialState.alreadyAddedAccount = Self.walletAccount(idByte: 0x0f)
+
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+
+        store.send(.accountAlreadyAddedCancelTapped)
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+
+        // `.backToHomeTapped` disconnects the Ledger inside AddLedgerHWWallet's own `.run` effect
+        // -- poll for the spy rather than asserting synchronously.
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
+    }
+
+    @Test func goToExistingAccountLeavesTheFlowAndKeepsTheAccount() async throws {
+        let disconnected = LockIsolated(false)
+        let account = Self.walletAccount(idByte: 0x0f)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.isAccountAlreadyAddedSheetPresented = true
+        initialState.alreadyAddedAccount = account
+
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+
+        store.send(.goToExistingAccountTapped)
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        // Unlike the cancel above, the account must survive so Root can read it.
+        #expect(store.state.alreadyAddedAccount == account)
+
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
     }
 
     // MARK: - contactSupportTapped
@@ -279,6 +345,19 @@ import ComposableArchitecture
     private func isConnected(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
         if case .ledgerConnected = element { return true }
         return false
+    }
+
+    /// Mirrors AddLedgerHWWalletTests' own private fixture.
+    private static func walletAccount(idByte: UInt8) -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+            name: "Ledger",
+            keySource: Account.ledgerKeySource,
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
+            ufvk: nil,
+            uivk: nil
+        ))
     }
 
     /// `LedgerAccountBinding`'s device identity is `tpk0-` plus 64 lowercase hex digits, validated

@@ -41,7 +41,13 @@ struct ConnectHWWalletCoordFlow {
     @ObservableState
     struct State {
         var chooseHWWalletState = ChooseHWWallet.State.initial
+        /// The account a Ledger's viewing key already matched, set right before
+        /// `isAccountAlreadyAddedSheetPresented` -- see the coordinator's
+        /// `.ledgerDeviceReady(.accountAlreadyImported(_))` arm. Deliberately left set once the
+        /// sheet is dismissed via `goToExistingAccountTapped`, since Root reads it from here.
+        var alreadyAddedAccount: WalletAccount? = nil
         var birthday: BlockHeight? = nil
+        var isAccountAlreadyAddedSheetPresented = false
         var isFailureSheetPresented = false
         var isHelpSheetPresented = false
         var path = StackState<Path.State>()
@@ -56,11 +62,13 @@ struct ConnectHWWalletCoordFlow {
     }
 
     enum Action: BindableAction {
+        case accountAlreadyAddedCancelTapped
         case binding(BindingAction<ConnectHWWalletCoordFlow.State>)
         case cancelFailureTapped
         case chooseHWWallet(ChooseHWWallet.Action)
         case closeHelpSheetTapped
         case contactSupportTapped
+        case goToExistingAccountTapped
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
         case shareFinished
@@ -86,23 +94,21 @@ struct ConnectHWWalletCoordFlow {
                 return .none
 
             case .cancelFailureTapped:
-                // Close the sheet and leave the whole connect flow. The vendor instructions
-                // element (whichever one is on the path) disconnects its own transport as needed
-                // (the Ledger one disconnects the Ledger in its own reducer; Keystone's is a
-                // no-op) and Root observes `backToHomeTapped` and tears the flow down
-                // (path = nil), so the user is never stranded on the connection screen.
+                // Close the sheet and leave the whole connect flow -- see
+                // leaveFlowThroughVendorInstructions.
                 state.isFailureSheetPresented = false
-                for id in state.path.ids {
-                    switch state.path[id: id] {
-                    case .addKeystoneHWWallet:
-                        return .send(.path(.element(id: id, action: .addKeystoneHWWallet(.backToHomeTapped))))
-                    case .addLedgerHWWallet:
-                        return .send(.path(.element(id: id, action: .addLedgerHWWallet(.backToHomeTapped))))
-                    default:
-                        continue
-                    }
-                }
-                return .none
+                return leaveFlowThroughVendorInstructions(state: state)
+
+            case .accountAlreadyAddedCancelTapped:
+                state.isAccountAlreadyAddedSheetPresented = false
+                return leaveFlowThroughVendorInstructions(state: state)
+
+            case .goToExistingAccountTapped:
+                // `alreadyAddedAccount` is deliberately left set here (unlike the two cancels) --
+                // Root reads it off `connectHWWalletCoordFlowState` once the flow closes, to know
+                // which account to switch to (RootCoordinator.swift).
+                state.isAccountAlreadyAddedSheetPresented = false
+                return leaveFlowThroughVendorInstructions(state: state)
 
             case .contactSupportTapped:
                 state.isFailureSheetPresented = false
@@ -136,5 +142,25 @@ struct ConnectHWWalletCoordFlow {
             }
         }
         .forEach(\.path, action: \.path)
+    }
+
+    /// Leaves the connect flow the same way `cancelFailureTapped` always has: finds whichever
+    /// vendor's instructions element is on the path and sends it `.backToHomeTapped`. That
+    /// disconnects its own transport (the Ledger element disconnects the Ledger in its own
+    /// reducer; Keystone's is a no-op) and Root observes the action and tears the flow down
+    /// (`path = nil`), so the user is never stranded on the connection screen. Shared by
+    /// `cancelFailureTapped`, `accountAlreadyAddedCancelTapped` and `goToExistingAccountTapped`.
+    private func leaveFlowThroughVendorInstructions(state: State) -> Effect<Action> {
+        for id in state.path.ids {
+            switch state.path[id: id] {
+            case .addKeystoneHWWallet:
+                return .send(.path(.element(id: id, action: .addKeystoneHWWallet(.backToHomeTapped))))
+            case .addLedgerHWWallet:
+                return .send(.path(.element(id: id, action: .addLedgerHWWallet(.backToHomeTapped))))
+            default:
+                continue
+            }
+        }
+        return .none
     }
 }

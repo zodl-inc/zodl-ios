@@ -546,6 +546,33 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    @MainActor @Test func unlockTappedReportsAnAccountThatIsAlreadyInTheWallet() async throws {
+        let fixture = try Self.makePairingFixture()
+        let existingAccount = Self.walletAccount(idByte: 0x0f)
+        var state = AddLedgerHWWallet.State()
+        state.pairing = fixture
+        state.$walletAccounts.withLock { $0 = [existingAccount] }
+
+        let collisionError = ZcashError.rustImportAccountUfvk(
+            """
+            Error while initializing accounts: An account corresponding to the data provided already \
+            exists in the wallet with UUID AccountUuid(0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f).
+            """
+        )
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(importAccount: { _, _, _, _, _, _, _ in throw collisionError })
+        }
+
+        await store.send(.unlockTapped(nil)) { $0.isImportingAccount = true }
+        await store.receive(.accountAlreadyImported(existingAccount)) {
+            $0.isImportingAccount = false
+        }
+        await store.finish()
+    }
+
     // MARK: - loadedWalletAccounts
 
     @MainActor @Test func loadedWalletAccountsSelectsTheImportedAccount() async {

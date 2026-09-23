@@ -585,6 +585,34 @@ import ComposableArchitecture
         #expect(store.state.path == .connectHWWalletCoordFlow)
         #expect(store.state.connectHWWalletCoordFlowState.path.isEmpty)
     }
+
+    // MARK: - Account Already Added: go to existing account
+
+    /// MOB-2020: `.connectHWWalletCoordFlow(.goToExistingAccountTapped)` reuses the manual
+    /// switcher's whole `.home(.walletAccountTapped)` arm, including its already-selected guard --
+    /// proven here the same way `walletAccountSwitchInvalidatesBothHomeAndSeeAllTransactionLists`
+    /// proves the manual switch: the account write happens synchronously (inside the reducer
+    /// body, not a `.run` effect), so no wait is needed after `send`.
+    @Test func goToExistingAccountSwitchesToTheAccountAlreadyInTheWallet() async {
+        let selected = Self.walletAccount(idByte: 78)
+        let alreadyAdded = Self.walletAccount(idByte: 79)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = selected }
+        initialState.$walletAccounts.withLock { $0 = [selected, alreadyAdded] }
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.alreadyAddedAccount = alreadyAdded
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.connectHWWalletCoordFlow(.goToExistingAccountTapped))
+
+        #expect(store.state.selectedWalletAccount == alreadyAdded)
+    }
 }
 
 /// Shared no-op dependency baseline for every test in this file. Kept as a private, file-scoped
