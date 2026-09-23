@@ -6489,6 +6489,40 @@
         }
       }
     },
+    "currencyConversion.currencies.error" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn’t load the currencies. Please check your connection and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No pudimos cargar las monedas. Verifica tu conexión e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "currencyConversion.currencies.retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intentar de nuevo"
+          }
+        }
+      }
+    },
     "currencyConversion.currencyLabel" : {
       "extractionState" : "manual",
       "localizations" : {

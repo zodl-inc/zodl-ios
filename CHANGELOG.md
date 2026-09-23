@@ -10,6 +10,12 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 ### Added
 
 - [MOB-1877] Export incoming or full viewing keys from Advanced Settings, including for Keystone wallets. Choose a key type, confirm full-key privacy warnings, then reveal its QR code or text and share it with a trusted service. Available in English and Spanish.
+- [MOB-1706] Choose from more supported currencies in Currency Conversion, with a retry option if the currency list cannot be loaded.
+
+### Fixed
+
+- [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+- [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
 
 ## [3.14.1] - 2026-09-17
 
