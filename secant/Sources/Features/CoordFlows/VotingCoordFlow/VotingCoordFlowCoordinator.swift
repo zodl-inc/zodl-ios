@@ -4062,6 +4062,12 @@ extension VotingCoordFlow {
             roundSession.submissionProgress.isRetrying = false
             roundSession.batchSubmissionStatus = .authorizationFailed(error: error)
         }
+        // A failure the voter is shown ends the flow's own continuation: the
+        // next run is one they start, so a software wallet asks for Face ID
+        // again and the bar starts over. An automatic re-run that failed before
+        // it drove the round never reached `reduceAuthenticationSucceeded`, the
+        // one place that spends the ticket.
+        state.pendingBatchSubmission = false
         return .none
     }
 
@@ -4081,6 +4087,8 @@ extension VotingCoordFlow {
                 totalCount: totalCount
             )
         }
+        // The next run is the voter's, as after an authorization failure.
+        state.pendingBatchSubmission = false
         return .none
     }
 
