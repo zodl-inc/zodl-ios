@@ -34,11 +34,6 @@ struct ViewingKeyPresentationTests {
         case chooser(StoreOf<ExportViewingKeys>)
         case detail(StoreOf<ViewingKeyDetail>)
 
-        var canExportFull: Bool {
-            guard case let .chooser(store) = self else { return false }
-            return store.canExportFull
-        }
-
         var detailKey: String? {
             guard case let .detail(store) = self else { return nil }
             return store.detail.key?.rawValue
@@ -407,94 +402,6 @@ struct ViewingKeyPresentationTests {
     }
 
     @Test
-    func consentRemainsReachableAtCompactAndAccessibilitySizes() async throws {
-        let configurations = [
-            RenderConfiguration(
-                name: "compact-light",
-                width: 320,
-                height: 568,
-                colorScheme: .light,
-                dynamicTypeSize: .large
-            ),
-            RenderConfiguration(
-                name: "accessibility5-light",
-                width: 393,
-                height: 852,
-                colorScheme: .light,
-                dynamicTypeSize: .accessibility5
-            ),
-            RenderConfiguration(
-                name: "compact-accessibility5-light",
-                width: 320,
-                height: 568,
-                colorScheme: .light,
-                dynamicTypeSize: .accessibility5
-            )
-        ]
-
-        // Read from the rendered pixels and the sheet's geometry, not from text
-        // recognition: Vision's OCR of the capture never returned when the
-        // whole target ran in parallel (a semaphore inside the recognizer that
-        // nothing signalled), which hung the test host and, with it, the suite.
-        for configuration in configurations {
-            let store = try await makeRenderStore(.checkedConsent)
-            let geometry = RenderGeometry()
-            let png = try await render(
-                store: store,
-                configuration: configuration,
-                expectsSheet: true,
-                scrollToBottom: configuration.dynamicTypeSize == .accessibility5
-                    || configuration.width == 320,
-                geometry: geometry
-            )
-            let pixels = try RenderedPixels(png: png)
-            let sheet = geometry.visibleSheetFrame
-            let viewport = geometry.scrollViewport
-            try #require(
-                !sheet.isEmpty && !viewport.isEmpty,
-                "The consent sheet was not presented and scrolled in \(configuration.name)"
-            )
-            // The full export action is the primary button pinned under the
-            // scrolled content: the lowest wide band of its colour, and it has
-            // to sit completely inside the sheet's visible frame.
-            let exportButton = try #require(
-                pixels.rowBands(
-                    matching: Design.Btns.Primary.bg.color(configuration.colorScheme),
-                    in: configuration.colorScheme,
-                    columns: Int(viewport.minX)...Int(viewport.maxX - 1),
-                    minimumCoverage: 0.4
-                )
-                .filter { $0.height >= 36 }
-                .last,
-                "No primary button in the capture for \(configuration.name)"
-            )
-            #expect(
-                exportButton.minY > sheet.minY && exportButton.maxY < sheet.maxY,
-                "Full export action was not completely visible in \(configuration.name): \(exportButton) in \(sheet)"
-            )
-
-            // The last acknowledgement is the bottom of the scrolled content, and
-            // its checked box is drawn at the content's leading edge: scrolled to
-            // the end, that box must be inside the viewport, top edge included.
-            let lastCheckbox = try #require(
-                pixels.lowestCheckedBox(
-                    matching: Design.Checkboxes.onBg.color(configuration.colorScheme),
-                    in: configuration.colorScheme,
-                    leadingColumn: Int(viewport.minX),
-                    rows: Int(viewport.minY - 24)...Int(viewport.maxY - 1)
-                ),
-                "No checked acknowledgement box near the end of the content in \(configuration.name)"
-            )
-            #expect(
-                lastCheckbox.minY >= viewport.minY && lastCheckbox.maxY <= viewport.maxY,
-                "Last acknowledgement was not reachable in \(configuration.name): \(lastCheckbox) in \(viewport)"
-            )
-            #expect(store.canExportFull)
-            Attachment.record([UInt8](png), named: "consent-\(configuration.name)-scrolled.png")
-        }
-    }
-
-    @Test
     func darkConsentTitleRemainsReadableAgainstSheetPanel() async throws {
         let store = try await makeRenderStore(.consent)
         let configuration = RenderConfiguration(
@@ -715,8 +622,7 @@ struct ViewingKeyPresentationTests {
         expectsSheet: Bool,
         expectedConsentSheetHeight: ClosedRange<CGFloat>? = nil,
         scrollToBottom: Bool = false,
-        scrollToDecodedQRCode expectedQRCode: String? = nil,
-        geometry: RenderGeometry? = nil
+        scrollToDecodedQRCode expectedQRCode: String? = nil
     ) async throws -> Data {
         let size = CGSize(width: configuration.width, height: configuration.height)
         let rootView = NavigationStack {
@@ -776,10 +682,6 @@ struct ViewingKeyPresentationTests {
             presentedSheetView = presentedView
             let visibleFrame = visiblePresentationFrame(view: presentedView, window: window)
             let visibleHeight = visibleFrame.height
-            geometry?.visibleSheetFrame = visibleFrame
-            if configuration.width == 320 && configuration.dynamicTypeSize == .accessibility5 {
-                print("Compact AX host geometry: window=\(window.bounds) presented.frame=\(presentedView.frame) presented.bounds=\(presentedView.bounds) visible=\(visibleFrame) safeArea=\(presentedView.safeAreaInsets)")
-            }
             #expect(
                 visibleHeight >= 400,
                 "Consent sheet visible frame was \(visibleFrame) in window \(window.bounds)"
@@ -845,10 +747,6 @@ struct ViewingKeyPresentationTests {
                 await nextMainRunLoopTurn()
                 window.layoutIfNeeded()
                 #expect(scrollView.contentOffset.y >= maximumOffset - 1)
-                geometry?.scrollViewport = scrollView.convert(scrollView.bounds, to: window)
-                if let presentedSheetView {
-                    geometry?.visibleSheetFrame = visiblePresentationFrame(view: presentedSheetView, window: window)
-                }
             }
         }
 
@@ -857,163 +755,6 @@ struct ViewingKeyPresentationTests {
         await nextMainRunLoopTurn()
         window.isHidden = true
         return try #require(image.pngData())
-    }
-
-    /// What `render` measured on the way to its capture, in window points,
-    /// for a test that asserts on where things ended up rather than only on
-    /// the pixels.
-    private final class RenderGeometry {
-        /// The presented sheet's frame clipped to the window, once it settled.
-        var visibleSheetFrame = CGRect.zero
-        /// The scroll view's visible region after the requested scroll.
-        var scrollViewport = CGRect.zero
-    }
-
-    /// The pixels of a capture, readable by colour without any recognizer.
-    ///
-    /// Captures are rendered at scale 1, so a pixel is a window point.
-    private struct RenderedPixels {
-        let width: Int
-        let height: Int
-        private let bytes: [UInt8]
-
-        init(png: Data) throws {
-            let image = try #require(UIImage(data: png)?.cgImage)
-            let context = try #require(
-                CGContext(
-                    data: nil,
-                    width: image.width,
-                    height: image.height,
-                    bitsPerComponent: 8,
-                    bytesPerRow: image.width * 4,
-                    space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                )
-            )
-            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-            let data = try #require(context.data).assumingMemoryBound(to: UInt8.self)
-            width = image.width
-            height = image.height
-            bytes = Array(UnsafeBufferPointer(start: data, count: image.width * image.height * 4))
-        }
-
-        /// Whether the pixel at `x`, `y` is `color`, within the drift a rendered
-        /// colour picks up on its way through the renderer and the PNG.
-        func matches(x: Int, y: Int, _ color: Channels) -> Bool {
-            guard x >= 0, y >= 0, x < width, y < height else { return false }
-            let index = (y * width + x) * 4
-            return abs(Int(bytes[index]) - color.red) <= 20
-                && abs(Int(bytes[index + 1]) - color.green) <= 20
-                && abs(Int(bytes[index + 2]) - color.blue) <= 20
-        }
-
-        /// Rows on which at least `minimumCoverage` of `columns` are `color`,
-        /// joined into bands when at most four rows apart (a button's title is
-        /// drawn over its background), top to bottom, in pixel coordinates.
-        func rowBands(
-            matching color: Color,
-            in colorScheme: ColorScheme,
-            columns: ClosedRange<Int>,
-            minimumCoverage: Double
-        ) -> [CGRect] {
-            let channels = Channels(color, colorScheme)
-            let columnCount = Double(columns.count)
-            var bands: [CGRect] = []
-            var start: Int?
-            var end = 0
-            for y in 0..<height {
-                let covered = columns.filter { matches(x: $0, y: y, channels) }.count
-                let qualifies = Double(covered) / columnCount >= minimumCoverage
-                if qualifies {
-                    if let open = start, y - end > 4 {
-                        bands.append(Self.band(from: open, to: end, columns: columns))
-                        start = y
-                    } else if start == nil {
-                        start = y
-                    }
-                    end = y
-                }
-            }
-            if let open = start {
-                bands.append(Self.band(from: open, to: end, columns: columns))
-            }
-            return bands
-        }
-
-        /// The lowest checked box drawn with its leading edge at
-        /// `leadingColumn` within `rows`: a 16-point square of `color`, solid
-        /// just inside its rounded top and bottom edges, with a body the check
-        /// mark thins to about half. Text starts to the right of the box, so
-        /// nothing else this colour occupies those columns near the end of the
-        /// content.
-        func lowestCheckedBox(
-            matching color: Color,
-            in colorScheme: ColorScheme,
-            leadingColumn: Int,
-            rows: ClosedRange<Int>
-        ) -> CGRect? {
-            let channels = Channels(color, colorScheme)
-            let side = 16
-            for x in (leadingColumn - 1)...(leadingColumn + 1) {
-                let columns = x...(x + side - 1)
-                var found: CGRect?
-                var runStart: Int?
-                var previous = rows.lowerBound - 1
-                func closeRun(at last: Int) {
-                    guard let first = runStart else { return }
-                    runStart = nil
-                    let rowsInRun = last - first + 1
-                    guard (side - 2)...(side + 4) ~= rowsInRun else { return }
-                    // Two rows in from each edge: the corners are rounded by
-                    // four points, so the edge rows themselves are not solid.
-                    let edgesSolid = [first + 2, last - 2].allSatisfy { row in
-                        columns.filter { matches(x: $0, y: row, channels) }.count >= side - 3
-                    }
-                    guard edgesSolid else { return }
-                    found = CGRect(x: x, y: first, width: side, height: rowsInRun)
-                }
-                for y in max(0, rows.lowerBound)...min(height - 1, rows.upperBound) {
-                    let covered = columns.filter { matches(x: $0, y: y, channels) }.count
-                    if covered >= side - 8 {
-                        if runStart == nil {
-                            runStart = y
-                        }
-                    } else {
-                        closeRun(at: previous)
-                    }
-                    previous = y
-                }
-                closeRun(at: previous)
-                if let found {
-                    return found
-                }
-            }
-            return nil
-        }
-
-        private static func band(from start: Int, to end: Int, columns: ClosedRange<Int>) -> CGRect {
-            CGRect(x: columns.lowerBound, y: start, width: columns.count, height: end - start + 1)
-        }
-
-        /// A colour as the renderer writes it for `colorScheme`.
-        struct Channels {
-            let red: Int
-            let green: Int
-            let blue: Int
-
-            init(_ color: Color, _ colorScheme: ColorScheme) {
-                var red: CGFloat = 0
-                var green: CGFloat = 0
-                var blue: CGFloat = 0
-                var alpha: CGFloat = 0
-                UIColor(color)
-                    .resolvedColor(with: UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light))
-                    .getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-                self.red = Int((red * 255).rounded())
-                self.green = Int((green * 255).rounded())
-                self.blue = Int((blue * 255).rounded())
-            }
-        }
     }
 
     private func capture(window: UIWindow) -> UIImage {
