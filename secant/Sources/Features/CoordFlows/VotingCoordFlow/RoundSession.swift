@@ -105,10 +105,6 @@ struct RoundSession: Equatable {
     /// re-entrant vote submissions during round polling re-triggers.
     var isSubmittingVote: Bool = false
 
-    /// Substep within the current proposal's submission. Renders as a
-    /// 4-step progress indicator on the Confirm Submission view.
-    var voteSubmissionStep: VoteSubmissionStep?
-
     /// Which note bundle the vote-submission loop is currently processing
     /// (0-based). Nil when no vote is in-flight. Used for UI progress.
     var currentVoteBundleIndex: UInt32?
@@ -284,35 +280,6 @@ enum BatchSubmissionStatus: Equatable {
             return false
         }
     }
-}
-
-/// Substep of the per-proposal vote submission cycle. Renders as a 4-step
-/// progress indicator on the Confirm Submission view.
-enum VoteSubmissionStep: Equatable {
-    case authorizingVote    // delegation proof (ZKP #1)
-    case preparingProof     // vote-tree sync + generateVanWitness + buildVoteCommitment + signCastVote + submitVoteCommitment
-    case confirming         // fetchTxConfirmation poll
-    case sendingShares      // buildSharePayloads + delegateShares
-
-    var label: String {
-        switch self {
-        case .authorizingVote: return String(localizable: .coinVoteStoreSubmissionAuthorizingVote)
-        case .preparingProof: return String(localizable: .coinVoteStoreSubmissionPreparingProof)
-        case .confirming: return String(localizable: .coinVoteStoreSubmissionWaitingForConfirmation)
-        case .sendingShares: return String(localizable: .coinVoteStoreSubmissionSendingShares)
-        }
-    }
-
-    var stepNumber: Int {
-        switch self {
-        case .authorizingVote: return 1
-        case .preparingProof: return 2
-        case .confirming: return 3
-        case .sendingShares: return 4
-        }
-    }
-
-    static let totalSteps = 4
 }
 
 /// Zashi-only readiness for the PIR precompute optimization (see

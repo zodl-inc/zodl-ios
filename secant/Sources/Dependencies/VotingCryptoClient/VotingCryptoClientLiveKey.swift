@@ -154,9 +154,6 @@ extension VotingCryptoClient: DependencyKey {
             eligibility: { roundId in
                 try await registry.session(for: roundId).eligibility()
             },
-            precomputePir: { roundId, bundleIndex in
-                try await registry.session(for: roundId).precomputePir(bundleIndex: bundleIndex)
-            },
             precomputeDelegationProof: { roundId, bundleIndex in
                 // No cancellation hook: `cancel()` finishes a session for good
                 // and would not interrupt a proof already running anyway, so an
@@ -207,9 +204,6 @@ extension VotingCryptoClient: DependencyKey {
                     rawOrchardAddress: Data(hotkey.rawOrchardAddress),
                     addressIndex: hotkey.addressIndex
                 )
-            },
-            extractOrchardFvkFromUfvk: { ufvkStr, networkId in
-                Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
             },
             extractNcRoot: { treeStateBytes in
                 Data(try VotingRustBackend.extractNcRoot(treeState: [UInt8](treeStateBytes)))

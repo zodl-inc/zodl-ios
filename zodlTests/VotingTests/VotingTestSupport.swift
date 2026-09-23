@@ -184,7 +184,6 @@ extension VotingTestSuite {
         }
         dependencies.localAuthentication.authenticate = { true }
         dependencies.backgroundTask = .noOp
-        dependencies.votingAPI.startHealthProbeSweep = { }
         dependencies.votingMetadata = votingMetadataClient(VotingMetadataBox())
         dependencies.continuousClock = ImmediateClock()
         dependencies.votingCrypto.openRoundSession = { _, _, _, _ in recorder.record("openRoundSession") }
