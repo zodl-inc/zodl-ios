@@ -334,6 +334,7 @@ struct SmartBanner {
                     state.isSyncTimedOutAutoAppeareDisabled = state.isSyncTimedOutSheetPresented
                 }
                 return .merge(
+                    retractAnsweredCurrencyConversionOffer(state: state),
                     .publisher {
                         networkMonitor.networkMonitorStream()
                             .map(Action.networkMonitorChanged)
@@ -1657,15 +1658,30 @@ struct SmartBanner {
     /// A lane's seat-validity rule, in ONE place. Consulted when a request is about to seat
     /// (`openBannerRequest`) and when a seated banner is about to open (`openBanner`); lanes
     /// with no rule are always valid. Balance-driven retraction of an already-SEATED banner
-    /// lives in `shieldingBalanceSyncEffect` — same rule, event-driven site.
+    /// lives in `shieldingBalanceSyncEffect` — same rule, event-driven site; a seated currency
+    /// conversion offer is retracted when Home appears (`retractAnsweredCurrencyConversionOffer`).
     private func isPriorityStillValid(_ priority: State.PriorityContent, state: State) -> Bool {
         switch priority {
         case .priority7:
             return state.isShieldable(zcashSDKEnvironment.shieldingThreshold())
                 && !state.transactions.isAnyShieldingPending()
+        case .priority8:
+            // Offered until the user answers it — on or off, wherever they do.
+            return userStoredPreferences.exchangeRate() == nil
         default:
             return true
         }
+    }
+
+    /// The currency conversion offer can be answered away from its banner (Settings, the Tor
+    /// opt-out), and nothing re-walks the ladder when Home comes back — so a seated offer the
+    /// user has since answered is retracted on appear, through the same clean close the
+    /// banner's own flow uses.
+    private func retractAnsweredCurrencyConversionOffer(state: State) -> Effect<Action> {
+        guard state.priorityContent == .priority8, !isPriorityStillValid(.priority8, state: state) else {
+            return .none
+        }
+        return .send(.closeAndCleanupBanner)
     }
 
     /// Where the priority walk continues when `priority`'s offer turns out invalid at seat/open
