@@ -6,8 +6,8 @@
 //  Figma's "Error States and Edge Cases" (Dev-Ready Q3 2026, node 1073:12817) draws as a bottom
 //  sheet over the device picker -- an alert icon, a title, a message and one button -- and
 //  supplies that sheet's copy and action. Matches on the `ZcashError`/`LedgerClientError` case
-//  only, never on message text, same discipline as LedgerErrorText.swift (which still serves
-//  LedgerSigning until a later commit moves the sign sheet over to this type too).
+//  only, never on message text -- the one failure the SDK has no case for, an import collision,
+//  is classified by LedgerAccountCollision.swift instead.
 //
 
 import Foundation
@@ -32,8 +32,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case requestRejected
     /// Figma "Ledger Disconnected"; the `.sign` message is draft copy.
     case disconnected
-    /// Figma "Account Already Added." Never produced by `init(_:)` -- a later commit classifies
-    /// import collisions itself.
+    /// Figma "Account Already Added." Never produced by `init(_:)` -- `LedgerAccountCollision`
+    /// classifies import collisions itself.
     case accountAlreadyAdded
     /// Not in Figma; draft copy.
     case appTooOld
@@ -64,8 +64,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     static let noDevicesFoundTimeout: Duration = .seconds(20)
 
     /// Classifies a Ledger failure by its `ZcashError`/`LedgerClientError` case only, never by
-    /// message text -- see LedgerErrorText.swift for the same discipline. Never produces
-    /// `.accountAlreadyAdded`; a later commit classifies import collisions itself.
+    /// message text. Never produces `.accountAlreadyAdded`; `LedgerAccountCollision` classifies
+    /// import collisions itself.
     init(_ error: Error) {
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
@@ -236,8 +236,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// `true` when a retry must scan and connect again, rather than repeat the request on the
     /// connection that is still open. A device refusal (`.deviceLocked`, `.requestRejected`,
     /// `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the transport usable for
-    /// another attempt; `.accountAlreadyAdded` needs no retry at all. Everything else means the
-    /// transport itself is gone.
+    /// another attempt; `.accountAlreadyAdded` needs no retry at all. Everything else needs a
+    /// fresh scan and connection: the transport is gone, or a different or restarted device must
+    /// be connected (`.deviceMismatch`, `.appTooOld` after the update, and `.unknown`, where a
+    /// clean reconnect is the safe retry).
     var retryNeedsNewConnection: Bool {
         switch self {
         case .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,

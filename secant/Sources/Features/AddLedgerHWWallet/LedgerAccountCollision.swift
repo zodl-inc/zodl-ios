@@ -5,9 +5,9 @@
 //  MOB-2020 Ledger error states: librustzcash refuses to import a Ledger whose viewing key
 //  already belongs to an account in the wallet (`SqliteClientError::AccountCollision(uuid)`) --
 //  for example a Ledger that shares a recovery phrase with the Zodl wallet or the Keystone. The
-//  SDK has no `ZcashError` case for this refusal, so unlike LedgerIssue.swift and
-//  LedgerErrorText.swift (which match only on the ZcashError/LedgerClientError case, never on
-//  message text), this type has no choice but to read the Rust error text itself. It arrives as
+//  SDK has no `ZcashError` case for this refusal, so unlike LedgerIssue.swift (which matches only
+//  on the ZcashError/LedgerClientError case, never on message text), this type has no choice but
+//  to read the Rust error text itself. It arrives as
 //  `ZcashError.rustImportAccountUfvk(message)`, whose message is the raw Rust string, e.g.
 //  "Error while initializing accounts: An account corresponding to the data provided already
 //  exists in the wallet with UUID AccountUuid(67e55044-10b1-426f-9247-bb680e5fe0c8)." That text is

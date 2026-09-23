@@ -235,7 +235,7 @@ import ComposableArchitecture
         await pairingStore.finish()
     }
 
-    @MainActor @Test func connectFailureIsReportedAsConnectionLostAndRescans() async {
+    @MainActor @Test func connectFailureIsReportedAsConnectionLost() async {
         let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
         var state = AddLedgerHWWallet.State()
         state.selectedDevice = device
