@@ -11,376 +11,193 @@ extension DependencyValues {
     }
 }
 
-enum VotingTxHashLookup: Equatable, Sendable {
-    case notFound
-    case present(String)
-}
-
+/// The app's whole voting surface on `zcash_voting`.
+///
+/// Two halves, and the split matters. The store-scoped members read and write
+/// the sidecar database directly and need nothing but an open database. The
+/// round-scoped members go through a ``VotingRoundSession``, which is opened
+/// once per round with ``openRoundSession`` and is where planning, bundle
+/// setup, proving, signing and driving all happen; calling one of them for a
+/// round with no open session throws ``VotingSessionError/notOpen(roundId:)``.
+///
+/// `runRound` and `trackShares` are exclusive per round: a second one while the
+/// first is in flight throws ``VotingRustBackendError/sessionBusy``, because two
+/// drivers over one round would contend for its rows and their events would be
+/// indistinguishable.
 @DependencyClient
 struct VotingCryptoClient {
-    // --- State stream (DB → UI, follows SDKSynchronizer pattern) ---
+    // MARK: - State stream (DB -> UI, follows the SDKSynchronizer pattern)
+
     var stateStream: @Sendable () -> AnyPublisher<VotingDbState, Never>
         = { Empty().eraseToAnyPublisher() }
 
-    /// Re-publish the current DB state for the given round, triggering stateStream subscribers.
+    /// Re-publish the current DB state, triggering `stateStream` subscribers.
+    ///
+    /// The round's own state is the session plan now (`sessionPlan`), which is
+    /// read where it is needed rather than pushed, so nothing publishes a new
+    /// value here yet.
     var refreshState: @Sendable (_ roundId: String) async -> Void = { _ in }
 
-    // --- Database lifecycle ---
-    var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void
-    var setWalletId: @Sendable (_ walletId: String) async throws -> Void
-    var initRound: @Sendable (_ params: VotingRoundParams, _ sessionJson: String?) async throws -> Void
-    var getRoundState: @Sendable (_ roundId: String) async throws -> RoundStateInfo
-    var getVotes: @Sendable (_ roundId: String) async throws -> [VoteRecord]
-    var listRounds: @Sendable () async throws -> [RoundSummaryInfo]
-    /// Delete bundle rows with index >= keepCount, removing skipped bundles
-    /// so that proof_generated only considers signed+proven bundles.
-    var deleteSkippedBundles: @Sendable (_ roundId: String, _ keepCount: UInt32) async throws -> Void
+    // MARK: - Process-wide proving
 
-    /// Warm process-lifetime proving-key caches before the first proof needs them.
+    /// Fix the process-wide proving policy.
+    ///
+    /// Must run before ``warmProvingCaches`` and before the first proof: either
+    /// of those starts the pool on the crate's own default policy, and the
+    /// policy asked for here is then not the one in force.
+    var configureProving: @Sendable (_ policy: VotingProvingPolicy) async throws -> Void
+
+    /// Warm process-lifetime proving-key caches before the first proof needs
+    /// them.
     var warmProvingCaches: @Sendable () async throws -> Void = {}
 
-    // --- Wallet notes ---
-    var getWalletNotes: @Sendable (
-        _ walletDbPath: String,
-        _ snapshotHeight: UInt64,
-        _ networkId: UInt32,
-        _ accountUUID: [UInt8]
-    ) async throws -> [NoteInfo]
+    // MARK: - Wallet teardown
 
-    // --- Bundle management ---
-    var setupBundles: @Sendable (_ roundId: String, _ notes: [NoteInfo]) async throws -> BundleSetupResult
-    var getBundleCount: @Sendable (_ roundId: String) async throws -> UInt32
+    /// Open the window in which nothing may open the sidecar or a round session, for a reset or
+    /// a heal that is about to close the database and delete its file. Balanced by
+    /// ``endWalletTeardown``. See ``VotingTeardown``.
+    var beginWalletTeardown: @Sendable () -> Void = { }
+    var endWalletTeardown: @Sendable () -> Void = { }
+    /// The teardown generation an open should capture, or nil while one is under way -- in which
+    /// case the open must not start at all.
+    var teardownGenerationIfIdle: @Sendable () -> UInt64? = { 0 }
+    /// Whether an open that captured `capturedGeneration` may still go ahead, asked again
+    /// immediately before the call that would create the database or the session.
+    var teardownAllowsOpen: @Sendable (_ capturedGeneration: UInt64) -> Bool = { _ in true }
+    /// Announced when a teardown begins, so a flow that is still alive can stop its in-flight
+    /// opens and give back the sessions it holds rather than wait to be refused.
+    var teardownBegan: @Sendable () -> AnyPublisher<Void, Never> = { Empty().eraseToAnyPublisher() }
 
-    // --- Witness generation & verification ---
-    var generateNoteWitnesses: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ walletDbPath: String,
-        _ notes: [NoteInfo],
-        _ networkId: UInt32
-    ) async throws -> [WitnessData]
-    var verifyWitness: @Sendable (_ witness: WitnessData) async throws -> Bool
+    // MARK: - Database lifecycle
 
-    // --- Crypto operations ---
-    /// Generate a new voting hotkey for `networkId`. The application must persist the returned
-    /// `storedSecret` — it cannot be recovered from the wallet seed (spec `CHP_DESIGN.md` §7.5
-    /// leak point 1 / CHP.md §11.5 N... hotkey is app-owned random material, not a wallet-seed
-    /// derivation). Calling this again produces an unrelated hotkey, not a recovery of the
-    /// previous one.
-    var generateHotkey: @Sendable (_ networkId: UInt32) async throws -> VotingHotkey
-    /// Build a voting PCZT for Keystone signing.
-    /// The PCZT's single Orchard action IS the voting dummy action, so Keystone's
-    /// SpendAuth signature will be over the voting-bound ZIP-244 sighash.
-    var buildVotingPczt: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ notes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeySeed: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ orchardFvkOverride: Data?,
-        _ keystoneSeedFingerprintOverride: Data?
-    ) async throws -> VotingPcztResult
-    var storeTreeState: @Sendable (_ roundId: String, _ treeState: Data) async throws -> Void
-    var extractSpendAuthSignatureFromSignedPczt: @Sendable (
-        _ signedPczt: Data,
-        _ actionIndex: UInt32
-    ) throws -> Data
-    /// Extract the ZIP-244 shielded sighash from finalized PCZT bytes.
-    /// Returns the 32-byte sighash that Keystone signed internally.
-    var extractPcztSighash: @Sendable (_ pcztBytes: Data) throws -> Data
-    /// Resolve the round PIR endpoint, fetch ZKP #1 IMT proofs, and cache them in the voting DB.
-    /// Requires `buildVotingPczt` to have stored delegation data for this bundle first.
-    /// `polyLen` is the dynamic config's `pir_layout.poly_len` (YPIR RLWE polynomial degree,
-    /// 2048 or 4096) — load-bearing since `zcash_voting` 3.0, which validates it locally and
-    /// re-checks it against the PIR server at connect.
-    var precomputeDelegationPir: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64,
-        _ networkId: UInt32,
-        _ pirDepth: UInt32,
-        _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32,
-        _ polyLen: UInt32
-    ) async throws -> DelegationPirPrecomputeResult
-    /// Build and prove the real delegation ZKP (#1). Long-running.
-    /// Loads data from voting DB and wallet DB, fetches IMT proofs from server,
-    /// generates a real Halo2 proof, and reports progress.
-    /// Requires `buildVotingPczt` to have been called first for this bundle —
-    /// it stores the delegation data (alpha, secrets, sighash) needed by the prover.
-    /// Pass every PIR endpoint configured for the round, plus the round's
-    /// expected snapshot height. The SDK probes each endpoint's `GET /root`
-    /// and uses the first endpoint (in config order) whose served snapshot
-    /// height equals `expectedSnapshotHeight` exactly. Endpoints that are
-    /// behind, ahead, missing snapshot metadata, or unreachable are excluded.
-    /// If none match, the stream finishes with a `PirSnapshotResolverError`
-    /// — there is no fallback to mismatched endpoints.
-    var buildAndProveDelegation: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ senderSeed: [UInt8],
-        _ hotkeyStoredSecret: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64,
-        _ pirDepth: UInt32,
-        _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32,
-        _ polyLen: UInt32
-    ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
-    /// Prepares bundle `bundleIndex`'s delegation proof before the user reaches Confirm, using
-    /// only viewing material — the Orchard FVK, the stored hotkey secret, and the seed
-    /// fingerprint — never the wallet seed. Runs at speculative priority
-    /// (`VotingProvingIntent.speculative`) until `promoteDelegationProving` raises the proving
-    /// pool for it.
+    var openDatabase: @Sendable (_ path: String, _ networkId: UInt32) async throws -> Void
+    var setWalletId: @Sendable (_ walletId: String) async throws -> Void
+    /// Close every open round session, then the store itself.
+    var closeDatabase: @Sendable () async -> Void
+
+    // MARK: - Store-scoped reads and maintenance
+
+    var listRounds: @Sendable () async throws -> [VotingRoundSummary]
+    /// Plan a round from the sidecar alone, without opening a session for it.
+    var roundPlan: @Sendable (_ roundId: String, _ proposalIds: [UInt32]) async throws -> VotingRoundPlan
+    /// The rounds of every wallet that still owe helper-share work.
+    var pendingShareRounds: @Sendable () async throws -> [VotingPendingShareRound]
+    /// Drop the round's cached vote tree so the next sync starts from scratch.
+    var resetVoteTree: @Sendable (_ roundId: String) async throws -> Void
+    /// Clear per-session state for a round, leaving signed and registered
+    /// bundles alone -- the safe "resume in place" cleanup.
+    var resetSessionState: @Sendable (_ roundId: String) async throws -> Void
+    var deleteRound: @Sendable (_ roundId: String, _ discardingRecovery: Bool) async throws -> Void
+    /// Delete bundle rows with index >= `keepCount`, so the skipped bundles stop
+    /// counting towards the round's remaining work.
+    var deleteSkippedBundles: @Sendable (_ roundId: String, _ keepCount: UInt32) async throws -> Void
+    /// Retry a combined delegate-and-vote cast the chain refused, answering
+    /// whether there was one to retry.
+    var retryBlockedCombinedCast: @Sendable (_ roundId: String, _ bundleIndex: UInt32) async throws -> Bool
+    /// Forget the recorded ballot decisions for the named proposals.
+    var clearBallotIntents: @Sendable (_ roundId: String, _ proposalIds: [UInt32]) async throws -> Void
+    /// The Keystone signatures stored for a round.
+    var keystoneSignatures: @Sendable (_ roundId: String) async throws -> [VotingKeystoneSignatureRecord]
+
+    // MARK: - Round session lifecycle
+
+    /// Open a round session, replacing any session the round already has.
+    ///
+    /// The route is fixed for the session's whole life and `.tor` fails closed:
+    /// a session that cannot have the Tor route is refused rather than opened
+    /// over a direct connection.
+    ///
+    /// The route governs every service the session touches: chain and
+    /// helper traffic, PIR queries and vote-tree sync. On `.tor` all of it
+    /// rides Tor and fails closed; nothing falls back to a direct
+    /// connection.
+    var openRoundSession: @Sendable (
+        _ inputs: VotingSessionInputs,
+        _ binding: VotingSessionBinding,
+        _ route: VotingTransportRoute,
+        _ epoch: UInt64
+    ) async throws -> Void
+    var closeRoundSession: @Sendable (_ roundId: String) async -> Void
+    var closeAllRoundSessions: @Sendable () async -> Void
+    /// Stop the round's bounded passes. Permanent: a cancelled session is
+    /// finished, not paused, and the round is reopened rather than resumed.
+    var cancelRoundSession: @Sendable (_ roundId: String) async -> Void
+    /// Move the round's submission epoch, invalidating passes that captured an
+    /// older one.
+    var setOperationEpoch: @Sendable (_ roundId: String, _ epoch: UInt64) async -> Void
+    /// Push a refreshed service configuration -- the helper fleet and the
+    /// vote-tree nodes -- into every round session already open. Round timing
+    /// is per round, not per service, and is never carried here. A round with
+    /// no open session is untouched; a session that closed in the meantime
+    /// simply keeps whatever it already had.
+    var updateHostConfiguration: @Sendable (_ overrides: VotingHostOverrides) async -> Void = { _ in }
+
+    // MARK: - Round session work
+
+    var sessionPlan: @Sendable (_ roundId: String) async throws -> VotingRoundPlan
+    /// Record ballot decisions and answer with the refreshed plan.
+    var setBallotIntents: @Sendable (_ roundId: String, _ intents: [VotingBallotIntent]) async throws -> VotingRoundPlan
+    /// Create the round's row and its delegation bundle rows. Reads the wallet,
+    /// so an account with nothing eligible is refused as a typed
+    /// ``VotingError`` rather than as a fault.
+    var setupBundles: @Sendable (_ roundId: String) async throws -> VotingBundleLayout
+    /// Whether this account can vote in the round, persisting nothing.
+    var eligibility: @Sendable (_ roundId: String) async throws -> VotingEligibilityReport
+    /// Persist one bundle's witnesses and padded secrets and warm its PIR rows.
+    var precomputePir: @Sendable (_ roundId: String, _ bundleIndex: UInt32) async throws -> VotingPirPrecomputeReport
+    /// Generate one bundle's delegation proof ahead of a run, or report the
+    /// persisted one it reused.
+    ///
+    /// Cancelling the consuming task stops the stream but not a proof already
+    /// running: the crate takes no cancellation signal for one, and a proof that
+    /// finishes is persisted and reused, so nothing is wasted.
     var precomputeDelegationProof: @Sendable (
         _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ bundleNotes: [NoteInfo],
-        _ orchardFvk: Data,
-        _ hotkeyStoredSecret: [UInt8],
-        _ seedFingerprint: Data,
-        _ accountIndex: UInt32,
-        _ roundName: String,
-        _ pirEndpoints: [String],
-        _ expectedSnapshotHeight: UInt64,
-        _ pirDepth: UInt32,
-        _ tier0Layers: UInt32,
-        _ tier1Layers: UInt32,
-        _ polyLen: UInt32
-    ) -> AsyncThrowingStream<ProofEvent, Error>
-        = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ in AsyncThrowingStream { $0.finish() } }
-    /// Raises the proving pool for the rest of the current speculative proof — and any further
-    /// speculative proofs of this flow — until the precompute run finishes. Call once Confirm
-    /// needs the proof that `precomputeDelegationProof` started ahead of time.
-    var promoteDelegationProving: @Sendable () async -> Void = {}
-    /// Clears the promotion armed by `promoteDelegationProving`, so it cannot leak into the next
-    /// precompute run. Called when the precompute effect finishes or fails.
-    var resetDelegationProvingPromotion: @Sendable () -> Void = {}
+        _ bundleIndex: UInt32
+    ) -> AsyncThrowingStream<VotingDelegationProofEvent, Error>
+        = { _, _ in AsyncThrowingStream { $0.finish() } }
+    /// The redacted PCZTs a Keystone device signs, one per named bundle, in the
+    /// order named.
+    var keystoneSigningRequests: @Sendable (
+        _ roundId: String,
+        _ bundleIndices: [UInt32]
+    ) async throws -> [VotingKeystoneSigningRequest]
+    /// Lift the signatures off the PCZTs a Keystone device returned and store
+    /// them. One atomic idempotent batch.
+    var storeKeystoneSignatures: @Sendable (
+        _ roundId: String,
+        _ signed: [VotingKeystoneSignedBundle]
+    ) async throws -> VotingKeystoneSignatureBatchResult
+    /// Drive the round to quiescence, narrating as it goes.
+    ///
+    /// The driver itself does not fail: a run that could do nothing says why
+    /// through the report's quiescence, which arrives as the stream's last
+    /// element. A thrown error is the call around it -- a session that is closed
+    /// or already driving, or a signer this host cannot build.
+    var runRound: @Sendable (
+        _ roundId: String,
+        _ signer: VotingDelegationSigner,
+        _ policy: VotingRoundDrivePolicy
+    ) -> AsyncThrowingStream<VotingRoundRunEvent, Error>
+        = { _, _, _ in AsyncThrowingStream { $0.finish() } }
+    /// Drive the round's unconfirmed helper shares to confirmation, on the same
+    /// terms as `runRound` and without a signer.
+    var trackShares: @Sendable (
+        _ roundId: String,
+        _ policy: VotingShareTrackingPolicy
+    ) -> AsyncThrowingStream<VotingShareTrackingRunEvent, Error>
+        = { _, _ in AsyncThrowingStream { $0.finish() } }
+
+    // MARK: - Key material
+
+    /// Generate a new voting hotkey for `networkId`. The application must
+    /// persist the returned `storedSecret` -- it cannot be recovered from the
+    /// wallet seed, and calling this again produces an unrelated hotkey rather
+    /// than recovering the previous one.
+    var generateHotkey: @Sendable (_ networkId: UInt32) async throws -> VotingHotkey
     /// Extract Orchard FVK bytes from a UFVK string.
     var extractOrchardFvkFromUfvk: @Sendable (_ ufvkStr: String, _ networkId: UInt32) throws -> Data
-    /// Build, sign, and persist the cast-vote commitment for one proposal in a single call.
-    /// Replaces the former three-member sequence — build the commitment, sign the cast vote,
-    /// build the share payloads — because `zcash_voting` now owns that orchestration
-    /// internally and the intermediate artifacts are no longer separable steps.
-    ///
-    /// `voteCommitmentTreePosition` must be `0` for the provisional call in the sanctioned
-    /// sequence (plan Task 9, spec `CHP_DESIGN.md` §3/A2 step 1) — the true position is not
-    /// known until the cast-vote transaction confirms on chain. The call is idempotent:
-    /// repeating it for the same (round, bundle, proposal) returns the persisted recovery
-    /// bundle rather than re-proving.
-    ///
-    /// `hotkeyStoredSecret` is the voting hotkey's stored secret bytes (plan Task 10), not a
-    /// derived seed. The returned pair feeds `VotingAPIClient.submitVoteCommitment(bundle:
-    /// signature:)` verbatim — `bundle.sharesHash` is populated empty; `submitVoteCommitment`'s
-    /// wire-body construction never reads it (verified: `VotingAPIClientLiveKey.swift:912-933`).
-    // swiftlint:disable:next function_parameter_count
-    var commitVote: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ hotkeyStoredSecret: [UInt8],
-        _ proposalId: UInt32,
-        _ choice: VoteChoice,
-        _ numOptions: UInt32,
-        _ voteCommitmentTreePosition: UInt64,
-        _ vanAuthPath: [Data],
-        _ vanPosition: UInt32,
-        _ vanAnchorHeight: UInt32,
-        _ singleShare: Bool
-    ) async throws -> (bundle: VoteCommitmentBundle, signature: CastVoteSignature)
-    /// Produce this wallet's own SpendAuth signature for one delegation bundle.
-    /// The software counterpart of the Keystone QR round-trip: `zcash_voting` 2.0 no longer
-    /// derives account keys or signs for its callers, and prescribes exactly this instead —
-    /// load the bundle's signing request, derive the account SpendAuth key from the seed,
-    /// randomize it with the request's randomizer, sign the request's sighash. All of it
-    /// happens inside the SDK; the seed goes in, only the detached signature comes back.
-    /// Feed the result straight into `getDelegationSubmission`.
-    var signDelegationRequest: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ senderSeed: [UInt8],
-        _ hotkeyStoredSecret: [UInt8],
-        _ networkId: UInt32,
-        _ accountIndex: UInt32,
-        _ roundName: String
-    ) async throws -> (signature: Data, sighash: Data)
-
-    /// Reconstruct the chain-ready delegation TX payload from a previously-produced
-    /// SpendAuth signature + ZIP-244 sighash. `zcash_voting` no longer derives account keys
-    /// or signs on the caller's behalf, so an externally-produced signature is the only
-    /// remaining path — this one member now serves both the Keystone-signed call site
-    /// (`VotingCoordFlowCoordinator.swift:2900`, signature off the scanned QR) and the
-    /// software-signed call sites (`:3557`, `:3591` — see this task's step 8.10 finding for
-    /// their unresolved signature source).
-    var getDelegationSubmission: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ signature: Data,
-        _ sighash: Data
-    ) async throws -> DelegationRegistration
-    var storeVanPosition: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ position: UInt32) async throws -> Void
-    var syncVoteTree: @Sendable (_ roundId: String, _ nodeUrl: String) async throws -> UInt32
-    var generateVanWitness: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ anchorHeight: UInt32) async throws -> VanWitness
-    var markVoteSubmitted: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ txHash: String) async throws -> Void
-    /// Drop the in-memory TreeClient so the next `syncVoteTree` starts fresh.
-    /// Recovers from stale state after commitment tree timeout.
-    var resetTreeClient: @Sendable () async throws -> Void
     /// Extract the Orchard nc_root from a protobuf-encoded TreeState.
     var extractNcRoot: @Sendable (_ treeStateBytes: Data) throws -> Data
-
-    // --- Recovery state (stored in the voting SQLite DB) ---
-
-    /// Store the TX hash of a delegation bundle that has been submitted to the chain.
-    var storeDelegationTxHash: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ txHash: String
-    ) async throws -> Void
-    /// Load a previously stored delegation TX hash for a bundle.
-    /// Returns `.notFound` when the DB has no row; `throws` reserved for FFI failures.
-    var getDelegationTxHash: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32
-    ) async throws -> VotingTxHashLookup
-    /// Persist a vote TX hash for a bundle + proposal immediately after submission.
-    var storeVoteTxHash: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ txHash: String
-    ) async throws -> Void
-    /// Load a previously stored vote TX hash.
-    /// Returns `.notFound` when the DB has no row; `throws` reserved for FFI failures.
-    var getVoteTxHash: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> VotingTxHashLookup
-    /// Record a confirmed cast-vote transaction in one atomic step.
-    ///
-    /// `eventsJson` is the confirmation-events array the app's existing confirmation polling
-    /// already fetches (`VotingAPIClient.fetchTxConfirmation(_:_:_:).events`), serialized as JSON —
-    /// a list of `{"type": …, "attributes": [{"key": …, "value": …}]}` objects. Callers must
-    /// not parse `leaf_index` themselves; that is exactly the duplicated state this entry point
-    /// exists to delete (spec `CHP_DESIGN.md` §3/A2 step 4).
-    var confirmVoteSubmission: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32,
-        _ txHash: String,
-        _ eventsJson: String
-    ) async throws -> VoteConfirmationInfo
-    /// Read the persisted commitment-recovery bundle for a (round, bundle, proposal) as the
-    /// raw JSON `commitVote` wrote — opaque to this layer; feed it straight into
-    /// `recoverWireJson`. Distinct from `getVoteCommitmentBundle`/
-    /// `getVoteCommitmentBundleWithPosition`, which decode it as the app's own
-    /// `VoteCommitmentBundle` — a decode target that no longer matches what `commitVote`
-    /// persists (see `## CORRECTIONS` item 13 in the T9 plan notes).
-    var getCommitmentBundleJson: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> (bundleJson: String, vcTreePosition: UInt64)?
-    /// Rebuild one helper-server share payload as `zcash_voting`'s own wire JSON, with the
-    /// confirmed vote-commitment-tree position and the scheduled submit time late-bound into
-    /// it. POST the returned string verbatim — do not decode, re-shape, or re-encode it.
-    var recoverWireJson: @Sendable (
-        _ commitmentBundleJson: String,
-        _ proposalId: UInt32,
-        _ shareIndex: UInt32,
-        _ voteCommitmentTreePosition: UInt64,
-        _ submitAt: UInt64
-    ) async throws -> String
-    /// List the share indices the crate can actually recover from a persisted commitment
-    /// bundle (`zcash_voting::share::recover_payloads`'s own single-share slicing — one
-    /// share when the vote was single-share, every built share otherwise). Crash recovery
-    /// iterates this list instead of guessing `singleShare ? 1 : numOptions`, which
-    /// under-delivered whenever the built share count differed from the option count
-    /// (finding #9: server accepted all 16 built shares on a 2-option proposal; the guess
-    /// would have delivered 2).
-    var recoverableShareIndices: @Sendable (
-        _ commitmentBundleJson: String
-    ) async throws -> [UInt32]
-    /// Persist a Keystone bundle signature so it survives app restarts.
-    var storeKeystoneBundleSignature: @Sendable (
-        _ roundId: String,
-        _ info: KeystoneBundleSignatureInfo
-    ) async throws -> Void
-    /// Load all persisted Keystone bundle signatures for a round.
-    var loadKeystoneBundleSignatures: @Sendable (
-        _ roundId: String
-    ) async throws -> [KeystoneBundleSignatureInfo]
-    /// Load a persisted vote commitment bundle (nil if never stored).
-    var getVoteCommitmentBundle: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> VoteCommitmentBundle?
-    /// Load a persisted vote commitment bundle with its VC tree position (needed for share resubmission).
-    var getVoteCommitmentBundleWithPosition: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32,
-        _ proposalId: UInt32
-    ) async throws -> (bundle: VoteCommitmentBundle, vcTreePosition: UInt64)?
-    /// Clear recovery state for a round (keystone sigs, TX hashes).
-    var clearRecoveryState: @Sendable (
-        _ roundId: String
-    ) async throws -> Void
-    /// Clear per-session voting state for a round without touching signed or
-    /// registered bundles — the safe "resume in place" cleanup. Unlike
-    /// `clearRound`, this can never destroy delegation material an on-chain
-    /// registration may already depend on.
-    var resetSessionState: @Sendable (_ roundId: String) async throws -> Void
-    /// Stored ZIP-244 sighash of the bundle's persisted delegation PCZT.
-    /// Throws when the bundle has no completed delegation setup (e.g. the PCZT
-    /// build never stored its signing fields, or they were cleared).
-    var getStoredDelegationSighash: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32
-    ) async throws -> Data
-    /// Delete one bundle's persisted Keystone signature. The bundle becomes
-    /// eligible again for `resetSessionState`'s guarded cleanup, which leaves
-    /// signed bundles untouched. Deleting a missing row succeeds.
-    var clearKeystoneSignature: @Sendable (
-        _ roundId: String,
-        _ bundleIndex: UInt32
-    ) async throws -> Void
-
-    // --- Share delegation tracking ---
-
-    /// Compute the nullifier for a vote share (pure function, no DB needed).
-    var computeShareNullifier: @Sendable (_ voteCommitment: [UInt8], _ shareIndex: UInt32, _ primaryBlind: [UInt8]) throws -> String
-    /// Record a share delegation after sending to helper servers.
-    ///
-    /// The share's nullifier is no longer supplied by the caller: `zcash_voting` derives it
-    /// from the committed vote's recovery state, so a caller cannot record a nullifier that
-    /// disagrees with the share it belongs to. Read it back via `getShareDelegations`/
-    /// `getUnconfirmedDelegations` when polling `VotingAPIClient.fetchShareStatus`.
-    var recordShareDelegation: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ sentToURLs: [String], _ submitAt: UInt64) async throws -> Void
-    /// Get all share delegations for a round.
-    var getShareDelegations: @Sendable (_ roundId: String) async throws -> [VotingShareDelegation]
-    /// Get unconfirmed share delegations for a round.
-    var getUnconfirmedDelegations: @Sendable (_ roundId: String) async throws -> [VotingShareDelegation]
-    /// Mark a share delegation as confirmed on-chain.
-    var markShareConfirmed: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32) async throws -> Void
-    /// Append new server URLs to a share delegation's sent_to_urls.
-    var addSentServers: @Sendable (_ roundId: String, _ bundleIndex: UInt32, _ proposalId: UInt32, _ shareIndex: UInt32, _ newURLs: [String]) async throws -> Void
-}
-
-/// Positions a mined cast-vote transaction confirmed. Mirrors
-/// `VotingRustBackend.VotingVoteConfirmation` (SDK-lane Task 3) field for field.
-struct VoteConfirmationInfo: Equatable, Sendable {
-    let txHash: String
-    let vanLeafPosition: UInt32
-    let voteCommitmentTreePosition: UInt64
 }
 #endif

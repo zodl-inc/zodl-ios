@@ -421,12 +421,10 @@ enum VotingErrorMapper {
     /// Whether a raw error is the NULL-column read that means this device's
     /// delegation setup for a round is incomplete.
     ///
-    /// Extracted so `DelegationDiagnosis` can be consulted at call sites that
-    /// know WHICH round failed. The message this predicate selects here is a
-    /// fallback: it describes the symptom, and cannot tell a setup that was
-    /// interrupted before anything was submitted from one whose delegation is
-    /// already on chain. Only the round's observable state separates those,
-    /// and this function does not have it.
+    /// The message this predicate selects describes the symptom only: it
+    /// cannot tell a setup that was interrupted before anything was submitted
+    /// from one whose delegation is already on chain. Only the round's own
+    /// state separates those, and this function does not have it.
     static func isIncompleteDelegationSetup(_ rawError: String) -> Bool {
         rawError.contains("no alpha for round") || rawError.contains("Invalid column type Null")
     }

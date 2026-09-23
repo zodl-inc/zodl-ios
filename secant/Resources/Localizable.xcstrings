@@ -3948,6 +3948,23 @@
         }
       }
     },
+    "coinVote.ineligible.belowMinimumMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your wallet held shielded funds at snapshot block height #%1$@, but less than the %2$@ ZEC minimum this voting round required."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu billetera tenía fondos protegidos en la altura de bloque de la instantánea #%1$@, pero menos del mínimo de %2$@ ZEC que requería esta ronda de votación."
+          }
+        }
+      }
+    },
     "coinVote.ineligible.detailBallots" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4307,23 +4324,6 @@
         }
       }
     },
-    "coinVote.pollsList.insufficientBalanceMessage" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your wallet is not eligible for this voting round because it held %1$@ ZEC at snapshot block height #%2$@. A minimum balance of %3$@ ZEC was required to participate."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your wallet is not eligible for this voting round because it held %1$@ ZEC at snapshot block height #%2$@. A minimum balance of %3$@ ZEC was required to participate."
-          }
-        }
-      }
-    },
     "coinVote.pollsList.insufficientBalanceTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4337,6 +4337,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Insufficient Balance"
+          }
+        }
+      }
+    },
+    "coinVote.pollsList.legacyRoundMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An earlier version of the app had started submitting your vote for this poll, and it was still being confirmed when the app was updated. To avoid sending anything twice, this version only shows the poll. Anything already confirmed still counts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una versión anterior de la aplicación había empezado a enviar tu voto para esta votación y aún se estaba confirmando cuando se actualizó la aplicación. Para no enviar nada dos veces, esta versión solo muestra la votación. Lo que ya se confirmó sigue contando."
+          }
+        }
+      }
+    },
+    "coinVote.pollsList.legacyRoundTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll can't be continued here"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta votación no se puede continuar aquí"
           }
         }
       }
@@ -5869,6 +5903,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Some votes could not be submitted."
+          }
+        }
+      }
+    },
+    "coinVote.submission.partialFailureBundlesSkippedMultiple" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@ bundles skipped)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@ paquetes omitidos)"
+          }
+        }
+      }
+    },
+    "coinVote.submission.partialFailureBundlesSkippedSingle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (1 bundle skipped)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (1 paquete omitido)"
           }
         }
       }
