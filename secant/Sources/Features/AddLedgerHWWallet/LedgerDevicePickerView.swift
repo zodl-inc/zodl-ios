@@ -112,7 +112,7 @@ struct LedgerDevicePickerView: View {
             store.send(.deviceTapped(device))
         } label: {
             HStack(spacing: 0) {
-                Asset.Assets.Partners.ledgerLogo.image
+                Asset.Assets.Partners.ledgerMark.image
                     .resizable()
                     .frame(width: 24, height: 24)
                     .padding(8)

@@ -35,7 +35,6 @@ extension HomeView {
                         icon: walletAccount.vendor.icon(),
                         title: walletAccount.vendor.name(),
                         address: walletAccount.unifiedAddress ?? String(localizable: .receiveErrorCantExtractUnifiedAddress),
-                        vendor: walletAccount.vendor,
                         selected: store.selectedWalletAccount == walletAccount,
                         showsSelectedBadge: store.walletAccounts.count > 1
                     ) {
@@ -64,25 +63,18 @@ extension HomeView {
         .padding(.horizontal, 4)
     }
 
-    /// The 40 x 40 vendor logo. Ledger's mark (`Partners.ledgerLogo`) is already a filled circle,
-    /// so it draws edge-to-edge; Zodl and Keystone keep the smaller mark centred on a
+    /// The 40 x 40 vendor logo: every vendor's mark, drawn at 24 x 24 with 8 pt padding on a
     /// `Design.Surfaces.bgAlt` circle. Kept separate so `walletAccountView` can overlay the
     /// selected badge on top of it.
-    @ViewBuilder private func walletAccountLogo(vendor: WalletAccount.Vendor, icon: Image) -> some View {
-        if vendor == .ledger {
-            icon
-                .resizable()
-                .frame(width: 40, height: 40)
-        } else {
-            icon
-                .resizable()
-                .frame(width: 24, height: 24)
-                .padding(8)
-                .background {
-                    Circle()
-                        .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                }
-        }
+    @ViewBuilder private func walletAccountLogo(icon: Image) -> some View {
+        icon
+            .resizable()
+            .frame(width: 24, height: 24)
+            .padding(8)
+            .background {
+                Circle()
+                    .fill(Design.Surfaces.bgAlt.color(colorScheme))
+            }
     }
 
     /// The selected-account badge overlaid on the bottom-trailing corner of the logo.
@@ -104,7 +96,6 @@ extension HomeView {
         icon: Image,
         title: String,
         address: String,
-        vendor: WalletAccount.Vendor,
         selected: Bool = false,
         showsSelectedBadge: Bool = false,
         action: (() -> Void)? = nil
@@ -114,7 +105,7 @@ extension HomeView {
                 action?()
             } label: {
                 HStack(spacing: 12) {
-                    walletAccountLogo(vendor: vendor, icon: icon)
+                    walletAccountLogo(icon: icon)
                         .overlay(alignment: .bottomTrailing) {
                             if selected && showsSelectedBadge {
                                 selectedWalletAccountBadge()
