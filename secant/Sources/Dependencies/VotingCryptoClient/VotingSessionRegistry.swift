@@ -142,6 +142,13 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
     /// rather than guess from the order two tasks happened to run in.
     private(set) var joinedOpenCount = 0
 
+    /// How many open attempts are waiting behind an earlier drain of their
+    /// round before they build, for tests and diagnostics. Counted before the
+    /// wait begins and cleared when it ends, so a test that stages an open
+    /// behind a drain can know the attempt is inside that wait rather than
+    /// guess whether its task has run yet.
+    private(set) var attemptsWaitingOnDrains = 0
+
     init(makeSession: @escaping Factory) {
         self.makeSession = makeSession
     }
@@ -356,8 +363,12 @@ actor VotingSessionRegistryCore<Session: VotingRegistrySession> {
         // would never finish. The cancellation such a drain delivers is what
         // stops this attempt instead, at the fences below.
         let inherited = drains.values.filter { $0.key == roundId }.map(\.task)
-        for task in inherited {
-            await task.value
+        if !inherited.isEmpty {
+            attemptsWaitingOnDrains += 1
+            defer { attemptsWaitingOnDrains -= 1 }
+            for task in inherited {
+                await task.value
+            }
         }
 
         guard generation == generationAtStart, !Task.isCancelled else {

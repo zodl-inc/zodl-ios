@@ -92,9 +92,10 @@ import Testing
 
     /// Staged rather than timed. The overlap this is about is the window
     /// between an open registering its attempt and its session arriving, and
-    /// the factory holds that window open until the second caller is on its way
-    /// in — where a sleep would close it early under load and fail the
-    /// assertion on correct behaviour.
+    /// the factory holds that window open until the second caller has joined
+    /// the attempt — where a sleep, or a release from the second caller's own
+    /// task, would close it early under load and fail the assertion on
+    /// correct behaviour.
     @Test func twoConcurrentOpensForOneRoundBuildOneSessionAndShareItsOutcome() async throws {
         let factory = SlowFactory()
         let registry = VotingSessionRegistry { inputs, binding, route, epoch in
@@ -115,17 +116,20 @@ import Testing
         await wait(for: factory.entered, "the first open to reach the factory")
 
         let second = Task {
-            // Released from here, as this caller's last act before entering the
-            // registry: the attempt it has to join is provably still in flight
-            // when it gets there.
-            await factory.released.open()
-            return try await registry.open(
+            try await registry.open(
                 inputs: inputs,
                 binding: VotingSessionBinding(roster: []),
                 route: .direct,
                 epoch: 0
             )
         }
+        // The factory stays shut until the second caller has joined the
+        // attempt: released any earlier, the first open's refusal could clear
+        // the attempt before the second reached the registry, which would then
+        // build a second one — correct registry behaviour that this test's
+        // one-call assertion would report as the defect it rules out.
+        await settle("the second open to join the attempt in flight") { await registry.joinedOpenCount == 1 }
+        await factory.released.open()
 
         let outcomes = [await first.result, await second.result]
 
@@ -682,7 +686,10 @@ import Testing
         }
         // `closeAll` moves the generation in its synchronous prologue, before it
         // can suspend, so the bump is the teardown's own proof that it is
-        // inside. Nothing here waits on the clock for it.
+        // inside. Nothing here waits on the clock for it. The staging left the
+        // superseding attempt inside its wait behind the first attempt's drain,
+        // where cancellation is not answered, so the drain waiting for it is
+        // still pending when the count below is read.
         await settle("the teardown to enter the registry") {
             await registry.generation == generationBefore + 1
         }
@@ -723,7 +730,10 @@ import Testing
         let draining = Task { await registry.closeAll() }
         // The generation moves in `closeAll`'s synchronous prologue, and what is
         // opening is given up in that same prologue: seeing the bump means the
-        // superseding attempt has been cancelled too.
+        // superseding attempt has been cancelled too -- inside its wait behind
+        // the parked attempt's drain, where the staging left it and where
+        // cancellation is not answered, so the drain waiting for it is still
+        // pending below.
         await settle("the teardown to enter the registry") {
             await registry.generation == generationBefore + 1
         }
@@ -863,10 +873,21 @@ import Testing
             )
         }
         // The supersede has happened: the wait for the attempt it gave up is a
-        // drain of this registry, and the second open's own attempt is behind it.
+        // drain of this registry.
         await settle(
             "the second open to give up the parked attempt",
             until: { await registry.pendingDrainCount == 1 },
+            sourceLocation: sourceLocation
+        )
+        // And the second open's own attempt is inside its wait behind that
+        // drain. That wait does not answer cancellation, so a teardown reaching
+        // the registry from here finds the attempt still pending; one reaching
+        // an attempt that had not run yet would see it leave at its first
+        // cancellation check instead, a different state from the one every
+        // test here stages.
+        await settle(
+            "the second open to start waiting behind that drain",
+            until: { await registry.attemptsWaitingOnDrains == 1 },
             sourceLocation: sourceLocation
         )
 
