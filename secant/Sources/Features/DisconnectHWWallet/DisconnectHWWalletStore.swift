@@ -16,8 +16,7 @@ struct DisconnectHWWallet {
         var isProcessing = false
         var isFailureSheetUp = false
         var isSheetUp = false
-        var selectedVendor: WalletAccount.Vendor?
-        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         // support
         var canSendMail = false
@@ -25,18 +24,15 @@ struct DisconnectHWWallet {
         var messageToBeShared: String?
         var supportData: SupportData?
 
-        /// The connected hardware vendors, keystone before ledger — the fixed order both the
-        /// card list and `onAppear`'s single-vendor preselection rely on. `.zcash` (the default,
-        /// non-hardware vendor) never appears here.
-        var connectedHWVendors: [WalletAccount.Vendor] {
-            var vendors: [WalletAccount.Vendor] = []
-            if walletAccounts.contains(where: { $0.vendor == .keystone }) {
-                vendors.append(.keystone)
+        /// MOB-2020: this screen follows the SELECTED account, not "whichever hardware wallet is
+        /// connected" — a Keystone account's `vendor` is `.keystone`, a Ledger account's is
+        /// `.ledger`, and a Zodl account (or no selection) is `nil`, even when both a Keystone and
+        /// a Ledger are connected elsewhere in the wallet.
+        var vendor: WalletAccount.Vendor? {
+            guard let selectedWalletAccount, selectedWalletAccount.vendor.isHWWallet() else {
+                return nil
             }
-            if walletAccounts.contains(where: { $0.vendor == .ledger }) {
-                vendors.append(.ledger)
-            }
-            return vendors
+            return selectedWalletAccount.vendor
         }
 
         init(isProcessing: Bool = false) {
@@ -56,7 +52,6 @@ struct DisconnectHWWallet {
         case sendSupportMailFinished
         case shareFinished
         case tryAgain
-        case vendorTapped(WalletAccount.Vendor)
     }
 
     @Dependency(\.ledgerClient) var ledgerClient
@@ -73,22 +68,13 @@ struct DisconnectHWWallet {
             case .onAppear:
                 // TCA Store is @MainActor; reducer body always runs on main.
                 state.canSendMail = MainActor.assumeIsolated { MFMailComposeViewController.canSendMail() }
-                // Only one hardware vendor connected -> nothing to choose, preselect it. With
-                // both connected the user picks a card (`vendorTapped`), so nothing is preselected.
-                if state.connectedHWVendors.count == 1 {
-                    state.selectedVendor = state.connectedHWVendors.first
-                }
                 return .none
 
             case .binding:
                 return .none
 
-            case .vendorTapped(let vendor):
-                state.selectedVendor = vendor
-                return .none
-
             case .disconnectTapped:
-                guard state.selectedVendor != nil else {
+                guard state.vendor != nil else {
                     return .none
                 }
                 state.isSheetUp = true
@@ -97,10 +83,7 @@ struct DisconnectHWWallet {
 
             case .disconnectConfirmed:
                 state.isSheetUp = false
-                guard let selectedVendor = state.selectedVendor else {
-                    return .none
-                }
-                guard let account = state.walletAccounts.first(where: { $0.vendor == selectedVendor }) else {
+                guard let account = state.selectedWalletAccount, account.vendor.isHWWallet() else {
                     return .none
                 }
                 return .run { send in
@@ -111,7 +94,7 @@ struct DisconnectHWWallet {
                         // Bluetooth link. Only unwind those once the account delete itself has
                         // actually gone through -- a failed delete must leave the binding in place
                         // so `tryAgain` still has something to retry against.
-                        if selectedVendor == .ledger {
+                        if account.vendor == .ledger {
                             try? walletStorage.deleteLedgerBinding(account.id)
                             try? walletStorage.clearEncryptionKeys(account.account)
                             await ledgerClient.disconnect()

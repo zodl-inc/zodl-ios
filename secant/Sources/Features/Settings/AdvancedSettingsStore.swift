@@ -35,8 +35,12 @@ struct AdvancedSettings {
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
-        var isHWWalletConnected: Bool {
-            walletAccounts.contains { $0.vendor.isHWWallet() }
+        /// MOB-2020: Advanced Settings follows the SELECTED account, not "is any hardware wallet
+        /// connected" — a Zodl account shows no "Disconnect Hardware" row, a Keystone account's
+        /// row disconnects only the Keystone, and a Ledger account's row disconnects only the
+        /// Ledger, even when both hardware wallets are connected.
+        var isHWWalletAccountSelected: Bool {
+            selectedWalletAccount?.vendor.isHWWallet() ?? false
         }
 
         /// MOB-2020: a Ledger account has no signing path yet (Phase 3), so the restart-migration

@@ -42,7 +42,7 @@ struct DisconnectHWWalletView: View {
 
                 Spacer()
 
-                connectedHWWalletCards()
+                connectedHWWalletCard()
                     .padding(.bottom, Design.Spacing._3xl)
 
                 if store.isProcessing {
@@ -60,7 +60,7 @@ struct DisconnectHWWalletView: View {
                     ) {
                         store.send(.disconnectTapped)
                     }
-                    .disabled(store.selectedVendor == nil)
+                    .disabled(store.vendor == nil)
                     .padding(.bottom, 24)
                 }
 
@@ -93,12 +93,12 @@ struct DisconnectHWWalletView: View {
         .screenTitle(String(localizable: .disconnectHWWalletTitle))
     }
 
-    /// "Disconnect Keystone" / "Disconnect Ledger" once a card is picked, the vendor-agnostic
-    /// "Disconnect Hardware" while nothing is selected yet (single-vendor screens land here for a
-    /// beat until `onAppear`'s preselection lands; a both-connected screen stays here until the
-    /// user taps a card).
+    /// "Disconnect Keystone" / "Disconnect Ledger" for the selected account's vendor, the
+    /// vendor-agnostic "Disconnect Hardware" for a Zodl account or no selection — this screen is
+    /// reached only from the selected account's Advanced Settings, so `nil` is not expected in
+    /// practice.
     @ViewBuilder private func headingText() -> some View {
-        switch store.selectedVendor {
+        switch store.vendor {
         case .keystone:
             Text(localizable: .deleteKeystoneTitle)
         case .ledger:
@@ -108,21 +108,16 @@ struct DisconnectHWWalletView: View {
         }
     }
 
-    /// One card per connected hardware vendor, same visual as the single badge this replaces.
-    /// The selection checkbox only appears once there's an actual choice to make (both
-    /// connected) -- a single connected vendor is preselected on `onAppear` and its card has
-    /// nothing to disambiguate. The info line mirrors the selection and is hidden until there
-    /// is one.
-    @ViewBuilder func connectedHWWalletCards() -> some View {
+    /// A single card for the selected account's hardware vendor (MOB-2020: this screen follows
+    /// the selection, never "whichever hardware wallet is connected"), same visual as the badge
+    /// this replaces. Not tappable -- there is nothing to choose, only the selected account's
+    /// vendor to disconnect. The info line mirrors it and is hidden when there is none.
+    @ViewBuilder func connectedHWWalletCard() -> some View {
         WithPerceptionTracking {
-            let vendors = store.connectedHWVendors
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(vendors, id: \.self) { vendor in
+                if let vendor = store.vendor {
                     hwWalletCard(vendor)
-                        .padding(.bottom, vendor == vendors.last ? 0 : Design.Spacing._md)
-                }
 
-                if store.selectedVendor != nil {
                     HStack(alignment: .top, spacing: 0) {
                         Asset.Assets.infoOutline.image
                             .zImage(size: 16, style: Design.Text.tertiary)
@@ -145,40 +140,30 @@ struct DisconnectHWWalletView: View {
 
     @ViewBuilder private func hwWalletCard(_ vendor: WalletAccount.Vendor) -> some View {
         WithPerceptionTracking {
-            Button {
-                store.send(.vendorTapped(vendor))
-            } label: {
-                HStack(spacing: 0) {
-                    vendorMark(vendor)
-                        .padding(.trailing, Design.Spacing._xl)
+            HStack(spacing: 0) {
+                vendorMark(vendor)
+                    .padding(.trailing, Design.Spacing._xl)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        vendorNameText(vendor)
-                            .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    vendorNameText(vendor)
+                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
-                        Text(localizable: .currentlyConnected)
-                            .zFont(size: 14, style: Design.Text.primary)
-                    }
-
-                    Spacer()
-
-                    // Only worth disambiguating when there's more than one card -- a single
-                    // connected vendor is already preselected and unambiguous.
-                    if store.connectedHWVendors.count > 1 {
-                        selectionCheckbox(isOn: store.selectedVendor == vendor)
-                    }
+                    Text(localizable: .currentlyConnected)
+                        .zFont(size: 14, style: Design.Text.primary)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, Design.Spacing._2xl)
-                .padding(.vertical, Design.Spacing._xl)
-                .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .fill(Design.Surfaces.fgPrimary.color(colorScheme))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                                .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-                        }
-                }
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, Design.Spacing._2xl)
+            .padding(.vertical, Design.Spacing._xl)
+            .background {
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                    .fill(Design.Surfaces.fgPrimary.color(colorScheme))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Design.Radius._xl)
+                            .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                    }
             }
         }
     }
@@ -215,7 +200,7 @@ struct DisconnectHWWalletView: View {
     }
 
     @ViewBuilder private func connectedHWInfoText() -> some View {
-        switch store.selectedVendor {
+        switch store.vendor {
         case .ledger:
             Text(localizable: .connectedHWInfoLedger)
         case .keystone, .zcash, nil:
@@ -223,29 +208,6 @@ struct DisconnectHWWalletView: View {
         }
     }
 
-    /// Same square checkbox `AccountsSelectionView`'s selected row uses (`ZashiToggle` ->
-    /// `CheckboxToggleStyle`), drawn directly since selection here is one `Vendor?` on `State`
-    /// rather than a per-row `Bool` binding a `Toggle` could drive.
-    @ViewBuilder private func selectionCheckbox(isOn: Bool) -> some View {
-        if isOn {
-            RoundedRectangle(cornerRadius: Design.Radius._xs)
-                .fill(Design.Checkboxes.onBg.color(colorScheme))
-                .frame(width: 16, height: 16)
-                .overlay {
-                    Asset.Assets.check.image
-                        .zImage(size: 12, style: Design.Checkboxes.onFg)
-                }
-        } else {
-            RoundedRectangle(cornerRadius: Design.Radius._xs)
-                .fill(Design.Checkboxes.offBg.color(colorScheme))
-                .frame(width: 16, height: 16)
-                .background {
-                    RoundedRectangle(cornerRadius: Design.Radius._xs)
-                        .stroke(Design.Checkboxes.offStroke.color(colorScheme))
-                }
-        }
-    }
-    
     @ViewBuilder func bulletPointText(_ text: String) -> some View {
         HStack {
             Circle()

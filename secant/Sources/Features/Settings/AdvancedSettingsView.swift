@@ -97,7 +97,7 @@ struct AdvancedSettingsView: View {
                             }
                         }
 
-                        if store.isHWWalletConnected {
+                        if store.isHWWalletAccountSelected {
                             ActionRow(
                                 icon: Asset.Assets.Icons.hardDrive.image,
                                 title: String(localizable: .disconnectHWWalletCta),

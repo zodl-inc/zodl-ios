@@ -50,15 +50,36 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @Test func isHWWalletConnectedReflectsWalletAccounts() {
+    /// MOB-2020: Advanced Settings follows the SELECTED account, not "is any hardware wallet
+    /// connected" -- the row (and the gate it feeds) stays hidden for a Zodl account even while a
+    /// Keystone and a Ledger are both connected elsewhere in the wallet.
+    @Test func theDisconnectRowFollowsTheSelectedAccount() {
         var state = AdvancedSettings.State()
-        state.$walletAccounts.withLock { $0 = [] }
-        #expect(!state.isHWWalletConnected)
-        state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
-        #expect(state.isHWWalletConnected)
-        // MOB-2020: the row -- and the gate it feeds -- is no longer Keystone-only.
-        state.$walletAccounts.withLock { $0 = [ledgerAccount()] }
-        #expect(state.isHWWalletConnected)
+        state.$walletAccounts.withLock { $0 = [keystoneAccount(), ledgerAccount()] }
+
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        #expect(!state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = zodlAccount() }
+        #expect(!state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = keystoneAccount() }
+        #expect(state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = ledgerAccount() }
+        #expect(state.isHWWalletAccountSelected)
+    }
+
+    private func zodlAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x00, count: 16)),
+            name: "Zodl",
+            keySource: nil,
+            seedFingerprint: [UInt8](repeating: 0x00, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
     }
 
     private func keystoneAccount() -> WalletAccount {
