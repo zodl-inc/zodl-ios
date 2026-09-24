@@ -17,22 +17,29 @@ struct AddLedgerHWWallet {
     struct State: Equatable {
         var devices: [LedgerBluetoothDevice] = []
         var isScanning = false
-        /// The Bluetooth scan's own error line, shown while no device is selected yet.
-        var scanError: String? = nil
+        /// The last scan, connect or pair failure -- drives the issue sheet. Cleared whenever a
+        /// device is (re-)selected or a new scan/connect attempt starts. The device picker is
+        /// now the only screen that connects and pairs — see ConnectHWWalletCoordFlowCoordinator.
+        var issue: LedgerIssue? = nil
+        /// Whether `issue`'s sheet is on screen. A swipe-to-dismiss clears only this flag, so
+        /// `issue` stays set and the page keeps only its bottom Try again button -- a rescan
+        /// when `canRescan`, otherwise a reconnect of the kept selection -- instead of losing
+        /// the failure entirely.
+        var isIssueSheetPresented = false
         var selectedDevice: LedgerBluetoothDevice? = nil
         var isConnecting = false
         var pairing: LedgerPairing? = nil
         var isPairing = false
-        /// A connect/pairing failure surfaced after `connectDeviceTapped`, once a device is
-        /// selected. Cleared whenever a device is (re-)selected. The device picker is now the
-        /// only screen that connects and pairs — see AddLedgerHWWalletCoordFlowCoordinator.
-        var pairingError: String? = nil
         var isAccountSelected = false
         var isImportingAccount = false
         var isHelpSheetPresented = false
         var randomSuccessIconIndex = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+
+        /// Whether the picker can offer its own Try again button below the (now empty) device
+        /// list: there is a failure showing, and nothing else is already in flight or selected.
+        var canRescan: Bool { issue != nil && !isScanning && !isConnecting && !isPairing && selectedDevice == nil }
 
         /// The paired account's address, derived from the pairing's UFVK the same way Keystone's
         /// `keystoneAddress` is — empty when there is no pairing yet or derivation fails.
@@ -62,6 +69,7 @@ struct AddLedgerHWWallet {
     }
 
     enum Action: BindableAction, Equatable {
+        case accountAlreadyImported(WalletAccount?)
         case accountImported(AccountUUID)
         case accountImportFailed(String)
         case accountImportSucceeded
@@ -76,12 +84,14 @@ struct AddLedgerHWWallet {
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
         case helpSheetRequested
+        case issuePrimaryTapped
         case loadedWalletAccounts([WalletAccount], AccountUUID)
         case nextTapped
         case onAppear
-        case pairingFailed(message: String, connectionLost: Bool)
+        case pairingFailed(issue: LedgerIssue, connectionLost: Bool)
         case pairingSucceeded(LedgerPairing)
-        case scanFailed(String)
+        case scanFailed(LedgerIssue)
+        case scanTimedOut
         case setBirthdayTapped
         case startScanning
         case stopScanning
@@ -94,6 +104,7 @@ struct AddLedgerHWWallet {
 
     init() { }
 
+    @Dependency(\.continuousClock) var clock
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.ledgerClient) var ledgerClient
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -108,7 +119,8 @@ struct AddLedgerHWWallet {
             case .onAppear:
                 state.devices = []
                 state.isScanning = false
-                state.scanError = nil
+                state.issue = nil
+                state.isIssueSheetPresented = false
                 state.selectedDevice = nil
                 state.isConnecting = false
                 state.pairing = nil
@@ -123,15 +135,38 @@ struct AddLedgerHWWallet {
 
             case .startScanning:
                 state.isScanning = true
-                state.scanError = nil
+                state.issue = nil
+                state.isIssueSheetPresented = false
                 state.devices = []
+                // The scan and the no-devices timer run as sibling child tasks of the SAME
+                // effect, rather than the timer racing a separate `.cancellable` -- so the timer
+                // can never outlive the scan it is timing. Whichever finishes first cancels the
+                // other; when the timer fires first the scan keeps running.
                 return .run { send in
-                    do {
-                        for try await batch in ledgerClient.scanDevices() {
-                            await send(.devicesUpdated(batch))
+                    await withTaskGroup(of: Bool.self) { group in
+                        group.addTask {                       // the scan; `true` = the scan ended
+                            do {
+                                for try await batch in ledgerClient.scanDevices() {
+                                    await send(.devicesUpdated(batch))
+                                }
+                            } catch {
+                                await send(.scanFailed(LedgerIssue(error)))
+                            }
+                            return true
                         }
-                    } catch {
-                        await send(.scanFailed(LedgerErrorText.message(for: error)))
+                        group.addTask {                       // the no-devices timer
+                            do {
+                                try await clock.sleep(for: LedgerIssue.noDevicesFoundTimeout)
+                                await send(.scanTimedOut)
+                            } catch {}
+                            return false
+                        }
+                        while let scanEnded = await group.next() {
+                            if scanEnded {
+                                group.cancelAll()
+                                break
+                            }
+                        }
                     }
                 }
                 .cancellable(id: CancelId.scan, cancelInFlight: true)
@@ -140,9 +175,19 @@ struct AddLedgerHWWallet {
                 state.devices = devices
                 return .none
 
-            case let .scanFailed(message):
+            case .scanTimedOut:
+                // Ignored once a device has already turned up, or once the scan is no longer the
+                // one running (it already failed, was cancelled, or already timed out once).
+                guard state.isScanning, state.devices.isEmpty else { return .none }
                 state.isScanning = false
-                state.scanError = message
+                state.issue = .noDevicesFound
+                state.isIssueSheetPresented = true
+                return .cancel(id: CancelId.scan)
+
+            case let .scanFailed(issue):
+                state.isScanning = false
+                state.issue = issue
+                state.isIssueSheetPresented = true
                 return .cancel(id: CancelId.scan)
 
             case .stopScanning:
@@ -151,7 +196,8 @@ struct AddLedgerHWWallet {
 
             case let .deviceTapped(device):
                 state.selectedDevice = device
-                state.pairingError = nil
+                state.issue = nil
+                state.isIssueSheetPresented = false
                 return .none
 
             case .connectDeviceTapped:
@@ -159,20 +205,17 @@ struct AddLedgerHWWallet {
                     return .none
                 }
                 state.isConnecting = true
-                state.pairingError = nil
+                state.issue = nil
+                state.isIssueSheetPresented = false
                 return .run { send in
                     do {
                         try await ledgerClient.connect(device)
                     } catch {
                         // A connect failure always leaves the transport unusable, so it is
-                        // reported as connection-lost even when LedgerErrorText.isConnectionLost
-                        // would classify the underlying error differently.
-                        await send(
-                            .pairingFailed(
-                                message: LedgerErrorText.message(for: error),
-                                connectionLost: true
-                            )
-                        )
+                        // reported as needing a new connection even when
+                        // `LedgerIssue(error).retryNeedsNewConnection` would say otherwise for
+                        // this same underlying error.
+                        await send(.pairingFailed(issue: LedgerIssue(error), connectionLost: true))
                         return
                     }
 
@@ -182,18 +225,17 @@ struct AddLedgerHWWallet {
                         let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
                         await send(.pairingSucceeded(pairing))
                     } catch {
-                        await send(
-                            .pairingFailed(
-                                message: LedgerErrorText.message(for: error),
-                                connectionLost: LedgerErrorText.isConnectionLost(error)
-                            )
-                        )
+                        let issue = LedgerIssue(error)
+                        await send(.pairingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection))
                     }
                 }
 
             case .deviceConnected:
                 state.isConnecting = false
                 state.isPairing = true
+                // The scan is cancelled below; isScanning must say so too, since nothing else
+                // flips it back once the effect it belonged to is torn down.
+                state.isScanning = false
                 return .cancel(id: CancelId.scan)
 
             case let .pairingSucceeded(pairing):
@@ -201,18 +243,32 @@ struct AddLedgerHWWallet {
                 state.pairing = pairing
                 return .none
 
-            case let .pairingFailed(message, connectionLost):
+            case let .pairingFailed(issue, connectionLost):
                 state.isConnecting = false
                 state.isPairing = false
-                state.pairingError = message
+                state.issue = issue
+                state.isIssueSheetPresented = true
+                // A device refusal (connectionLost == false) leaves the transport open and the
+                // selection in place, so Connect can be retried on it. A transport failure
+                // (connectionLost == true) can't be retried on the same link, so the selection
+                // and the stale device list are dropped. Either way this no longer rescans on its
+                // own -- the issue sheet's Try again (`.issuePrimaryTapped`) does that now.
                 guard connectionLost else { return .none }
-                // A device refusal leaves the transport open and the selection in place so the
-                // user can tap Connect again (the live client's `connect` closes the previous
-                // link and reconnects, which is fine). A transport failure can't be retried on
-                // the same link, so drop the selection and the stale device list and rescan.
                 state.selectedDevice = nil
                 state.devices = []
-                return .send(.startScanning)
+                state.isScanning = false
+                return .cancel(id: CancelId.scan)
+
+            case .issuePrimaryTapped:
+                state.isIssueSheetPresented = false
+                // Only `.tryAgain` needs a follow-up action here: for `.openSettings` the view
+                // has already opened Settings before sending this, and every other action
+                // (`.goToAccount`, `.close`, `.none`) just dismisses the sheet, which the line
+                // above already did.
+                guard state.issue?.primaryAction(in: .connect) == .tryAgain else { return .none }
+                // A device refusal kept the open connection and the selection in place, so retry
+                // the same connect/pair request instead of scanning again.
+                return state.selectedDevice != nil ? .send(.connectDeviceTapped) : .send(.startScanning)
 
             case .accountTapped:
                 state.isAccountSelected.toggle()
@@ -229,6 +285,7 @@ struct AddLedgerHWWallet {
                     return .none
                 }
                 state.isImportingAccount = true
+                let walletAccounts = state.walletAccounts
                 return .run { send in
                     do {
                         let uuid = try await sdkSynchronizer.importAccount(
@@ -254,12 +311,23 @@ struct AddLedgerHWWallet {
                         }
                         await send(.accountImported(uuid))
                     } catch {
+                        // A viewing-key collision (the Ledger matches an account already in the
+                        // wallet) is not surfaced as a generic import failure -- it has its own
+                        // sheet. Every other `importAccount` failure keeps today's behavior.
+                        if LedgerAccountCollision.isCollision(error) {
+                            await send(.accountAlreadyImported(LedgerAccountCollision.collidingAccount(in: error, among: walletAccounts)))
+                            return
+                        }
                         // Surface only the SDK error's localizedDescription (a static code +
                         // message); the raw Rust error string is never included, so no
                         // UFVK/binding/device-identity data can leak.
                         await send(.accountImportFailed(error.localizedDescription))
                     }
                 }
+
+            case .accountAlreadyImported:
+                state.isImportingAccount = false
+                return .none
 
             case let .accountImported(uuid):
                 return .run { send in

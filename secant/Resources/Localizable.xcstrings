@@ -9283,6 +9283,23 @@
         }
       }
     },
+    "keepZodlOpenWarningLedger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "^[Warning:](style: 'boldPrimary') Your Zodl funds cannot be spent until your Ledger wallet is synced."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "^[Advertencia:](style: 'boldPrimary') No podrás usar tus fondos de Zodl hasta que tu billetera Ledger esté sincronizada."
+          }
+        }
+      }
+    },
     "keepZodlOpenWarningRestore" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10339,92 +10356,177 @@
         }
       }
     },
-    "ledger.error.appTooOld" : {
+    "ledger.issue.accountAlreadyAdded.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Update the Zcash app on your Ledger to 3.6.0 or newer."
+            "value" : "This account is already connected to Zodl."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Actualiza la app de Zcash en tu Ledger a la versión 3.6.0 o posterior."
+            "value" : "Esta cuenta ya está conectada a Zodl."
           }
         }
       }
     },
-    "ledger.error.bluetoothOff" : {
+    "ledger.issue.accountAlreadyAdded.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Turn on Bluetooth to connect your Ledger."
+            "value" : "Account Already Added"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Activa el Bluetooth para conectar tu Ledger."
+            "value" : "Cuenta ya agregada"
           }
         }
       }
     },
-    "ledger.error.bluetoothUnauthorized" : {
+    "ledger.issue.appTooOld.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Allow Bluetooth access for Zodl in Settings to connect your Ledger."
+            "value" : "The Zcash app on your Ledger is out of date. Update it to version 3.6.0 or newer with Ledger Live, then try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Permite el acceso a Bluetooth para Zodl en Ajustes para conectar tu Ledger."
+            "value" : "La app de Zcash en tu Ledger está desactualizada. Actualízala a la versión 3.6.0 o posterior con Ledger Live y vuelve a intentarlo."
           }
         }
       }
     },
-    "ledger.error.bluetoothUnsupported" : {
+    "ledger.issue.appTooOld.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This device doesn't support Bluetooth LE."
+            "value" : "Update the Zcash App"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Este dispositivo no admite Bluetooth LE."
+            "value" : "Actualiza la app de Zcash"
           }
         }
       }
     },
-    "ledger.error.connectionLost" : {
+    "ledger.issue.bluetoothOff.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The connection to your Ledger was lost. Connect again."
+            "value" : "Turn on Bluetooth in Control Center or Settings to connect your Ledger."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Se perdió la conexión con tu Ledger. Conéctalo de nuevo."
+            "value" : "Activa el Bluetooth desde el Centro de Control o los Ajustes para conectar tu Ledger."
           }
         }
       }
     },
-    "ledger.error.derivationBudget" : {
+    "ledger.issue.bluetoothOff.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth Is Off"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Bluetooth está desactivado"
+          }
+        }
+      }
+    },
+    "ledger.issue.bluetoothUnauthorized.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl needs Bluetooth access to connect to your Ledger. Turn on Bluetooth in Settings to continue."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zodl necesita acceso a Bluetooth para conectarse a tu Ledger. Activa el Bluetooth en Ajustes para continuar."
+          }
+        }
+      }
+    },
+    "ledger.issue.bluetoothUnauthorized.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth Access Required"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se requiere acceso a Bluetooth"
+          }
+        }
+      }
+    },
+    "ledger.issue.bluetoothUnsupported.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device can't use Bluetooth, so it can't connect to a Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este dispositivo no puede usar Bluetooth, por lo que no puede conectarse a un Ledger."
+          }
+        }
+      }
+    },
+    "ledger.issue.bluetoothUnsupported.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth Unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bluetooth no disponible"
+          }
+        }
+      }
+    },
+    "ledger.issue.derivationBudget.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -10441,121 +10543,444 @@
         }
       }
     },
-    "ledger.error.deviceMismatch" : {
+    "ledger.issue.derivationBudget.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This isn't the Ledger this account was paired with."
+            "value" : "Restart the Zcash App"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Este no es el Ledger con el que se vinculó esta cuenta."
+            "value" : "Reinicia la app de Zcash"
           }
         }
       }
     },
-    "ledger.error.generic" : {
+    "ledger.issue.deviceLocked.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zodl couldn't connect to your Ledger."
+            "value" : "Unlock your Ledger and open the Zcash app on the device to continue."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Zodl no pudo conectarse a tu Ledger."
+            "value" : "Desbloquea tu Ledger y abre la app de Zcash en el dispositivo para continuar."
           }
         }
       }
     },
-    "ledger.error.notSignable" : {
+    "ledger.issue.deviceLocked.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your Ledger can't sign this transaction."
+            "value" : "Unlock Your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tu Ledger no puede firmar esta transacción."
+            "value" : "Desbloquea tu Ledger"
           }
         }
       }
     },
-    "ledger.error.pairingRefused" : {
+    "ledger.issue.deviceMismatch.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bluetooth pairing was refused. Forget the device in iOS Settings › Bluetooth and try again."
+            "value" : "This isn't the Ledger this account was connected with. Connect that Ledger and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Se rechazó la vinculación por Bluetooth. Olvida el dispositivo en Ajustes de iOS › Bluetooth e inténtalo de nuevo."
+            "value" : "Este no es el Ledger con el que se conectó esta cuenta. Conecta ese Ledger e inténtalo de nuevo."
           }
         }
       }
     },
-    "ledger.error.rejected" : {
+    "ledger.issue.deviceMismatch.title" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You rejected the transaction on your Ledger."
+            "value" : "Wrong Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Rechazaste la transacción en tu Ledger."
+            "value" : "Ledger incorrecto"
           }
         }
       }
     },
-    "ledger.error.userRejected" : {
+    "ledger.issue.disconnected.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The export was declined on the device."
+            "value" : "Your Ledger disconnected during setup. Check the connection and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "La exportación fue rechazada en el dispositivo."
+            "value" : "Tu Ledger se desconectó durante la configuración. Revisa la conexión e inténtalo de nuevo."
           }
         }
       }
     },
-    "ledger.error.wrongApp" : {
+    "ledger.issue.disconnected.sign.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Open the Zcash app on your Ledger and try again."
+            "value" : "Your Ledger disconnected before the transaction was signed. Check the connection and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Abre la app de Zcash en tu Ledger e inténtalo de nuevo."
+            "value" : "Tu Ledger se desconectó antes de firmar la transacción. Revisa la conexión e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.issue.disconnected.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger Disconnected"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ledger desconectado"
+          }
+        }
+      }
+    },
+    "ledger.issue.goToAccount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go to Account"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ir a la cuenta"
+          }
+        }
+      }
+    },
+    "ledger.issue.noDevicesFound.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't find any Ledger devices nearby. Make sure your Ledger hardware is unlocked and Bluetooth is turned on."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No pudimos encontrar dispositivos Ledger cerca. Asegúrate de que tu Ledger esté desbloqueado y de que el Bluetooth esté activado."
+          }
+        }
+      }
+    },
+    "ledger.issue.noDevicesFound.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Devices Found"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se encontraron dispositivos"
+          }
+        }
+      }
+    },
+    "ledger.issue.notPaired.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This account has no Ledger pairing saved in Zodl. Disconnect it in Advanced Settings, then connect your Ledger again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cuenta no tiene un emparejamiento de Ledger guardado en Zodl. Desconéctala en Configuración Avanzada y vuelve a conectar tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.issue.notPaired.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger Not Paired"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ledger no emparejado"
+          }
+        }
+      }
+    },
+    "ledger.issue.notSignable.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger can't sign this transaction. Nothing was sent."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger no puede firmar esta transacción. No se envió nada."
+          }
+        }
+      }
+    },
+    "ledger.issue.notSignable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't Sign This Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se puede firmar esta transacción"
+          }
+        }
+      }
+    },
+    "ledger.issue.openSettings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open System Settings"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Ajustes del sistema"
+          }
+        }
+      }
+    },
+    "ledger.issue.pairingFailed.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't pair with your Ledger. Try again from your device settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No pudimos vincular tu Ledger. Inténtalo de nuevo desde los ajustes de tu dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.issue.pairingFailed.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing Failed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Error al vincular"
+          }
+        }
+      }
+    },
+    "ledger.issue.requestRejected.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You declined the request on your Ledger. Approve the account export on your device to continue."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste la solicitud en tu Ledger. Aprueba la exportación de la cuenta en tu dispositivo para continuar."
+          }
+        }
+      }
+    },
+    "ledger.issue.requestRejected.sign.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You rejected the transaction on your Ledger. Try again to review it on your device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste la transacción en tu Ledger. Inténtalo de nuevo para revisarla en tu dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.issue.requestRejected.sign.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction Rejected"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transacción rechazada"
+          }
+        }
+      }
+    },
+    "ledger.issue.requestRejected.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Rejected"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importación rechazada"
+          }
+        }
+      }
+    },
+    "ledger.issue.tryAgain" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Intentar de nuevo"
+          }
+        }
+      }
+    },
+    "ledger.issue.unknown.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl couldn't connect to your Ledger. Make sure it's unlocked and nearby, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zodl no pudo conectarse a tu Ledger. Asegúrate de que esté desbloqueado y cerca, luego inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.issue.unknown.sign.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl couldn't finish signing with your Ledger. Make sure it's unlocked and nearby, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zodl no pudo terminar de firmar con tu Ledger. Asegúrate de que esté desbloqueado y cerca, luego inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.issue.unknown.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something Went Wrong"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Algo salió mal"
           }
         }
       }
@@ -10726,23 +11151,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Firmando…"
-          }
-        }
-      }
-    },
-    "ledger.signWith.tryAgain" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Try Again"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Intentar de nuevo"
           }
         }
       }

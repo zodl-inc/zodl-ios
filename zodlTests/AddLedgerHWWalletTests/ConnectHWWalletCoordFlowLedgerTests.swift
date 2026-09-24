@@ -59,6 +59,50 @@ import ComposableArchitecture
         }
     }
 
+    @Test func pairingANewLedgerStillShowsItsAccount() async throws {
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        // No account carries the pairing's UFVK, so the pre-import check must let this through.
+        devicePickerState.$walletAccounts.withLock { $0 = [Self.walletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.last!
+        let fixture = try Self.makePairingFixture(ufvk: "uview1ledgerpairingfixture")
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerAccount(let accountState) = store.state.path.last {
+            #expect(accountState.pairing == fixture)
+        } else {
+            Issue.record("expected .ledgerAccount to be pushed carrying the pairing")
+        }
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(store.state.alreadyAddedAccount == nil)
+    }
+
+    @Test func pairingALedgerAlreadyInTheWalletRaisesAccountAlreadyAddedOnThePicker() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.last!
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        // The path still ends at the picker -- the collision arm pushes nothing.
+        #expect(store.state.path.count == 2)
+        #expect(isDevicePicker(store.state.path.last))
+    }
+
     // MARK: - Account
 
     @Test func nextTappedPushesDeviceReadyCarryingTheAccountState() async {
@@ -143,6 +187,21 @@ import ComposableArchitecture
         #expect(restoreInfoIsProcessing == false)
     }
 
+    // MARK: - Device Ready: accountAlreadyImported
+
+    @Test func accountAlreadyImportedShowsTheAccountAlreadyAddedSheet() async {
+        let account = Self.walletAccount(idByte: 0x0f)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerDeviceReady(.accountAlreadyImported(account)))))
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        #expect(store.state.alreadyAddedAccount == account)
+    }
+
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
@@ -153,6 +212,57 @@ import ComposableArchitecture
         store.send(.cancelFailureTapped)
 
         #expect(store.state.isFailureSheetPresented == false)
+    }
+
+    // MARK: - accountAlreadyAddedCancelTapped / goToExistingAccountTapped
+
+    @Test func accountAlreadyAddedCancelLeavesTheFlow() async throws {
+        let disconnected = LockIsolated(false)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.isAccountAlreadyAddedSheetPresented = true
+        initialState.alreadyAddedAccount = Self.walletAccount(idByte: 0x0f)
+
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+
+        store.send(.accountAlreadyAddedCancelTapped)
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+
+        // `.backToHomeTapped` disconnects the Ledger inside AddLedgerHWWallet's own `.run` effect
+        // -- poll for the spy rather than asserting synchronously.
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
+    }
+
+    @Test func goToExistingAccountLeavesTheFlowAndKeepsTheAccount() async throws {
+        let disconnected = LockIsolated(false)
+        let account = Self.walletAccount(idByte: 0x0f)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.isAccountAlreadyAddedSheetPresented = true
+        initialState.alreadyAddedAccount = account
+
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+
+        store.send(.goToExistingAccountTapped)
+
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        // Unlike the cancel above, the account must survive so Root can read it.
+        #expect(store.state.alreadyAddedAccount == account)
+
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
     }
 
     // MARK: - contactSupportTapped
@@ -252,6 +362,106 @@ import ComposableArchitecture
         #expect(store.state.errMsg.isEmpty)
     }
 
+    // MARK: - hardwareWalletVendor (MOB-2020: Keystone-branding fix)
+
+    @Test func ledgerBirthdayAndRestoreScreensCarryTheLedgerVendor() async {
+        // .ledgerDeviceReady(.setBirthdayTapped) pushes a birthday state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            let store = makeStore(initialState: initialState)
+            let deviceReadyId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: deviceReadyId, action: .ledgerDeviceReady(.setBirthdayTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .estimateBirthdaysDate(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .estimateBirthdaysDate to be pushed")
+            }
+        }
+
+        // .estimateBirthdaysDate(.enterManuallyTapped) pushes a manual birthday state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimateBirthdaysDate(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let estimateId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimateId, action: .estimateBirthdaysDate(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+
+        // .walletBirthday(.restoreTapped) pushes a restore-info state carrying .ledger.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.walletBirthday(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let walletBirthdayId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: walletBirthdayId, action: .walletBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.restoreTapped), from an .estimatedBirthday element that already
+        // carries .ledger, pushes a restore-info state carrying .ledger.
+        do {
+            var estimatedBirthdayState = WalletBirthday.State.initial
+            estimatedBirthdayState.hardwareWalletVendor = .ledger
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(estimatedBirthdayState))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.enterManuallyTapped), from an .estimatedBirthday element that
+        // already carries .ledger, pushes a birthday state carrying .ledger.
+        do {
+            var estimatedBirthdayState = WalletBirthday.State.initial
+            estimatedBirthdayState.hardwareWalletVendor = .ledger
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.ledgerDeviceReady(AddLedgerHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(estimatedBirthdayState))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .ledger)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeStore(
@@ -281,11 +491,27 @@ import ComposableArchitecture
         return false
     }
 
+    /// Mirrors AddLedgerHWWalletTests' own private fixture. `ufvk` defaults to `nil`, matching an
+    /// account that was never asked to carry a viewing key.
+    private static func walletAccount(idByte: UInt8, ufvk: String? = nil) -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+            name: "Ledger",
+            keySource: Account.ledgerKeySource,
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
+            ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
+            uivk: nil
+        ))
+    }
+
     /// `LedgerAccountBinding`'s device identity is `tpk0-` plus 64 lowercase hex digits, validated
     /// through the linked FFI -- same fixture shape as LedgerSessionTests/AddLedgerHWWalletTests.
-    private static func makePairingFixture() throws -> LedgerPairing {
+    /// `ufvk` defaults to the same sentinel every other fixture in this file used before the
+    /// pre-import collision check existed; the collision tests pass their own to control the match.
+    private static func makePairingFixture(ufvk: String = "utest1fixture") throws -> LedgerPairing {
         LedgerPairing(
-            ufvk: "utest1fixture",
+            ufvk: ufvk,
             binding: LedgerAccountBinding(
                 deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "a", count: 64)),
                 zip32AccountIndex: Zip32AccountIndex(0)

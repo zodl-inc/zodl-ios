@@ -52,6 +52,18 @@ struct ConnectHWWalletCoordFlowView: View {
                 .zashiSheet(isPresented: $store.isFailureSheetPresented) {
                     failureSheetContent()
                 }
+                .zashiSheet(isPresented: $store.isAccountAlreadyAddedSheetPresented) {
+                    LedgerIssueSheetContent(
+                        issue: .accountAlreadyAdded,
+                        context: .connect,
+                        onPrimary: { store.send(.goToExistingAccountTapped) },
+                        secondary: .init(
+                            title: String(localizable: .generalCancel),
+                            type: .secondary,
+                            action: { store.send(.accountAlreadyAddedCancelTapped) }
+                        )
+                    )
+                }
                 .overlay {
                     if let supportData = store.supportData {
                         UIMailDialogView(

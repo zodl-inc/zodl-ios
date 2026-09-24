@@ -699,6 +699,11 @@ struct SendConfirmation {
                     do {
                         let binding = try walletStorage.exportLedgerBinding(account.id)
                         await send(.ledgerSigning(.signRequested(.init(pczt: pczt, accountUUID: account.id, binding: binding))))
+                    } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
+                        // MOB-2020: no stored binding for this account -- report Ledger Not Paired
+                        // on the sign sheet directly instead of bouncing to the generic PCZT
+                        // failure screen; there is nothing a retry could fix.
+                        await send(.ledgerSigning(.pairingMissing))
                     } catch {
                         try? await mainQueue.sleep(for: .seconds(Constants.delay))
                         await send(.updateFailedData(-795, "ledgerSignRequest failed: no binding", ""))
@@ -713,17 +718,12 @@ struct SendConfirmation {
                 state.pcztWithSigs = pcztWithSigs
                 return .send(.createTransactionFromPCZT)
 
-            case .ledgerSigning(.signingFailed(let message, restartable: false, _)):
-                return .run { send in
-                    try? await mainQueue.sleep(for: .seconds(Constants.delay))
-                    await send(.updateFailedData(-794, message, ""))
-                    await send(.pcztSendFailed("ledger signing failed".toZcashError()))
-                }
-
             case .ledgerSigning:
-                // Includes a restartable `.signingFailed`: the user stays on `LedgerSignSheetView`
-                // to tap Try Again rather than being bounced to the failure screen. Every other
-                // `LedgerSigning.Action` is internal to that sub-machine.
+                // MOB-2020: every `LedgerSigning.Action` other than `.signed` is internal to that
+                // sub-machine -- a `.signingFailed` now renders as `LedgerIssueSheetContent`
+                // inside `LedgerSignSheetView` itself (Cancel Transaction is always there to back
+                // out), so nothing here bounces the user to the generic PCZT failure screen the
+                // way a non-restartable failure used to.
                 return .none
 
             case .ledgerSignCancelTapped:

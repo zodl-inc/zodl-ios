@@ -128,6 +128,13 @@ extension Root {
                 state.path = nil
                 return .none
 
+            case .connectHWWalletCoordFlow(.goToExistingAccountTapped):
+                // The flow itself closes through the `.addLedgerHWWallet(.backToHomeTapped)` arm above.
+                guard let account = state.connectHWWalletCoordFlowState.alreadyAddedAccount else {
+                    return .none
+                }
+                return .send(.home(.walletAccountTapped(account)))
+
             case .home(.connectHWWalletTapped):
                 state.connectHWWalletCoordFlowState = .initial
                 state.path = .connectHWWalletCoordFlow

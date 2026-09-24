@@ -7,7 +7,9 @@
 //  too -- see `RootCoordinator`'s `.signWithKeystoneRequested`). Presented as a `zashiSheet` over
 //  the screen the user confirmed from while the Ledger signs -- only "Cancel Transaction" closes
 //  it, via `.interactiveDismissDisabled()`. The status block below copies (not moves) that former
-//  screen's `statusContent`/`spinnerStatus`/`deviceRow`, without its bone-coloured card.
+//  screen's `statusContent`/`spinnerStatus`/`deviceRow`, without its bone-coloured card. A failed
+//  ceremony instead shows `LedgerIssueSheetContent`, the same Ledger error-state sheet
+//  `AddLedgerHWWallet`'s device picker uses.
 //
 
 import SwiftUI
@@ -21,30 +23,45 @@ struct LedgerSignSheetView: View {
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(spacing: 0) {
-                Asset.Assets.Partners.ledgerLogo.image
-                    .resizable()
-                    .frame(width: 44, height: 44)
-
-                Text(localizable: .ledgerSignSheetTitle)
-                    .zFont(.semiBold, size: 20, style: Design.Text.primary)
-                    .padding(.top, 12)
-
-                Text(localizable: .ledgerSignSheetDesc)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-
-                statusContent()
-                    .padding(.top, 16)
-
-                VStack(spacing: 12) {
-                    if store.ledgerSigning.phase == .failed && store.ledgerSigning.isRestartable {
-                        ZashiButton(String(localizable: .ledgerSignWithTryAgain)) {
+            if store.ledgerSigning.phase == .failed, let issue = store.ledgerSigning.issue {
+                LedgerIssueSheetContent(
+                    issue: issue,
+                    context: .sign,
+                    primaryAction: store.ledgerSigning.failedPrimaryAction,
+                    onPrimary: {
+                        switch store.ledgerSigning.failedPrimaryAction {
+                        case .tryAgain:
                             store.send(.ledgerSigning(.tryAgainTapped))
+                        case .openSettings:
+                            store.send(.ledgerSigning(.openSettingsTapped))
+                        case .goToAccount, .close, .none:
+                            break
                         }
-                    }
+                    },
+                    secondary: .init(
+                        title: String(localizable: .ledgerSignSheetCancel),
+                        type: .destructive1,
+                        action: { store.send(.ledgerSignCancelTapped) }
+                    )
+                )
+            } else {
+                VStack(spacing: 0) {
+                    Asset.Assets.Partners.ledgerLogo.image
+                        .resizable()
+                        .frame(width: 44, height: 44)
+
+                    Text(localizable: .ledgerSignSheetTitle)
+                        .zFont(.semiBold, size: 20, style: Design.Text.primary)
+                        .padding(.top, 12)
+
+                    Text(localizable: .ledgerSignSheetDesc)
+                        .zFont(size: 14, style: Design.Text.tertiary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+
+                    statusContent()
+                        .padding(.top, 16)
 
                     ZashiButton(
                         String(localizable: .ledgerSignSheetCancel),
@@ -52,16 +69,19 @@ struct LedgerSignSheetView: View {
                     ) {
                         store.send(.ledgerSignCancelTapped)
                     }
+                    .padding(.top, 32)
                 }
+                .frame(maxWidth: .infinity)
+                // The top and bottom padding apply only to this normal content -- `LedgerIssueSheetContent`
+                // pads itself.
                 .padding(.top, 32)
+                .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, Design.Spacing.sheetBottomSpace)
-            // No `.onAppear` here: on iOS 16.4-25 `ZashiSheetModifier` re-identifies this content
-            // on every height change (the status block below switches shape), which would refire
-            // `.onAppear` mid-ceremony -- `.confirmWithLedgerTapped` starts it once instead.
-            .interactiveDismissDisabled()
         }
+        // No `.onAppear` here: on iOS 16.4-25 `ZashiSheetModifier` re-identifies this content
+        // on every height change (the status block below switches shape), which would refire
+        // `.onAppear` mid-ceremony -- `.confirmWithLedgerTapped` starts it once instead.
+        .interactiveDismissDisabled()
     }
 }
 
@@ -99,10 +119,9 @@ extension LedgerSignSheetView {
             spinnerStatus(String(localizable: .ledgerSignWithSigning))
 
         case .failed:
-            Text(store.ledgerSigning.errorMessage ?? "")
-                .zFont(size: 14, style: Design.Text.error)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            // `body` renders `LedgerIssueSheetContent` instead of this content while
+            // `phase == .failed` -- this case only keeps the switch exhaustive over `Phase`.
+            EmptyView()
         }
     }
 

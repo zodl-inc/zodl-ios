@@ -56,7 +56,9 @@ struct RestoreInfoView: View {
 
                 if let attrText = try? AttributedString(
                     markdown: String(
-                        localizable: store.isKeystoneFlow
+                        localizable: store.isKeystoneFlow && store.hardwareWalletVendor == .ledger
+                        ? .keepZodlOpenWarningLedger
+                        : store.isKeystoneFlow
                         ? .keepZodlOpenWarningHWWallet
                         : store.isResyncFlow
                         ? .keepZodlOpenWarningResync

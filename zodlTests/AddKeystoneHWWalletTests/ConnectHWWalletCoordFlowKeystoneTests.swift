@@ -184,6 +184,100 @@ import ComposableArchitecture
         #expect(store.state.errMsg.isEmpty)
     }
 
+    // MARK: - hardwareWalletVendor (MOB-2020: Keystone-branding fix)
+
+    @Test func keystoneBirthdayAndRestoreScreensKeepTheKeystoneVendor() async {
+        // .keystoneDeviceReady(.setBirthdayTapped) pushes a birthday state staying .keystone.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.addKeystoneHWWallet(AddKeystoneHWWallet.State.initial))
+            initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+            let store = makeStore(initialState: initialState)
+            let deviceReadyId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: deviceReadyId, action: .keystoneDeviceReady(.setBirthdayTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .estimateBirthdaysDate(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .keystone)
+            } else {
+                Issue.record("expected .estimateBirthdaysDate to be pushed")
+            }
+        }
+
+        // .estimateBirthdaysDate(.enterManuallyTapped) pushes a manual birthday state staying .keystone.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+            initialState.path.append(.estimateBirthdaysDate(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let estimateId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimateId, action: .estimateBirthdaysDate(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .keystone)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+
+        // .walletBirthday(.restoreTapped) pushes a restore-info state staying .keystone.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+            initialState.path.append(.walletBirthday(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let walletBirthdayId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: walletBirthdayId, action: .walletBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .keystone)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.restoreTapped) pushes a restore-info state staying .keystone.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.restoreTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .restoreInfo(let restoreInfoState) = store.state.path.last {
+                #expect(restoreInfoState.hardwareWalletVendor == .keystone)
+            } else {
+                Issue.record("expected .restoreInfo to be pushed")
+            }
+        }
+
+        // .estimatedBirthday(.enterManuallyTapped) pushes a birthday state staying .keystone.
+        do {
+            var initialState = ConnectHWWalletCoordFlow.State()
+            initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
+            initialState.path.append(.estimatedBirthday(WalletBirthday.State.initial))
+            let store = makeStore(initialState: initialState)
+            let estimatedId = store.state.path.ids.last!
+
+            store.send(.path(.element(id: estimatedId, action: .estimatedBirthday(.enterManuallyTapped))))
+
+            #expect(store.state.path.count == 3)
+            if case .walletBirthday(let birthdayState) = store.state.path.last {
+                #expect(birthdayState.hardwareWalletVendor == .keystone)
+            } else {
+                Issue.record("expected .walletBirthday to be pushed")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeStore(

@@ -44,15 +44,16 @@ struct SwapAndPayCoordFlow {
         var isHelpSheetPresented = false
         var isInAppBrowserOn = false
         /// MOB-2020: set while `.swapAndPay(.confirmWithLedgerTapped)` waits for the quote sheet
-        /// (`SwapForm`'s `isQuotePresented`) to finish dismissing -- iOS cannot present the Ledger
-        /// sheet while another sheet is still animating out.
+        /// (`SwapForm`'s or `CrossPayForm`'s `isQuotePresented`) to finish dismissing -- iOS cannot
+        /// present the Ledger sheet while another sheet is still animating out.
         var isLedgerConfirmationAwaitingQuoteDismissal = false
         var isSwapExperience = true
         var learnMoreRequested = false
         var isSwapToZecExperience = false
         /// MOB-2020: the Ledger counterpart to `confirmWithKeystone`/`crossPayConfirmation` -- a
         /// scoped child, not a path element, so `LedgerSignSheetView` can present over whichever
-        /// screen triggered it (the swap quote sheet or `CrossPayConfirmationView`).
+        /// screen triggered it (the quote sheet in `SwapForm` or `CrossPayForm`, or
+        /// `CrossPayConfirmationView`).
         var ledgerConfirmationState = SendConfirmation.State.initial
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []

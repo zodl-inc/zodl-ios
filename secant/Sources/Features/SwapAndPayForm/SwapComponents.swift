@@ -474,7 +474,11 @@ extension SwapAndPayForm {
                     }
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 } else if store.selectedWalletAccount?.vendor == .ledger {
-                    ZashiButton(String(localizable: .ledgerConfirmSwap)) {
+                    ZashiButton(
+                        store.isSwapExperienceEnabled
+                        ? String(localizable: .ledgerConfirmSwap)
+                        : String(localizable: .ledgerConfirmPay)
+                    ) {
                         store.send(.confirmWithLedgerTapped)
                     }
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
