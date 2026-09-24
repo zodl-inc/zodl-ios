@@ -22,6 +22,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
 - [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
+- The Currency Conversion banner on Home now goes away once you turn currency conversion on or off in Settings; before, it kept offering to set it up until the app was restarted.
 
 ## [3.14.1] - 2026-09-17
 
