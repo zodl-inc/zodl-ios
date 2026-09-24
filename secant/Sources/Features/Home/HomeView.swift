@@ -40,40 +40,38 @@ struct HomeView: View {
                     }
                     .accessibilityIdentifier(AccessibilityID.Home.receiveButton)
 
-                    // MOB-2020: a Ledger account is receive-only until Phase 3 (Ledger signing)
-                    // — Send, Pay and Swap all derive a software spending key, a path a Ledger
-                    // account never has.
-                    if store.isSpendingAvailable {
-                        Spacer(minLength: 8)
+                    // MOB-2020 Phase 3.2: a Ledger account can now sign, so Send, Pay and Swap show
+                    // for it like any other account -- the receive-only gate this comment used to
+                    // describe is gone.
+                    Spacer(minLength: 8)
 
-                        button(
-                            String(localizable: .tabsSend),
-                            icon: Asset.Assets.Icons.sent.image
-                        ) {
-                            store.send(.sendTapped)
-                        }
-                        .accessibilityIdentifier(AccessibilityID.Home.sendButton)
-
-                        Spacer(minLength: 8)
-
-                        button(
-                            String(localizable: .swapAndPayPay),
-                            icon: Asset.Assets.Icons.pay.image
-                        ) {
-                            store.send(.payWithNearTapped)
-                        }
-                        .accessibilityIdentifier(AccessibilityID.Home.payButton)
-
-                        Spacer(minLength: 8)
-
-                        button(
-                            String(localizable: .swapAndPaySwap),
-                            icon: Asset.Assets.Icons.swap.image
-                        ) {
-                            store.send(.swapWithNearTapped)
-                        }
-                        .accessibilityIdentifier(AccessibilityID.Home.swapButton)
+                    button(
+                        String(localizable: .tabsSend),
+                        icon: Asset.Assets.Icons.sent.image
+                    ) {
+                        store.send(.sendTapped)
                     }
+                    .accessibilityIdentifier(AccessibilityID.Home.sendButton)
+
+                    Spacer(minLength: 8)
+
+                    button(
+                        String(localizable: .swapAndPayPay),
+                        icon: Asset.Assets.Icons.pay.image
+                    ) {
+                        store.send(.payWithNearTapped)
+                    }
+                    .accessibilityIdentifier(AccessibilityID.Home.payButton)
+
+                    Spacer(minLength: 8)
+
+                    button(
+                        String(localizable: .swapAndPaySwap),
+                        icon: Asset.Assets.Icons.swap.image
+                    ) {
+                        store.send(.swapWithNearTapped)
+                    }
+                    .accessibilityIdentifier(AccessibilityID.Home.swapButton)
                 }
                 .zFont(.medium, size: 12, style: Design.Text.primary)
                 .padding(.top, 24)

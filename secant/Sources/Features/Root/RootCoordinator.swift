@@ -627,7 +627,10 @@ extension Root {
                     .swapAndPayCoordFlow(.sendFailed(_, true)),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
-                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendDone)),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendPartial)),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendFailed(_, true))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .swapToZecSummary(.sentTheFundsButtonTapped)))):

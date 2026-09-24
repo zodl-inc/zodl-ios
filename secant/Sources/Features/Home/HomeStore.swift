@@ -36,17 +36,6 @@ struct Home {
             selectedWalletAccount?.vendor.isHWWallet() ?? false
         }
 
-        var isLedgerAccountActive: Bool {
-            selectedWalletAccount?.vendor == .ledger
-        }
-
-        /// MOB-2020 Phase 1 ships a Ledger account as receive-only — Ledger signing lands in
-        /// Phase 3, which is what removes this gate (Send, Pay and Swap all derive a spending
-        /// key from the wallet's seed, a path a Ledger account never has). Receive is unaffected.
-        var isSpendingAvailable: Bool {
-            !isLedgerAccountActive
-        }
-
         var isKeystoneConnected: Bool {
             for account in walletAccounts {
                 if account.vendor == .keystone {

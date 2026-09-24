@@ -473,6 +473,11 @@ extension SwapAndPayForm {
                         store.send(.confirmWithKeystoneTapped)
                     }
                     .padding(.bottom, Design.Spacing.sheetBottomSpace)
+                } else if store.selectedWalletAccount?.vendor == .ledger {
+                    ZashiButton(String(localizable: .ledgerConfirmSwap)) {
+                        store.send(.confirmWithLedgerTapped)
+                    }
+                    .padding(.bottom, Design.Spacing.sheetBottomSpace)
                 } else {
                     ZashiButton(String(localizable: .generalConfirm)) {
                         store.send(.confirmButtonTapped)

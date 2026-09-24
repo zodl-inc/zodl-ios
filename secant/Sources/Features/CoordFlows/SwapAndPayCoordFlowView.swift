@@ -107,6 +107,7 @@ struct SwapAndPayCoordFlowView: View {
                 ) {
                     helpSheetContent()
                 }
+                .ledgerSignSheet(store: store.scope(state: \.ledgerConfirmationState, action: \.ledgerConfirmation))
                 .sheet(isPresented: $store.isInAppBrowserOn) {
                     if let url = store.helpArticleURL {
                         InAppBrowserView(url: url)

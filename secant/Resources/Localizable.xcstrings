@@ -10220,6 +10220,57 @@
         }
       }
     },
+    "ledger.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm with Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar con Ledger"
+          }
+        }
+      }
+    },
+    "ledger.confirmPay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pay with Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pagar con Ledger"
+          }
+        }
+      }
+    },
+    "ledger.confirmSwap" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Swap with Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Intercambiar con Ledger"
+          }
+        }
+      }
+    },
     "ledger.devicePicker.confirmOnDevice" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10373,19 +10424,36 @@
         }
       }
     },
+    "ledger.error.derivationBudget" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close and reopen the Zcash app on your Ledger, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cierra y vuelve a abrir la app de Zcash en tu Ledger, luego inténtalo de nuevo."
+          }
+        }
+      }
+    },
     "ledger.error.deviceMismatch" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The connected Ledger is not the device this account was paired with."
+            "value" : "This isn't the Ledger this account was paired with."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El Ledger conectado no es el dispositivo con el que se vinculó esta cuenta."
+            "value" : "Este no es el Ledger con el que se vinculó esta cuenta."
           }
         }
       }
@@ -10407,6 +10475,23 @@
         }
       }
     },
+    "ledger.error.notSignable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger can't sign this transaction."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger no puede firmar esta transacción."
+          }
+        }
+      }
+    },
     "ledger.error.pairingRefused" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10420,6 +10505,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Se rechazó la vinculación por Bluetooth. Olvida el dispositivo en Ajustes de iOS › Bluetooth e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.error.rejected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You rejected the transaction on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste la transacción en tu Ledger."
           }
         }
       }
@@ -10454,6 +10556,227 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Abre la app de Zcash en tu Ledger e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.signSheet.cancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cancelar transacción"
+          }
+        }
+      }
+    },
+    "ledger.signSheet.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm the transaction on your Ledger device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma la transacción en tu dispositivo Ledger."
+          }
+        }
+      }
+    },
+    "ledger.signSheet.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm Transaction"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar transacción"
+          }
+        }
+      }
+    },
+    "ledger.signWith.connecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conectando…"
+          }
+        }
+      }
+    },
+    "ledger.signWith.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your Ledger unlocked with the Zcash app open. Review the transaction on the device and approve it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén tu Ledger desbloqueado con la app de Zcash abierta. Revisa la transacción en el dispositivo y apruébala."
+          }
+        }
+      }
+    },
+    "ledger.signWith.preparing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing the transaction…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preparando la transacción…"
+          }
+        }
+      }
+    },
+    "ledger.signWith.review" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review and approve the transaction on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revisa y aprueba la transacción en tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.signWith.scanning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking for your Ledger…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscando tu Ledger…"
+          }
+        }
+      }
+    },
+    "ledger.signWith.selectDevice" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selecciona tu Ledger"
+          }
+        }
+      }
+    },
+    "ledger.signWith.sending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending the transaction to your Ledger…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviando la transacción a tu Ledger…"
+          }
+        }
+      }
+    },
+    "ledger.signWith.signing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signing…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Firmando…"
+          }
+        }
+      }
+    },
+    "ledger.signWith.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma en tu Ledger"
+          }
+        }
+      }
+    },
+    "ledger.signWith.tryAgain" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Intentar de nuevo"
           }
         }
       }

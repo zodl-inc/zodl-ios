@@ -14,6 +14,10 @@ import Foundation
 @preconcurrency import ZcashLightClientKit
 
 enum LedgerErrorText {
+    /// Maps a Ledger failure to the message shown for a **pairing/export** failure -- the
+    /// `AddLedgerHWWallet` scan/connect/pair flow. `.ledgerUserRejected` means the user declined
+    /// the viewing-key export on the device here; see `signingMessage(for:)` for the same SDK
+    /// case's *different* meaning once signing exists (declining a transaction).
     static func message(for error: Error) -> String {
         switch error {
         case ZcashError.ledgerBluetoothPoweredOff:
@@ -32,11 +36,36 @@ enum LedgerErrorText {
             return String(localizable: .ledgerErrorPairingRefused)
         case ZcashError.ledgerDeviceMismatch:
             return String(localizable: .ledgerErrorDeviceMismatch)
+        // MOB-2020 Phase 3.2: signing-only cases -- never reachable from `AddLedgerHWWallet`'s
+        // scan/connect/pair path. The SDK's `reason` text is deliberately never surfaced here (it
+        // can describe the transaction), so both a caps mismatch and an unsignable transaction
+        // share the same generic "can't sign this" copy.
+        case ZcashError.ledgerTransactionNotSignable:
+            return String(localizable: .ledgerErrorNotSignable)
+        case ZcashError.ledgerDerivationBudgetExhausted:
+            return String(localizable: .ledgerErrorDerivationBudget)
+        case ZcashError.ledgerCapsMismatch:
+            return String(localizable: .ledgerErrorNotSignable)
         default:
             if isConnectionLost(error) {
                 return String(localizable: .ledgerErrorConnectionLost)
             }
             return String(localizable: .ledgerErrorGeneric)
+        }
+    }
+
+    /// Maps a Ledger failure to the message shown for a **signing** failure --
+    /// `LedgerSigning`/`SignWithLedgerView`'s ceremony. `.ledgerUserRejected` means the user
+    /// declined the *transaction* on the device here, distinct from `message(for:)`'s
+    /// pairing-time meaning (declining the viewing-key export) -- the two contexts need different
+    /// copy for the same SDK case. Every other case reads correctly in both contexts, so this
+    /// defers to `message(for:)`.
+    static func signingMessage(for error: Error) -> String {
+        switch error {
+        case ZcashError.ledgerUserRejected:
+            return String(localizable: .ledgerErrorRejected)
+        default:
+            return message(for: error)
         }
     }
 
@@ -48,12 +77,20 @@ enum LedgerErrorText {
         case ZcashError.ledgerTransportClosed,
             ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTimeout,
-            ZcashError.ledgerBluetoothConnectionFailed:
+            ZcashError.ledgerBluetoothConnectionFailed,
+            ZcashError.ledgerTransportFailed:
             return true
         case LedgerClientError.notConnected:
             return true
         default:
             return false
         }
+    }
+
+    /// Whether a fresh attempt at the same Ledger operation could succeed -- wraps the SDK's own
+    /// `ZcashError.ledgerIsRestartable`, `false` for anything that did not come from the Ledger
+    /// integration (`nil` there).
+    static func isRestartable(_ error: Error) -> Bool {
+        (error as? ZcashError)?.ledgerIsRestartable ?? false
     }
 }

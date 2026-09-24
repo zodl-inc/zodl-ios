@@ -74,6 +74,34 @@ extension SwapAndPayCoordFlow {
                 }
                 return .none
 
+                // MARK: - Ledger
+
+            // MOB-2020: fires from the swap quote sheet, which `SwapAndPay` closes on this same
+            // action (`isQuotePresented = false`) -- iOS cannot present the Ledger sheet while
+            // that sheet is still animating out, so this only stages the state and waits for
+            // `.swapAndPay(.quoteSheetDismissed)` below.
+            case .swapAndPay(.confirmWithLedgerTapped):
+                state.ledgerConfirmationState = .initial
+                state.ledgerConfirmationState.proposal = state.swapAndPayState.proposal
+                state.ledgerConfirmationState.type = state.swapAndPayState.isSwapExperienceEnabled ? .swap : .pay
+                state.isLedgerConfirmationAwaitingQuoteDismissal = true
+                return .none
+
+            case .swapAndPay(.quoteSheetDismissed):
+                guard state.isLedgerConfirmationAwaitingQuoteDismissal else {
+                    return .none
+                }
+                state.isLedgerConfirmationAwaitingQuoteDismissal = false
+                return .send(.ledgerConfirmation(.confirmWithLedgerTapped))
+
+            // MOB-2020: fires from a pushed screen with no sheet up, so the Ledger sheet can
+            // present immediately -- no quote-dismissal wait needed.
+            case .path(.element(id: _, action: .crossPayConfirmation(.confirmWithLedgerTapped))):
+                state.ledgerConfirmationState = .initial
+                state.ledgerConfirmationState.proposal = state.swapAndPayState.proposal
+                state.ledgerConfirmationState.type = state.swapAndPayState.isSwapExperienceEnabled ? .swap : .pay
+                return .send(.ledgerConfirmation(.confirmWithLedgerTapped))
+
             case .path(.element(id: _, action: .confirmWithKeystone(.getSignatureTapped))):
                 var scanState = Scan.State.initial
                 scanState.checkers = [.keystonePCZTScanChecker]
@@ -87,6 +115,38 @@ extension SwapAndPayCoordFlow {
                         return .send(.path(.element(id: id, action: .confirmWithKeystone(.foundPCZT(pcztWithSigs)))))
                     }
                 }
+                return .none
+
+            // MOB-2020: the Ledger twin of both `.scan(.foundPCZT)` (push `.sending`) and
+            // `.confirmWithKeystone(.keystoneFirmwareAccepted)` (the swap-metadata write) above,
+            // collapsed into one arm -- a Ledger signature has no firmware gate splitting those
+            // two moments apart, and `ledgerConfirmationState` is a scoped child (not a path
+            // element), so by the time this runs it already holds the signed PCZT and has started
+            // the submit.
+            case .ledgerConfirmation(.ledgerSigning(.signed)):
+                let depositAddress = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
+                let crosspay = state.swapAndPayState.isSwapExperienceEnabled
+
+                if let provider = state.swapAndPayState.selectedAsset?.provider {
+                    let totalFees = state.swapAndPayState.totalFees
+                    let totalUSDFees = state.swapAndPayState.totalUSDFees
+                    userMetadataProvider.markTransactionAsSwapFor(
+                        depositAddress,
+                        provider,
+                        totalFees,
+                        totalUSDFees,
+                        state.swapAndPayState.zecAsset?.id ?? "",
+                        state.swapAndPayState.selectedAsset?.id ?? "",
+                        !crosspay,
+                        SwapConstants.pendingDeposit,
+                        state.swapAndPayState.zecToBeSpendInQuoteUSFormat
+                    )
+                    if let account = state.selectedWalletAccount?.account {
+                        try? userMetadataProvider.store(account)
+                    }
+                }
+
+                state.path.append(.sending(state.ledgerConfirmationState))
                 return .none
 
             case .path(.element(id: _, action: .confirmWithKeystone(.updateResult(let result)))):
@@ -120,7 +180,35 @@ extension SwapAndPayCoordFlow {
                     }
                 }
                 return .none
-                
+
+            case .ledgerConfirmation(.updateResult(let result)):
+                let sendConfirmationState = state.ledgerConfirmationState
+                return .run { send in
+                    await send(.updateTxIdToExpand(sendConfirmationState.txIdToExpand))
+                    await send(
+                        .updateFailedData(
+                            sendConfirmationState.failedCode,
+                            sendConfirmationState.failedDescription ?? "",
+                            sendConfirmationState.failedPcztMsg
+                        )
+                    )
+                    await send(.updatePartialFailureData(
+                        sendConfirmationState.partialFailureTxIds,
+                        sendConfirmationState.partialFailureStatuses
+                    ))
+                    await send(.updatePendingDescription(sendConfirmationState.pendingDescription))
+
+                    switch result {
+                    case .success:
+                        await send(.updateResult(.success))
+                    case .pending:
+                        await send(.updateResult(.pending))
+                    case .failure:
+                        await send(.updateResult(.failure))
+                    default: return
+                    }
+                }
+
             case .path(.element(id: _, action: .confirmWithKeystone(.pcztSendFailed(let error)))):
                 for element in state.path.reversed() {
                     if element.is(\.sending) {
@@ -139,6 +227,13 @@ extension SwapAndPayCoordFlow {
                         break
                     }
                 }
+                return .none
+
+            case .ledgerConfirmation(.pcztSendFailed(let error)):
+                if state.path.contains(where: { $0.is(\.sending) }) {
+                    return .send(.ledgerConfirmation(.sendFailed(error?.toZcashError(), true)))
+                }
+                state.path.append(.preSendingFailure(state.ledgerConfirmationState))
                 return .none
 
             // MOB-1510: pop to `confirmWithKeystone` first so this only ever applies once (`break`)
