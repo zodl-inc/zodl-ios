@@ -55,9 +55,9 @@
 //  reason (it also drives a Root store touching this process-global state).
 //
 //  The only live Keystone-connect completion signal is
-//  `.addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))))`
+//  `.connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))))`
 //  -- see `keystoneAutoSelectImmediatelyRefreshesTransactionsAndBalance` below. Both
-//  `.accountHWWalletSelection(.accountImportSucceeded)` arms (`AddKeystoneHWWalletCoordFlow`'s own
+//  `.accountHWWalletSelection(.accountImportSucceeded)` arms (`ConnectHWWalletCoordFlow`'s own
 //  and `Settings`'s) are defensive/dead wiring, not reachable UI paths -- see
 //  `settingsAccountHWWalletSelectionAppliesSwitchReactionsAsDefensiveWiring`'s doc comment for why.
 //
@@ -222,12 +222,12 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = zashiAccount }
         initialState.$walletAccounts.withLock { $0 = [zashiAccount] }
-        initialState.path = Root.State.Path.addKeystoneHWWalletCoordFlow
-        initialState.addKeystoneHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        guard let keystoneDeviceReadyId = initialState.addKeystoneHWWalletCoordFlowState.path.ids.last else {
+        guard let keystoneDeviceReadyId = initialState.connectHWWalletCoordFlowState.path.ids.last else {
             Issue.record("expected a keystoneDeviceReady element id on the Add Keystone HW Wallet path")
             return
         }
@@ -264,7 +264,7 @@ import ComposableArchitecture
         }
 
         store.send(
-            .addKeystoneHWWalletCoordFlow(
+            .connectHWWalletCoordFlow(
                 .path(.element(id: keystoneDeviceReadyId, action: .keystoneDeviceReady(.accountImportSucceeded)))
             )
         )
@@ -303,12 +303,12 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = zashiAccount }
         initialState.$walletAccounts.withLock { $0 = [zashiAccount] }
-        initialState.path = Root.State.Path.addKeystoneHWWalletCoordFlow
-        initialState.addKeystoneHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        guard let keystoneDeviceReadyId = initialState.addKeystoneHWWalletCoordFlowState.path.ids.last else {
+        guard let keystoneDeviceReadyId = initialState.connectHWWalletCoordFlowState.path.ids.last else {
             Issue.record("expected a keystoneDeviceReady element id on the Add Keystone HW Wallet path")
             return
         }
@@ -361,7 +361,7 @@ import ComposableArchitecture
         }
 
         store.send(
-            .addKeystoneHWWalletCoordFlow(
+            .connectHWWalletCoordFlow(
                 .path(.element(id: keystoneDeviceReadyId, action: .keystoneDeviceReady(.accountImportSucceeded)))
             )
         )
@@ -389,7 +389,7 @@ import ComposableArchitecture
     /// `SettingsCoordinator.swift` has no handler for `.accountHWWalletSelection(.nextTapped)`, so
     /// `AccountsSelectionView` is a dead end when reached from Settings; `.unlockTapped` (and
     /// therefore `.accountImported`/`.accountImportSucceeded`) is never reachable from that step.
-    /// (The SAME is true of `AddKeystoneHWWalletCoordFlow`'s own `.accountHWWalletSelection(.accountImportSucceeded)`
+    /// (The SAME is true of `ConnectHWWalletCoordFlow`'s own `.accountHWWalletSelection(.accountImportSucceeded)`
     /// arm above it in `RootCoordinator.swift` -- its `.nextTapped` only ever pushes forward to
     /// `.keystoneDeviceReady`, never fires unlock directly from that step either.) Live coverage of
     /// the Keystone-connect parity fix is `keystoneAutoSelectImmediatelyRefreshesTransactionsAndBalance`
@@ -562,6 +562,28 @@ import ComposableArchitecture
         #expect(fetchCalls.value == 0)
         #expect(store.state.transactions == existingTransactions)
         #expect(store.state.homeState.transactionListState.isInvalidated == false)
+    }
+
+    // MARK: - Connect HW Wallet flow root
+
+    /// MOB-2020 UI round 2: `.home(.connectHWWalletTapped)` opens `ConnectHWWalletCoordFlow` with
+    /// the vendor chooser as the flow's root screen (an empty flow path) -- replacing the old
+    /// standalone `chooseHWWallet` Root path, which this file's `baseNoOpDependencies` helper
+    /// isn't otherwise exercised by, so the test lives here rather than duplicating that setup in
+    /// ChooseHWWalletTests/ConnectHWWalletCoordFlowTests.swift.
+    @Test func connectHWWalletTappedOpensTheChooserAsTheFlowRoot() async {
+        let initialState = Root.State.initial
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.connectHWWalletTapped))
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.path.isEmpty)
     }
 }
 

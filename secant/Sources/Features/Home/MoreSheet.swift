@@ -28,15 +28,15 @@ extension HomeView {
                 .padding(.bottom, store.isHWWalletAccountActive ? 24 : 0)
             }
 
-            if !store.isKeystoneConnected {
+            if store.canConnectHWWallet {
                 ActionRow(
                     icon: Asset.Assets.Partners.keystone.image,
-                    title: String(localizable: .settingsKeystone),
+                    title: String(localizable: .keystoneConnect),
                     desc: String(localizable: .settingsKeystoneDesc),
                     customIcon: true,
                     divider: true
                 ) {
-                    store.send(.addKeystoneHWWalletTapped)
+                    store.send(.connectHWWalletTapped)
                 }
                 .padding(.bottom, 12)
             }

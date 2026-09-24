@@ -8746,6 +8746,23 @@
         }
       }
     },
+    "hardwareWalletExplainer.infoBoxDescriptionLedger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger is a popular hardware wallet brand whose devices keep your keys offline and sign over Bluetooth. It's one of many trusted hardware wallet options, alongside Keystone and others."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ledger es una marca popular de hardware wallet cuyos dispositivos mantienen tus claves sin conexión y firman mediante Bluetooth. Es una de las muchas opciones confiables de hardware wallet, junto con Keystone y otros."
+          }
+        }
+      }
+    },
     "hardwareWalletExplainer.infoBoxTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8759,6 +8776,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sobre Keystone"
+          }
+        }
+      }
+    },
+    "hardwareWalletExplainer.infoBoxTitleLedger" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sobre Ledger"
           }
         }
       }
@@ -8828,6 +8862,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "La información que compartas con los socios de integración de Zodl está sujeta a sus políticas de privacidad."
+          }
+        }
+      }
+    },
+    "hwWallet.chooser.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Which hardware wallet would you like to connect? Select your device to get started."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Qué billetera de hardware deseas conectar? Selecciona tu dispositivo para comenzar."
           }
         }
       }
@@ -9995,6 +10046,380 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "¿Estás seguro?"
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.connectedDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger hardware wallet has been successfully connected."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu billetera de hardware Ledger se ha conectado correctamente."
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.failureDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not connect your Ledger wallet. Your funds are safe. Please check that the Zcash app is open and up to date on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo conectar tu wallet Ledger. Tus fondos están seguros. Verifica que la app de Zcash esté abierta y actualizada en tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.pair" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow these steps to pair your Ledger via Bluetooth."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sigue estos pasos para vincular tu Ledger mediante Bluetooth."
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.step1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock your Ledger device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desbloquea tu dispositivo Ledger"
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.step2" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install and open the Zcash app"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala y abre la app de Zcash"
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.step3" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Bluetooth"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activa el Bluetooth"
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.step4" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm the Ledger device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma el dispositivo Ledger"
+          }
+        }
+      }
+    },
+    "ledger.addHWWallet.step5" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verify the Bluetooth pairing code"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verifica el código de vinculación Bluetooth"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.confirmOnDevice" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm the viewing-key export on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma la exportación de la clave de visualización en tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select the Ledger device you'd like to connect."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selecciona el dispositivo Ledger que deseas conectar."
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.scanning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking for your Ledger…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscando tu Ledger…"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Your Device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selecciona tu dispositivo"
+          }
+        }
+      }
+    },
+    "ledger.error.appTooOld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update the Zcash app on your Ledger to 3.6.0 or newer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualiza la app de Zcash en tu Ledger a la versión 3.6.0 o posterior."
+          }
+        }
+      }
+    },
+    "ledger.error.bluetoothOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn on Bluetooth to connect your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activa el Bluetooth para conectar tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.error.bluetoothUnauthorized" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Bluetooth access for Zodl in Settings to connect your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite el acceso a Bluetooth para Zodl en Ajustes para conectar tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.error.bluetoothUnsupported" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device doesn't support Bluetooth LE."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este dispositivo no admite Bluetooth LE."
+          }
+        }
+      }
+    },
+    "ledger.error.connectionLost" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The connection to your Ledger was lost. Connect again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se perdió la conexión con tu Ledger. Conéctalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.error.deviceMismatch" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The connected Ledger is not the device this account was paired with."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Ledger conectado no es el dispositivo con el que se vinculó esta cuenta."
+          }
+        }
+      }
+    },
+    "ledger.error.generic" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl couldn't connect to your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zodl no pudo conectarse a tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.error.pairingRefused" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth pairing was refused. Forget the device in iOS Settings › Bluetooth and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se rechazó la vinculación por Bluetooth. Olvida el dispositivo en Ajustes de iOS › Bluetooth e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "ledger.error.userRejected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The export was declined on the device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La exportación fue rechazada en el dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.error.wrongApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the Zcash app on your Ledger and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la app de Zcash en tu Ledger e inténtalo de nuevo."
           }
         }
       }

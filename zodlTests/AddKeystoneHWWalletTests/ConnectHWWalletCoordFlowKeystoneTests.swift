@@ -1,18 +1,21 @@
 //
-//  AddKeystoneHWWalletCoordFlowTests.swift
+//  ConnectHWWalletCoordFlowKeystoneTests.swift
 //  zodlTests
 //
-//  Covers the coordinator-level error-handling state added for #1920:
+//  Covers the coordinator-level error-handling state added for #1920, now exercised through the
+//  merged `ConnectHWWalletCoordFlow` (MOB-2020 UI round 2 -- the flow's root is the vendor
+//  chooser, and the Keystone instructions screen that used to be the old
+//  AddKeystoneHWWalletCoordFlow's own root is a `Path` element instead):
 //  - accountImportFailed bubbles up from a path element and shows the failure sheet
 //  - cancelFailureTapped hides the sheet and exits the flow
 //  - contactSupportTapped routes to mail or share depending on device capability
 //  - sendSupportMailFinished / shareFinished clear their respective state
-//  (Features/CoordFlows/AddKeystoneHWWalletCoordFlow*.swift)
+//  (Features/CoordFlows/ConnectHWWalletCoordFlow*.swift)
 //
-//  AddKeystoneHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState),
-//  so these tests drive a plain Store and read state directly after sending actions —
-//  the same approach used by ScanCoordFlowZip321Tests. Initial state is set up before
-//  Store creation (never via store.state mutation, which is get-only on a plain Store).
+//  ConnectHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState), so
+//  these tests drive a plain Store and read state directly after sending actions — the same
+//  approach used by ScanCoordFlowZip321Tests. Initial state is set up before Store creation
+//  (never via store.state mutation, which is get-only on a plain Store).
 //
 
 import Testing
@@ -22,12 +25,12 @@ import ComposableArchitecture
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
-@Suite(.serialized) @MainActor struct AddKeystoneHWWalletCoordFlowTests {
+@Suite(.serialized) @MainActor struct ConnectHWWalletCoordFlowKeystoneTests {
 
     // MARK: - accountImportFailed from keystoneDeviceReady
 
     @Test func accountImportFailedShowsFailureSheet() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
@@ -39,7 +42,7 @@ import ComposableArchitecture
     }
 
     @Test func accountImportFailedAfterSuccessScreenIsIgnored() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
         initialState.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
@@ -57,7 +60,7 @@ import ComposableArchitecture
         var restoreInfoState = RestoreInfo.State.initial
         restoreInfoState.isKeystoneFlow = true
         restoreInfoState.isProcessing = true
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State.initial))
         initialState.path.append(.restoreInfo(restoreInfoState))
         initialState.path.append(.keystoneConnected(AddKeystoneHWWallet.State.initial))
@@ -77,7 +80,7 @@ import ComposableArchitecture
     // MARK: - cancelFailureTapped
 
     @Test func cancelFailureTappedHidesSheet() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         let store = makeStore(initialState: initialState)
 
@@ -89,7 +92,7 @@ import ComposableArchitecture
     // MARK: - contactSupportTapped
 
     @Test func contactSupportTappedWithMailCapabilitySetsSupportData() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         initialState.canSendMail = true
         initialState.errMsg = "ZRUST0067: rust error"
@@ -102,7 +105,7 @@ import ComposableArchitecture
     }
 
     @Test func contactSupportTappedWithoutMailSetsMessageToBeShared() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.isFailureSheetPresented = true
         initialState.canSendMail = false
         initialState.errMsg = "ZRUST0067: rust error"
@@ -117,7 +120,7 @@ import ComposableArchitecture
     // MARK: - Mail / share cleanup
 
     @Test func sendSupportMailFinishedClearsSupportData() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         // generate() reads walletStorage; this call runs in test code, outside
         // the store's dependency scope, so it needs its own override.
         initialState.supportData = withDependencies {
@@ -133,7 +136,7 @@ import ComposableArchitecture
     }
 
     @Test func shareFinishedClearsMessageToBeShared() async {
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.messageToBeShared = "some message"
         let store = makeStore(initialState: initialState)
 
@@ -147,13 +150,13 @@ import ComposableArchitecture
     @Test func successfulImportPushesSuccessScreenWithoutFailureSheet() async throws {
         var elementState = AddKeystoneHWWallet.State.initial
         elementState.zcashAccounts = ZcashAccounts.testFixture()
-        var initialState = AddKeystoneHWWalletCoordFlow.State()
+        var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.keystoneDeviceReady(elementState))
 
         let importCount = LockIsolated(0)
         let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
         let store = Store(initialState: initialState) {
-            AddKeystoneHWWalletCoordFlow()
+            ConnectHWWalletCoordFlow()
         } withDependencies: {
             $0.audioServices.systemSoundVibrate = { }
             $0.sdkSynchronizer = .mocked(
@@ -184,10 +187,10 @@ import ComposableArchitecture
     // MARK: - Helpers
 
     private func makeStore(
-        initialState: AddKeystoneHWWalletCoordFlow.State = AddKeystoneHWWalletCoordFlow.State()
-    ) -> StoreOf<AddKeystoneHWWalletCoordFlow> {
+        initialState: ConnectHWWalletCoordFlow.State = ConnectHWWalletCoordFlow.State()
+    ) -> StoreOf<ConnectHWWalletCoordFlow> {
         Store(initialState: initialState) {
-            AddKeystoneHWWalletCoordFlow()
+            ConnectHWWalletCoordFlow()
         } withDependencies: {
             $0.audioServices.systemSoundVibrate = { }
             // SupportDataGenerator.generate (contactSupportTapped) reads walletStorage.

@@ -118,11 +118,6 @@ struct HomeView: View {
                             : AccessibilityID.Home.syncPending
                     )
             }
-            .sheet(isPresented: $store.isInAppBrowserKeystoneOn) {
-                if let url = URL(string: store.inAppBrowserURLKeystone) {
-                    InAppBrowserView(url: url)
-                }
-            }
             .zashiSheet(isPresented: $store.accountSwitchRequest, horizontalPadding: Design.Spacing.edgeToEdgeSpacing) {
                 accountSwitchContent()
             }

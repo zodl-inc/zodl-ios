@@ -15,7 +15,6 @@ struct Home {
         var appId: String?
         var canRequestReview = false
         @Shared(.inMemory(.featureFlags)) var featureFlags: FeatureFlags = .initial
-        var isInAppBrowserKeystoneOn = false
         var isRateEducationEnabled = false
         var isRateTooltipEnabled = false
         var migratingDatabase = true
@@ -54,12 +53,26 @@ struct Home {
                     return true
                 }
             }
-            
+
             return false
         }
 
-        var inAppBrowserURLKeystone: String {
-            "https://keyst.one/shop/products/keystone-3-pro?discount=Zodl"
+        var isLedgerConnected: Bool {
+            for account in walletAccounts {
+                if account.vendor == .ledger {
+                    return true
+                }
+            }
+
+            return false
+        }
+
+        /// True unless a Keystone AND a Ledger account are already connected — the entry points
+        /// into `ChooseHWWallet` (MOB-2020) gate on this instead of the old
+        /// `walletAccounts.count == 1` check, since a wallet can now hold up to one of each
+        /// hardware vendor.
+        var canConnectHWWallet: Bool {
+            !(isKeystoneConnected && isLedgerConnected)
         }
 
         init(
@@ -83,12 +96,14 @@ struct Home {
         case alert(PresentationAction<Action>)
         case binding(BindingAction<Home.State>)
         case buyTapped
+        /// A Home entry point into `ChooseHWWallet` (MOB-2020) — Root consumes this the same way
+        /// `addKeystoneHWWalletTapped` opens the Keystone-only flow.
+        case connectHWWalletTapped
         case currencyConversionCloseTapped
         case currencyConversionSetupTapped
         /// The migration smart banner was tapped — Root opens `MigrationCoordFlow`.
         case migrationTapped
         case foundTransactions
-        case keystoneBannerTapped
         case moreTapped
         case moreInMoreTapped
         case onAppear
@@ -96,7 +111,6 @@ struct Home {
         case payTapped
         case payWithNearTapped
         case poolBalancesDismissTapped
-        case presentKeystoneWeb
         case rateTooltipTapped
         case receiveScreenRequested
         case receiveTapped
@@ -417,15 +431,12 @@ struct Home {
                 state.moreRequest = false
                 return .none
 
-            case .keystoneBannerTapped:
+            case .connectHWWalletTapped:
+                // Root consumes this to open `ChooseHWWallet`; this arm dismisses whichever
+                // sheet sent it (the Wallets & Hardware sheet or the More sheet) so the chooser
+                // is not presented under it.
                 state.accountSwitchRequest = false
-                return .run { send in
-                    try? await mainQueue.sleep(for: .seconds(1))
-                    await send(.presentKeystoneWeb)
-                }
-
-            case .presentKeystoneWeb:
-                state.isInAppBrowserKeystoneOn = true
+                state.moreRequest = false
                 return .none
 
             case .walletAccountTapped:

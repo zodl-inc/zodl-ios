@@ -15,7 +15,7 @@ struct Root {
     @ObservableState
     struct State {
         enum Path {
-            case addKeystoneHWWalletCoordFlow
+            case connectHWWalletCoordFlow
             case currencyConversionSetup
             case migrationCoordFlow
             case receive
@@ -305,7 +305,7 @@ struct Root {
         // enriching swap metadata in the background; not the curated offering.
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
-        var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
+        var connectHWWalletCoordFlowState = ConnectHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
@@ -342,8 +342,8 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
-            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
-                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+            case .connectHWWalletCoordFlow, .currencyConversionSetup,
+                 .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
         }
@@ -488,7 +488,7 @@ struct Root {
         case walletConfigLoaded(WalletConfig)
         case welcome(Welcome.Action)
 
-        case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
+        case connectHWWalletCoordFlow(ConnectHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
@@ -616,8 +616,25 @@ struct Root {
 
     init() { }
     
+    /// `core` is split into three opaque `some Reducer` chunks on purpose (MOB-2020). One
+    /// `@ReducerBuilder` with 35+ statements nests the builder's `_Sequence` types so deep that the
+    /// Swift runtime's type demangler overflows the 1 MB main-thread stack of a physical iPhone
+    /// while it instantiates the reducer's metadata on the first `send` — a Debug build crashed at
+    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator survived on
+    /// its 8 MB stack. Every opaque property is a metadata boundary (the outer name refers to the
+    /// opaque type, not its expansion), so keep each chunk well under 20 statements and put a new
+    /// scope into the smallest one rather than appending here.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
+        screenScopes
+
+        flowScopes
+
+        reducers
+    }
+
+    @ReducerBuilder<State, Action>
+    private var screenScopes: some Reducer<State, Action> {
         BindingReducer()
         
         Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
@@ -679,9 +696,12 @@ struct Root {
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()
         }
-        
-        Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
-            AddKeystoneHWWalletCoordFlow()
+    }
+
+    @ReducerBuilder<State, Action>
+    private var flowScopes: some Reducer<State, Action> {
+        Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
+            ConnectHWWalletCoordFlow()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
@@ -711,7 +731,10 @@ struct Root {
         Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
             IronwoodAnnouncement()
         }
+    }
 
+    @ReducerBuilder<State, Action>
+    private var reducers: some Reducer<State, Action> {
         initializationReduce()
 
         destinationReduce()
