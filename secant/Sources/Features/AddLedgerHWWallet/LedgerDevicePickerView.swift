@@ -8,7 +8,8 @@
 //  "Approve on your Ledger" screen; the export prompt is explained in place via the status line
 //  below the list. Row styling mirrors AccountsSelectionView's account row; the busy Connect
 //  button mirrors KeystoneDeviceReadyView's accessoryView pattern. A scan/connect/pair failure
-//  also shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen.
+//  shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen; a
+//  swipe-dismiss leaves only the bottom Try again to retry.
 //
 
 import SwiftUI
@@ -42,14 +43,7 @@ struct LedgerDevicePickerView: View {
                     .padding(.top, 8)
 
                 if store.devices.isEmpty {
-                    if !store.isScanning {
-                        if let issue = store.issue {
-                            Text(issue.message(in: .connect))
-                                .zFont(size: 14, style: Design.Utility.ErrorRed._700)
-                                .lineSpacing(1.5)
-                                .padding(.top, 24)
-                        }
-                    } else {
+                    if store.isScanning {
                         VStack(spacing: 0) {
                             ProgressView()
                                 .padding(.bottom, 12)
@@ -76,11 +70,6 @@ struct LedgerDevicePickerView: View {
                         .zFont(size: 14, style: Design.Text.tertiary)
                         .lineSpacing(1.5)
                         .padding(.top, 16)
-                } else if !store.devices.isEmpty, let issue = store.issue {
-                    Text(issue.message(in: .connect))
-                        .zFont(size: 14, style: Design.Utility.ErrorRed._700)
-                        .lineSpacing(1.5)
-                        .padding(.top, 16)
                 }
 
                 Spacer()
@@ -100,7 +89,11 @@ struct LedgerDevicePickerView: View {
                     }
                     .padding(.bottom, 24)
                 } else {
-                    ZashiButton(String(localizable: .keystoneAddHWWalletConnect)) {
+                    ZashiButton(
+                        store.issue != nil
+                        ? String(localizable: .ledgerIssueTryAgain)
+                        : String(localizable: .keystoneAddHWWalletConnect)
+                    ) {
                         store.send(.connectDeviceTapped)
                     }
                     .disabled(store.selectedDevice == nil)

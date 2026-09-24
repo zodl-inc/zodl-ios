@@ -17,14 +17,14 @@ struct AddLedgerHWWallet {
     struct State: Equatable {
         var devices: [LedgerBluetoothDevice] = []
         var isScanning = false
-        /// The last scan, connect or pair failure -- drives both the issue sheet and the inline
-        /// line shown below the device list. Cleared whenever a device is (re-)selected or a new
-        /// scan/connect attempt starts. The device picker is now the only screen that connects
-        /// and pairs — see AddLedgerHWWalletCoordFlowCoordinator.
+        /// The last scan, connect or pair failure -- drives the issue sheet. Cleared whenever a
+        /// device is (re-)selected or a new scan/connect attempt starts. The device picker is
+        /// now the only screen that connects and pairs — see AddLedgerHWWalletCoordFlowCoordinator.
         var issue: LedgerIssue? = nil
-        /// Whether `issue`'s sheet is on screen. A swipe-to-dismiss clears only this flag, so the
-        /// picker falls back to showing `issue` as its inline line (and, once `canRescan` is
-        /// true, its own Try again button) instead of losing the failure entirely.
+        /// Whether `issue`'s sheet is on screen. A swipe-to-dismiss clears only this flag, so
+        /// `issue` stays set and the page keeps only its bottom Try again button -- a rescan
+        /// when `canRescan`, otherwise a reconnect of the kept selection -- instead of losing
+        /// the failure entirely.
         var isIssueSheetPresented = false
         var selectedDevice: LedgerBluetoothDevice? = nil
         var isConnecting = false
