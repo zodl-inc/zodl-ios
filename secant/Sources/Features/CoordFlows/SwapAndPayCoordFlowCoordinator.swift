@@ -125,7 +125,6 @@ extension SwapAndPayCoordFlow {
             // the submit.
             case .ledgerConfirmation(.ledgerSigning(.signed)):
                 let depositAddress = state.swapAndPayState.quote?.depositAddress ?? state.swapAndPayState.address
-                let crosspay = state.swapAndPayState.isSwapExperienceEnabled
 
                 if let provider = state.swapAndPayState.selectedAsset?.provider {
                     let totalFees = state.swapAndPayState.totalFees
@@ -137,7 +136,9 @@ extension SwapAndPayCoordFlow {
                         totalUSDFees,
                         state.swapAndPayState.zecAsset?.id ?? "",
                         state.swapAndPayState.selectedAsset?.id ?? "",
-                        !crosspay,
+                        // `exactInput` is true for a swap and false for CrossPay, the same value the software
+                        // path records via `type == .swap` -- the Keystone arm below passes the inverse.
+                        state.swapAndPayState.isSwapExperienceEnabled,
                         SwapConstants.pendingDeposit,
                         state.swapAndPayState.zecToBeSpendInQuoteUSFormat
                     )

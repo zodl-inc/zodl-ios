@@ -283,6 +283,48 @@ import ComposableArchitecture
             #expect(store.state.path.last?.is(\.sending) == true)
         }
     }
+
+    /// MOB-2020: `exactInput` records whether the ZEC side of the swap is the one the user fixed
+    /// -- true for a swap (`.swapFromZec`), false for CrossPay (`.crossPay`), the same value the
+    /// software path already records via `sendConfirmationState.type == .swap`. Until the
+    /// swap-status poll in `RootSwaps` overwrites it from NEAR, this is the only source of truth
+    /// for the Activity row's type.
+    @Test(arguments: [true, false])
+    func aLedgerSignedSwapIsRecordedAsASwapAndACrossPayAsAPayment(isSwapExperienceEnabled: Bool) async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var initialState = SwapAndPayCoordFlow.State()
+            initialState.swapAndPayState.address = "utestdepositaddress"
+            initialState.swapAndPayState.isSwapExperienceEnabled = isSwapExperienceEnabled
+            initialState.swapAndPayState.selectedAsset = SwapAsset(
+                provider: "near",
+                chain: "eth",
+                token: "ETH",
+                assetId: "eth-id",
+                usdPrice: 1,
+                decimals: 18
+            )
+
+            let capturedExactInput = LockIsolated<Bool?>(nil)
+            let store = Store(initialState: initialState) {
+                SwapAndPayCoordFlow()
+            } withDependencies: {
+                $0.userMetadataProvider.markTransactionAsSwapFor = { _, _, _, _, _, _, exactInput, _, _ in
+                    capturedExactInput.setValue(exactInput)
+                }
+                $0.userMetadataProvider.store = { _ in }
+            }
+
+            store.send(.ledgerConfirmation(.ledgerSigning(.signed(Pczt([0xAB])))))
+
+            await waitForCoordFlowStore {
+                capturedExactInput.value != nil
+            }
+
+            #expect(capturedExactInput.value == isSwapExperienceEnabled)
+        }
+    }
 }
 
 @MainActor
