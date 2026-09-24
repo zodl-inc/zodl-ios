@@ -72,8 +72,9 @@ struct LedgerSignSheetView: View {
                     .padding(.top, 32)
                 }
                 .frame(maxWidth: .infinity)
-                // The bottom padding applies only to this normal content -- `LedgerIssueSheetContent`
+                // The top and bottom padding apply only to this normal content -- `LedgerIssueSheetContent`
                 // pads itself.
+                .padding(.top, 32)
                 .padding(.bottom, Design.Spacing.sheetBottomSpace)
             }
         }
