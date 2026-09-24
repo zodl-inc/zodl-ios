@@ -20,6 +20,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-1364] Turning on Tor from Currency Conversion now protects requests immediately, without requiring an app restart. If Tor cannot connect, requests stay protected.
+- [MOB-1697] Cancelling the payment warning after scanning a payment request now closes the confirmation cleanly and returns to the send form.
 - [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
 - [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
 - [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.

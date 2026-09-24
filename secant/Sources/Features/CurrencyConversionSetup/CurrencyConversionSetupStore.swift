@@ -73,6 +73,7 @@ struct CurrencyConversionSetup {
         var isTorOn = false
         var isTorSheetPresented = false
         var selectedCurrency: CurrencyISO4217 = .usd
+        @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
 
         var isSaveButtonDisabled: Bool {
             currentSettingsOption == activeSettingsOption && selectedCurrency == initialCurrency
@@ -100,7 +101,6 @@ struct CurrencyConversionSetup {
         case currencyPickerDismissed
         case currencyPickerTask
         case currencyPickerTapped
-        case delayedDismisalRequested
         case enableTapped
         case enableTorTapped
         case laterTapped
@@ -121,7 +121,6 @@ struct CurrencyConversionSetup {
     @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.fiatCurrencyCatalog)
     var fiatCurrencyCatalog
-    @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.userStoredPreferences) var userStoredPreferences
     @Dependency(\.walletStorage) var walletStorage
@@ -250,19 +249,17 @@ struct CurrencyConversionSetup {
             case .enableTorTapped:
                 state.isTorSheetPresented = false
                 try? walletStorage.importTorSetupFlag(true)
+                state.$swapAPIAccess.withLock { $0 = .protected }
                 return .run { send in
-                    await send(.saveChangesTapped)
                     do {
-                        //try await sdkSynchronizer.torEnabled(true)
-                        try? await mainQueue.sleep(for: .seconds(0.2))
-                        await send(.delayedDismisalRequested)
+                        try await sdkSynchronizer.torEnabled(true)
+                        guard !Task.isCancelled else { return }
+                        await send(.saveChangesTapped)
                     } catch {
+                        guard !Task.isCancelled else { return }
                         await send(.torInitFailed)
                     }
                 }
-
-            case .delayedDismisalRequested:
-                return .none
                 
             case .laterTapped:
                 state.isTorSheetPresented = false

@@ -16,7 +16,7 @@ import Testing
 /// running give it `FakeSession`, whose `close()` stops where the test wants it
 /// — the only way to ask what a second closer does while a first one is still
 /// joining the calls a session has in flight.
-@Suite struct VotingSessionRegistryTests {
+@Suite(.timeLimit(.minutes(1))) struct VotingSessionRegistryTests {
     private let roundId = "a1b2c3"
 
     @Test func sessionForAnUnopenedRoundThrowsNotOpen() async throws {
@@ -113,7 +113,7 @@ import Testing
         }
         // The first open is inside the factory and staying there, so its
         // attempt is registered and cannot finish before the second arrives.
-        await wait(for: factory.entered, "the first open to reach the factory")
+        await factory.entered.wait()
 
         let second = Task {
             try await registry.open(
@@ -162,7 +162,7 @@ import Testing
             )
         }
         // The open has registered its attempt and is held inside the factory.
-        await wait(for: factory.entered, "the open to reach the factory")
+        await factory.entered.wait()
 
         // Returns only once the open it interrupted has finished, so nothing
         // can register a session behind it. The factory is still holding, and
@@ -967,32 +967,6 @@ import Testing
     /// A registry whose factory is the app's own wiring — the synchronizer
     /// dependency's session factory — backed by the no-op client, which refuses
     /// rather than reaching the SDK.
-    /// Waits for a staged handshake, bounded: a gate that never opens should
-    /// name what it was waiting for rather than hang the suite until the runner
-    /// gives up on it.
-    private func wait(
-        for gate: Gate,
-        _ what: String,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) async {
-        let opened = await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await gate.wait()
-                return true
-            }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(5))
-                return false
-            }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
-        if !opened {
-            Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
-        }
-    }
-
     private func makeRegistry() -> VotingSessionRegistry {
         let synchronizer = SDKSynchronizerClient.noOp
         let backend = VotingRustBackend()

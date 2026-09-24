@@ -193,15 +193,7 @@ import ZcashPaymentURI
             let requestZecId = try #require(store.state.path.ids.last)
             #expect(store.state.path[id: requestZecId]?.is(\.requestZecConfirmation) == true)
 
-            // The pop itself is verified below; the known issue documents a pre-existing
-            // composition wart rather than a defect of the cancel wiring: `coordinatorReduce()`
-            // sits BEFORE the path `forEach` in the flow's `body`, so any handler that pops in
-            // response to a path-element action (this one, and equally the screen's own
-            // `.goBackTappedFromRequestZec` back button) removes the element before its child
-            // reducer runs, and TCA reports "received an action for a missing element".
-            withKnownIssue("pre-existing: coordinatorReduce() runs before .forEach, so the pop precedes the child reducer") {
-                store.send(.path(.element(id: requestZecId, action: .requestZecConfirmation(.cancelTapped))))
-            }
+            store.send(.path(.element(id: requestZecId, action: .requestZecConfirmation(.cancelTapped))))
 
             await waitForScanStore {
                 store.state.path.count == 1
