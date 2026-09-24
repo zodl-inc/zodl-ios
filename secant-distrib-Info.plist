@@ -47,6 +47,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Zodl uses Bluetooth to connect to your Ledger hardware wallet.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs access to your camera to scan QR codes.</string>
 	<key>NSFaceIDUsageDescription</key>
