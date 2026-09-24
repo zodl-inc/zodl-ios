@@ -218,9 +218,15 @@ struct VotingSubmissionProgress: Equatable, Sendable {
         isRetrying = false
     }
 
-    /// The bundles `plan` still owes vote work for, ascending.
+    /// The bundles `plan` still owes vote work for, ascending: the bundles of
+    /// its vote-family steps and every bundle its recovered vote work names,
+    /// the Android app's rule. The second list is not redundant: a vote whose
+    /// blocking helper share is being recovered owes a `confirm_share` step,
+    /// which is not a vote-family kind, and is listed there as share work.
     static func voteCarryingBundleIndexes(in plan: VotingRoundPlan) -> [UInt32] {
-        Set(plan.nextSteps.filter { voteCarryingStepKinds.contains($0.kind) }.map(\.bundleIndex)).sorted()
+        let stepBundles = plan.nextSteps.filter { voteCarryingStepKinds.contains($0.kind) }.map(\.bundleIndex)
+        let recoveredBundles = plan.recoveredVoteWork.map(\.bundleIndex)
+        return Set(stepBundles + recoveredBundles).sorted()
     }
 }
 #endif

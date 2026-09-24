@@ -85,6 +85,33 @@ import Testing
         #expect(withoutPlan.estimatedCompletedProposals == 1)
     }
 
+    /// A resumed round whose bundle 0 has its votes confirmed but still
+    /// recovers a blocking helper share owes a `confirm_share` step there, and
+    /// the crate lists the share under recovered vote work. Bundle 0 still has
+    /// to carry every question, so bundle 1's two proofs are half of two
+    /// questions: the Android app's "1 of 4" at 47.5 %, not "2 of 4" at 65 %.
+    @Test func aBundleRecoveringABlockingShareStillCarriesEveryQuestion() throws {
+        var progress = VotingSubmissionProgress()
+        progress.apply(try planRefreshedEvent(
+            completedProposals: 0,
+            totalProposals: 4,
+            nextSteps: [
+                ("confirm_share", 0, 1),
+                ("cast_vote", 1, 1),
+                ("cast_vote", 1, 2),
+                ("cast_vote", 1, 3),
+                ("cast_vote", 1, 4)
+            ],
+            recoveredVoteWork: [("submit_shares", 0, 1)]
+        ))
+
+        progress.apply(try voteProofEvent(stepProposalId: 1, bundleIndex: 1, proofProposalId: 1, proofProgress: 1.0))
+        progress.apply(try voteProofEvent(stepProposalId: 1, bundleIndex: 1, proofProposalId: 2, proofProgress: 1.0))
+
+        #expect(progress.estimatedCompletedProposals == 1)
+        #expect(isClose(progress.fraction, 0.25))
+    }
+
     @Test func anyDriveEventEndsTheRetrySignal() throws {
         var progress = VotingSubmissionProgress()
         progress.isRetrying = true
@@ -113,6 +140,25 @@ import Testing
         let plan = try JSONDecoder().decode(VotingRoundPlan.self, from: JSONSerialization.data(withJSONObject: payload))
 
         #expect(VotingSubmissionProgress.voteCarryingBundleIndexes(in: plan) == [0, 1, 2, 4])
+    }
+
+    /// The Android app's rule: every bundle the plan's recovered vote work
+    /// names carries vote work, whatever the work's kind, alongside the
+    /// bundles of the vote-family steps.
+    @Test func recoveredVoteWorkAddsItsBundles() throws {
+        var payload = planPayload()
+        payload["next_steps"] = [
+            nextStepPayload(kind: "cast_vote", bundleIndex: 2, proposalId: 1),
+            nextStepPayload(kind: "confirm_share", bundleIndex: 0, proposalId: 1)
+        ]
+        payload["recovered_vote_work"] = [
+            recoveredVoteWorkPayload(kind: "submit_shares", bundleIndex: 0, proposalId: 1),
+            recoveredVoteWorkPayload(kind: "advance_vote", bundleIndex: 2, proposalId: 1),
+            recoveredVoteWorkPayload(kind: "a_future_kind", bundleIndex: 5, proposalId: 1)
+        ]
+        let plan = try JSONDecoder().decode(VotingRoundPlan.self, from: JSONSerialization.data(withJSONObject: payload))
+
+        #expect(VotingSubmissionProgress.voteCarryingBundleIndexes(in: plan) == [0, 2, 5])
     }
 
     // MARK: - Mapping the crate's steps
@@ -172,11 +218,15 @@ import Testing
     private func planRefreshedEvent(
         completedProposals: UInt32,
         totalProposals: UInt32,
-        nextSteps: [(kind: String, bundleIndex: UInt32, proposalId: UInt32)]
+        nextSteps: [(kind: String, bundleIndex: UInt32, proposalId: UInt32)],
+        recoveredVoteWork: [(kind: String, bundleIndex: UInt32, proposalId: UInt32)] = []
     ) throws -> VotingRoundDriveEvent {
         var plan = planPayload()
         plan["next_steps"] = nextSteps.map {
             nextStepPayload(kind: $0.kind, bundleIndex: $0.bundleIndex, proposalId: $0.proposalId)
+        }
+        plan["recovered_vote_work"] = recoveredVoteWork.map {
+            recoveredVoteWorkPayload(kind: $0.kind, bundleIndex: $0.bundleIndex, proposalId: $0.proposalId)
         }
         let event: [String: Any] = [
             "kind": "plan_refreshed",
@@ -197,6 +247,17 @@ import Testing
             "proposal_id": Int(proposalId),
             "choice": 0,
             "share_index": 0
+        ]
+    }
+
+    private func recoveredVoteWorkPayload(kind: String, bundleIndex: UInt32, proposalId: UInt32) -> [String: Any] {
+        [
+            "kind": kind,
+            "bundle_index": Int(bundleIndex),
+            "proposal_id": Int(proposalId),
+            "tx_hash": NSNull(),
+            "vc_tree_position": 17,
+            "share_indexes": [0]
         ]
     }
 
