@@ -40,6 +40,9 @@ struct HomeView: View {
                     }
                     .accessibilityIdentifier(AccessibilityID.Home.receiveButton)
 
+                    // MOB-2020 Phase 3.2: a Ledger account can now sign, so Send, Pay and Swap show
+                    // for it like any other account -- the receive-only gate this comment used to
+                    // describe is gone.
                     Spacer(minLength: 8)
 
                     button(
@@ -112,11 +115,6 @@ struct HomeView: View {
                             ? AccessibilityID.Home.syncComplete
                             : AccessibilityID.Home.syncPending
                     )
-            }
-            .sheet(isPresented: $store.isInAppBrowserKeystoneOn) {
-                if let url = URL(string: store.inAppBrowserURLKeystone) {
-                    InAppBrowserView(url: url)
-                }
             }
             .zashiSheet(isPresented: $store.accountSwitchRequest, horizontalPadding: Design.Spacing.edgeToEdgeSpacing) {
                 accountSwitchContent()

@@ -173,12 +173,12 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
-                            } else if path == .addKeystoneHWWalletCoordFlow {
-                                AddKeystoneHWWalletCoordFlowView(
+                            } else if path == .connectHWWalletCoordFlow {
+                                ConnectHWWalletCoordFlowView(
                                     store:
                                         store.scope(
-                                            state: \.addKeystoneHWWalletCoordFlowState,
-                                            action: \.addKeystoneHWWalletCoordFlow),
+                                            state: \.connectHWWalletCoordFlowState,
+                                            action: \.connectHWWalletCoordFlow),
                                     tokenName: tokenName
                                 )
                                 .transition(.move(edge: .trailing))
@@ -273,6 +273,17 @@ private extension RootView {
                             tokenName: tokenName
                         )
                     }
+                    // MOB-2020 UI round 2: a Ledger shield presents this sheet over the screen the
+                    // user tapped Shield from -- same view send/request-ZEC/pay/swap already use --
+                    // instead of the popover above. See `RootCoordinator`'s `.signWithKeystoneRequested`
+                    // and `.ledgerShieldingSheetDismissed`.
+                    .ledgerSignSheet(
+                        store: store.scope(
+                            state: \.signWithKeystoneCoordFlowState.sendConfirmationState,
+                            action: \.signWithKeystoneCoordFlow.sendConfirmation
+                        ),
+                        onDismiss: { store.send(.ledgerShieldingSheetDismissed) }
+                    )
                     .animation(.easeInOut(duration: 0.3), value: store.path)
                     .overlayedWithSplash(store.splashAppeared) {
                         store.send(.splashRemovalRequested)

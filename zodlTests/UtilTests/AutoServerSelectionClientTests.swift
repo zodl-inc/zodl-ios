@@ -141,7 +141,7 @@ struct RootAutoServerCandidateTests {
         } operation: {
             var state = Root.State.initial
             let nonSensitivePaths: [Root.State.Path] = [
-                .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                .connectHWWalletCoordFlow, .currencyConversionSetup, .receive,
                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
             ]
             for path in nonSensitivePaths {

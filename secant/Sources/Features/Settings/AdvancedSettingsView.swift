@@ -85,7 +85,10 @@ struct AdvancedSettingsView: View {
                         // MOB-1466: the stuck-run escape hatch. Present only while a migration is
                         // IN PROGRESS (`isMigrationInProgress`) — see `AdvancedSettings.State`.
                         // `coinsSwap` is the migration glyph every other migration surface uses.
-                        if store.isMigrationInProgress {
+                        // MOB-2020: also hidden for a Ledger account — its migration run is
+                        // already excluded (`MigrationDerivations.candidateAccountUUIDs`), so
+                        // there is nothing this row could ever restart for it.
+                        if store.isMigrationInProgress && !store.isLedgerAccount {
                             ActionRow(
                                 icon: Asset.Assets.Icons.coinsSwap.image,
                                 title: String(localizable: .migrationRestartTitle)
@@ -94,7 +97,7 @@ struct AdvancedSettingsView: View {
                             }
                         }
 
-                        if store.isKeystoneConnected {
+                        if store.isHWWalletAccountSelected {
                             ActionRow(
                                 icon: Asset.Assets.Icons.hardDrive.image,
                                 title: String(localizable: .disconnectHWWalletCta),

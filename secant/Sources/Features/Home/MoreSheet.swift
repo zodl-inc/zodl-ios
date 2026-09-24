@@ -11,7 +11,7 @@ import ComposableArchitecture
 extension HomeView {
     @ViewBuilder func moreContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !store.isKeystoneAccountActive {
+            if !store.isHWWalletAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
                     ? Asset.Assets.Partners.flexaDisabled.image
@@ -19,24 +19,24 @@ extension HomeView {
                     title: String(localizable: .settingsFlexa),
                     desc: String(localizable: .settingsFlexaDesc),
                     customIcon: true,
-                    divider: store.featureFlags.flexa && !store.isKeystoneAccountActive
+                    divider: store.featureFlags.flexa && !store.isHWWalletAccountActive
                 ) {
                     store.send(.flexaTapped)
                 }
                 .disabled(walletStatus.isNotReadyForFullySyncedOperation)
                 .padding(.top, 32)
-                .padding(.bottom, store.isKeystoneAccountActive ? 24 : 0)
+                .padding(.bottom, store.isHWWalletAccountActive ? 24 : 0)
             }
 
-            if !store.isKeystoneConnected {
+            if store.canConnectHWWallet {
                 ActionRow(
                     icon: Asset.Assets.Partners.keystone.image,
-                    title: String(localizable: .settingsKeystone),
+                    title: String(localizable: .keystoneConnect),
                     desc: String(localizable: .settingsKeystoneDesc),
                     customIcon: true,
                     divider: true
                 ) {
-                    store.send(.addKeystoneHWWalletTapped)
+                    store.send(.connectHWWalletTapped)
                 }
                 .padding(.bottom, 12)
             }
@@ -76,7 +76,7 @@ extension HomeView {
                 title: String(localizable: .sendSelectPayWithNear),
                 desc: String(localizable: .sendSelectPayWithNearDesc),
                 customIcon: true,
-                divider: !store.isKeystoneAccountActive
+                divider: !store.isHWWalletAccountActive
             ) {
                 store.send(.payWithNearTapped)
             }
@@ -84,7 +84,7 @@ extension HomeView {
             .padding(.top, 32)
             .padding(.bottom, 8)
 
-            if !store.isKeystoneAccountActive {
+            if !store.isHWWalletAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
                     ? Asset.Assets.Partners.flexaDisabled.image

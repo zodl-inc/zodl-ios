@@ -15,7 +15,7 @@ struct Root {
     @ObservableState
     struct State {
         enum Path {
-            case addKeystoneHWWalletCoordFlow
+            case connectHWWalletCoordFlow
             case currencyConversionSetup
             case migrationCoordFlow
             case receive
@@ -305,7 +305,7 @@ struct Root {
         // enriching swap metadata in the background; not the curated offering.
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
-        var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
+        var connectHWWalletCoordFlowState = ConnectHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
@@ -329,11 +329,17 @@ struct Root {
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
         }
 
-        /// True while the user is inside a flow that can contain a payment or vote.
-        /// This is computed from live navigation state so a deferred candidate is
+        /// True while `LedgerSignSheetView` is up over Home for a Ledger shield.
+        var isLedgerShieldingSheetPresented: Bool {
+            signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented
+        }
+
+        /// True while the user is inside a flow that can contain a payment or vote, or either the
+        /// Keystone signing popover or the Ledger shielding sheet is up over Home with no `path`
+        /// of its own. This is computed from live navigation state so a deferred candidate is
         /// reconsidered as soon as the user leaves the flow.
         var isSensitiveFlowActive: Bool {
-            if signWithKeystoneCoordFlowBinding { return true }
+            if signWithKeystoneCoordFlowBinding || isLedgerShieldingSheetPresented { return true }
             guard let path else { return false }
             switch path {
             case .settings:
@@ -342,8 +348,8 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
-            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
-                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+            case .connectHWWalletCoordFlow, .currencyConversionSetup,
+                 .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
         }
@@ -378,8 +384,8 @@ struct Root {
         /// transactions, receive, request-ZEC, currency conversion, Tor setup, server switch,
         /// wallet backup, and the Keystone add flow — so the remaining terms only need to cover
         /// the presentation states that are NOT `Path` cases: the Keystone signing popover, the
-        /// Server Setup full-screen cover, a background task in flight, and any alert already
-        /// on screen.
+        /// Ledger shielding sheet, the Server Setup full-screen cover, a background task in
+        /// flight, and any alert already on screen.
         ///
         /// Home's own informational sheets (e.g. the smart banner) are deliberately NOT gated
         /// here: enumerating `Home.State`'s bindings would be brittle, and the cost of losing
@@ -390,6 +396,7 @@ struct Root {
             destinationState.destination == .home
                 && path == nil
                 && !signWithKeystoneCoordFlowBinding
+                && !isLedgerShieldingSheetPresented
                 && !serverSetupViewBinding
                 && bgTask == nil
                 && alert == nil
@@ -488,7 +495,7 @@ struct Root {
         case walletConfigLoaded(WalletConfig)
         case welcome(Welcome.Action)
 
-        case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
+        case connectHWWalletCoordFlow(ConnectHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
@@ -500,6 +507,9 @@ struct Root {
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
+        /// MOB-2020 UI round 2: `LedgerSignSheetView`'s `onDismiss`, sent from `RootView`'s
+        /// `.ledgerSignSheet` next to the Keystone popover -- see `RootCoordinator`'s arm.
+        case ledgerShieldingSheetDismissed
         case swapAndPayCoordFlow(SwapAndPayCoordFlow.Action)
         case transactionsCoordFlow(TransactionsCoordFlow.Action)
         case walletBackupCoordFlow(WalletBackupCoordFlow.Action)
@@ -616,8 +626,25 @@ struct Root {
 
     init() { }
     
+    /// `core` is split into three opaque `some Reducer` chunks on purpose (MOB-2020). One
+    /// `@ReducerBuilder` with 35+ statements nests the builder's `_Sequence` types so deep that the
+    /// Swift runtime's type demangler overflows the 1 MB main-thread stack of a physical iPhone
+    /// while it instantiates the reducer's metadata on the first `send` — a Debug build crashed at
+    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator survived on
+    /// its 8 MB stack. Every opaque property is a metadata boundary (the outer name refers to the
+    /// opaque type, not its expansion), so keep each chunk well under 20 statements and put a new
+    /// scope into the smallest one rather than appending here.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
+        screenScopes
+
+        flowScopes
+
+        reducers
+    }
+
+    @ReducerBuilder<State, Action>
+    private var screenScopes: some Reducer<State, Action> {
         BindingReducer()
         
         Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
@@ -679,9 +706,12 @@ struct Root {
         Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
             ScanCoordFlow()
         }
-        
-        Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
-            AddKeystoneHWWalletCoordFlow()
+    }
+
+    @ReducerBuilder<State, Action>
+    private var flowScopes: some Reducer<State, Action> {
+        Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
+            ConnectHWWalletCoordFlow()
         }
 
         Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
@@ -711,7 +741,10 @@ struct Root {
         Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
             IronwoodAnnouncement()
         }
+    }
 
+    @ReducerBuilder<State, Action>
+    private var reducers: some Reducer<State, Action> {
         initializationReduce()
 
         destinationReduce()

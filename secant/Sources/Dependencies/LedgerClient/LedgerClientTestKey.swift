@@ -12,6 +12,7 @@ extension LedgerClient {
         scanDevices: { AsyncThrowingStream { $0.finish() } },
         connect: { _ in },
         pairAccount: { _ in throw LedgerClientError.notConnected },
-        disconnect: { }
+        disconnect: { },
+        signPCZT: { _, _, _ in AsyncThrowingStream { $0.finish(throwing: LedgerClientError.notConnected) } }
     )
 }

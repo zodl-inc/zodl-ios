@@ -53,6 +53,15 @@ struct WalletStorage {
         static func zcashStoredVotingHotkey(accountId: AccountUUID) -> String {
             "\(Constants.zcashStoredVotingHotkey)_\(accountId.id.map { String(format: "%02x", $0) }.joined())"
         }
+
+        static let zcashStoredLedgerBinding = "zcashStoredLedgerBinding"
+
+        /// Per-account keychain key for the Ledger device binding (device identity + ZIP 32
+        /// account index the account was exported at). Keyed the same way as the voting hotkey
+        /// so multiple accounts never collide on a single keychain item.
+        static func zcashStoredLedgerBinding(accountId: AccountUUID) -> String {
+            "\(Constants.zcashStoredLedgerBinding)_\(accountId.id.map { String(format: "%02x", $0) }.joined())"
+        }
     }
     
     /// States of the Swap API access opt-in
@@ -79,6 +88,10 @@ struct WalletStorage {
         case storageError(Error)
         case unsupportedVersion(Int)
         case unsupportedLanguage(MnemonicLanguageType)
+        // Appended after the existing cases, deliberately: the enum's NSError code numbering
+        // counts payload cases first, then payload-less cases in declaration order, so appending
+        // a new payload-less case here keeps every existing case's numeric code unchanged.
+        case uninitializedLedgerBinding
     }
 
     private let secItem: SecItemClient
@@ -192,9 +205,11 @@ struct WalletStorage {
         try? deleteData(forKey: Constants.zcashStoredAdressBookEncryptionKeys)
         try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_zashi")
         try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_keystone")
+        try? deleteData(forKey: "\(Constants.zcashStoredUserMetadataEncryptionKeys)_ledger")
         try? deleteData(forKey: Constants.zcashStoredWalletBackupReminder)
         try? deleteData(forKey: "\(Constants.zcashStoredShieldingReminder)_zashi")
         try? deleteData(forKey: "\(Constants.zcashStoredShieldingReminder)_keystone")
+        try? deleteData(forKey: "\(Constants.zcashStoredShieldingReminder)_ledger")
         try? deleteData(forKey: Constants.zcashStoredWalletBackupAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredShieldingAcknowledged)
         try? deleteData(forKey: Constants.zcashStoredTorSetupFlag)
@@ -208,6 +223,11 @@ struct WalletStorage {
             try? deleteData(forKey: key)
         }
         try? deleteData(forKey: Constants.zcashStoredVotingHotkey)
+        // Ledger bindings are stored per-account under "<zcashStoredLedgerBinding>_<accountUUIDHex>",
+        // the same shape as the voting hotkey above. Enumerate and wipe every such entry.
+        for key in keychainKeys(withPrefix: "\(Constants.zcashStoredLedgerBinding)_") {
+            try? deleteData(forKey: key)
+        }
     }
     
     func importAddressBookEncryptionKeys(_ keys: AddressBookEncryptionKeys) throws {
@@ -509,6 +529,52 @@ struct WalletStorage {
             throw WalletStorageError.unsupportedVersion(hotkey.version)
         }
         return hotkey
+    }
+
+    // MARK: - Ledger Binding
+
+    /// Stores the device identity + ZIP 32 account index a Ledger account was imported with.
+    /// A Ledger account itself carries neither (the SDK requires both at import time, and a
+    /// Ledger never reveals a seed fingerprint), so this binding is the only place either value
+    /// lives.
+    func importLedgerBinding(_ binding: LedgerAccountBinding, accountId: AccountUUID) throws {
+        do {
+            guard let data = try encode(object: binding) else {
+                throw KeychainError.encoding
+            }
+
+            try setData(data, forKey: Constants.zcashStoredLedgerBinding(accountId: accountId))
+        } catch KeychainError.duplicate {
+            throw WalletStorageError.alreadyImported
+        } catch {
+            throw WalletStorageError.storageError(error)
+        }
+    }
+
+    func exportLedgerBinding(accountId: AccountUUID) throws -> LedgerAccountBinding {
+        let reqData: Data?
+
+        do {
+            reqData = try data(forKey: Constants.zcashStoredLedgerBinding(accountId: accountId))
+        } catch KeychainError.noDataFound {
+            throw WalletStorageError.uninitializedLedgerBinding
+        } catch {
+            throw error
+        }
+
+        guard let reqData else {
+            throw WalletStorageError.uninitializedLedgerBinding
+        }
+
+        guard let binding = try decode(json: reqData, as: LedgerAccountBinding.self) else {
+            throw WalletStorageError.uninitializedLedgerBinding
+        }
+
+        return binding
+    }
+
+    func deleteLedgerBinding(accountId: AccountUUID) throws {
+        try deleteData(forKey: Constants.zcashStoredLedgerBinding(accountId: accountId))
     }
 
     // MARK: - Wallet Storage Codable & Query helpers

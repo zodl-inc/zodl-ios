@@ -426,8 +426,8 @@ extension SDKSynchronizerClient: DependencyKey {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
                 }
 
-                // Put the Zashi account to the top
-                let sortedWalletAccounts = walletAccounts.sorted { $0.vendor.rawValue > $1.vendor.rawValue }
+                // Put the Zashi account to the top, then Keystone, then Ledger.
+                let sortedWalletAccounts = WalletAccount.sortedByVendor(walletAccounts)
 
                 return sortedWalletAccounts
             },
@@ -486,6 +486,15 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             redactPCZTForSigner: { pczt in
                 try await synchronizer.redactPCZTForSigner(pczt: pczt)
+            },
+            signPCZTWithLedger: { pczt, accountUUID, binding, transport, progress in
+                try await synchronizer.signPCZTWithLedger(
+                    pczt: pczt,
+                    accountUUID: accountUUID,
+                    binding: binding,
+                    transport: transport,
+                    progress: progress
+                )
             },
             fetchTxidsWithMemoContaining: { searchTerm in
                 try await synchronizer.fetchTxidsWithMemoContaining(searchTerm: searchTerm)

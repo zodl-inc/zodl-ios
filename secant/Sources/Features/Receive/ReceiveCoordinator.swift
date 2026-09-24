@@ -17,7 +17,7 @@ extension Receive {
                 var addressDetailsState = AddressDetails.State.initial
                 addressDetailsState.address = address
                 addressDetailsState.maxPrivacy = maxPrivacy
-                if state.selectedWalletAccount?.vendor == .keystone {
+                if state.selectedWalletAccount?.vendor.isHWWallet() == true {
                     addressDetailsState.addressTitle = maxPrivacy
                     ? String(localizable: .accountsKeystoneShieldedAddress)
                     : String(localizable: .accountsKeystoneTransparentAddress)

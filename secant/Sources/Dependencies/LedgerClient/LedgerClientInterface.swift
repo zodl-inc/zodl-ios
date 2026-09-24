@@ -38,6 +38,12 @@ enum LedgerClientError: Error, Equatable, LocalizedError {
     }
 }
 
+/// One step of a Ledger signing ceremony, as `LedgerClient.signPCZT` reports it.
+enum LedgerSigningEvent: Equatable, Sendable {
+    case progress(LedgerSigningProgress)
+    case signed(Pczt)
+}
+
 @DependencyClient
 struct LedgerClient {
     /// Scans for Ledger devices. Each element is the whole list found so far.
@@ -51,4 +57,11 @@ struct LedgerClient {
     var pairAccount: @Sendable (Zip32AccountIndex) async throws -> LedgerPairing
     /// Closes the open connection, if any.
     var disconnect: @Sendable () async -> Void
+    /// Signs a PCZT on the connected device. Yields `.progress` for each stage the SDK reports, in
+    /// order, then `.signed` once, then finishes. Fails with `LedgerClientError/notConnected` when
+    /// nothing is connected, otherwise with the SDK's error. Cancelling the consumer cancels the
+    /// ceremony (the SDK then closes the transport).
+    var signPCZT: @Sendable (Pczt, AccountUUID, LedgerAccountBinding) -> AsyncThrowingStream<LedgerSigningEvent, Error> = { _, _, _ in
+        AsyncThrowingStream { $0.finish(throwing: LedgerClientError.notConnected) }
+    }
 }
