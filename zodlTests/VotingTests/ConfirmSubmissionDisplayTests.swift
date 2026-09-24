@@ -44,17 +44,17 @@ import Testing
         #expect(shown.title == String(localizable: .coinVoteSubmissionContinuedProcessingTitle))
     }
 
-    @Test func aRunThatHasMeasuredNothingYetReadsZeroOfItsTotal() throws {
+    @Test func aRunThatHasMeasuredNothingYetShowsItsFirstVote() throws {
         var submission = VotingSubmissionProgress()
         submission.apply(try planRefreshedEvent(completedProposals: 0, totalProposals: 36))
 
         let shown = try #require(card(ConfirmSubmissionDisplay.bottom(status: .submitting, submission: submission)))
 
         #expect(isClose(shown.value, 0.3))
-        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("0", "36")))
+        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("1", "36")))
     }
 
-    @Test func aRunCountsTheQuestionsDoneOfItsTotal() throws {
+    @Test func aRunShowsTheVoteAfterTheQuestionsDone() throws {
         var submission = VotingSubmissionProgress()
         submission.apply(try planRefreshedEvent(completedProposals: 0, totalProposals: 4))
         submission.apply(try voteProofEvent(proposalId: 1))
@@ -62,7 +62,24 @@ import Testing
         let shown = try #require(card(ConfirmSubmissionDisplay.bottom(status: .submitting, submission: submission)))
 
         #expect(isClose(shown.value, 0.3 + 0.7 * 0.25))
-        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("1", "4")))
+        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("2", "4")))
+    }
+
+    /// Every vote is proven while the chain has confirmed none: the estimate
+    /// stays one short of the total until the tally says otherwise, and the
+    /// card names the last vote rather than the one before it.
+    @Test func aRunWhoseLastVoteWaitsForConfirmationShowsItsTotal() throws {
+        var submission = VotingSubmissionProgress()
+        submission.apply(try planRefreshedEvent(completedProposals: 0, totalProposals: 4))
+        for proposalId in UInt32(1)...4 {
+            submission.apply(try voteProofEvent(proposalId: proposalId))
+        }
+
+        let shown = try #require(card(ConfirmSubmissionDisplay.bottom(status: .submitting, submission: submission)))
+
+        #expect(submission.estimatedCompletedProposals == 3)
+        #expect(isClose(shown.value, 1))
+        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("4", "4")))
     }
 
     @Test func aConfirmedTallyFillsTheBar() throws {
@@ -100,14 +117,26 @@ import Testing
         #expect(shown.title == String(localizable: .coinVoteStoreSubmissionAuthorizingVote))
     }
 
-    @Test func aSubmissionFailureKeepsItsCount() throws {
+    /// Three votes got through and the fourth failed: the bar keeps what got
+    /// through, and the card names the vote that failed.
+    @Test func aSubmissionFailureShowsTheVoteThatFailed() throws {
         let shown = try #require(card(ConfirmSubmissionDisplay.bottom(
             status: .submissionFailed(error: "x", submittedCount: 3, totalCount: 10),
             submission: VotingSubmissionProgress()
         )))
 
         #expect(isClose(shown.value, 0.3 + 0.7 * 0.3))
-        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("3", "10")))
+        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("4", "10")))
+    }
+
+    @Test func aFailureAfterEveryVoteWasSubmittedShowsItsTotal() throws {
+        let shown = try #require(card(ConfirmSubmissionDisplay.bottom(
+            status: .submissionFailed(error: "x", submittedCount: 10, totalCount: 10),
+            submission: VotingSubmissionProgress()
+        )))
+
+        #expect(isClose(shown.value, 1))
+        #expect(shown.title == String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount("10", "10")))
     }
 
     // MARK: - Header

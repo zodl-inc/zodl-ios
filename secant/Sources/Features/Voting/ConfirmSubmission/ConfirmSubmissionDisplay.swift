@@ -98,7 +98,7 @@ enum ConfirmSubmissionDisplay {
             return Bottom.progress(
                 value: min(1, authorizationWeight + fraction * (1 - authorizationWeight)),
                 title: String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount(
-                    String(submittedCount),
+                    String(voteInProgress(done: submittedCount, total: totalCount)),
                     String(totalCount)
                 ))
             )
@@ -129,13 +129,22 @@ enum ConfirmSubmissionDisplay {
             title = String(localizable: .coinVoteConfirmSubmissionProgressRetrying)
         } else if let total = submission.totalProposals, total > 0 {
             title = String(localizable: .coinVoteConfirmSubmissionProgressSubmittingVoteCount(
-                String(submission.estimatedCompletedProposals ?? 0),
+                String(voteInProgress(done: Int(submission.estimatedCompletedProposals ?? 0), total: Int(total))),
                 String(total)
             ))
         } else {
             title = String(localizable: .coinVoteSubmissionContinuedProcessingTitle)
         }
         return Bottom.progress(value: value, title: title)
+    }
+
+    /// The vote a card names: the one after the `done` already counted, never
+    /// past the total. A run in progress is working on that vote, and a run
+    /// that failed failed on it. The estimate underneath stays the count of
+    /// questions done, which is the Android app's figure; its screen shows
+    /// that count itself, from 0 of M to M - 1 of M.
+    private static func voteInProgress(done: Int, total: Int) -> Int {
+        min(done + 1, total)
     }
 }
 #endif
