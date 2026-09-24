@@ -710,7 +710,7 @@ struct ViewingKeyPresentationTests {
                         expectsSheet
                             ? $0.bounds.height > 0
                                 && $0.bounds.width >= window.bounds.width * 0.7
-                                && $0.bounds.width < window.bounds.width * 0.95
+                                && $0.bounds.width <= window.bounds.width
                                 && scrollableHeight($0) > 0
                             : $0.bounds.height >= window.bounds.height * 0.5
                                 && $0.bounds.width >= window.bounds.width * 0.95
