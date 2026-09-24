@@ -22,7 +22,9 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
 - [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
-- The Currency Conversion banner on Home now goes away once you turn currency conversion on or off in Settings; before, it kept offering to set it up until the app was restarted.
+- [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.
+- [MOB-1916] When a coinholder poll submission hits a brief network problem, the app now tries again on its own and shows "Reconnecting..." while it waits.
+- [MOB-1916] When a coinholder poll submission fails, the screen now says it failed instead of still reading as in progress.
 
 ## [3.14.1] - 2026-09-17
 

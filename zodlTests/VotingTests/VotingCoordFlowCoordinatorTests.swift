@@ -667,7 +667,7 @@ extension VotingSharedStateSuites {
             session.keystoneSignedBundles = [0]
             session.currentKeystoneBundleIndex = 1
             session.keystoneSigningStatus = .awaitingSignature
-            session.batchSubmissionStatus = .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7)
+            session.batchSubmissionStatus = .submitting
             session.isSubmittingVote = true
             var state = VotingCoordFlow.State()
             state.isKeystoneUser = true
@@ -682,7 +682,7 @@ extension VotingSharedStateSuites {
 
             let updated = tryUnwrap(state.roundCache[roundId])
             // The duplicate-submission guard: a live run keeps the status it set.
-            #expect(updated.batchSubmissionStatus == .submitting(currentIndex: 0, totalCount: 2, currentProposalId: 7))
+            #expect(updated.batchSubmissionStatus == .submitting)
             // The signing loop itself is still stood down and the screen is
             // still popped -- only the submission status is left alone.
             #expect(updated.keystoneSignedBundles == Set([0]))
@@ -1934,6 +1934,7 @@ extension VotingSharedStateSuites {
 
             #expect(recorder.events().filter { $0 == "runRound" }.count == 4)
             #expect(store.state.roundCache[self.activeRoundId]?.runRetryCount == 3)
+            #expect(store.state.roundCache[self.activeRoundId]?.submissionProgress.isRetrying == false)
         }
 
         /// The automatic re-run is the continuation of a Confirm the voter has
@@ -1978,15 +1979,180 @@ extension VotingSharedStateSuites {
             #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
         }
 
-        /// The Confirm screen reserves the bar's first 30 % for the delegation
-        /// proof, the longest thing a software wallet waits on. Nothing writes that
-        /// reservation on its own, so it is folded out of the run's own progress —
-        /// a bar frozen at zero while the crate proves is what this covers.
-        @Test func theConfirmBarFollowsTheRunsProvingProgress() throws {
+        /// A run that stopped because bundles failed on the network is run again
+        /// on its own, redoing only those bundles, without a second prompt.
+        @MainActor
+        @Test func aTransportFailureRerunsTheFailedBundlesAndCompletes() async throws {
+            let recorder = EventRecorder()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? failed : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 2)
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+        }
+
+        /// A network failure that does not clear is still bounded: after the
+        /// ladder's re-runs the voter sees the failure's own message.
+        @MainActor
+        @Test func aTransportFailureThatPersistsShowsItsOwnMessage() async throws {
+            let recorder = EventRecorder()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    recorder.record("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(failed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 4)
+            #expect(store.state.roundCache[self.activeRoundId]?.runRetryCount == 3)
+            #expect(
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .submissionFailed(
+                    error: VotingErrorMapper.userFriendlyMessage(from: "connection reset"),
+                    submittedCount: 0,
+                    totalCount: 2
+                )
+            )
+            #expect(store.state.roundCache[self.activeRoundId]?.submissionProgress.isRetrying == false)
+        }
+
+        /// While the re-run waits, the Confirm card says the flow is reconnecting.
+        @MainActor
+        @Test func theVoterSeesTheFlowReconnectWhileATransportRerunWaits() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? failed : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+
+            await waitForStore { clock.sleeps.value.contains(Swift.Duration.seconds(2)) }
+            let waiting = tryUnwrap(store.state.roundCache[activeRoundId])
+            #expect(waiting.submissionProgress.isRetrying)
+            #expect(
+                ConfirmSubmissionDisplay.bottom(status: waiting.batchSubmissionStatus, submission: waiting.submissionProgress)
+                    == ConfirmSubmissionDisplay.Bottom.progress(
+                        value: ConfirmSubmissionDisplay.authorizationWeight,
+                        title: String(localizable: .coinVoteConfirmSubmissionProgressRetrying)
+                    )
+            )
+
+            await clock.advance(by: .seconds(2))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+            #expect(store.state.roundCache[self.activeRoundId]?.submissionProgress.isRetrying == false)
+        }
+
+        /// Every event a run narrates moves the Confirm screen's measurement, and
+        /// the first one says a run is submitting.
+        @Test func aRunsNarrationMovesTheConfirmProgress() throws {
             var session = RoundSession(roundId: activeRoundId)
             session.sessionEpoch = 1
+            session.batchSubmissionStatus = .authorizing
             var state = VotingCoordFlow.State()
             state.roundCache[activeRoundId] = session
+
+            _ = VotingCoordFlow().reduceRoundRunEvent(
+                &state,
+                roundId: activeRoundId,
+                epoch: 1,
+                event: VotingRoundRunEvent.event(try planRefreshedEvent(completedProposals: 0, totalProposals: 2))
+            )
+
+            let refreshed = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(refreshed.batchSubmissionStatus == .submitting)
+            #expect(refreshed.submissionProgress.totalProposals == 2)
+            #expect(refreshed.submissionProgress.estimatedCompletedProposals == nil)
 
             _ = VotingCoordFlow().reduceRoundRunEvent(
                 &state,
@@ -1995,30 +2161,292 @@ extension VotingSharedStateSuites {
                 event: VotingRoundRunEvent.event(try driveEvent("""
                 {
                     "kind": "step_progress",
+                    "step": {"kind": "cast_vote", "bundle_index": 0, "proposal_id": 1, "choice": 0, "share_index": 0},
                     "progress": {
-                        "kind": "delegation",
+                        "kind": "vote_commit",
                         "bundle_index": 0,
-                        "delegation_progress": "proof_progress",
-                        "proof_progress": 0.25
+                        "proposal_id": 1,
+                        "vote_commit_stage": "proof_progress",
+                        "proof_progress": 1.0
                     }
                 }
                 """))
             )
 
-            #expect(tryUnwrap(state.roundCache[activeRoundId]).delegationProofStatus == .generating(progress: 0.25))
+            let proven = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(proven.submissionProgress.estimatedCompletedProposals == 1)
+            #expect(proven.submissionProgress.fraction == 0.5)
+        }
+
+        /// An event without a tally still says a run is driving the round, as
+        /// the Android app's screen does from the first event on.
+        @Test func aNarrationWithoutATallyStillShowsTheRunIsSubmitting() throws {
+            var session = RoundSession(roundId: activeRoundId)
+            session.sessionEpoch = 1
+            session.batchSubmissionStatus = .authorizing
+            var state = VotingCoordFlow.State()
+            state.roundCache[activeRoundId] = session
 
             _ = VotingCoordFlow().reduceRoundRunEvent(
                 &state,
                 roundId: activeRoundId,
                 epoch: 1,
-                event: VotingRoundRunEvent.event(
-                    try driveEvent(#"{"kind": "step_progress", "progress": {"kind": "chain_outcome"}}"#)
-                )
+                event: VotingRoundRunEvent.event(try driveEvent("""
+                {"kind": "step_selected", "step": {"kind": "cast_vote", "bundle_index": 0, "proposal_id": 1, "choice": 0, "share_index": 0}}
+                """))
             )
 
-            // Past proving is a finished proof: the reservation stays filled rather
-            // than dropping back when the run moves on.
-            #expect(tryUnwrap(state.roundCache[activeRoundId]).delegationProofStatus == .complete)
+            let updated = tryUnwrap(state.roundCache[activeRoundId])
+            #expect(updated.batchSubmissionStatus == .submitting)
+            #expect(updated.submissionProgress.totalProposals == nil)
+        }
+
+        /// Runs are measured against the voter's selected choices, as the Android
+        /// app measures them, so a re-run continues the count instead of starting
+        /// a new one.
+        @MainActor
+        @Test func theRoundIsDrivenAgainstTheSelectedChoices() async throws {
+            let recorder = EventRecorder()
+            let policies = LockIsolated<[VotingRoundDrivePolicy]>([])
+            let report = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, policy in
+                    policies.withValue { $0.append(policy) }
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(report))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { !policies.value.isEmpty }
+
+            #expect(policies.value.first?.progressBaseline == VotingProgressBaseline.selectedChoices)
+        }
+
+        /// An automatic re-run keeps what the stopped run measured, and while it
+        /// waits the voter is told the flow is reconnecting.
+        @MainActor
+        @Test func anAutomaticRerunKeepsTheBarAndSaysItIsReconnecting() async throws {
+            let recorder = EventRecorder()
+            let clock = RecordingTestClock()
+            let refreshed = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let proven = try driveEvent("""
+            {
+                "kind": "step_progress",
+                "step": {"kind": "cast_vote", "bundle_index": 0, "proposal_id": 1, "choice": 0, "share_index": 0},
+                "progress": {
+                    "kind": "vote_commit",
+                    "bundle_index": 0,
+                    "proposal_id": 1,
+                    "vote_commit_stage": "proof_progress",
+                    "proof_progress": 1.0
+                }
+            }
+            """)
+            let stopped = try runReport(kind: "pass_budget_exhausted", completedProposals: 0, totalProposals: 2)
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.continuousClock = clock
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.event(refreshed))
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(proven))
+                            continuation.yield(VotingRoundRunEvent.finished(stopped))
+                        } else {
+                            continuation.yield(VotingRoundRunEvent.finished(completed))
+                        }
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+
+            await waitForStore { clock.sleeps.value.contains(Swift.Duration.seconds(2)) }
+            let waiting = tryUnwrap(store.state.roundCache[activeRoundId]).submissionProgress
+            #expect(waiting.isRetrying)
+            #expect(waiting.estimatedCompletedProposals == 1)
+            #expect(waiting.fraction == 0.5)
+
+            await clock.advance(by: .seconds(2))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            // The re-run narrated only its plan, so what the first run measured
+            // is still what the screen shows.
+            let after = tryUnwrap(store.state.roundCache[activeRoundId]).submissionProgress
+            #expect(after.isRetrying == false)
+            #expect(after.estimatedCompletedProposals == 1)
+        }
+
+        /// Try again after a failure is a new submission the voter started: its
+        /// bar starts over rather than resuming the failed one's.
+        @MainActor
+        @Test func aSubmissionTheVoterRestartsStartsTheBarOver() async throws {
+            let recorder = EventRecorder()
+            let refreshed = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "proof_failed", message: "proving ran out of memory")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(refreshed))
+                            continuation.yield(VotingRoundRunEvent.finished(failed))
+                        } else {
+                            continuation.yield(VotingRoundRunEvent.finished(completed))
+                        }
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+            #expect(store.state.roundCache[activeRoundId]?.submissionProgress.totalProposals == 2)
+
+            store.send(.retryBatchSubmission(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(store.state.roundCache[activeRoundId]?.submissionProgress.totalProposals == nil)
+            #expect(store.state.roundCache[activeRoundId]?.submissionProgress.estimatedCompletedProposals == nil)
+        }
+
+        /// An automatic re-run that fails recording the ballot never starts
+        /// driving the round, so it never spends the ticket that let it skip
+        /// Face ID. The voter's Try again after that failure is still a
+        /// submission of their own: it asks for Face ID again, and its bar starts
+        /// over rather than resuming the failed one's.
+        @MainActor
+        @Test func aFailedAutomaticRerunHandsTheNextRunBackToTheVoter() async throws {
+            let recorder = EventRecorder()
+            let refreshed = try planRefreshedEvent(completedProposals: 0, totalProposals: 2)
+            let failed = try runReport(
+                kind: "failures",
+                completedProposals: 0,
+                totalProposals: 2,
+                failures: [(kind: "transport", message: "connection reset")]
+            )
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000) }
+                // The voter's Confirm records the ballot first; the second write
+                // is the automatic re-run's, and the store refuses it.
+                $0.votingCrypto.setBallotIntents = { _, intents in
+                    let call = recorder.recordAndCount("setBallotIntents")
+                    guard call != 2 else {
+                        throw VotingError(kind: VotingErrorKind.dbBusy, retryable: true, message: "database is locked")
+                    }
+                    return try self.recordedBallotPlan(intents)
+                }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        if call == 1 {
+                            continuation.yield(VotingRoundRunEvent.event(refreshed))
+                            continuation.yield(VotingRoundRunEvent.finished(failed))
+                        } else {
+                            continuation.yield(VotingRoundRunEvent.finished(completed))
+                        }
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus.isFailureState == true }
+
+            // The failure is the re-run's own ballot write, after the voter's one
+            // run, and the sheet sits over that run's bar.
+            #expect(recorder.events().filter { $0 == "setBallotIntents" }.count == 2)
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 1)
+            #expect(store.state.roundCache[activeRoundId]?.submissionProgress.totalProposals == 2)
+
+            store.send(.retryBatchSubmission(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate", "authenticate"])
+            // The voter's run narrated nothing before it finished, so this is the
+            // bar it started with.
+            #expect(store.state.roundCache[activeRoundId]?.submissionProgress.totalProposals == nil)
         }
 
         /// A proposal the voter deliberately skipped is decided, not pending: it
