@@ -1,7 +1,7 @@
 import ConcurrencyExtras
 import Dependencies
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Recovery of delegations an earlier build wiped: the pre-open snapshot of
 /// the voting database, the launch-time carve of every preserved copy, the
@@ -19,7 +19,7 @@ public enum VotingRecovery {
         case launch
     }
 
-    private static let registeredLogger = LockIsolated<@Sendable () -> ZcashLightClientKit.Logger?>({ nil })
+    private static let registeredLogger = LockIsolated<@Sendable () -> ZODLSwiftWalletSDK.Logger?>({ nil })
     private static let registeredBackend = LockIsolated<RecoveryBackend?>(nil)
 
     /// Hands the module what it cannot own: the app's logger and its open
@@ -27,7 +27,7 @@ public enum VotingRecovery {
     /// `didRestore` runs after a round was cleared and imported, so the app
     /// can republish what it shows for that round.
     public static func configure(
-        logger: @escaping @Sendable () -> ZcashLightClientKit.Logger?,
+        logger: @escaping @Sendable () -> ZODLSwiftWalletSDK.Logger?,
         backend: @escaping @Sendable () async throws -> VotingRustBackend,
         didRestore: @escaping @Sendable (_ roundId: String) async -> Void = { _ in }
     ) {
@@ -81,7 +81,7 @@ public enum VotingRecovery {
         DelegationEscrowFile.invalidate(inDocuments: documents)
     }
 
-    static func logger() -> ZcashLightClientKit.Logger? {
+    static func logger() -> ZODLSwiftWalletSDK.Logger? {
         registeredLogger.value()
     }
 

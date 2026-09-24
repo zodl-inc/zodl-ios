@@ -8,7 +8,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Root {
     func torInitCheckReduce() -> Reduce<Root.State, Root.Action> {

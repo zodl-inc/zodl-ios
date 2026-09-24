@@ -21,7 +21,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Where the chain is and how fast it moves — the pair every forward ETA needs. Carried as ONE
 /// value so the two halves cannot drift apart at a call site: a screen measuring a block delta

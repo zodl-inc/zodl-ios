@@ -20,7 +20,7 @@ let package = Package(
         .target(
             name: "VotingRecovery",
             dependencies: [
-                .product(name: "ZcashLightClientKit", package: "zodl-swift-wallet-sdk"),
+                .product(name: "ZODLSwiftWalletSDK", package: "zodl-swift-wallet-sdk"),
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "DependenciesMacros", package: "swift-dependencies"),
                 .product(name: "ConcurrencyExtras", package: "swift-concurrency-extras")

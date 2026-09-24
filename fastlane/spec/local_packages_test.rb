@@ -5,13 +5,13 @@ class ZodlLocalPackagesTest < Minitest::Test
   def test_parses_bare_relative_path
     pbxproj = <<~PBX
       /* Begin XCLocalSwiftPackageReference section */
-      \t\t34FC670D2FFD1644004175E0 /* XCLocalSwiftPackageReference "../ZcashLightClientKit" */ = {
+      \t\t34FC670D2FFD1644004175E0 /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
       \t\t\tisa = XCLocalSwiftPackageReference;
-      \t\t\trelativePath = ../ZcashLightClientKit;
+      \t\t\trelativePath = ../zodl-swift-wallet-sdk;
       \t\t};
       /* End XCLocalSwiftPackageReference section */
     PBX
-    assert_equal ["../ZcashLightClientKit"], Zodl::LocalPackages.parse(pbxproj)
+    assert_equal ["../zodl-swift-wallet-sdk"], Zodl::LocalPackages.parse(pbxproj)
   end
 
   def test_parses_quoted_relative_path_and_dedupes

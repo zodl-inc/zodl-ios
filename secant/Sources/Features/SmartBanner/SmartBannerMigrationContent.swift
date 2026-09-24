@@ -10,7 +10,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 
 enum MigrationBannerVariant: Equatable {
     case required

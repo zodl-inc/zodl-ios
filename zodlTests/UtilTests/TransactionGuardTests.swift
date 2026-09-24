@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Several tests drive the shared `TransactionGuardClient.liveValue`, which is backed by a single

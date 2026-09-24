@@ -7,7 +7,7 @@
 
 import Combine
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Root {
     func coordinatorReduce() -> Reduce<Root.State, Root.Action> {

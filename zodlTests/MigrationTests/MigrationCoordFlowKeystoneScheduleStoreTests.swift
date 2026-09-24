@@ -15,7 +15,7 @@
 import ComposableArchitecture
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: installs the process-global `@Shared(.inMemory(.selectedWalletAccount))` the

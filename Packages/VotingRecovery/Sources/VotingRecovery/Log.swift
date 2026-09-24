@@ -1,5 +1,5 @@
 import Foundation
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 
 /// The module's log lines, forwarded to whatever logger the app registered
 /// through `VotingRecovery.configure`. Nothing here ever carries a secret:

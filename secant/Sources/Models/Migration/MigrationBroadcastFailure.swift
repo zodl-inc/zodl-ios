@@ -26,7 +26,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Which class of broadcast failure occurred, per the normative doc's R14-R17 —
 /// `MigrationManagerClient.routeBroadcastFailure` is the sole consumer of a non-nil result. Not

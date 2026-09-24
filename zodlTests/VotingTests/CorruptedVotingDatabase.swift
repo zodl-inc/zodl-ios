@@ -1,6 +1,6 @@
 import Foundation
 import SQLite3
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 @testable import zodl_internal
 @testable import VotingRecovery
 
@@ -59,7 +59,7 @@ extension VotingRecoveryEndToEndTests {
         /// When set, every bundle of the round under test stores the
         /// commitment its blinding opens for this hotkey, so the SDK's restore
         /// accepts the carved rows. Otherwise `Fixture.govComm`.
-        let hotkey: ZcashLightClientKit.VotingHotkey?
+        let hotkey: ZODLSwiftWalletSDK.VotingHotkey?
 
         var allURLs: [URL] { [databaseURL, walURL, shmURL] }
 
@@ -95,7 +95,7 @@ extension VotingRecoveryEndToEndTests {
             updateAfterCheckpoint: Bool = false,
             notesPerBundle: Int = 1,
             otherRounds: Int = 0,
-            hotkey: ZcashLightClientKit.VotingHotkey? = nil,
+            hotkey: ZODLSwiftWalletSDK.VotingHotkey? = nil,
             seed: UInt64? = nil
         ) throws {
             // A caller's seed wins, then the environment (which is how a CI

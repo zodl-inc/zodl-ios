@@ -5,12 +5,12 @@
 //  App-only value models for the Orchard -> Ironwood migration (MOB-1459/MOB-1496). The SDK-shaped
 //  models (`MigrationState`, `MigrationAttentionReason`, `MigrationProgress`, `NoteSplitProposal`,
 //  `MigrationTransferProposal`, `MigrationSchedule`, `MigrationTransferResult`,
-//  `MigrationNetworkPrivacyOptions`, …) now come straight from `ZcashLightClientKit` — this file
+//  `MigrationNetworkPrivacyOptions`, …) now come straight from `ZODLSwiftWalletSDK` — this file
 //  only keeps the types that have no SDK counterpart.
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Aggregate summary of the migration for progress UI. Not part of the SDK surface. [ext]
 struct MigrationSummary: Equatable, Sendable, Codable {

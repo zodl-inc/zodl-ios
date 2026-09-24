@@ -2,7 +2,7 @@
 import Testing
 import Foundation
 import ComposableArchitecture
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 @testable import zodl_internal
 @testable import VotingRecovery
 
@@ -84,7 +84,7 @@ struct VoteAgain {
     /// broadcast, the round was cleared, and a rebuild put fresh secrets in
     /// place of the ones the chain has.
     @discardableResult
-    private func plantTheIncident(hotkey: ZcashLightClientKit.VotingHotkey? = nil) throws -> VotingRecoveryEndToEndTests.CorruptedDatabase {
+    private func plantTheIncident(hotkey: ZODLSwiftWalletSDK.VotingHotkey? = nil) throws -> VotingRecoveryEndToEndTests.CorruptedDatabase {
         let documents = try #require(
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         )

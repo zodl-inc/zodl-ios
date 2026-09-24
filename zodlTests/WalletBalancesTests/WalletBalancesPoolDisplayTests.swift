@@ -10,7 +10,7 @@ import Combine
 import ComposableArchitecture
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized) struct WalletBalancesPoolDisplayTests {
     private static let testAccount = WalletAccount(

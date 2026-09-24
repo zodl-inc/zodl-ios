@@ -6,7 +6,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 
 /// Final review screen before vote submission. Renders its visual states from
 /// the same body, driven by `RoundSession.batchSubmissionStatus`:

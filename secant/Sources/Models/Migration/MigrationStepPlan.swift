@@ -83,7 +83,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// WHEN in one app-open the driver is running. See the file header for why the split is a privacy
 /// property rather than an implementation detail.

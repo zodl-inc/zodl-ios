@@ -7,7 +7,7 @@
 
 import Foundation
 @preconcurrency import MnemonicSwift
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Zcash implementation of the keychain that is not universal but designed to deliver functionality needed by the wallet itself.
 /// All the APIs should be thread safe according to official doc:

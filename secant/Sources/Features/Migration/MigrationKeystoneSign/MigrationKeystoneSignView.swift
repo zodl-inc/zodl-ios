@@ -19,7 +19,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct MigrationKeystoneSignView: View {
     @Environment(\.colorScheme) private var colorScheme

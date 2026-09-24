@@ -6,7 +6,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension ZcashSDKEnvironment: DependencyKey {
 

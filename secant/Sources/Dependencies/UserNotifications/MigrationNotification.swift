@@ -13,7 +13,7 @@
 //  `transferComplete`, whose §4.4 matrix copy is unchanged and stays fully in `body`.
 //
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum MigrationNotification: Equatable, Sendable {
     /// Stable prefix shared by every identifier below — phase 2's tap-routing (matching a

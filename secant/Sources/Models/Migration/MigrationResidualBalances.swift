@@ -18,7 +18,7 @@
 //  route from answering differently about the same wallet.
 //
 
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 
 struct MigrationResidualBalances: Equatable, Sendable {
     /// The account's spendable (and not locked) Orchard balance — the figure the residual lane

@@ -7,7 +7,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import ZcashPaymentURI
 
 extension DependencyValues {

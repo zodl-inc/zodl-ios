@@ -8,7 +8,7 @@
 import ComposableArchitecture
 @preconcurrency import Combine
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DependencyValues {
     var exchangeRate: ExchangeRateClient {

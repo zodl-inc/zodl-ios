@@ -94,7 +94,7 @@
 import Foundation
 @preconcurrency import Combine
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import os
 
 extension MigrationTransferProposal {

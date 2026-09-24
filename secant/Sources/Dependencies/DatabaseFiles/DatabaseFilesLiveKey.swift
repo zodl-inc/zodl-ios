@@ -6,7 +6,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DatabaseFilesClient: DependencyKey {
     static let liveValue = DatabaseFilesClient.live()

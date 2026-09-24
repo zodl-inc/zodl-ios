@@ -62,7 +62,7 @@ class ZodlPreflightTest < Minitest::Test
 
   def local_pkg(**overrides)
     {
-      path: "../ZcashLightClientKit", resolved: "/Users/dev/ZcashLightClientKit",
+      path: "../zodl-swift-wallet-sdk", resolved: "/Users/dev/ZODLSwiftWalletSDK",
       exists: true, git: "6bfe97fc", dirty: false
     }.merge(overrides)
   end
@@ -70,7 +70,7 @@ class ZodlPreflightTest < Minitest::Test
   def test_missing_local_package_blocks
     report = Zodl::Preflight.check(facts(local_packages: [local_pkg(exists: false, git: nil, dirty: nil)]))
     refute report.ok?
-    assert(report.errors.any? { |e| e.include?("../ZcashLightClientKit") && e.include?("not found") })
+    assert(report.errors.any? { |e| e.include?("../zodl-swift-wallet-sdk") && e.include?("not found") })
   end
 
   def test_local_package_warns_with_git_state
