@@ -21,7 +21,15 @@ extension SignWithKeystoneCoordFlow {
             case .path(.element(id: _, action: .scan(.cancelTapped))):
                 let _ = state.path.popLast()
                 return .none
-                
+
+            // MOB-2020 Phase 3.3: the Ledger counterpart of `.scan(.foundPCZT)` above -- by the
+            // time `SendConfirmation`'s own `.ledgerSigning(.signed)` arm runs, the root state
+            // already holds the signed PCZT and has started the submit, so there is no action left
+            // to forward.
+            case .sendConfirmation(.ledgerSigning(.signed)):
+                state.path.append(.sending(state.sendConfirmationState))
+                return .none
+
                 // MARK: - Self
                 
             case .sendConfirmation(.getSignatureTapped):
@@ -47,7 +55,8 @@ extension SignWithKeystoneCoordFlow {
                     break
                 case .success:
                     if state.sendConfirmationState.isShielding {
-                        walletStorage.resetShieldingReminder(WalletAccount.Vendor.keystone.name())
+                        let vendorName = state.sendConfirmationState.selectedWalletAccount?.vendor.name() ?? WalletAccount.Vendor.keystone.name()
+                        walletStorage.resetShieldingReminder(vendorName)
                     }
                     state.path.append(.sendResultSuccess(state.sendConfirmationState))
                 default: break

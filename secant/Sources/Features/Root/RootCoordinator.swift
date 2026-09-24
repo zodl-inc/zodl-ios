@@ -456,9 +456,30 @@ extension Root {
                 return .none
 
             case .signWithKeystoneRequested:
+                // MOB-2020 UI round 2: a Ledger shield never opens this popover -- its root,
+                // `SignWithKeystoneCoordFlowView`, presents `LedgerSignSheetView` as a sheet over
+                // whichever screen the user tapped Shield from instead (see `RootView`).
+                // `.confirmWithLedgerTapped` puts the sheet up, resolves the PCZT and starts the
+                // Ledger ceremony (see `SendConfirmationStore.swift`). The popover only opens once
+                // that ceremony has pushed `.sending` or `.preSendingFailure` onto the coord flow's
+                // own path -- see `.ledgerShieldingSheetDismissed` below.
+                if state.selectedWalletAccount?.vendor == .ledger {
+                    return .send(.signWithKeystoneCoordFlow(.sendConfirmation(.confirmWithLedgerTapped)))
+                }
                 state.signWithKeystoneCoordFlowBinding = true
                 return .send(.signWithKeystoneCoordFlow(.sendConfirmation(.resolvePCZT)))
-                
+
+            // MOB-2020 UI round 2: `LedgerSignSheetView`'s `onDismiss` -- fired only after the
+            // sheet has actually finished animating away. The popover can only be presented AFTER
+            // that finishes: iOS silently drops a presentation requested while another is still
+            // animating out, which a same-tick `signWithKeystoneCoordFlowBinding = true` (from
+            // whatever pushed the coord flow's path below) would risk racing.
+            case .ledgerShieldingSheetDismissed:
+                if !state.signWithKeystoneCoordFlowState.path.isEmpty {
+                    state.signWithKeystoneCoordFlowBinding = true
+                }
+                return .none
+
                 // MARK: - Request Zec
 
             case .requestZecCoordFlow(.path(.element(id: _, action: .requestZecSummary(.cancelRequestTapped)))):
@@ -609,6 +630,16 @@ extension Root {
             case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .transactionDetails(.closeDetailTapped)))):
                 state.signWithKeystoneCoordFlowBinding = false
                 return .send(.fetchTransactionsForTheSelectedAccount)
+
+            // MOB-2020 UI round 2: Close on the shielding popover's pre-signing-failure screen
+            // previously did nothing, for either vendor -- the popover stayed up over a dead
+            // screen. There is no path element here to pop back to (this coordinator's root IS
+            // that failure state once `.ledgerShieldingSheetDismissed` has presented the popover,
+            // or Keystone's own confirmation screen), so this closes the popover itself instead.
+            // No refetch: a pre-signing failure never reached the point of storing a transaction.
+            case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .preSendingFailure(.backFromPCZTFailureTapped)))):
+                state.signWithKeystoneCoordFlowBinding = false
+                return .none
 
                 // MARK: - Tor Setup
                 

@@ -386,7 +386,7 @@ struct SendFormView: View {
                 .padding(.bottom, 8)
 
             Group {
-                Text(localizable: .texKeystoneWarn1).bold()
+                Text(localizable: store.selectedWalletAccount?.vendor == .ledger ? .texLedgerWarn1 : .texKeystoneWarn1).bold()
                 + Text(localizable: .texKeystoneWarn2)
             }
             .zFont(size: 14, style: Design.Text.tertiary)

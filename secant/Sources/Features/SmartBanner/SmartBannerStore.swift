@@ -1602,8 +1602,6 @@ struct SmartBanner {
         guard let account = state.selectedWalletAccount else {
             return .none
         }
-        // No Ledger signing yet, so no offer.
-        guard account.vendor != .ledger else { return declineEffect }
         guard state.isShieldable(zcashSDKEnvironment.shieldingThreshold()) else {
             return declineEffect
         }

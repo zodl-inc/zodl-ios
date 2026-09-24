@@ -2,12 +2,12 @@
 //  LedgerSignSheet.swift
 //  Zashi
 //
-//  MOB-2020: Figma 1073:19914 -- the Ledger signing sheet that replaces the pushed
-//  `SignWithLedgerView` screen for send, request-ZEC, pay and swap. Presented as a `zashiSheet`
-//  over the confirmation screen while the Ledger signs -- only "Cancel Transaction" closes it,
-//  via `.interactiveDismissDisabled()`. The status block below copies (not moves)
-//  `SignWithLedgerView`'s `statusContent`/`spinnerStatus`/`deviceRow`, without its bone-coloured
-//  card.
+//  MOB-2020: Figma 1073:19914 -- the Ledger signing sheet that replaces the pushed Ledger
+//  confirm-on-device screen for send, request-ZEC, pay and swap (and, since UI round 2, shielding
+//  too -- see `RootCoordinator`'s `.signWithKeystoneRequested`). Presented as a `zashiSheet` over
+//  the screen the user confirmed from while the Ledger signs -- only "Cancel Transaction" closes
+//  it, via `.interactiveDismissDisabled()`. The status block below copies (not moves) that former
+//  screen's `statusContent`/`spinnerStatus`/`deviceRow`, without its bone-coloured card.
 //
 
 import SwiftUI

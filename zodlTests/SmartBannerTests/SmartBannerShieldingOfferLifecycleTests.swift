@@ -379,24 +379,22 @@ import ComposableArchitecture
         }
     }
 
-    /// MOB-2020: a Ledger account has no signing path yet (Phase 3) — `shieldingOfferDecision`'s
-    /// vendor guard declines before the reminder/threshold checks even run, so the ladder walks
-    /// straight past priority7 regardless of balance.
-    @Test func ledgerAccountNeverSeatsTheShieldingOffer() async {
+    /// MOB-2020 Phase 3.3: a Ledger account now shields through the same signing screen as
+    /// Keystone, so `shieldingOfferDecision`'s vendor guard is gone — a fresh Ledger account (no
+    /// stored reminder) seats priority7 on the very first ladder pass, exactly as any other vendor
+    /// would.
+    @Test func ledgerAccountSeatsTheShieldingOfferLikeKeystone() async {
         await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             let account = Self.ledgerAccount()
             let store = makeStore(account: account, transparentBalance: Self.shieldableBalance)
-            store.dependencies.walletStorage.exportTorSetupFlag = { nil }
 
             await store.send(.shieldingBalanceFetched(account.id, Self.shieldableBalance))
-            await store.receive(\.evaluatePriority75)
             await store.finish()
             await store.skipReceivedActions(strict: false)
 
-            #expect(store.state.priorityContent == .priority75)
-            #expect(store.state.priorityContent != .priority7)
+            #expect(store.state.priorityContent == .priority7)
         }
     }
 
