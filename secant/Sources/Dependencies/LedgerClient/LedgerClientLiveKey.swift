@@ -33,18 +33,31 @@ extension LedgerBluetoothScanner: LedgerScanning {
 /// throws ``LedgerClientError/notConnected`` when nothing is open; otherwise it leaves the
 /// transport open whether pairing succeeds or fails, so a failed pairing can be retried over the
 /// same connection.
+///
+/// `signPCZT` throws the same error when nothing is open. A signing failure leaves the transport
+/// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
+/// `ledgerTransportClosed`, `ledgerTransportFailed` and cancellation all mean the transport is
+/// already gone (see docs/LEDGER.md's "transport closed" rule), so the session drops its reference
+/// rather than keep a dead one around for a retry that would only fail again.
 actor LedgerSession {
     private nonisolated let makeScanner: @Sendable () -> any LedgerScanning
     private nonisolated let scannerBox = LockIsolated<(any LedgerScanning)?>(nil)
     private let pair: @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing
+    private nonisolated let sign: @Sendable (
+        any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
+    ) async throws -> Pczt
     private var transport: (any LedgerAPDUTransport)?
 
     init(
         makeScanner: @escaping @Sendable () -> any LedgerScanning,
-        pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing
+        pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing,
+        sign: @escaping @Sendable (
+            any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
+        ) async throws -> Pczt
     ) {
         self.makeScanner = makeScanner
         self.pair = pair
+        self.sign = sign
     }
 
     /// The scanner, created on first use and reused after that.
@@ -100,6 +113,62 @@ actor LedgerSession {
         LoggerProxy.event("Ledger: disconnected")
     }
 
+    /// Signs `pczt` on the connected device: yields `.progress` for each stage the SDK reports, in
+    /// order, then `.signed` once, then finishes. Finishes throwing
+    /// ``LedgerClientError/notConnected`` when nothing is connected. The actor lets go of isolation
+    /// for the ceremony's duration — signing can take as long as the user needs to review the
+    /// transaction on the device — and only comes back to it to record the outcome.
+    nonisolated func signPCZT(
+        _ pczt: Pczt,
+        accountUUID: AccountUUID,
+        binding: LedgerAccountBinding
+    ) -> AsyncThrowingStream<LedgerSigningEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                guard let transport = await self.transport else {
+                    LoggerProxy.warn("Ledger: signing requested with no connection")
+                    continuation.finish(throwing: LedgerClientError.notConnected)
+                    return
+                }
+
+                LoggerProxy.event("Ledger: signing started")
+                do {
+                    let signed = try await self.sign(transport, pczt, accountUUID, binding) { stage in
+                        LoggerProxy.event("Ledger: signing stage \(Self.stageTag(stage))")
+                        continuation.yield(.progress(stage))
+                    }
+                    LoggerProxy.event("Ledger: signed")
+                    continuation.yield(.signed(signed))
+                    continuation.finish()
+                } catch {
+                    LoggerProxy.warn("Ledger: signing failed (\(Self.errorTag(error)))")
+                    if Self.shouldDropTransport(after: error) {
+                        await self.dropTransport(ifStillOpen: transport)
+                    }
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    /// Forgets the open transport after a signing failure the SDK already closed it for — but only
+    /// when the session is still holding the very transport the ceremony used. A `connect()` that
+    /// opened a different transport while this ceremony's failure was still unwinding must not lose
+    /// that newer, live transport to a stale ceremony's cleanup. Compared by reference
+    /// (`LedgerAPDUTransport` is not class-bound, but both the live and fake conformances are
+    /// reference types — `LedgerBluetoothTransport` is an actor), since the protocol does not
+    /// require `Equatable`. Never calls `close()` again on it — the SDK already did.
+    private func dropTransport(ifStillOpen usedTransport: any LedgerAPDUTransport) {
+        guard let current = transport, current as AnyObject === usedTransport as AnyObject else {
+            return
+        }
+        transport = nil
+    }
+
     /// The error's stable code (`ZLEDG…`) or type name — never its message, which for a custom
     /// transport could carry device data.
     private static func errorTag(_ error: Error) -> String {
@@ -108,11 +177,50 @@ actor LedgerSession {
         }
         return String(describing: type(of: error))
     }
+
+    /// The stage's tag for the one-line-per-stage progress log — never the PCZT, keys, identities
+    /// or addresses those stages are about.
+    private static func stageTag(_ stage: LedgerSigningProgress) -> String {
+        switch stage {
+        case .identifyingDevice:
+            return "identifyingDevice"
+        case .streaming(let sent, let total):
+            return "streaming \(sent)/\(total)"
+        case .awaitingReviewOnDevice:
+            return "awaitingReviewOnDevice"
+        case .signing:
+            return "signing"
+        case .complete:
+            return "complete"
+        }
+    }
+
+    /// Whether a signing failure means the SDK already closed the transport, so the session should
+    /// drop its reference to it rather than leave a dead one open for a retry that would only fail
+    /// again. `CancellationError` counts too: cancelling a ceremony closes the transport the same
+    /// way a transport-level failure does (docs/LEDGER.md). Every other error — a refusal, a rule
+    /// violation, a mismatch — is a function of the transaction or the device, not the connection,
+    /// so the same transport can retry.
+    private static func shouldDropTransport(after error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        guard let zcashError = error as? ZcashError else {
+            return false
+        }
+        switch zcashError {
+        case .ledgerBluetoothDisconnected, .ledgerTimeout, .ledgerTransportClosed, .ledgerTransportFailed:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 extension LedgerClient: DependencyKey {
     static let liveValue: Self = {
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
         let networkType = zcashSDKEnvironment.network().networkType
 
         let session = LedgerSession(
@@ -127,6 +235,9 @@ extension LedgerClient: DependencyKey {
                     binding: pairing.binding,
                     appVersion: pairing.appVersion.description
                 )
+            },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await sdkSynchronizer.signPCZTWithLedger(pczt, accountUUID, binding, transport, progress)
             }
         )
 
@@ -134,7 +245,8 @@ extension LedgerClient: DependencyKey {
             scanDevices: { session.scanDevices() },
             connect: { device in try await session.connect(device) },
             pairAccount: { zip32AccountIndex in try await session.pairAccount(zip32AccountIndex) },
-            disconnect: { await session.disconnect() }
+            disconnect: { await session.disconnect() },
+            signPCZT: { pczt, accountUUID, binding in session.signPCZT(pczt, accountUUID: accountUUID, binding: binding) }
         )
     }()
 }

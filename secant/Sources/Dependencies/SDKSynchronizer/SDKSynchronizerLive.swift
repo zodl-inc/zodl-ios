@@ -487,6 +487,15 @@ extension SDKSynchronizerClient: DependencyKey {
             redactPCZTForSigner: { pczt in
                 try await synchronizer.redactPCZTForSigner(pczt: pczt)
             },
+            signPCZTWithLedger: { pczt, accountUUID, binding, transport, progress in
+                try await synchronizer.signPCZTWithLedger(
+                    pczt: pczt,
+                    accountUUID: accountUUID,
+                    binding: binding,
+                    transport: transport,
+                    progress: progress
+                )
+            },
             fetchTxidsWithMemoContaining: { searchTerm in
                 try await synchronizer.fetchTxidsWithMemoContaining(searchTerm: searchTerm)
             },

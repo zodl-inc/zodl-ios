@@ -114,6 +114,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         createAndSubmitTransactionFromPCZT: unimplemented("\(Self.self).createAndSubmitTransactionFromPCZT", placeholder: .success(txIds: [])),
         urEncoderForPCZT: unimplemented("\(Self.self).urEncoderForPCZT", placeholder: nil),
         redactPCZTForSigner: unimplemented("\(Self.self).redactPCZTForSigner", placeholder: Pczt()),
+        signPCZTWithLedger: unimplemented("\(Self.self).signPCZTWithLedger", placeholder: Pczt()),
         fetchTxidsWithMemoContaining: unimplemented("\(Self.self).fetchTxidsWithMemoContaining", placeholder: []),
         getCustomUnifiedAddress: unimplemented("\(Self.self).getCustomUnifiedAddress", placeholder: nil),
         torEnabled: unimplemented("\(Self.self).torEnabled"),
@@ -217,6 +218,7 @@ extension SDKSynchronizerClient {
         createAndSubmitTransactionFromPCZT: { _, _ in .success(txIds: []) },
         urEncoderForPCZT: { _ in nil },
         redactPCZTForSigner: { _ in Pczt() },
+        signPCZTWithLedger: { _, _, _, _, _ in Pczt() },
         fetchTxidsWithMemoContaining: { _ in [] },
         getCustomUnifiedAddress: { _, _ in nil },
         torEnabled: { _ in },
@@ -409,6 +411,9 @@ extension SDKSynchronizerClient {
         createAndSubmitTransactionFromPCZT: @escaping @Sendable (Pczt, Pczt) async throws -> CreateProposedTransactionsResult = { _, _ in .success(txIds: []) },
         urEncoderForPCZT: @escaping @Sendable (Pczt) -> UREncoder? = { _ in nil },
         redactPCZTForSigner: @escaping @Sendable (Pczt) async throws -> Pczt = { _ in Pczt() },
+        signPCZTWithLedger: @escaping @Sendable (
+            Pczt, AccountUUID, LedgerAccountBinding, any LedgerAPDUTransport, (@Sendable (LedgerSigningProgress) -> Void)?
+        ) async throws -> Pczt = { _, _, _, _, _ in Pczt() },
         fetchTxidsWithMemoContaining: @escaping @Sendable (String) async throws -> [Data] = { _ in [] },
         getCustomUnifiedAddress: @escaping @Sendable (AccountUUID, Set<ReceiverType>) async throws -> UnifiedAddress? = { _, _ in nil },
         torEnabled: @escaping @Sendable (Bool) async throws -> Void = { _ in },
@@ -506,6 +511,7 @@ extension SDKSynchronizerClient {
             createAndSubmitTransactionFromPCZT: createAndSubmitTransactionFromPCZT,
             urEncoderForPCZT: urEncoderForPCZT,
             redactPCZTForSigner: redactPCZTForSigner,
+            signPCZTWithLedger: signPCZTWithLedger,
             fetchTxidsWithMemoContaining: fetchTxidsWithMemoContaining,
             getCustomUnifiedAddress: getCustomUnifiedAddress,
             torEnabled: torEnabled,
