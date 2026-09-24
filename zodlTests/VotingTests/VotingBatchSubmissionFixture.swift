@@ -58,7 +58,7 @@ import Foundation
 import os
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 /// Ordered record of what the fixture's fakes were asked to do, with event-driven waits.
 final class VotingBatchEventRecorder: @unchecked Sendable {

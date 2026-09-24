@@ -10,12 +10,12 @@
 import Testing
 import Foundation
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct WalletAccountStashTests {
     private enum Const {
         /// Sentinel UA built through the SDK's internal `init(validatedEncoding:networkType:)`
-        /// (reachable via `@testable import ZcashLightClientKit`) — the merge logic treats
+        /// (reachable via `@testable import ZODLSwiftWalletSDK`) — the merge logic treats
         /// addresses as opaque tokens, so no FFI validation is involved.
         static let existingStashUA = UnifiedAddress(validatedEncoding: "u1modelstashfixture", networkType: .mainnet)
     }

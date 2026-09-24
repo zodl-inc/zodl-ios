@@ -9,7 +9,7 @@ import Foundation
 @preconcurrency import Combine
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // FiatCurrencyResult is a value type whose stored members (Date, NSDecimalNumber, State enum) are all Sendable;
 // the SDK simply hasn't declared the conformance. Swift mandates `@unchecked Sendable` for retroactive conformance —

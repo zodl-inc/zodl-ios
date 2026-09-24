@@ -1,5 +1,5 @@
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// One bundle to restore, in the escrow's own terms.
 struct RecoveredDelegationBundleInput: Equatable, Sendable {

@@ -23,7 +23,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// A pending transfer's forward ETA, bucketed into the three granularities the migration surfaces
 /// render. PAST labels ("Sent Nh ago", "Overdue Nh ago") are NOT modelled here — they keep their

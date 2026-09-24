@@ -54,7 +54,7 @@
 import ComposableArchitecture
 import Foundation
 import Testing
-@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing) @testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: resets the process-global `@Shared(.inMemory(.migrationStoppedSyncForBroadcast))`

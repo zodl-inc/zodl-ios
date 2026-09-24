@@ -8,7 +8,7 @@
 import Testing
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Uses a real, named UserDefaults suite shared across its test methods, so the suite is

@@ -1,7 +1,7 @@
 import ConcurrencyExtras
 import Dependencies
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// File-backed store for `DelegationEscrowEntry`.
 ///

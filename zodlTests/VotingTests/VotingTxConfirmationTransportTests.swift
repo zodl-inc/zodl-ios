@@ -10,7 +10,7 @@ import Foundation
 import os
 import Testing
 @testable import zodl_internal
-@preconcurrency import enum ZcashLightClientKit.ZcashError
+@preconcurrency import enum ZODLSwiftWalletSDK.ZcashError
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct VotingTxConfirmationTransportTests {

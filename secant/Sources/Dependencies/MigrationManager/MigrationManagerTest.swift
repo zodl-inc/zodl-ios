@@ -40,7 +40,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension MigrationManagerClient: TestDependencyKey {
     /// Quiet reads, loud side effects — see this file's header for why the line is there.

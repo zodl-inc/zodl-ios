@@ -27,7 +27,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct MigrationCoordFlow {
@@ -182,7 +182,7 @@ struct MigrationCoordFlow {
         /// The dotted `major.minor.build` firmware version the decode envelope (or PCZT stamp)
         /// reported for a ceremony that failed the minimum-firmware gate; `nil` when none was
         /// reported at all. A formatted `String` deliberately, not a `KeystoneDisplayFirmwareVersion`: the
-        /// SDK's `ZcashLightClientKit.KeystoneFirmwareVersion` and this app's own
+        /// SDK's `ZODLSwiftWalletSDK.KeystoneFirmwareVersion` and this app's own
         /// `Features/SendConfirmation/KeystoneDisplayFirmwareVersion.swift` share a bare name, and
         /// formatting once at detection time keeps this field trivially Equatable/Sendable.
         var detectedKeystoneFirmwareVersion: String?

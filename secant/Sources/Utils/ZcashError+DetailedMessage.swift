@@ -6,7 +6,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // NOTE: `ConsensusBranchID` is the SDK's typealias for `Int32`, so this extends `Int32` — kept
 // internal and narrowly named for that reason. (The SDK itself extends the same typealias with

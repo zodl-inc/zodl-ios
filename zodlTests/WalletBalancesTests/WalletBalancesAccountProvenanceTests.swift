@@ -35,7 +35,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized) struct WalletBalancesAccountProvenanceTests {
     private static func walletAccount(idByte: UInt8) -> WalletAccount {

@@ -13,7 +13,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum MigrationSpendingKeyDerivation {
     /// Derives a software account's `UnifiedSpendingKey` from the wallet's stored seed phrase.

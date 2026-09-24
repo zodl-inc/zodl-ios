@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import ComposableArchitecture
 
 struct ZatoshiStringRepresentation: Equatable {

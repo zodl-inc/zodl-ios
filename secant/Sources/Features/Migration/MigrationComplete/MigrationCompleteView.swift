@@ -50,7 +50,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import SwiftUI
 
 struct MigrationCompleteView: View {

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import ComposableArchitecture
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `AutoServerSelectionClient.rebuildAfterStall` -- the bounded way back to a running sync once the
