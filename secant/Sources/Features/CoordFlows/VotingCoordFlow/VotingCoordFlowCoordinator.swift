@@ -2593,10 +2593,11 @@ extension VotingCoordFlow {
 
         case .runBundleSetupThenRerun:
             // The re-run is the automatic continuation of the Confirm the voter
-            // has already authenticated, so the round's resume ticket deliberately skips a
-            // second biometric prompt. Nothing of the first run is carried into
-            // it: the seed was never retained, and the new run effect reads it
-            // from wallet storage again for its own single call.
+            // has already authenticated, so the round's resume ticket
+            // deliberately skips a second biometric prompt. Nothing of the
+            // first run is carried into it: the seed was never retained, and
+            // the new run effect reads it from wallet storage again for its own
+            // single call.
             state.roundCache[roundId]?.holdsResumeTicket = true
             mutateSession(&state, roundId: roundId) { $0.batchSubmissionStatus = .idle }
             return .run { [votingCrypto] send in
@@ -3067,9 +3068,9 @@ extension VotingCoordFlow {
         guard let session = state.roundCache[roundId] else { return .none }
         // Idempotent entry: a fresh `.requested` tap (or a retryable status)
         // may start the run, and an in-flight status may only be re-entered by
-        // a resume holding the round's resume ticket. A stray
-        // duplicate — a stale auth effect, a double dispatch — falls through to
-        // `.none` instead of restarting (and thereby cancelling) the run.
+        // a resume holding the round's resume ticket. A stray duplicate — a
+        // stale auth effect, a double dispatch — falls through to `.none`
+        // instead of restarting (and thereby cancelling) the run.
         let isResume = session.holdsResumeTicket
         guard session.batchSubmissionStatus == .requested
             || canStartSubmission(session)

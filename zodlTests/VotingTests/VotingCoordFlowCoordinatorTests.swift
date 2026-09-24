@@ -692,6 +692,44 @@ extension VotingSharedStateSuites {
             #expect(!isDelegationSigningTop(state))
         }
 
+        /// A failure ends its own round's automatic continuation and no other:
+        /// another round whose re-run is still setting up keeps its ticket, so
+        /// that re-run still starts without a second prompt.
+        @Test func anotherRoundsFailureLeavesAPendingRerunsTicketAlone() {
+            var pending = roundSession()
+            pending.holdsResumeTicket = true
+            var failing = roundSession(roundId: otherRoundId)
+            failing.holdsResumeTicket = true
+            var state = VotingCoordFlow.State()
+            state.roundCache[roundId] = pending
+            state.roundCache[otherRoundId] = failing
+
+            _ = VotingCoordFlow().coordinatorReduce().reduce(
+                into: &state,
+                action: .batchSubmissionFailed(roundId: otherRoundId, error: "x", submittedCount: 0, totalCount: 2)
+            )
+
+            #expect(tryUnwrap(state.roundCache[roundId]).holdsResumeTicket)
+            #expect(!tryUnwrap(state.roundCache[otherRoundId]).holdsResumeTicket)
+        }
+
+        /// Done clears no ticket. The round it closes spent its own when its run
+        /// started, and another round whose re-run is still setting up keeps its
+        /// ticket, so that re-run still starts without a second prompt.
+        @Test func submissionDoneLeavesAPendingRerunsTicketAlone() {
+            var pending = roundSession()
+            pending.holdsResumeTicket = true
+            var state = VotingCoordFlow.State()
+            state.roundCache[roundId] = pending
+
+            _ = VotingCoordFlow().coordinatorReduce().reduce(
+                into: &state,
+                action: .submissionDoneTapped(roundId: otherRoundId)
+            )
+
+            #expect(tryUnwrap(state.roundCache[roundId]).holdsResumeTicket)
+        }
+
         private let roundId = "round-1"
 
         private func roundSession(
@@ -2539,7 +2577,6 @@ extension VotingSharedStateSuites {
         @Test func anotherRoundsConfirmDoesNotRideAPendingRerunsTicket() async throws {
             let recorder = EventRecorder()
             let setupGate = TestGate()
-            let otherRoundId = String(repeating: "bb", count: 32)
             let needsBundles = try runReport(kind: "needs_bundle_setup", completedProposals: 0, totalProposals: 2)
             let completed = try runReport(
                 kind: "no_work_left",
@@ -2598,7 +2635,7 @@ extension VotingSharedStateSuites {
             // and confirms the other round.
             store.send(.submitAllDraftsTapped(roundId: otherRoundId))
             await waitForStore {
-                store.state.roundCache[otherRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+                store.state.roundCache[self.otherRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
             }
 
             await setupGate.open()

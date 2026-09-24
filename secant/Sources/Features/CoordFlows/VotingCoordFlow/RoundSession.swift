@@ -235,7 +235,8 @@ struct RoundSession: Equatable {
     /// authorization or bundle setup (`reduceBatchSubmissionFailed`,
     /// `reduceBatchAuthorizationFailed`, `reduceBundleSetupFailed`), or the
     /// voter backing out of Keystone signing (`.delegationRejected`). Closing
-    /// the flow or switching account drops it with the round cache.
+    /// the flow, switching account or switching the config source drops it
+    /// with the round cache.
     ///
     /// Per round, because Confirm can be left while a bundle-setup re-run is
     /// still setting up: another round's Confirm is the voter's own, so it
