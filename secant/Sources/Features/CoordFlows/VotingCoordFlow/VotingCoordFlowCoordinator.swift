@@ -2391,7 +2391,19 @@ extension VotingCoordFlow {
     /// the wallet's holding for both -- which for `insufficientEligibility`,
     /// where the wallet does hold notes, is a false statement about the voter's
     /// own money. Each kind now says only what is known about it.
+    ///
+    /// A setup that fails ends the automatic re-run `.runBundleSetupThenRerun`
+    /// started, when it was that re-run's setup, so the ticket that let the
+    /// re-run skip Face ID goes with it. Nothing later spends the ticket
+    /// otherwise: the ineligible sheet leaves the voter on the polls list, a
+    /// round the flow still has open is re-entered without passing round
+    /// entry, and the voter's next Confirm would skip authentication. The
+    /// ticket is flow-wide, so the failed setup of a round the voter entered
+    /// clears it too. It is normally clear by then. When it is not, another
+    /// round's re-run is still setting up, and that re-run asks for Face ID
+    /// instead: an extra prompt, never a skipped one.
     func reduceBundleSetupFailed(_ state: inout State, roundId: String, error: VotingError) -> Effect<Action> {
+        state.pendingBatchSubmission = false
         switch error.kind {
         case .noSpendableNotes:
             return .send(.ineligibleForRound(roundId: roundId, reason: IneligibleReason.noSpendableNotes))

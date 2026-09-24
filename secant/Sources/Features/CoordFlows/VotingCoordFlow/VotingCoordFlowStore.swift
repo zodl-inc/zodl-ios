@@ -141,9 +141,21 @@ struct VotingCoordFlow {
         // MARK: - Submission flow-wide state (Stage 5)
 
         /// Signals that a run should start again without a second
-        /// authentication prompt -- the continuation of a Confirm the voter has
-        /// already authenticated, after the bundle rows it turned out to need
-        /// were persisted. Cleared on success, retry, or flow dismiss.
+        /// authentication prompt -- the automatic continuation of a Confirm the
+        /// voter has already authenticated: the re-run once the bundle rows it
+        /// turned out to need are set up (`.runBundleSetupThenRerun`), and the
+        /// re-runs of the retry ladder (`scheduleRunRetry`).
+        ///
+        /// Cleared when that continuation starts its run
+        /// (`reduceAuthenticationSucceeded`), and wherever it ends without one,
+        /// so the voter's next Confirm asks for Face ID again: a failed
+        /// submission or authorization (`reduceBatchSubmissionFailed`,
+        /// `reduceBatchAuthorizationFailed`) and a failed bundle setup
+        /// (`reduceBundleSetupFailed`). Also cleared when the voter finishes a
+        /// submission (`.submissionDoneTapped`), backs out of Keystone signing
+        /// (`.delegationRejected`), switches account
+        /// (`resetAccountScopedVotingState`), or leaves the flow
+        /// (`.dismissFlow`).
         var pendingBatchSubmission: Bool = false
 
         /// Round id whose submission alert is currently surfaced. Drives

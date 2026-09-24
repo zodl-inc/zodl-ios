@@ -2449,6 +2449,87 @@ extension VotingSharedStateSuites {
             #expect(store.state.roundCache[activeRoundId]?.submissionProgress.totalProposals == nil)
         }
 
+        /// A bundle-setup re-run is the automatic continuation of the voter's
+        /// Confirm, so it holds the ticket that skips Face ID. When that setup
+        /// finds the wallet ineligible, the flow ends on the polls list with the
+        /// ineligible sheet and nothing spends the ticket. The voter's next
+        /// Confirm is their own, even on a round the flow still has open: it
+        /// asks for Face ID again.
+        @MainActor
+        @Test(arguments: [VotingErrorKind.noSpendableNotes, VotingErrorKind.insufficientEligibility])
+        func anIneligibleBundleSetupRerunHandsTheNextConfirmBackToTheVoter(kind: VotingErrorKind) async throws {
+            let recorder = EventRecorder()
+            let needsBundles = try runReport(kind: "needs_bundle_setup", completedProposals: 0, totalProposals: 2)
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            // Where a round tap reads the voter's ballot back from.
+            let metadata = VotingMetadataBox()
+            metadata.drafts[activeRoundId] = ["1": 0, "2": 1]
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.votingMetadata = self.votingMetadataClient(metadata)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.roundPlan = { _, _ in try self.plan(openProposals: [1, 2]) }
+                $0.votingCrypto.openRoundSession = { _, _, route, epoch in
+                    recorder.record("openRoundSession:\(route):\(epoch)")
+                }
+                // The round's first setup succeeds; the one the voter's run asks
+                // for finds the wallet ineligible.
+                $0.votingCrypto.setupBundles = { _ in
+                    let call = recorder.recordAndCount("setupBundles")
+                    guard call != 2 else {
+                        throw VotingError(kind: kind, message: "the wallet is no longer eligible")
+                    }
+                    return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+                }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? needsBundles : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { store.state.ineligibleSheet != nil }
+
+            // The voter authenticated once, the run asked for bundle rows, and
+            // the setup it re-ran found the wallet out.
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
+            #expect(recorder.events().filter { $0 == "setupBundles" }.count == 2)
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 1)
+
+            store.send(.dismissIneligibleSheet)
+            store.send(.roundTapped(activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            // The tap reused the open session, so no round entry ran on the way
+            // back to Confirm.
+            #expect(recorder.events().filter { $0.hasPrefix("openRoundSession") }.count == 1)
+
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate", "authenticate"])
+        }
+
         /// A proposal the voter deliberately skipped is decided, not pending: it
         /// carries no choice in the plan's completed display, so draining the
         /// ballot from the display alone would leave its draft behind and rewrite a
