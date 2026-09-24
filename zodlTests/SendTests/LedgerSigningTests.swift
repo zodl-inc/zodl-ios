@@ -118,7 +118,12 @@ import ComposableArchitecture
     @MainActor @Test func aSignRequestBeforeTheConnectionWaitsUntilConnected() async throws {
         let request = try Self.signRequest()
         let signPCZTCallCount = LockIsolated(0)
-        let store = TestStore(initialState: LedgerSigning.State()) {
+        // MOB-2020: `.deviceConnected` is now guarded on `phase == .connecting` (a late result
+        // from the non-cancellable `connect` effect must not resurrect a ceremony that already
+        // failed), so this starts mid-connect rather than at the default `.scanning`.
+        var initialState = LedgerSigning.State()
+        initialState.phase = .connecting
+        let store = TestStore(initialState: initialState) {
             LedgerSigning()
         } withDependencies: {
             $0.ledgerClient = .noOp
@@ -131,8 +136,8 @@ import ComposableArchitecture
         await store.send(.signRequested(request)) {
             $0.request = request
         }
-        // Still `.scanning` (the default) -- `startSigningIfReady`'s guard must not let signing
-        // start before a device is connected.
+        // Still `.connecting` -- `startSigningIfReady`'s guard must not let signing start before
+        // a device is connected.
         await store.receive(\.startSigningIfReady)
         #expect(signPCZTCallCount.value == 0)
 
@@ -420,6 +425,33 @@ import ComposableArchitecture
         }
 
         #expect(store.state.failedPrimaryAction == .tryAgain)
+        await store.finish()
+    }
+
+    @MainActor @Test func pairingMissingFailsOnNotPairedAndIgnoresALateConnect() async {
+        let device = Self.device(name: "Nano X")
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+        state.phase = .connecting
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.ledgerClient = .noOp
+        }
+
+        await store.send(.pairingMissing) {
+            $0.phase = .failed
+            $0.issue = .notPaired
+            $0.isConnectionLost = false
+        }
+        #expect(store.state.failedPrimaryAction == .none)
+
+        // A late result from the non-cancellable `connect` effect must not overwrite the ceremony
+        // that already failed above -- both are no-ops now that `phase` is `.failed`.
+        await store.send(.deviceConnected)
+        await store.send(.connectionFailed(.disconnected))
         await store.finish()
     }
 

@@ -128,11 +128,12 @@ import ComposableArchitecture
         }
     }
 
-    @Test func aMissingBindingFailsBeforeSigning() async throws {
+    @Test func anUnreadableBindingStillFailsBeforeSigning() async throws {
         try await withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             struct BindingMissing: Error {}
+            // MOB-2020: not `uninitializedLedgerBinding`, so this still falls to the unchanged catch-all failure screen.
             let pczt = Pczt([0x01])
 
             var initialState = makeState(account: Self.ledgerAccount())
@@ -159,6 +160,41 @@ import ComposableArchitecture
             await store.finish()
 
             #expect(store.state.ledgerSigning.request == nil)
+        }
+    }
+
+    @Test func aMissingPairingShowsNotPairedOnTheSheet() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let pczt = Pczt([0x01])
+
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.pczt = pczt
+            initialState.isLedgerSignSheetPresented = true
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.walletStorage = .noOp
+                $0.walletStorage.exportLedgerBinding = { _ in throw WalletStorage.WalletStorageError.uninitializedLedgerBinding }
+            }
+
+            await store.send(.ledgerSignRequest)
+            await store.receive(\.ledgerSigning.pairingMissing) {
+                $0.ledgerSigning.phase = .failed
+                $0.ledgerSigning.issue = .notPaired
+                $0.ledgerSigning.isConnectionLost = false
+            }
+            // No `updateFailedData`/`pcztSendFailed` -- the sheet stays up showing Ledger Not
+            // Paired instead of bouncing to the generic PCZT failure screen.
+            await store.finish()
+
+            #expect(store.state.isLedgerSignSheetPresented == true)
+            #expect(store.state.ledgerSigning.issue == .notPaired)
+            #expect(store.state.failedCode == nil)
+            #expect(store.state.failedDescription == nil)
         }
     }
 

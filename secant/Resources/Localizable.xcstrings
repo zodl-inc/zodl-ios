@@ -10730,6 +10730,40 @@
         }
       }
     },
+    "ledger.issue.notPaired.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This account has no Ledger pairing saved in Zodl. Disconnect it in Advanced Settings, then connect your Ledger again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cuenta no tiene un emparejamiento de Ledger guardado en Zodl. Desconéctala en Configuración Avanzada y vuelve a conectar tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.issue.notPaired.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ledger Not Paired"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ledger no emparejado"
+          }
+        }
+      }
+    },
     "ledger.issue.notSignable.message" : {
       "extractionState" : "manual",
       "localizations" : {

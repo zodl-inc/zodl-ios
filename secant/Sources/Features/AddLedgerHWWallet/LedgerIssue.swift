@@ -41,6 +41,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case derivationBudgetExhausted
     /// Not in Figma; draft copy.
     case deviceMismatch
+    /// Not in Figma, draft copy (Android calls it "Ledger Not Paired"). The account has no
+    /// stored Ledger binding, so no device can sign for it. Never produced by `init(_:)` --
+    /// `SendConfirmation` reports it directly.
+    case notPaired
     /// Not in Figma; draft copy.
     case transactionNotSignable
     /// Not in Figma; draft copy -- the catch-all for anything else.
@@ -138,6 +142,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueDerivationBudgetTitle)
         case .deviceMismatch:
             return String(localizable: .ledgerIssueDeviceMismatchTitle)
+        case .notPaired:
+            return String(localizable: .ledgerIssueNotPairedTitle)
         case .transactionNotSignable:
             return String(localizable: .ledgerIssueNotSignableTitle)
         case .unknown:
@@ -178,6 +184,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueDerivationBudgetMessage)
         case .deviceMismatch:
             return String(localizable: .ledgerIssueDeviceMismatchMessage)
+        case .notPaired:
+            return String(localizable: .ledgerIssueNotPairedMessage)
         case .transactionNotSignable:
             return String(localizable: .ledgerIssueNotSignableMessage)
         case .unknown:
@@ -215,6 +223,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return .tryAgain
         case .deviceMismatch:
             return .tryAgain
+        case .notPaired:
+            return .none
         case .transactionNotSignable:
             return context == .connect ? .close : .none
         case .unknown:
@@ -236,16 +246,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// `true` when a retry must scan and connect again, rather than repeat the request on the
     /// connection that is still open. A device refusal (`.deviceLocked`, `.requestRejected`,
     /// `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the transport usable for
-    /// another attempt; `.accountAlreadyAdded` needs no retry at all. Everything else needs a
-    /// fresh scan and connection: the transport is gone, or a different or restarted device must
-    /// be connected (`.deviceMismatch`, `.appTooOld` after the update, and `.unknown`, where a
-    /// clean reconnect is the safe retry).
+    /// another attempt; `.accountAlreadyAdded` and `.notPaired` need no retry at all. Everything
+    /// else needs a fresh scan and connection: the transport is gone, or a different or restarted
+    /// device must be connected (`.deviceMismatch`, `.appTooOld` after the update, and
+    /// `.unknown`, where a clean reconnect is the safe retry).
     var retryNeedsNewConnection: Bool {
         switch self {
         case .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
             .pairingFailed, .disconnected, .appTooOld, .deviceMismatch, .unknown:
             return true
-        case .deviceLocked, .requestRejected, .accountAlreadyAdded, .derivationBudgetExhausted,
+        case .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
             .transactionNotSignable:
             return false
         }

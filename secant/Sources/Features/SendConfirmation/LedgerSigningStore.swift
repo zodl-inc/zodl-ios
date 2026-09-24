@@ -70,6 +70,10 @@ struct LedgerSigning {
         case deviceConnected
         case connectionFailed(LedgerIssue)
         case signRequested(State.SignRequest)
+        // MOB-2020: sent by the parent's `.ledgerSignRequest` in place of `.signRequested` when
+        // the account has no stored Ledger binding at all -- there is no pczt/account/binding to
+        // hand over, so this fails the ceremony directly instead of ever reaching `.connected`.
+        case pairingMissing
         case startSigningIfReady
         case signingProgressed(LedgerSigningProgress)
         case signed(Pczt)
@@ -191,10 +195,17 @@ struct LedgerSigning {
                 )
 
             case .deviceConnected:
+                // The `connect` effect below is not cancellable, so a connect already in flight
+                // can still report back later -- a late result must not overwrite a ceremony that
+                // already failed (e.g. via `.pairingMissing`).
+                guard state.phase == .connecting else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
 
             case let .connectionFailed(issue):
+                // Same non-cancellable-`connect` reasoning as `.deviceConnected` above: a late
+                // result must not overwrite a ceremony that already failed.
+                guard state.phase == .connecting else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
                 // connection-lost regardless of what `LedgerIssue(error).retryNeedsNewConnection`
                 // would classify the underlying error as -- same rule AddLedgerHWWallet's own
@@ -207,6 +218,15 @@ struct LedgerSigning {
             case let .signRequested(request):
                 state.request = request
                 return .send(.startSigningIfReady)
+
+            case .pairingMissing:
+                // No device is ever going to sign for this account -- fail the ceremony outright
+                // and cancel any scan/sign still in flight (the `connect` effect can't be
+                // cancelled; the guards above handle a late result from it).
+                state.phase = .failed
+                state.issue = .notPaired
+                state.isConnectionLost = false
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign))
 
             case .startSigningIfReady:
                 guard state.phase == .connected, let request = state.request else {

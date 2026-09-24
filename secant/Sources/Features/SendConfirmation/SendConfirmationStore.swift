@@ -699,6 +699,11 @@ struct SendConfirmation {
                     do {
                         let binding = try walletStorage.exportLedgerBinding(account.id)
                         await send(.ledgerSigning(.signRequested(.init(pczt: pczt, accountUUID: account.id, binding: binding))))
+                    } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
+                        // MOB-2020: no stored binding for this account -- report Ledger Not Paired
+                        // on the sign sheet directly instead of bouncing to the generic PCZT
+                        // failure screen; there is nothing a retry could fix.
+                        await send(.ledgerSigning(.pairingMissing))
                     } catch {
                         try? await mainQueue.sleep(for: .seconds(Constants.delay))
                         await send(.updateFailedData(-795, "ledgerSignRequest failed: no binding", ""))

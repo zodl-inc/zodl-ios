@@ -142,6 +142,7 @@ import Foundation
             (.appTooOld, .tryAgain, .tryAgain),
             (.derivationBudgetExhausted, .tryAgain, .tryAgain),
             (.deviceMismatch, .tryAgain, .tryAgain),
+            (.notPaired, .none, .none),
             (.transactionNotSignable, .close, .none),
             (.unknown, .tryAgain, .tryAgain)
         ]
@@ -159,7 +160,7 @@ import Foundation
             .pairingFailed, .disconnected, .appTooOld, .deviceMismatch, .unknown
         ]
         let reusesConnection: [LedgerIssue] = [
-            .deviceLocked, .requestRejected, .accountAlreadyAdded, .derivationBudgetExhausted,
+            .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
             .transactionNotSignable
         ]
 
