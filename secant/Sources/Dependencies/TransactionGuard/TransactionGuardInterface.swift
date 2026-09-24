@@ -13,6 +13,12 @@ extension DependencyValues {
     }
 }
 
+/// The guard as its callers see it: take it around a submission, take it around a server
+/// switch, and never let the two overlap.
+///
+/// Coinholder voting submissions are issued by the SDK's native round driver over its own
+/// transport (an isolated Tor client or a direct HTTP client). They never touch the
+/// lightwalletd submission path and do not take this guard.
 @DependencyClient
 struct TransactionGuardClient {
     var acquire: @Sendable () async throws -> Void

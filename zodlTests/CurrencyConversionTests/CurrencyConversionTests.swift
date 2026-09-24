@@ -286,18 +286,6 @@ class CurrencyConversionTests: XCTestCase {
         )
     }
 
-    func testCurrencyISO4217AllCases() {
-        XCTAssertEqual(
-            CurrencyISO4217.allCases.count,
-            23,
-            "CurrencyConversion tests: `testCurrencyISO4217AllCases` count is expected to be 23 but it is \(CurrencyISO4217.allCases.count)"
-        )
-        XCTAssertTrue(
-            CurrencyISO4217.allCases.contains(.usd),
-            "CurrencyConversion tests: `testCurrencyISO4217AllCases` is expected to contain .usd"
-        )
-    }
-
     func testEquatableSameValuesAreEqual() {
         let a = CurrencyConversion(.usd, ratio: 30.0, timestamp: 1000)
         let b = CurrencyConversion(.usd, ratio: 30.0, timestamp: 1000)

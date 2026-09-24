@@ -18,11 +18,6 @@ import ComposableArchitecture
 extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
 
 @MainActor final class ExchangeRateProvider {
-    enum Constants {
-        static let cmcRateBaseURL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=ZEC&convert="
-        static let zecKey = "ZEC"
-    }
-
     private var cancellable: AnyCancellable? = nil
     nonisolated let eventStream = CurrentValueSubject<ExchangeRateClient.EchangeRateEvent, Never>(.value(nil, .usd))
     private var latestRate: FiatCurrencyResult? = nil
@@ -59,40 +54,9 @@ extension FiatCurrencyResult: @retroactive @unchecked Sendable {}
     }
 
     nonisolated func getCMCRate(for currency: CurrencyISO4217 = .usd) async throws -> Double {
-        guard let cmcKey = PartnerKeys.cmcKey else {
-            throw "CMC API Key missing"
-        }
-
-        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
-        @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
-
-        guard let url = URL(string: Constants.cmcRateBaseURL + currency.code) else {
-            throw URLError(.badURL)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(cmcKey, forHTTPHeaderField: "X-CMC_PRO_API_KEY")
-
-        let (data, response) = swapAPIAccess == .direct
-        ? try await URLSession.shared.data(for: request)
-        : try await sdkSynchronizer.httpRequestOverTor(request)
-
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw "httpStatus \(code)"
-        }
-
-        if let result = try? JSONDecoder().decode(CMCPrice.self, from: data) {
-            if let zec = result.data[Constants.zecKey],
-               let quote = zec.quote[currency.code] {
-                return quote.price
-            }
-        }
-
-        throw "Decode CMCPrice.self failed"
+        @Dependency(\.coinMarketCap)
+        var coinMarketCap
+        return try await coinMarketCap.price(currency)
     }
 
     func refreshExchangeRateUSD(_ rateSource: ExchangeRateClient.RateSource = .coinMarketCap) {

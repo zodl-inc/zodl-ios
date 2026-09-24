@@ -89,6 +89,10 @@ enum QRCodeGenerator {
         export: Bool = true,
         overlayedWithZcashLogo: Bool = true
     ) -> CGImage? {
+        if !overlayedWithZcashLogo {
+            return context.createCGImage(baseImage, from: baseImage.extent)
+        }
+
         // Keystone is the only vendor whose overlay asset ships without a Max/Low suffix (its
         // `KS_`-prefixed assets are suffix-less); the un-prefixed "plain" assets `.zashi` uses
         // are ALWAYS suffixed — there is no bare, un-suffixed plain asset. `.ledger` has no
@@ -125,13 +129,9 @@ enum QRCodeGenerator {
         let translationTransform = CGAffineTransform(translationX: iconRect.origin.x, y: iconRect.origin.y)
         let transformedIconCIImage = iconCIImage.transformed(by: scaleTransform.concatenating(translationTransform))
         
-        if overlayedWithZcashLogo {
-            let combinedImage = transformedIconCIImage.composited(over: baseImage)
-            
-            return context.createCGImage(combinedImage, from: combinedImage.extent)
-        } else {
-            return context.createCGImage(baseImage, from: baseImage.extent)
-        }
+        let combinedImage = transformedIconCIImage.composited(over: baseImage)
+
+        return context.createCGImage(combinedImage, from: combinedImage.extent)
     }
 }
 
