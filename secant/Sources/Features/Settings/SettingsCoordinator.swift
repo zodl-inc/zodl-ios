@@ -188,10 +188,6 @@ extension Settings {
                 let _ = state.path.popLast()
                 return .none
 
-            case .path(.element(id: _, action: .currencyConversionSetup(.delayedDismisalRequested))):
-                let _ = state.path.popLast()
-                return .none
-
                 // MARK: - Scan
                 
             case .path(.element(id: _, action: .scan(.foundAccounts(let account)))):
