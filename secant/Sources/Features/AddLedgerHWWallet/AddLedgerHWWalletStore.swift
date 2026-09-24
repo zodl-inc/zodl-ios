@@ -19,7 +19,7 @@ struct AddLedgerHWWallet {
         var isScanning = false
         /// The last scan, connect or pair failure -- drives the issue sheet. Cleared whenever a
         /// device is (re-)selected or a new scan/connect attempt starts. The device picker is
-        /// now the only screen that connects and pairs — see AddLedgerHWWalletCoordFlowCoordinator.
+        /// now the only screen that connects and pairs — see ConnectHWWalletCoordFlowCoordinator.
         var issue: LedgerIssue? = nil
         /// Whether `issue`'s sheet is on screen. A swipe-to-dismiss clears only this flag, so
         /// `issue` stays set and the page keeps only its bottom Try again button -- a rescan

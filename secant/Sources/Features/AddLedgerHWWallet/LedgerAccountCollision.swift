@@ -33,8 +33,9 @@ enum LedgerAccountCollision {
     /// encoding, or `nil` when none does. An account with no UFVK never matches. This runs on the
     /// device picker as soon as pairing succeeds, before an import is even attempted -- the
     /// import-time refusal (`isCollision` / `collidingAccount`) stays in place as the backstop
-    /// for a key librustzcash matches on one of its components (e.g. the same seed fingerprint
-    /// and account index) but that happens to be encoded differently from what's already stored.
+    /// for a key that shares any one component (its Orchard, Sapling or transparent key) with an
+    /// account already stored -- librustzcash matches component by component, this check only on
+    /// the whole encoding.
     static func existingAccount(matching ufvk: String, among walletAccounts: [WalletAccount]) -> WalletAccount? {
         walletAccounts.first { $0.account.ufvk?.stringEncoded == ufvk }
     }

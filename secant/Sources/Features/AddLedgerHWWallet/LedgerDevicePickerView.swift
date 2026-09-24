@@ -2,7 +2,7 @@
 //  LedgerDevicePickerView.swift
 //  Zashi
 //
-//  MOB-2020 Phase 1.3: the Bluetooth device list AddLedgerHWWalletCoordFlow pushes once the
+//  MOB-2020 Phase 1.3: the Bluetooth device list ConnectHWWalletCoordFlow pushes once the
 //  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this is now
 //  the one screen that finds, selects, connects and pairs the Ledger — there is no separate
 //  "Approve on your Ledger" screen; the export prompt is explained in place via the status line

@@ -195,9 +195,9 @@ struct LedgerSigning {
                 )
 
             case .deviceConnected:
-                // The `connect` effect below is not cancellable, so a connect already in flight
-                // can still report back later -- a late result must not overwrite a ceremony that
-                // already failed (e.g. via `.pairingMissing`).
+                // `.connect`'s effect is not cancellable, so a connect already in flight can still
+                // report back later -- a late result must not overwrite a ceremony that already
+                // failed (e.g. via `.pairingMissing`).
                 guard state.phase == .connecting else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
