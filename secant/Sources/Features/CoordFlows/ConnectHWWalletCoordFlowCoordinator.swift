@@ -109,6 +109,19 @@ extension ConnectHWWalletCoordFlow {
             case .path(.element(id: _, action: .ledgerDevicePicker(.pairingSucceeded(let pairing)))):
                 for element in state.path {
                     if case .ledgerDevicePicker(var devicePickerState) = element {
+                        // Figma (node 1073:13304) and Android raise "Account Already Added" on the
+                        // device picker itself, right after pairing, instead of making the user step
+                        // through every birthday screen first. The import-time arm
+                        // (`.ledgerDeviceReady(.accountAlreadyImported)`) stays as the backstop for a
+                        // key librustzcash matches at import but that this pre-import check missed.
+                        if let existingAccount = LedgerAccountCollision.existingAccount(
+                            matching: pairing.ufvk,
+                            among: devicePickerState.walletAccounts
+                        ) {
+                            state.alreadyAddedAccount = existingAccount
+                            state.isAccountAlreadyAddedSheetPresented = true
+                            return .none
+                        }
                         devicePickerState.pairing = pairing
                         state.path.append(.ledgerAccount(devicePickerState))
                     }

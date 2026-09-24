@@ -42,9 +42,12 @@ struct ConnectHWWalletCoordFlow {
     struct State {
         var chooseHWWalletState = ChooseHWWallet.State.initial
         /// The account a Ledger's viewing key already matched, set right before
-        /// `isAccountAlreadyAddedSheetPresented` -- see the coordinator's
-        /// `.ledgerDeviceReady(.accountAlreadyImported(_))` arm. Deliberately left set once the
-        /// sheet is dismissed via `goToExistingAccountTapped`, since Root reads it from here.
+        /// `isAccountAlreadyAddedSheetPresented` -- by the coordinator's own
+        /// `.ledgerDevicePicker(.pairingSucceeded(_))` arm, the pre-import check that fires as
+        /// soon as pairing succeeds, or by its `.ledgerDeviceReady(.accountAlreadyImported(_))`
+        /// arm, the import-time backstop for a collision the pre-import check missed. Deliberately
+        /// left set once the sheet is dismissed via `goToExistingAccountTapped`, since Root reads
+        /// it from here.
         var alreadyAddedAccount: WalletAccount? = nil
         var birthday: BlockHeight? = nil
         var isAccountAlreadyAddedSheetPresented = false

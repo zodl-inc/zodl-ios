@@ -59,6 +59,50 @@ import ComposableArchitecture
         }
     }
 
+    @Test func pairingANewLedgerStillShowsItsAccount() async throws {
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        // No account carries the pairing's UFVK, so the pre-import check must let this through.
+        devicePickerState.$walletAccounts.withLock { $0 = [Self.walletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.last!
+        let fixture = try Self.makePairingFixture(ufvk: "uview1ledgerpairingfixture")
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerAccount(let accountState) = store.state.path.last {
+            #expect(accountState.pairing == fixture)
+        } else {
+            Issue.record("expected .ledgerAccount to be pushed carrying the pairing")
+        }
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(store.state.alreadyAddedAccount == nil)
+    }
+
+    @Test func pairingALedgerAlreadyInTheWalletRaisesAccountAlreadyAddedOnThePicker() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let store = makeStore(initialState: initialState)
+        let id = store.state.path.ids.last!
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        // The path still ends at the picker -- the collision arm pushes nothing.
+        #expect(store.state.path.count == 2)
+        #expect(isDevicePicker(store.state.path.last))
+    }
+
     // MARK: - Account
 
     @Test func nextTappedPushesDeviceReadyCarryingTheAccountState() async {
@@ -447,24 +491,27 @@ import ComposableArchitecture
         return false
     }
 
-    /// Mirrors AddLedgerHWWalletTests' own private fixture.
-    private static func walletAccount(idByte: UInt8) -> WalletAccount {
+    /// Mirrors AddLedgerHWWalletTests' own private fixture. `ufvk` defaults to `nil`, matching an
+    /// account that was never asked to carry a viewing key.
+    private static func walletAccount(idByte: UInt8, ufvk: String? = nil) -> WalletAccount {
         WalletAccount(Account(
             id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
             name: "Ledger",
             keySource: Account.ledgerKeySource,
             seedFingerprint: nil,
             hdAccountIndex: nil,
-            ufvk: nil,
+            ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
             uivk: nil
         ))
     }
 
     /// `LedgerAccountBinding`'s device identity is `tpk0-` plus 64 lowercase hex digits, validated
     /// through the linked FFI -- same fixture shape as LedgerSessionTests/AddLedgerHWWalletTests.
-    private static func makePairingFixture() throws -> LedgerPairing {
+    /// `ufvk` defaults to the same sentinel every other fixture in this file used before the
+    /// pre-import collision check existed; the collision tests pass their own to control the match.
+    private static func makePairingFixture(ufvk: String = "utest1fixture") throws -> LedgerPairing {
         LedgerPairing(
-            ufvk: "utest1fixture",
+            ufvk: ufvk,
             binding: LedgerAccountBinding(
                 deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "a", count: 64)),
                 zip32AccountIndex: Zip32AccountIndex(0)

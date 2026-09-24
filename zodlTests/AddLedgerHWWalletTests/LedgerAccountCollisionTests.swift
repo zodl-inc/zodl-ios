@@ -59,17 +59,35 @@ import Foundation
         #expect(LedgerAccountCollision.collidingAccount(in: foreignError, among: [anotherAccount]) == nil)
     }
 
+    // MARK: - existingAccount(matching:among:)
+
+    @Test func existingAccountMatchesOnlyAnIdenticalViewingKey() {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existing = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        let differentUFVK = Self.walletAccount(idByte: 0x01, ufvk: "uview1anotherpairingfixture")
+        let noUFVK = Self.walletAccount(idByte: 0x02)
+
+        // Finds the account with the same UFVK string, among others.
+        #expect(LedgerAccountCollision.existingAccount(matching: matchingUFVK, among: [differentUFVK, noUFVK, existing]) == existing)
+        // A different UFVK string never matches, even against the same wallet accounts.
+        #expect(LedgerAccountCollision.existingAccount(matching: "uview1notpresentfixture", among: [differentUFVK, noUFVK, existing]) == nil)
+        // An account with no UFVK never matches, no matter what string is asked for.
+        #expect(LedgerAccountCollision.existingAccount(matching: matchingUFVK, among: [noUFVK]) == nil)
+    }
+
     // MARK: - Helpers
 
-    /// Mirrors AddLedgerHWWalletTests' own private fixture.
-    private static func walletAccount(idByte: UInt8) -> WalletAccount {
+    /// Mirrors AddLedgerHWWalletTests' own private fixture. `ufvk` defaults to `nil`, matching an
+    /// account that was never asked to carry a viewing key (the collidingAccount tests above key
+    /// only off `id`).
+    private static func walletAccount(idByte: UInt8, ufvk: String? = nil) -> WalletAccount {
         WalletAccount(Account(
             id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
             name: "Ledger",
             keySource: Account.ledgerKeySource,
             seedFingerprint: nil,
             hdAccountIndex: nil,
-            ufvk: nil,
+            ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
             uivk: nil
         ))
     }

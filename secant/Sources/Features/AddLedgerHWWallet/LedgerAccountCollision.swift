@@ -14,6 +14,11 @@
 //  read only to classify the failure and locate the existing account -- it is never logged or
 //  otherwise surfaced.
 //
+//  This type has two checks: `existingAccount(matching:among:)` runs right after pairing, before
+//  any import is attempted, and matches by exact UFVK string encoding; `isCollision` /
+//  `collidingAccount` are the import-time backstop, reading librustzcash's own refusal for a
+//  collision the pre-import check didn't catch.
+//
 
 import Foundation
 @preconcurrency import ZcashLightClientKit
@@ -23,6 +28,16 @@ import Foundation
 enum LedgerAccountCollision {
     /// A UUID formatted the way Rust's error text prints one -- lowercase, hyphenated RFC 4122.
     private static let uuidPattern = "[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"
+
+    /// The pre-import check: the `walletAccounts` element already carrying this exact UFVK
+    /// encoding, or `nil` when none does. An account with no UFVK never matches. This runs on the
+    /// device picker as soon as pairing succeeds, before an import is even attempted -- the
+    /// import-time refusal (`isCollision` / `collidingAccount`) stays in place as the backstop
+    /// for a key librustzcash matches on one of its components (e.g. the same seed fingerprint
+    /// and account index) but that happens to be encoded differently from what's already stored.
+    static func existingAccount(matching ufvk: String, among walletAccounts: [WalletAccount]) -> WalletAccount? {
+        walletAccounts.first { $0.account.ufvk?.stringEncoded == ufvk }
+    }
 
     /// `true` only for `ZcashError.rustImportAccountUfvk` whose message is this specific refusal,
     /// never any other import failure.
