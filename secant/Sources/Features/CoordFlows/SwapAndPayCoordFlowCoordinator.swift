@@ -76,10 +76,10 @@ extension SwapAndPayCoordFlow {
 
                 // MARK: - Ledger
 
-            // MOB-2020: fires from the swap quote sheet, which `SwapAndPay` closes on this same
-            // action (`isQuotePresented = false`) -- iOS cannot present the Ledger sheet while
-            // that sheet is still animating out, so this only stages the state and waits for
-            // `.swapAndPay(.quoteSheetDismissed)` below.
+            // MOB-2020: fires from the quote sheet in `SwapForm` or `CrossPayForm`, which
+            // `SwapAndPay` closes on this same action (`isQuotePresented = false`) -- iOS cannot
+            // present the Ledger sheet while that sheet is still animating out, so this only
+            // stages the state and waits for `.swapAndPay(.quoteSheetDismissed)` below.
             case .swapAndPay(.confirmWithLedgerTapped):
                 state.ledgerConfirmationState = .initial
                 state.ledgerConfirmationState.proposal = state.swapAndPayState.proposal
