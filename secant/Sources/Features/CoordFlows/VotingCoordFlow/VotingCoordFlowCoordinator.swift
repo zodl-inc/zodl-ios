@@ -488,7 +488,6 @@ extension VotingCoordFlow {
                 state.roundCache.removeAll()
                 state.path.removeAll()
                 state.pendingPipelineRoundId = nil
-                state.pendingBatchSubmission = false
                 state.pollClosedSheet = nil
                 state.ineligibleSheet = nil
                 state.legacyRoundSheetRoundId = nil
@@ -523,7 +522,6 @@ extension VotingCoordFlow {
                 // different poll. Round cache and share-tracking poll stay
                 // alive so unconfirmed shares keep recovering.
                 state.path.removeAll()
-                state.pendingBatchSubmission = false
                 state.skippedQuestionsSheet = nil
                 return .none
 
@@ -953,7 +951,7 @@ extension VotingCoordFlow {
                         break
                     }
                 }
-                state.pendingBatchSubmission = false
+                state.roundCache[roundId]?.holdsResumeTicket = false
                 if case .delegationSigning = state.path.last {
                     _ = state.path.popLast()
                 }
@@ -1558,7 +1556,6 @@ extension VotingCoordFlow {
         state.allRounds.removeAll()
         state.zodlEndorsedRoundIds.removeAll()
         state.pendingPipelineRoundId = nil
-        state.pendingBatchSubmission = false
         state.submissionAlertRoundId = nil
         state.submissionAlert = nil
         state.keystoneScan = nil
@@ -2393,17 +2390,15 @@ extension VotingCoordFlow {
     /// own money. Each kind now says only what is known about it.
     ///
     /// A setup that fails ends the automatic re-run `.runBundleSetupThenRerun`
-    /// started, when it was that re-run's setup, so the ticket that let the
-    /// re-run skip Face ID goes with it. Nothing later spends the ticket
-    /// otherwise: the ineligible sheet leaves the voter on the polls list, a
-    /// round the flow still has open is re-entered without passing round
-    /// entry, and the voter's next Confirm would skip authentication. The
-    /// ticket is flow-wide, so the failed setup of a round the voter entered
-    /// clears it too. It is normally clear by then. When it is not, another
-    /// round's re-run is still setting up, and that re-run asks for Face ID
-    /// instead: an extra prompt, never a skipped one.
+    /// started, when it was that re-run's setup, so the round's ticket that
+    /// let the re-run skip Face ID goes with it. Nothing later spends the
+    /// ticket otherwise: the ineligible sheet leaves the voter on the polls
+    /// list, a round the flow still has open is re-entered without passing
+    /// round entry, and the voter's next Confirm on this round would skip
+    /// authentication. Only this round's ticket goes: another round's re-run
+    /// keeps its own.
     func reduceBundleSetupFailed(_ state: inout State, roundId: String, error: VotingError) -> Effect<Action> {
-        state.pendingBatchSubmission = false
+        state.roundCache[roundId]?.holdsResumeTicket = false
         switch error.kind {
         case .noSpendableNotes:
             return .send(.ineligibleForRound(roundId: roundId, reason: IneligibleReason.noSpendableNotes))
@@ -2535,7 +2530,7 @@ extension VotingCoordFlow {
     /// the app doing nothing.
     ///
     /// The retry is the automatic continuation of a Confirm the voter has
-    /// already authenticated, so it carries `pendingBatchSubmission` the way
+    /// already authenticated, so it arms the round's resume ticket the way
     /// `.runBundleSetupThenRerun` does: without it the run goes back through
     /// `.submitAllDraftsTapped`, which would raise a biometric sheet seconds
     /// after a contention the voter never saw and did nothing to cause. An
@@ -2555,7 +2550,7 @@ extension VotingCoordFlow {
         // The voter sees the flow reconnecting, with the bar it had, until the
         // re-run's first event.
         state.roundCache[roundId]?.submissionProgress.isRetrying = true
-        state.pendingBatchSubmission = true
+        state.roundCache[roundId]?.holdsResumeTicket = true
         return .run { [continuousClock] send in
             try await continuousClock.sleep(for: .seconds(seconds))
             await send(.retryBatchSubmission(roundId: roundId))
@@ -2598,11 +2593,11 @@ extension VotingCoordFlow {
 
         case .runBundleSetupThenRerun:
             // The re-run is the automatic continuation of the Confirm the voter
-            // has already authenticated, so the ticket deliberately skips a
+            // has already authenticated, so the round's resume ticket deliberately skips a
             // second biometric prompt. Nothing of the first run is carried into
             // it: the seed was never retained, and the new run effect reads it
             // from wallet storage again for its own single call.
-            state.pendingBatchSubmission = true
+            state.roundCache[roundId]?.holdsResumeTicket = true
             mutateSession(&state, roundId: roundId) { $0.batchSubmissionStatus = .idle }
             return .run { [votingCrypto] send in
                 let layout = try await votingCrypto.setupBundles(roundId)
@@ -2982,7 +2977,7 @@ extension VotingCoordFlow {
             drafts: session.draftVotes,
             alreadyCast: Set(session.votes.keys)
         )
-        let needsAuthentication = !state.isKeystoneUser && !state.pendingBatchSubmission
+        let needsAuthentication = !state.isKeystoneUser && !session.holdsResumeTicket
         let totalCount = max(intents.count, session.draftVotes.count)
         // The generation this write belongs to, so a refusal it comes back with
         // cannot be read as an answer about a session opened since.
@@ -3072,15 +3067,15 @@ extension VotingCoordFlow {
         guard let session = state.roundCache[roundId] else { return .none }
         // Idempotent entry: a fresh `.requested` tap (or a retryable status)
         // may start the run, and an in-flight status may only be re-entered by
-        // a resume holding the `pendingBatchSubmission` ticket. A stray
+        // a resume holding the round's resume ticket. A stray
         // duplicate — a stale auth effect, a double dispatch — falls through to
         // `.none` instead of restarting (and thereby cancelling) the run.
-        let isResume = state.pendingBatchSubmission
+        let isResume = session.holdsResumeTicket
         guard session.batchSubmissionStatus == .requested
             || canStartSubmission(session)
             || (isResume && isBatchSubmitting(session))
         else { return .none }
-        state.pendingBatchSubmission = false
+        state.roundCache[roundId]?.holdsResumeTicket = false
         guard activeSession(in: state, roundId: roundId) != nil else { return .none }
         return startRoundRun(&state, roundId: roundId, keepsSubmissionProgress: isResume)
     }
@@ -4078,7 +4073,7 @@ extension VotingCoordFlow {
         // again and the bar starts over. An automatic re-run that failed before
         // it drove the round never reached `reduceAuthenticationSucceeded`, the
         // one place that spends the ticket.
-        state.pendingBatchSubmission = false
+        state.roundCache[roundId]?.holdsResumeTicket = false
         return .none
     }
 
@@ -4099,7 +4094,7 @@ extension VotingCoordFlow {
             )
         }
         // The next run is the voter's, as after an authorization failure.
-        state.pendingBatchSubmission = false
+        state.roundCache[roundId]?.holdsResumeTicket = false
         return .none
     }
 

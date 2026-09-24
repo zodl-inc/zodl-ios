@@ -628,7 +628,7 @@ extension VotingSharedStateSuites {
             session.batchSubmissionStatus = .authorizing
             var state = VotingCoordFlow.State()
             state.isKeystoneUser = true
-            state.pendingBatchSubmission = true
+            session.holdsResumeTicket = true
             state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
             state.roundCache[roundId] = session
 
@@ -648,7 +648,7 @@ extension VotingSharedStateSuites {
             #expect(updated.batchSubmissionStatus == .idle)
             #expect(updated.draftVotes == [2: .option(1)])
             #expect(updated.votes == [1: .option(0)])
-            #expect(!state.pendingBatchSubmission)
+            #expect(!updated.holdsResumeTicket)
             #expect(!isDelegationSigningTop(state))
         }
 
@@ -671,7 +671,7 @@ extension VotingSharedStateSuites {
             session.isSubmittingVote = true
             var state = VotingCoordFlow.State()
             state.isKeystoneUser = true
-            state.pendingBatchSubmission = true
+            session.holdsResumeTicket = true
             state.path.append(.delegationSigning(DelegationSigning.State(roundId: roundId)))
             state.roundCache[roundId] = session
 
@@ -688,7 +688,7 @@ extension VotingSharedStateSuites {
             #expect(updated.keystoneSignedBundles == Set([0]))
             #expect(updated.keystoneBundlesToSign.isEmpty)
             #expect(updated.keystoneSigningStatus == .idle)
-            #expect(!state.pendingBatchSubmission)
+            #expect(!updated.holdsResumeTicket)
             #expect(!isDelegationSigningTop(state))
         }
 
@@ -2528,6 +2528,143 @@ extension VotingSharedStateSuites {
             }
 
             #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate", "authenticate"])
+        }
+
+        /// A bundle-setup re-run holds its round's ticket while the setup runs,
+        /// and Confirm can be left in the meantime. A Confirm on another round is
+        /// that round's own: it asks for Face ID, and it leaves the first round's
+        /// ticket alone, so that re-run still starts without a prompt once its
+        /// setup finishes.
+        @MainActor
+        @Test func anotherRoundsConfirmDoesNotRideAPendingRerunsTicket() async throws {
+            let recorder = EventRecorder()
+            let setupGate = TestGate()
+            let otherRoundId = String(repeating: "bb", count: 32)
+            let needsBundles = try runReport(kind: "needs_bundle_setup", completedProposals: 0, totalProposals: 2)
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            var initialState = sessionFlowState(drafts: [1: .option(0), 2: .option(1)])
+            initialState.allRounds.append(
+                RoundListItem(roundNumber: 2, session: votingSession(proposalCount: 2, roundIdByte: 0xBB))
+            )
+            // A round the flow already has open, ready for its Confirm.
+            var otherSession = RoundSession(roundId: otherRoundId)
+            otherSession.draftVotes = [1: .option(0), 2: .option(1)]
+            otherSession.bundleCount = 1
+            otherSession.hotkeyAddress = ""
+            otherSession.liveSession = .open(binding: .voting)
+            initialState.roundCache[otherRoundId] = otherSession
+            let store = Store(initialState: initialState) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                // The first round's second setup is its re-run's, held open
+                // until the other round has been confirmed.
+                $0.votingCrypto.setupBundles = { _ in
+                    let call = recorder.recordAndCount("setupBundles")
+                    if call == 2 {
+                        await setupGate.wait()
+                    }
+                    return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+                }
+                $0.votingCrypto.runRound = { roundId, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    recorder.record("runRound:\(roundId)")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? needsBundles : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore { recorder.events().filter { $0 == "setupBundles" }.count == 2 }
+
+            // The voter leaves the first round's Confirm while its setup runs,
+            // and confirms the other round.
+            store.send(.submitAllDraftsTapped(roundId: otherRoundId))
+            await waitForStore {
+                store.state.roundCache[otherRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            await setupGate.open()
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(
+                recorder.events().filter { $0 == "authenticate" || $0.hasPrefix("runRound:") } == [
+                    "authenticate",
+                    "runRound:\(activeRoundId)",
+                    "authenticate",
+                    "runRound:\(otherRoundId)",
+                    "runRound:\(activeRoundId)"
+                ]
+            )
+        }
+
+        /// The bundle-setup re-run is the continuation of the Confirm the voter
+        /// authenticated, so once its setup succeeds it starts without asking
+        /// again.
+        @MainActor
+        @Test func aBundleSetupRerunStartsWithoutASecondPrompt() async throws {
+            let recorder = EventRecorder()
+            let needsBundles = try runReport(kind: "needs_bundle_setup", completedProposals: 0, totalProposals: 2)
+            let completed = try runReport(
+                kind: "no_work_left",
+                completedProposals: 2,
+                totalProposals: 2,
+                completedChoices: [(1, 0), (2, 1)]
+            )
+            let store = Store(initialState: sessionFlowState(drafts: [1: .option(0), 2: .option(1)])) {
+                VotingCoordFlow()
+            } withDependencies: {
+                self.sessionDependencies(&$0, recorder: recorder)
+                $0.localAuthentication.authenticate = {
+                    recorder.record("authenticate")
+                    return true
+                }
+                $0.votingCrypto.sessionPlan = { _ in
+                    let call = recorder.recordAndCount("sessionPlan")
+                    return try self.plan(needsBundleSetup: call == 1, openProposals: [1, 2])
+                }
+                $0.votingCrypto.setupBundles = { _ in
+                    recorder.record("setupBundles")
+                    return try self.bundleLayout(bundleCount: 1, eligibleWeight: 50_000_000)
+                }
+                $0.votingCrypto.runRound = { _, _, _ in
+                    let call = recorder.recordAndCount("runRound")
+                    return AsyncThrowingStream { continuation in
+                        continuation.yield(VotingRoundRunEvent.finished(call == 1 ? needsBundles : completed))
+                        continuation.finish()
+                    }
+                }
+            }
+
+            store.send(.startActiveRoundPipeline(roundId: activeRoundId))
+            await waitForStore { self.isProposalListTop(store.state) }
+            store.send(.submitAllDraftsTapped(roundId: activeRoundId))
+            await waitForStore {
+                store.state.roundCache[self.activeRoundId]?.batchSubmissionStatus == .completed(successCount: 2)
+            }
+
+            #expect(recorder.events().filter { $0 == "setupBundles" }.count == 2)
+            #expect(recorder.events().filter { $0 == "runRound" }.count == 2)
+            #expect(recorder.events().filter { $0 == "authenticate" } == ["authenticate"])
         }
 
         /// A proposal the voter deliberately skipped is decided, not pending: it

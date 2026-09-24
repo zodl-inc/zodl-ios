@@ -226,6 +226,22 @@ struct RoundSession: Equatable {
     /// is indistinguishable from the app doing nothing.
     var runRetryCount: Int = 0
 
+    /// The resume ticket: this round's automatic continuation of a Confirm the
+    /// voter has already authenticated may start its run without a second
+    /// authentication prompt. Armed on the round by its bundle-setup re-run
+    /// (`.runBundleSetupThenRerun`) and its retry ladder (`scheduleRunRetry`),
+    /// spent when that run starts (`reduceAuthenticationSucceeded`), and
+    /// cleared when the continuation ends without a run: a failed submission,
+    /// authorization or bundle setup (`reduceBatchSubmissionFailed`,
+    /// `reduceBatchAuthorizationFailed`, `reduceBundleSetupFailed`), or the
+    /// voter backing out of Keystone signing (`.delegationRejected`). Closing
+    /// the flow or switching account drops it with the round cache.
+    ///
+    /// Per round, because Confirm can be left while a bundle-setup re-run is
+    /// still setting up: another round's Confirm is the voter's own, so it
+    /// must ask for Face ID, and it must not spend this round's ticket.
+    var holdsResumeTicket: Bool = false
+
     /// What the last run isolated or skipped, when it finished with work it
     /// could not do. Nil when the run was clean; a completed run with this set
     /// is a partial success, and saying otherwise would be a lie about where
