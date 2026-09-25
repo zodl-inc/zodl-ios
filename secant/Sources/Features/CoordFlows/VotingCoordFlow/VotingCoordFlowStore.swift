@@ -140,12 +140,6 @@ struct VotingCoordFlow {
 
         // MARK: - Submission flow-wide state (Stage 5)
 
-        /// Signals that a run should start again without a second
-        /// authentication prompt -- the continuation of a Confirm the voter has
-        /// already authenticated, after the bundle rows it turned out to need
-        /// were persisted. Cleared on success, retry, or flow dismiss.
-        var pendingBatchSubmission: Bool = false
-
         /// Round id whose submission alert is currently surfaced. Drives
         /// the alert presentation; nil when no alert.
         var submissionAlertRoundId: String?

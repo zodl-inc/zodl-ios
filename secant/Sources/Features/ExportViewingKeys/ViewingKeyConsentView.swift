@@ -72,6 +72,9 @@ struct ViewingKeyConsentView: View {
         }
         // The native grabber sits over the sheet content rather than reserving header space.
         .padding(.top, 26 + 8)
+        // Inside the scroll fallback's clip edge: an unchecked checkbox's visible border lies
+        // just outside its frame, so a flush edge would cut it off.
+        .padding(.horizontal, Design.Spacing._3xl)
     }
 
     private var warning: some View {
@@ -140,5 +143,6 @@ struct ViewingKeyConsentView: View {
             }
             .disabled(!store.canExportFull)
         }
+        .padding(.horizontal, Design.Spacing._3xl)
     }
 }

@@ -2962,6 +2962,23 @@
         }
       }
     },
+    "coinVote.confirmSubmission.progressRetrying" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconnecting..."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconectando..."
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.progressSubmittingVoteCount" : {
       "extractionState" : "manual",
       "localizations" : {

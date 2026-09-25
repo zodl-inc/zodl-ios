@@ -117,12 +117,13 @@ import ComposableArchitecture
                         scheduler.schedule(after: date, tolerance: tolerance, options: options, action)
                     },
                     interval: { @Sendable date, interval, tolerance, options, action in
+                        let cancellation = scheduler.schedule(
+                            after: date, interval: interval, tolerance: tolerance, options: options, action
+                        )
                         if retryDelaysInSeconds.contains(where: { interval == .seconds($0) }) {
                             retrySleepsScheduled.withValue { $0 += 1 }
                         }
-                        return scheduler.schedule(
-                            after: date, interval: interval, tolerance: tolerance, options: options, action
-                        )
+                        return cancellation
                     }
                 )
                 $0.sdkSynchronizer = .mocked(
@@ -164,14 +165,14 @@ import ComposableArchitecture
         /// `.upToDate` until the first edge fetch has landed and settled (the subscription races
         /// the first push; re-pushing a duplicate is harmless). Leaves the store settled at
         /// `.upToDate` with no in-flight or dirty fetch.
-        func startObservingAndSettleAtUpToDate() async {
+        func startObservingAndSettleAtUpToDate() async throws {
             store.send(.observeTransactions)
-            await settled(expectingFetches: 1)
+            try await settled(expectingFetches: 1)
             while fetchCount < 2 {
                 await push(.upToDate)
-                try? await Task.sleep(nanoseconds: 20_000_000)
+                try await Task.sleep(nanoseconds: 20_000_000)
             }
-            await settled(expectingFetches: 2)
+            try await settled(expectingFetches: 2)
         }
 
         func push(_ status: SyncStatus) async {
@@ -182,9 +183,9 @@ import ComposableArchitecture
 
         /// Event-driven positive wait: `count` fetches have been requested and the coalescing gate
         /// is closed again.
-        func settled(expectingFetches count: Int) async {
+        func settled(expectingFetches count: Int) async throws {
             while fetchCount < count || store.state.isTransactionsFetchInFlight {
-                try? await Task.sleep(nanoseconds: 10_000_000)
+                try await Task.sleep(nanoseconds: 10_000_000)
             }
         }
 
@@ -197,15 +198,17 @@ import ComposableArchitecture
         /// and the retry fires anyway. On CI's shared main actor that turn order was the rule, not
         /// the exception (`backgroundingWhileARetryIsPendingDropsThatRetry` failed on every run);
         /// on an idle machine the effect's task wins the turn, which is why it passed locally.
-        func retryArmed(count: Int) async {
+        /// Advancing the scheduler also needs this handshake, or the sleep can register after the
+        /// intended deadline has already passed and leave the test waiting for an unfired retry.
+        func retryArmed(count: Int) async throws {
             while retrySleepsScheduled.value < count {
-                try? await Task.sleep(nanoseconds: 10_000_000)
+                try await Task.sleep(nanoseconds: 10_000_000)
             }
         }
 
         /// Negative-only wait.
-        func giveAWrongFetchTimeToLand() async {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+        func giveAWrongFetchTimeToLand() async throws {
+            try await Task.sleep(nanoseconds: 100_000_000)
         }
 
         func switchTo(_ account: WalletAccount) {
@@ -215,23 +218,24 @@ import ComposableArchitecture
 
     // MARK: - (1) A failed read after an account switch is retried, then no refetch on identical states
 
-    @Test func aFailedReadAfterAnAccountSwitchIsRetriedAndThenSettles() async {
+    @Test func aFailedReadAfterAnAccountSwitchIsRetriedAndThenSettles() async throws {
         let accountA = Self.walletAccount(idByte: 70)
         let accountB = Self.walletAccount(idByte: 71)
         let rowsB = IdentifiedArrayOf<TransactionState>(uniqueElements: [Self.minedTx(id: "b-1")])
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
         harness.answer(accountA, with: IdentifiedArrayOf<TransactionState>(uniqueElements: [Self.minedTx(id: "a-1")]))
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         harness.script(accountB, [Outcome.failure(FetchStubError()), Outcome.success(rowsB)])
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.transactions.isEmpty, "the failed read leaves the switched-to account empty")
 
         // The first retry delay elapses; the retry must be the ONLY new read and must succeed.
+        try await harness.retryArmed(count: 1)
         await harness.scheduler.advance(by: .seconds(Root.State.transactionsFetchRetryDelaysInSeconds[0]))
-        await harness.settled(expectingFetches: settledCount + 2)
+        try await harness.settled(expectingFetches: settledCount + 2)
         #expect(harness.store.state.transactions == rowsB, "the retried read must deliver the account's rows")
         #expect(harness.store.state.transactionsAccountId == accountB.id, "provenance names the account whose retry landed")
         #expect(harness.store.state.transactionsFetchRetryAttempt == 0, "a successful fetch resets the retry streak")
@@ -241,19 +245,19 @@ import ComposableArchitecture
         for _ in 0..<5 {
             await harness.push(.upToDate)
         }
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount == settledCount + 2, "no further read after the retry succeeded")
     }
 
     // MARK: - (2) A failed event-triggered read on a fully mined history is retried
 
-    @Test func aFailedEventTriggeredReadOnAMinedHistoryIsRetried() async {
+    @Test func aFailedEventTriggeredReadOnAMinedHistoryIsRetried() async throws {
         let accountA = Self.walletAccount(idByte: 72)
         let mined = Self.minedTx(id: "a-mined")
         let arrived = Self.minedTx(id: "a-new")
         let harness = Harness(selected: accountA, accounts: [accountA])
         harness.answer(accountA, with: IdentifiedArrayOf<TransactionState>(uniqueElements: [mined]))
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
         #expect(harness.store.state.transactions.map(\.id) == ["a-mined"])
 
@@ -263,60 +267,62 @@ import ComposableArchitecture
         ])
         harness.events.send(.foundTransactions([], nil))
         await harness.scheduler.advance(by: .seconds(0.3))
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.transactions.map(\.id) == ["a-mined"], "the failed read keeps the previous rows")
 
+        try await harness.retryArmed(count: 1)
         await harness.scheduler.advance(by: .seconds(Root.State.transactionsFetchRetryDelaysInSeconds[0]))
-        await harness.settled(expectingFetches: settledCount + 2)
+        try await harness.settled(expectingFetches: settledCount + 2)
         #expect(harness.store.state.transactions.map(\.id).contains("a-new"), "the retry must pick up the new transaction")
     }
 
     // MARK: - (3) A pending retry never outlives its account or the foreground
 
-    @Test func switchingAccountsWhileARetryIsPendingDropsThatRetry() async {
+    @Test func switchingAccountsWhileARetryIsPendingDropsThatRetry() async throws {
         let accountA = Self.walletAccount(idByte: 73)
         let accountB = Self.walletAccount(idByte: 74)
         let accountC = Self.walletAccount(idByte: 75)
         let rowsC = IdentifiedArrayOf<TransactionState>(uniqueElements: [Self.minedTx(id: "c-1")])
         let harness = Harness(selected: accountA, accounts: [accountA, accountB, accountC])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         harness.script(accountB, [Outcome.failure(FetchStubError())])
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
 
+        try await harness.retryArmed(count: 1)
         harness.answer(accountC, with: rowsC)
         harness.switchTo(accountC)
-        await harness.settled(expectingFetches: settledCount + 2)
+        try await harness.settled(expectingFetches: settledCount + 2)
         #expect(harness.store.state.transactions == rowsC)
 
         // B's retry would have fired inside this window; it must not, and C's rows must stand.
         await harness.scheduler.advance(by: .seconds(120))
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount(for: accountB) == 1, "no delayed retry for the account that was left")
         #expect(harness.fetchCount == settledCount + 2)
         #expect(harness.store.state.transactions == rowsC)
         #expect(harness.store.state.transactionsAccountId == accountC.id)
     }
 
-    @Test func backgroundingWhileARetryIsPendingDropsThatRetry() async {
+    @Test func backgroundingWhileARetryIsPendingDropsThatRetry() async throws {
         let accountA = Self.walletAccount(idByte: 76)
         let accountB = Self.walletAccount(idByte: 77)
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         harness.script(accountB, [Outcome.failure(FetchStubError())])
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failed read must have scheduled a retry")
         // The retry must be in flight before backgrounding cancels it -- see `retryArmed(count:)`.
-        await harness.retryArmed(count: 1)
+        try await harness.retryArmed(count: 1)
 
         harness.store.send(.initialization(.appDelegate(.didEnterBackground)))
         await harness.scheduler.advance(by: .seconds(120))
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount == settledCount + 1, "no retry may fire after backgrounding")
         #expect(harness.store.state.transactionsFetchRetryAttempt == 0)
     }
@@ -327,65 +333,67 @@ import ComposableArchitecture
     /// to obtain, so the retry must be cancelled as the read starts rather than firing a redundant
     /// second full-history read a second later. Deleting that `.cancel` leaves every other test in
     /// this suite green and only this one red.
-    @Test func aFetchStartedBeforeTheRetryDelayCancelsThePendingRetry() async {
+    @Test func aFetchStartedBeforeTheRetryDelayCancelsThePendingRetry() async throws {
         let accountA = Self.walletAccount(idByte: 80)
         let accountB = Self.walletAccount(idByte: 81)
         let rowsB = IdentifiedArrayOf<TransactionState>(uniqueElements: [Self.minedTx(id: "b-1")])
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         // B's first read throws, opening the retry lane; everything after it answers with B's rows.
         harness.script(accountB, [Outcome.failure(FetchStubError())])
         harness.answer(accountB, with: rowsB)
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failed read must have scheduled a retry")
 
         // t+1: still inside the first retry delay, so nothing has retried yet. An unrelated trigger
         // now starts its own read, which succeeds.
+        try await harness.retryArmed(count: 1)
         await harness.scheduler.advance(by: .seconds(1))
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount == settledCount + 1, "the retry delay has not elapsed yet")
         harness.events.send(.foundTransactions([], nil))
         await harness.scheduler.advance(by: .seconds(0.3))
-        await harness.settled(expectingFetches: settledCount + 2)
+        try await harness.settled(expectingFetches: settledCount + 2)
         #expect(harness.store.state.transactions == rowsB, "the event-triggered read must deliver the account's rows")
         #expect(harness.store.state.transactionsFetchRetryAttempt == 0, "a read that landed ends the failure streak")
 
         // Past t+2 and far beyond: the retry the failure had scheduled must never fire.
         await harness.scheduler.advance(by: .seconds(120))
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount == settledCount + 2, "a fetch that started must cancel the retry still waiting on the last failure")
     }
 
     // MARK: - (4) Repeated failures respect the budget and stay coalesced
 
-    @Test func repeatedFailuresStopAfterTheRetryBudget() async {
+    @Test func repeatedFailuresStopAfterTheRetryBudget() async throws {
         let accountA = Self.walletAccount(idByte: 78)
         let accountB = Self.walletAccount(idByte: 79)
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         let delays = Root.State.transactionsFetchRetryDelaysInSeconds
         harness.script(accountB, Array(repeating: Outcome.failure(FetchStubError()), count: delays.count + 3))
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
 
         #expect(delays.allSatisfy { $0 >= 2 }, "the just-before probe below needs at least a one-second gap")
         for (index, delay) in delays.enumerated() {
             // Just short of the delay: nothing yet; then the delay itself: exactly one more read.
+            try await harness.retryArmed(count: index + 1)
             await harness.scheduler.advance(by: .seconds(delay - 1))
-            await harness.giveAWrongFetchTimeToLand()
+            try await harness.giveAWrongFetchTimeToLand()
             #expect(harness.fetchCount == settledCount + 1 + index, "retry \(index + 1) fired early")
             await harness.scheduler.advance(by: .seconds(1))
-            await harness.settled(expectingFetches: settledCount + 2 + index)
+            try await harness.settled(expectingFetches: settledCount + 2 + index)
         }
         #expect(harness.store.state.transactionsFetchRetryAttempt == delays.count)
 
         await harness.scheduler.advance(by: .seconds(600))
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.fetchCount == settledCount + 1 + delays.count, "the budget is spent: no further retry")
         #expect(!harness.store.state.isTransactionsFetchInFlight)
         #expect(!harness.store.state.isTransactionsFetchDirty)

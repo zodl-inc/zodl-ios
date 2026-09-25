@@ -1,6 +1,26 @@
 {
     "releases": [
         {
+            "version": "3.15.0",
+            "date": "24-09-2026",
+            "timestamp": 1790243803,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added viewing key export in Advanced Settings, with QR code and key text options."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We updated Coinholder Polling to support the latest voting protocol.",
+                        "We updated Currency Conversion to load supported fiat currencies directly from the provider."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.14.1",
             "date": "17-09-2026",
             "timestamp": 1789643406,
