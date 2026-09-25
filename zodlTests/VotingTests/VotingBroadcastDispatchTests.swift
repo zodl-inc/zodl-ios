@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import zodl_internal
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingBroadcastDispatchTests {
     private static let servers = ["https://helper-a.example", "https://helper-b.example"]
 

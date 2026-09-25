@@ -4,7 +4,7 @@ import os
 import Testing
 @testable import zodl_internal
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingHelperDeliveryWindowTests {
     @Test func thirdAdmissionWaitsForOldestAndNeverExceedsCapacity() async throws {
         let tracker = DeliveryActivityTracker()

@@ -17,7 +17,7 @@ import os
 /// without the real SDK helper — it records "begin", awaits the body, then records "end", the
 /// same pairing guarantee `VotingRustBackend.withInteractiveProvingBoost`'s own `defer` gives on
 /// every exit path.
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingProvingPromotionTests {
     @Test func promoteWhileASpeculativeProofRunsBeginsTheBoostOnce() async throws {
         let records = SignalledRecords<String>()

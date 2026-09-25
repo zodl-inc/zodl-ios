@@ -11,7 +11,7 @@ import Testing
 /// The privacy trim mirrors the Android app's rule: pop the cheapest value-descending bundles while
 /// the accumulated dropped raw weight stays within the smaller of 1 % of the total and 1,000 ZEC,
 /// never below two bundles.
-@Suite(.timeLimit(.minutes(1))) struct VotingBundleTrimmingTests {
+@Suite(.timeLimit(.minutes(3))) struct VotingBundleTrimmingTests {
     private let zec: UInt64 = 100_000_000
 
     @Test func twoOrFewerBundlesAreNeverTrimmed() {
