@@ -470,6 +470,13 @@ struct SendForm {
                         let amount = try await sdkSynchronizer.sendMaxAmount(account.id, recipient, memo)
                         await send(.maxAmountResolved(address, amount))
                     } catch {
+                        // Every failure here surfaces the same generic toast, so without this the
+                        // cause is gone by the time anyone asks why Max stopped working.
+                        // `.onDisapear` cancels this effect and TCA suppresses the send below on
+                        // cancellation, so an ordinary dismissal must not be logged as an error.
+                        if !(error is CancellationError) {
+                            LoggerProxy.error("send-max failed to resolve an amount: \(error)")
+                        }
                         await send(.maxAmountFailed)
                     }
                 }
