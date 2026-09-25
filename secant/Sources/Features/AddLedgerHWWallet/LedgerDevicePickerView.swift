@@ -46,13 +46,13 @@ struct LedgerDevicePickerView: View {
                     skeletonDeviceList()
                 } else {
                     ScrollView {
-                        VStack(spacing: 8) {
+                        VStack(spacing: 12) {
                             ForEach(store.devices) { device in
                                 deviceRow(device)
                             }
                         }
                     }
-                    .padding(.top, 24)
+                    .padding(.top, 32)
                 }
 
                 if store.isPairing {
@@ -203,7 +203,7 @@ struct LedgerDevicePickerView: View {
                         Circle()
                             .fill(Design.Surfaces.bgAlt.color(colorScheme))
                     }
-                    .padding(.trailing, 8)
+                    .padding(.trailing, 12)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(device.model.productName)
@@ -227,7 +227,7 @@ struct LedgerDevicePickerView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background {
-                RoundedRectangle(cornerRadius: Design.Radius._3xl)
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
                     .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
             }
         }
