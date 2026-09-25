@@ -33,27 +33,17 @@ struct LedgerDevicePickerView: View {
                     .frame(height: 32)
                     .padding(.top, 16)
 
-                Text(localizable: .ledgerDevicePickerTitle)
+                Text(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle)
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 24)
 
-                Text(localizable: .ledgerDevicePickerDesc)
+                Text(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingDesc : .ledgerDevicePickerDesc)
                     .zFont(size: 14, style: Design.Text.tertiary)
                     .lineSpacing(1.5)
                     .padding(.top, 8)
 
                 if store.devices.isEmpty {
-                    if store.isScanning {
-                        VStack(spacing: 0) {
-                            ProgressView()
-                                .padding(.bottom, 12)
-
-                            Text(localizable: .ledgerDevicePickerScanning)
-                                .zFont(size: 14, style: Design.Text.tertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 48)
-                    }
+                    skeletonDeviceList()
                 } else {
                     ScrollView {
                         VStack(spacing: 8) {
@@ -74,7 +64,14 @@ struct LedgerDevicePickerView: View {
 
                 Spacer()
 
-                if store.isConnecting || store.isPairing {
+                if store.isScanning && store.devices.isEmpty {
+                    ZashiButton(
+                        String(localizable: .ledgerDevicePickerSearching),
+                        prefixView: ProgressView()
+                    ) { }
+                    .disabled(true)
+                    .padding(.bottom, 24)
+                } else if store.isConnecting || store.isPairing {
                     ZashiButton(
                         String(localizable: .keystoneAddHWWalletConnect),
                         accessoryView: ProgressView()
@@ -121,6 +118,75 @@ struct LedgerDevicePickerView: View {
             LedgerIssueSheetContent(issue: issue, context: .connect) {
                 store.send(.issuePrimaryTapped)
             }
+        }
+    }
+
+    // Figma "Search for devices" (1073:10702): three shimmer skeleton cards stand in for the
+    // device list while `store.devices` is empty, whether or not a scan is currently running —
+    // the shimmer itself keys off `store.isScanning`. The bottom fade uses `Asset.Colors.background`,
+    // not `.clear` or white, so it matches whatever `applyScreenBackground()` painted in both color
+    // schemes. A plain `VStack`, not a `ScrollView`.
+    @ViewBuilder private func skeletonDeviceList() -> some View {
+        VStack(spacing: 12) {
+            skeletonCard()
+            skeletonCard()
+            skeletonCard()
+        }
+        .padding(.top, 32)
+        .overlay(alignment: .bottom) {
+            LinearGradient(
+                colors: [Asset.Colors.background.color.opacity(0), Asset.Colors.background.color],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 164)
+            .allowsHitTesting(false)
+        }
+        .accessibilityHidden(true)
+    }
+
+    // Same placeholder chain as `NoTransactionPlaceholder`: `.fill(...)` -> `.shimmer(...)` ->
+    // `.clipShape(...)` -> `.frame(...)`, one per shape, so the shimmer gradient is clipped to
+    // each shape rather than the shape's bounding box.
+    @ViewBuilder private func skeletonCard() -> some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                .shimmer(store.isScanning)
+                .clipShape(Circle())
+                .frame(width: 32, height: 32)
+                .padding(.trailing, 8)
+
+            VStack(alignment: .leading, spacing: 4) {
+                RoundedRectangle(cornerRadius: Design.Radius._xs)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                    .shimmer(store.isScanning)
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius._xs))
+                    .frame(width: 100, height: 16)
+
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                    .shimmer(store.isScanning)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .frame(width: 68, height: 12)
+            }
+
+            Spacer()
+
+            RoundedRectangle(cornerRadius: Design.Radius._sm)
+                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                .shimmer(store.isScanning)
+                .clipShape(RoundedRectangle(cornerRadius: Design.Radius._sm))
+                .frame(width: 20, height: 20)
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                }
         }
     }
 
