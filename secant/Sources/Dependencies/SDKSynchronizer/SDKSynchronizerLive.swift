@@ -768,10 +768,10 @@ extension SDKSynchronizerClient {
     /// `outcomes[i]` belongs to `txIds[i]`; `endpoints` is the ordered list the transactions were
     /// submitted to and is only used to derive redacted "endpoint N" labels (never hostnames).
     ///
-    /// `.partial` requires at least one acceptance; with zero acceptances the result is decided
-    /// by the first not-accepted outcome (`.rejected` -> definitive failure, transport-level
-    /// failures -> `.grpcFailure`, which routes to "pending" because the transactions are in the
-    /// wallet and keep being rebroadcast by the SDK's background resubmission).
+    /// `.partial` requires at least one acceptance and a definitive server rejection. Any batch
+    /// containing only acceptances plus transport-level uncertainty maps to `.grpcFailure`, which
+    /// routes to "pending" because every created transaction has a retry plan and keeps being
+    /// rebroadcast by the SDK's background resubmission.
     ///
     /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
     /// resumed a nil winner on cancellation and routed it through the same branch as a transport
@@ -792,42 +792,34 @@ extension SDKSynchronizerClient {
             outcomes.append(contentsOf: Array(repeating: .notAttempted, count: txIds.count - outcomes.count))
         }
 
-        let firstNotAcceptedIndex = outcomes.firstIndex { outcome in
-            if case .accepted = outcome { return false }
-            return true
-        }
-
-        guard let firstNotAcceptedIndex else {
-            return .success(txIds: txIds)
-        }
-
-        let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
         let acceptedCount = outcomes.filter { outcome in
             if case .accepted = outcome { return true }
             return false
         }
         .count
 
-        switch outcomes[firstNotAcceptedIndex] {
-        case .accepted:
-            // Unreachable: `firstNotAcceptedIndex` never points at an accepted outcome. Keep the
-            // compiler-required branch loud so a refactor of the index derivation cannot silently
-            // turn a failed submission into a reported success.
-            assertionFailure("mapSubmissionOutcomes: first not-accepted outcome resolved to .accepted")
-            return .partial(txIds: txIds, statuses: statuses)
-        case let .rejected(code, message):
+        guard acceptedCount != txIds.count else {
+            return .success(txIds: txIds)
+        }
+
+        let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
+        let firstRejection = outcomes.compactMap { outcome -> (code: Int, message: String)? in
+            guard case let .rejected(code, message) = outcome else { return nil }
+            return (code, message)
+        }
+        .first
+
+        if let firstRejection {
             return acceptedCount == 0
-                ? .failure(txIds: txIds, code: code, description: message)
-                : .partial(txIds: txIds, statuses: statuses)
-        case .timedOut:
-            return acceptedCount == 0
-                ? .grpcFailure(txIds: txIds, reason: .timeout)
-                : .partial(txIds: txIds, statuses: statuses)
-        case .unreachable, .cancelled, .notAttempted:
-            return acceptedCount == 0
-                ? .grpcFailure(txIds: txIds)
+                ? .failure(txIds: txIds, code: firstRejection.code, description: firstRejection.message)
                 : .partial(txIds: txIds, statuses: statuses)
         }
+
+        let timedOut = outcomes.contains { outcome in
+            if case .timedOut = outcome { return true }
+            return false
+        }
+        return .grpcFailure(txIds: txIds, reason: timedOut ? .timeout : nil)
     }
 
     private static func status(for outcome: TransactionSubmissionOutcome, endpoints: [LightWalletEndpoint]) -> String {
