@@ -30,7 +30,7 @@ struct LedgerDevicePickerView: View {
                 Asset.Assets.Partners.ledgerTitleLogo.image
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(height: 32)
+                    .frame(height: 40)
                     .padding(.top, 16)
 
                 Text(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle)
