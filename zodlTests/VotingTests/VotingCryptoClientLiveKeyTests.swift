@@ -15,7 +15,7 @@ import os
 /// voting screen mid-proof left that proof running at proving priority in the background while the
 /// next one started. These tests exercise the seam directly with a spy `prove`, standing in for the
 /// real backend call, instead of driving the whole coordinator + Rust FFI.
-@Suite(.timeLimit(.minutes(1))) struct VotingCryptoClientLiveKeyTests {
+@Suite(.timeLimit(.minutes(3))) struct VotingCryptoClientLiveKeyTests {
     @Test func uncancelledRunYieldsProgressThenCompletedInOrder() async throws {
         let spy = DelegationProofSpy(behavior: .succeedsImmediately(progress: [0.25, 0.75], proof: Data([1, 2, 3])))
 

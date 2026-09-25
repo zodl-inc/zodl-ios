@@ -30,7 +30,7 @@ import Testing
 // touches process-global `@Shared` storage (`selectedWalletAccount`). The time limit is the
 // backstop for the deadline-free waits these tests use — a wait that never fires is recorded as a
 // failure rather than running until the CI job's own timeout.
-@Suite(.serialized, .timeLimit(.minutes(1)))
+@Suite(.serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct VotingBundleConcurrencyTests {
     private let roundId = VotingBatchSubmissionFixture.roundId

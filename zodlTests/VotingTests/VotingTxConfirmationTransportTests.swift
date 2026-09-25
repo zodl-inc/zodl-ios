@@ -12,7 +12,7 @@ import Testing
 @testable import zodl_internal
 @preconcurrency import enum ZcashLightClientKit.ZcashError
 
-@Suite(.serialized, .timeLimit(.minutes(1)))
+@Suite(.serialized, .timeLimit(.minutes(3)))
 struct VotingTxConfirmationTransportTests {
     private struct BoundedCall: Equatable, Sendable {
         let url: URL?
@@ -821,18 +821,19 @@ struct VotingTxConfirmationTransportTests {
     /// so a response that never arrives is cut off at 0.1 s instead of the session's 60 s default,
     /// and the loader is torn down. The bound is pinned on the configuration the seam mutates (the
     /// very object the session is built from) and confirmed by the request failing with a
-    /// `URLError`. The 30 s guard is a hang backstop only: far above the 0.1 s it confirms, below
+    /// `URLError`. The 120 s guard is a hang backstop only: far above the 0.1 s it confirms, below
     /// the suite limit, and outside CI's scheduling noise. A 500 ms guard raced the first
     /// URLSession use of a fresh test-runner process -- a cold CFNetwork start under load -- and
     /// lost every time this test was partitioned onto the second runner, while passing warm on the
-    /// first (unit_tests jobs 104819496663 and 104825210677).
+    /// first (unit_tests jobs 104819496663 and 104825210677); a 30 s guard later lost the same
+    /// race four runs straight on a starved runner (MOB-2110, run 36041154953).
     @Test func aStalledDirectResponseTimesOutAndStopsItsTransport() async {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StallingTxConfirmationURLProtocol.self]
         let request = URLRequest(url: URL(string: "https://vote.example/shielded-vote/v1/tx/abc")!)
 
         do {
-            _ = try await withTimeout(.seconds(30)) {
+            _ = try await withTimeout(.seconds(120)) {
                 try await performDirectTxConfirmationRequest(
                     request,
                     resourceTimeout: .milliseconds(100),

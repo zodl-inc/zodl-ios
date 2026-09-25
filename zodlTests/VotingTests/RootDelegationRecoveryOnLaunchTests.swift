@@ -16,7 +16,7 @@ import Testing
 ///
 /// Serialized because `.didFinishLaunching` logs through the process-global
 /// `LoggerProxy` and touches TCA `@Shared` in-memory state.
-@Suite(.serialized, .timeLimit(.minutes(1))) @MainActor
+@Suite(.serialized, .timeLimit(.minutes(3))) @MainActor
 struct RootDelegationRecoveryOnLaunchTests {
     /// Records that `run` was called, and how often.
     private final class RunSpy: @unchecked Sendable {

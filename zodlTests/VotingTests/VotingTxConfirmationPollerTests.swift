@@ -19,7 +19,7 @@ import Foundation
 import Testing
 @testable import zodl_internal
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingTxConfirmationPollerTests {
     private static let preferredServer = "https://vote-a.example"
     private static let mined = TxConfirmation(height: 100, code: 0)

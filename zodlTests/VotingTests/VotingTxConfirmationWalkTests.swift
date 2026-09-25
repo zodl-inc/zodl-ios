@@ -9,7 +9,7 @@ import ComposableArchitecture
 import Testing
 @testable import zodl_internal
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingTxConfirmationWalkTests {
     private static let servers = ["https://vote-a.example", "https://vote-b.example", "https://vote-c.example"]
     private static let mined = TxConfirmation(height: 100, code: 0)

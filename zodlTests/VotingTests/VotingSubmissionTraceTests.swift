@@ -8,7 +8,7 @@ import Foundation
 import Testing
 @testable import zodl_internal
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(3)))
 struct VotingSubmissionTraceTests {
     private struct StepFailure: Error {}
 
