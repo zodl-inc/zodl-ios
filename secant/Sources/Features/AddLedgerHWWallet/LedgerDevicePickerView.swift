@@ -153,7 +153,7 @@ struct LedgerDevicePickerView: View {
 
                 ZashiToggle(
                     isOn: Binding(
-                        get: { store.selectedDevice == device },
+                        get: { store.selectedDevice?.id == device.id },
                         set: { _ in store.send(.deviceTapped(device)) }
                     )
                 )

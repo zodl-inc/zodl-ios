@@ -173,6 +173,12 @@ struct AddLedgerHWWallet {
 
             case let .devicesUpdated(devices):
                 state.devices = devices
+                // The scan republishes a device each time its signal strength changes, so the
+                // selection follows the same device's latest value, not the one that was tapped.
+                if let selected = state.selectedDevice,
+                   let refreshed = devices.first(where: { $0.id == selected.id }) {
+                    state.selectedDevice = refreshed
+                }
                 return .none
 
             case .scanTimedOut:
