@@ -10288,23 +10288,6 @@
         }
       }
     },
-    "ledger.devicePicker.confirmOnDevice" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Confirm the viewing-key export on your Ledger."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Confirma la exportación de la clave de visualización en tu Ledger."
-          }
-        }
-      }
-    },
     "ledger.devicePicker.desc" : {
       "extractionState" : "manual",
       "localizations" : {

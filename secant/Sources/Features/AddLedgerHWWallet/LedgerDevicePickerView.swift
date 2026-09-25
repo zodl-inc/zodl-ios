@@ -5,8 +5,8 @@
 //  MOB-2020 Phase 1.3: the Bluetooth device list ConnectHWWalletCoordFlow pushes once the
 //  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this is now
 //  the one screen that finds, selects, connects and pairs the Ledger — there is no separate
-//  "Approve on your Ledger" screen; the export prompt is explained in place via the status line
-//  below the list. Row styling mirrors AccountsSelectionView's account row; the busy Connect
+//  "Approve on your Ledger" screen; while the Ledger waits for the export approval, the Connect
+//  button shows a spinner. Row styling mirrors AccountsSelectionView's account row; the busy Connect
 //  button mirrors KeystoneDeviceReadyView's accessoryView pattern. A scan/connect/pair failure
 //  shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen; a
 //  swipe-dismiss leaves only the bottom Try again to retry.
@@ -53,13 +53,6 @@ struct LedgerDevicePickerView: View {
                         }
                     }
                     .padding(.top, 32)
-                }
-
-                if store.isPairing {
-                    Text(localizable: .ledgerDevicePickerConfirmOnDevice)
-                        .zFont(size: 14, style: Design.Text.tertiary)
-                        .lineSpacing(1.5)
-                        .padding(.top, 16)
                 }
 
                 Spacer()
