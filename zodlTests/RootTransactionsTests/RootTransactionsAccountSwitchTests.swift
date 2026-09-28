@@ -627,6 +627,67 @@ import ComposableArchitecture
         #expect(!store.state.homeState.transactionListState.isInvalidated)
     }
 
+    // MARK: - (g) MOB-2020: See All opens in the loading state Home's list is in
+
+    /// `.home(.seeAllTransactionsTapped)` and `.home(.transactionList(.transactionTapped))`
+    /// (`RootCoordinator.swift`) rebuild the See All state from `.initial`, which starts loading.
+    /// Its own `$transactions` subscription used to end that on its first emission; now only
+    /// Root's `.loadingFinished` does, once per answered fetch -- and on a synced wallet the next
+    /// one is the next sync pass's edge-triggered refresh (MOB-1954). So once the selected
+    /// account's fetch has answered, See All must open loaded, over the rows Home already shows.
+    @Test func seeAllOpensLoadedOnceTheSelectedAccountsFetchHasAnswered() async {
+        let account = Self.walletAccount(idByte: 87)
+        let rows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "loaded-tx")])
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$walletAccounts.withLock { $0 = [account] }
+        initialState.$transactions.withLock { $0 = rows }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.seeAllTransactionsTapped))
+        #expect(
+            !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "See All must open loaded once the selected account's fetch has answered"
+        )
+
+        store.send(.home(.transactionList(.transactionTapped("loaded-tx"))))
+        #expect(
+            !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "a tapped Home row opens the same flow, so it must open loaded too"
+        )
+    }
+
+    /// The other half: while the selected account's fetch has not answered yet (a switch just
+    /// happened, or the first launch), See All opens on its loading placeholder as Home shows
+    /// its own, never on an empty state nothing has confirmed yet.
+    @Test func seeAllOpensLoadingWhileTheSelectedAccountsFetchHasNotAnswered() async {
+        let account = Self.walletAccount(idByte: 88)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$walletAccounts.withLock { $0 = [account] }
+        initialState.$transactions.withLock { $0 = [] }
+        initialState.homeState.transactionListState.isInvalidated = true
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.seeAllTransactionsTapped))
+        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+    }
+
     // MARK: - No-op guard regression
 
     /// Re-selecting the already-selected account must remain a complete no-op -- no fetch, no
