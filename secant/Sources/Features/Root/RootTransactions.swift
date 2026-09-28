@@ -297,6 +297,11 @@ extension Root {
                         reconciliationPoller(for: state.transactions, state: state),
                         .send(.home(.transactionList(.transactionsUpdated))),
                         .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                        // MOB-2020: the selected account's fetch DID answer, even though the answer
+                        // was ignored as spurious -- either list still mid-load (freshly invalidated
+                        // by a switch, say) must stop showing its placeholder over the KEPT rows.
+                        .send(.home(.transactionList(.loadingFinished))),
+                        .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                         coalescedFollowUp
                     )
                 }
@@ -336,26 +341,36 @@ extension Root {
                     // reflect `accountUUID`'s fetch, so this is where provenance is recorded too --
                     // see `transactionsAccountId`'s doc comment (`RootStore.swift`).
                     state.transactionsAccountId = accountUUID
+                    // MOB-2020: the selected account's fetch has answered, whether or not either
+                    // list happens to be subscribed right now -- explicit, rather than left to each
+                    // list's own `$transactions` publisher subscription, which only exists once
+                    // `.onAppear` has run (never, on a cold launch that hasn't shown Home yet) and
+                    // which used to also carry the ONLY signal that ended the loading state.
                     return .merge(
                         pendingTransactionsPoller,
                         .send(.home(.smartBanner(.evaluatePriority6))),
+                        .send(.home(.transactionList(.loadingFinished))),
+                        .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                         coalescedFollowUp
                     )
                 }
                 // The fetch still completed even though its result is identical to what's already in
                 // `state.transactions` -- most commonly when switching between two accounts that both
                 // have no transactions. The write above is skipped in that case, so nothing downstream
-                // of the shared `$transactions` publisher fires. Both transaction lists' own
-                // `transactionsUpdated` is what clears their `isInvalidated` flag (set by
+                // of the shared `$transactions` publisher fires, and neither list's `.loadingFinished`
+                // gets sent by the write branch above either. Both transaction lists' own
+                // `.loadingFinished` is what clears their `isInvalidated` flag (set by
                 // `accountSwitchedEffect` in `RootCoordinator.swift` on every switch), so without
                 // sending it here directly, an unchanged-but-completed fetch would leave them stuck
-                // showing their loading placeholder forever.
+                // showing their loading placeholder forever. `.transactionsUpdated` is sent alongside
+                // it, unchanged from before MOB-2020, purely so derived state (e.g. See All's search
+                // results) still recomputes on this path exactly as it always has.
                 //
                 // Only worth sending while a list is actually still showing that placeholder. A
                 // steady sync re-dispatches this fetch every 0.2s and usually yields an unchanged
                 // list, and `transactionsUpdated` re-runs each store's derived-state recomputation
                 // -- which on the See All screen, with a search term active, includes an SDK memo
-                // query. Nothing is waiting on the signal once both flags are already clear.
+                // query. Nothing is waiting on either signal once both flags are already clear.
                 guard state.homeState.transactionListState.isInvalidated
                     || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
                     return .merge(pendingTransactionsPoller, coalescedFollowUp)
@@ -364,6 +379,8 @@ extension Root {
                     pendingTransactionsPoller,
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                    .send(.home(.transactionList(.loadingFinished))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                     coalescedFollowUp
                 )
 
@@ -453,6 +470,8 @@ extension Root {
                     reconciliationPoller(for: state.transactions, state: state),
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                    .send(.home(.transactionList(.loadingFinished))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                     coalescedFollowUp,
                     delayedRetry
                 )

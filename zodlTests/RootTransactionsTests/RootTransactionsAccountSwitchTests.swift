@@ -275,13 +275,23 @@ import ComposableArchitecture
         // `.home(.walletBalances(.updateBalances))` specifically fired -- wait for its OWN
         // observable effect (the balance actually landing in `walletBalancesState`) too.
         await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        // MOB-2020: the transaction fetch's own completion (above) and the balance update run as
+        // two SEPARATE effect chains off the same switch -- waiting on the balance alone races
+        // whichever `.loadingFinished` send the fetch's completion made. Wait on it explicitly.
+        await waitForRootState(store) {
+            !$0.homeState.transactionListState.isInvalidated
+                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(!requestedAccounts.value.contains(zashiAccount.id))
         #expect(balanceRequests.value > 0)
         #expect(store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue)
-        #expect(store.state.homeState.transactionListState.isInvalidated)
-        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+        // MOB-2020: the auto-select's own fetch answered for the newly-selected account (its
+        // transaction landed, confirmed above) -- Root's `.loadingFinished` clears both lists'
+        // loading flag the same way a manual switch's own fetch does.
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+        #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
     }
 
     // MARK: - Keystone-connect auto-select must reload user metadata before decorating transactions
@@ -454,12 +464,19 @@ import ComposableArchitecture
         // See the sibling test's comment: `getAccountsBalances` is ALSO called independently by
         // SmartBanner's own priority evaluation, so wait for the update to actually land too.
         await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        // MOB-2020: see the sibling test's comment -- the transaction and balance chains are
+        // independent effects off the same switch, so wait on `.loadingFinished`'s own effect
+        // (isInvalidated clearing) explicitly rather than inferring it from the balance wait.
+        await waitForRootState(store) {
+            !$0.homeState.transactionListState.isInvalidated
+                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(balanceRequests.value > 0)
         #expect(store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue)
-        #expect(store.state.homeState.transactionListState.isInvalidated)
-        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+        #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
         #expect(store.state.path == nil)
     }
 
@@ -490,16 +507,23 @@ import ComposableArchitecture
 
     // MARK: - (e) An unchanged fetch result must still clear the loading state
 
-    /// `.fetchedTransactions` (`RootTransactions.swift`) only writes `state.transactions` -- and
-    /// that write is the ONLY thing whose downstream `transactionsUpdated` clears `isInvalidated` on
-    /// either list -- when the freshly fetched payload differs from what's already there (`if
-    /// state.transactions != identifiedArray`). Switching between two accounts that BOTH have no
-    /// transactions is exactly the case where the fetch's result (`[]`) equals what's already
-    /// sitting in `state.transactions` (also `[]`, left over from account A): nothing gets written,
-    /// so without a completion signal on that unchanged branch too, both lists are stuck showing
+    /// `.fetchedTransactions` (`RootTransactions.swift`) only writes `state.transactions` when the
+    /// freshly fetched payload differs from what's already there (`if state.transactions !=
+    /// identifiedArray`). Switching between two accounts that BOTH have no transactions is exactly
+    /// the case where the fetch's result (`[]`) equals what's already sitting in
+    /// `state.transactions` (also `[]`, left over from account A): nothing gets written, so without
+    /// an explicit completion signal on that unchanged branch too, both lists are stuck showing
     /// their loading placeholder forever. This is the real Keystone-connect path: connecting a
     /// Keystone whose wallet also happens to have no transactions yet, right after
     /// `accountSwitchedEffect` has already flipped both flags to `true`.
+    ///
+    /// MOB-2020: that explicit completion signal is `.loadingFinished` (`isInvalidated` is no
+    /// longer touched by `.transactionsUpdated` at all -- see `TransactionListStore.swift`/
+    /// `TransactionsManagerStore.swift`), sent from the SAME guarded branch this test already
+    /// exercises (`RootTransactions.swift`, the unchanged-but-completed path) -- so this test is
+    /// also this suite's coverage of Commit A's "cover an empty answer too" requirement: the newly
+    /// selected account has no transactions, `.loadingFinished` still arrives, and the empty-state
+    /// condition (`HomeView.swift`) holds once it does.
     @Test func switchingBetweenTwoEmptyAccountsClearsTheLoadingState() async {
         let accountA = Self.walletAccount(idByte: 74)
         let accountB = Self.walletAccount(idByte: 75)
@@ -524,6 +548,83 @@ import ComposableArchitecture
 
         #expect(!store.state.homeState.transactionListState.isInvalidated)
         #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+    }
+
+    // MARK: - (f) MOB-2020: the switch's own clearing write must not end the loading state
+
+    /// Red-first for MOB-2020. `accountSwitchedEffect` (`RootCoordinator.swift`) invalidates Home's
+    /// list and THEN clears the shared `$transactions` for the account just left. `TransactionList`
+    /// subscribes to `$transactions.publisher` from `.onAppear`, and before this fix its
+    /// `.transactionsUpdated` handler cleared `isInvalidated` on every write, not just a write that
+    /// meant "the selected account's fetch answered" -- so the switch's OWN clearing write ended
+    /// the loading state by itself, well before the newly-selected account's fetch had any chance
+    /// to answer, and Home rendered "Nothing here" for however long that fetch took.
+    ///
+    /// Never names `.loadingFinished` directly -- its effect is observed the same way every other
+    /// action in this file is, through the state it changes -- so this test is the same text before
+    /// and after the fix, and compiles unchanged against the pre-fix code (the point of red-first).
+    @Test func switchsOwnClearingWriteMustNotEndTheLoadingStateBeforeTheNewAccountsFetchAnswers() async {
+        let accountA = Self.walletAccount(idByte: 85)
+        let accountB = Self.walletAccount(idByte: 86)
+        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx")])
+        let bRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "b-tx")])
+        let gate = ResumableGate()
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = accountA }
+        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+        initialState.$transactions.withLock { $0 = aRows }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            // B's fetch is held open on a gate, so the window between the switch's clearing write
+            // and the new account's own answer is wide enough to observe deterministically.
+            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
+                if accountUUID == accountB.id {
+                    await gate.wait()
+                    return bRows
+                }
+                return aRows
+            }
+        }
+
+        // 1. Start the list's subscription, and seed its derived state from A's rows through the
+        // real reducer path, so the switch's clearing write is later provable as a CHANGE.
+        store.send(.home(.transactionList(.onAppear)))
+        store.send(.home(.transactionList(.transactionsUpdated)))
+        #expect(store.state.homeState.transactionListState.transactionListHomePage.map(\.id) == ["a-tx"])
+
+        // 2. Switch the selected account -- synchronously invalidates the list and clears
+        // `$transactions`, then fires a fresh (gated) fetch for B.
+        store.send(.home(.walletAccountTapped(accountB)))
+
+        // 3. `receive` the publisher-driven `.transactionsUpdated` the clearing write causes --
+        // proven by the home-page prefix flipping back to empty, the same signal
+        // `RootTransactionsEmptyFetchTests.swift` uses for an equivalent wait.
+        await waitForRootState(store) { $0.homeState.transactionListState.transactionListHomePage.isEmpty }
+
+        // RED on unmodified code: `.transactionsUpdated` used to clear `isInvalidated`
+        // unconditionally, so by the time the wait above resolves this already reads `false`.
+        #expect(
+            store.state.homeState.transactionListState.isInvalidated,
+            "the switch's own clearing write must not end the loading state before B's fetch answers"
+        )
+
+        // 4. Deliver B's own answer and `receive` `.loadingFinished`'s effect: isInvalidated clears.
+        // Waits on BOTH together -- on unmodified code `isInvalidated` is already `false` (the
+        // bug this test pins), so waiting on it alone would resolve before B's write actually
+        // lands; the transactions equality is what anchors this wait to the fetch's completion.
+        gate.open()
+        await waitForRootState(store) {
+            $0.transactions == bRows && !$0.homeState.transactionListState.isInvalidated
+        }
+
+        #expect(store.state.transactions == bRows, "B's own rows must be what's left once loading ends")
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
     }
 
     // MARK: - No-op guard regression
