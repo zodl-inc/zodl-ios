@@ -398,20 +398,20 @@ import ComposableArchitecture
     /// 16, 32 s) is still pending -- so after a switch, Home showed "Nothing here" for up to about
     /// a minute of silent retrying. A single failure, with its first retry still scheduled, must
     /// leave both lists' `isInvalidated` untouched.
-    @Test func aFailureWithARetryPendingKeepsBothListsLoading() async {
+    @Test func aFailureWithARetryPendingKeepsBothListsLoading() async throws {
         let accountA = Self.walletAccount(idByte: 82)
         let accountB = Self.walletAccount(idByte: 83)
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         harness.script(accountB, [Outcome.failure(FetchStubError())])
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failure must have scheduled its first retry")
 
         // Negative-only: give a wrongly-sent `.loadingFinished` time to land before checking it didn't.
-        await harness.giveAWrongFetchTimeToLand()
+        try await harness.giveAWrongFetchTimeToLand()
         #expect(harness.store.state.homeState.transactionListState.isInvalidated, "a retry is still pending -- Home must keep loading")
         #expect(
             harness.store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
@@ -424,22 +424,25 @@ import ComposableArchitecture
     /// The other half of the same fix: once the retry ladder is fully spent (and nothing coalesced
     /// behind it), the selected account's fetch has genuinely nothing further pending, and both
     /// lists' loading flag must clear -- exactly like every other completed-fetch path.
-    @Test func aFailureAfterTheRetryBudgetIsSpentClearsBothListsLoadingFlag() async {
+    @Test func aFailureAfterTheRetryBudgetIsSpentClearsBothListsLoadingFlag() async throws {
         let accountA = Self.walletAccount(idByte: 86)
         let accountB = Self.walletAccount(idByte: 87)
         let harness = Harness(selected: accountA, accounts: [accountA, accountB])
-        await harness.startObservingAndSettleAtUpToDate()
+        try await harness.startObservingAndSettleAtUpToDate()
         let settledCount = harness.fetchCount
 
         let delays = Root.State.transactionsFetchRetryDelaysInSeconds
         harness.script(accountB, Array(repeating: Outcome.failure(FetchStubError()), count: delays.count + 1))
         harness.switchTo(accountB)
-        await harness.settled(expectingFetches: settledCount + 1)
+        try await harness.settled(expectingFetches: settledCount + 1)
         #expect(harness.store.state.homeState.transactionListState.isInvalidated, "the first failure alone must not clear it")
 
         for (index, delay) in delays.enumerated() {
+            // Each retry's sleep must be parked on the scheduler before advancing past it -- see
+            // `retryArmed(count:)`.
+            try await harness.retryArmed(count: index + 1)
             await harness.scheduler.advance(by: .seconds(delay))
-            await harness.settled(expectingFetches: settledCount + 2 + index)
+            try await harness.settled(expectingFetches: settledCount + 2 + index)
         }
         #expect(harness.store.state.transactionsFetchRetryAttempt == delays.count, "the whole ladder must have run")
 
@@ -447,7 +450,7 @@ import ComposableArchitecture
         // after `isTransactionsFetchInFlight` clears (what `settled` waits for above), so wait for
         // its own effect (the flag actually clearing) rather than assuming it is immediate.
         while harness.store.state.homeState.transactionListState.isInvalidated {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(!harness.store.state.homeState.transactionListState.isInvalidated, "the budget is spent -- Home must stop loading")
         #expect(
