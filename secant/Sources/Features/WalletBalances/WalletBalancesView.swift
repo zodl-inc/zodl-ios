@@ -17,6 +17,8 @@ struct WalletBalancesView: View {
     let shortened: Bool
     let balanceTappable: Bool
 
+    @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
+
     init(
         store: StoreOf<WalletBalances>,
         tokenName: String,
@@ -41,7 +43,11 @@ struct WalletBalancesView: View {
                         value: .bounds
                     ) { $0 }
 
-                if shortened {
+                // MOB-2020: the fiat line is derived from `store.totalBalance`, which is not yet
+                // known for the selected account while `!store.hasConcreteBalance` -- hide it
+                // alongside the number's own shimmer placeholder rather than showing a fiat value
+                // derived from a stale or zeroed total.
+                if shortened && store.hasConcreteBalance {
                     exchangeRate()
                 }
 
@@ -88,24 +94,52 @@ struct WalletBalancesView: View {
     }
 
     @ViewBuilder private func balanceContent() -> some View {
+        // MOB-2020: `ZatoshiText` (the `shortened` layout) always hides on
+        // `isSensitiveContentHidden`, with no gate of its own; `ZatoshiRepresentationView` (the
+        // full layout) only hides when it is ALSO passed `couldBeHidden: true` -- mirrored here so
+        // hidden balances keep exactly today's precedence over the loading placeholder below.
+        let isHidden = isSensitiveContentHidden && (shortened || couldBeHidden)
+
         HStack(spacing: 0) {
             ZcashSymbol()
                 .frame(width: 32, height: 32)
                 .zForegroundColor(Design.Text.primary)
-            
-            if shortened {
-                ZatoshiText(store.totalBalance, .abbreviated)
-                    .zFont(.semiBold, size: 48, style: Design.Text.primary)
+
+            if isHidden {
+                // 1. Balances are hidden (the privacy setting) -- render exactly what renders
+                // today; `ZatoshiText`/`ZatoshiRepresentationView` do their own masking below.
+                balanceNumber()
+            } else if !store.hasConcreteBalance {
+                // 2. Not hidden, but nothing has been published for the SELECTED account yet (a
+                // fresh account switch, or first launch) -- a shimmer placeholder in place of the
+                // number, rather than a stale or 0.000 figure left over from the previous account.
+                RoundedRectangle(cornerRadius: Design.Radius._md)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                    .shimmer(true)
+                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius._md))
+                    .frame(width: 140, height: 40)
+                    .padding(.leading, 8)
+                    .accessibilityLabel(String(localizable: .generalLoading))
             } else {
-                ZatoshiRepresentationView(
-                    balance: store.totalBalance,
-                    fontName: FontFamily.Inter.semiBold.name,
-                    mostSignificantFontSize: 48,
-                    leastSignificantFontSize: 20,
-                    format: .expanded,
-                    couldBeHidden: couldBeHidden
-                )
+                // 3. A concrete balance for the selected account -- render the number as today.
+                balanceNumber()
             }
+        }
+    }
+
+    @ViewBuilder private func balanceNumber() -> some View {
+        if shortened {
+            ZatoshiText(store.totalBalance, .abbreviated)
+                .zFont(.semiBold, size: 48, style: Design.Text.primary)
+        } else {
+            ZatoshiRepresentationView(
+                balance: store.totalBalance,
+                fontName: FontFamily.Inter.semiBold.name,
+                mostSignificantFontSize: 48,
+                leastSignificantFontSize: 20,
+                format: .expanded,
+                couldBeHidden: couldBeHidden
+            )
         }
     }
     
