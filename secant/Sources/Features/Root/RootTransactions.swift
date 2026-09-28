@@ -167,10 +167,12 @@ extension Root {
                             // rendered as an EMPTY transaction list with no trace anywhere, reading as
                             // data loss. The list keeps its previous contents; the error goes to the
                             // log where the next investigation can find it. No user-facing alert:
-                            // `.transactionsFetchFailed` (below) still clears any list left showing its
-                            // loading placeholder and re-arms the reconciliation poller from the KEPT
-                            // rows, so together with the pending-transactions poller, the delayed retry
-                            // it schedules and the next synchronizer event, this fetch gets retried.
+                            // `.transactionsFetchFailed` (below) re-arms the reconciliation poller from
+                            // the KEPT rows, so together with the pending-transactions poller, the
+                            // delayed retry it schedules and the next synchronizer event, this fetch
+                            // gets retried. MOB-2020: it clears any list still showing its loading
+                            // placeholder only once nothing further is pending for it -- see that
+                            // action's own handling below.
                             LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
                             await send(.transactionsFetchFailed(accountUUID: accountUUID))
                         }
@@ -441,6 +443,13 @@ extension Root {
                 // and its action re-checks the account so a late one can never fetch for an
                 // account the user has since left.
                 var delayedRetry: Effect<Root.Action> = .none
+                // MOB-2020: only true once this failure leaves NOTHING further pending for the
+                // selected account -- the retry budget spent, with no coalesced follow-up either.
+                // While a delayed retry is still scheduled, or a coalesced follow-up is about to
+                // run, the selected account's fetch has not actually answered yet, and sending
+                // `.loadingFinished` here would flash the empty state for however long the retry
+                // ladder (2, 4, 8, 16, 32 s) takes to exhaust: exactly the bug this guards against.
+                var loadingFinished: Effect<Root.Action> = .none
                 if !hadCoalescedRequest {
                     let attempt = state.transactionsFetchRetryAttempt + 1
                     let budget = Root.State.transactionsFetchRetryDelaysInSeconds.count
@@ -460,20 +469,24 @@ extension Root {
                             edge, transaction event or foreground refreshes the list
                             """
                         )
+                        loadingFinished = .merge(
+                            .send(.home(.transactionList(.loadingFinished))),
+                            .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished)))
+                        )
                     }
                 }
-                // The list keeps its previous contents (nothing to overwrite here at all), but
-                // either list may already be showing its loading placeholder -- clear it exactly
-                // like every other completed-fetch path, and keep the reconciliation poller alive
-                // for whatever `state.transactions` still holds.
+                // The list keeps its previous contents (nothing to overwrite here at all).
+                // `.transactionsUpdated` still recomputes derived rows on every failure, unchanged
+                // from before MOB-2020; `.loadingFinished` (above) only joins it once nothing
+                // further is pending, and keep the reconciliation poller alive for whatever
+                // `state.transactions` still holds either way.
                 return .merge(
                     reconciliationPoller(for: state.transactions, state: state),
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
-                    .send(.home(.transactionList(.loadingFinished))),
-                    .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                     coalescedFollowUp,
-                    delayedRetry
+                    delayedRetry,
+                    loadingFinished
                 )
 
             case .retryFailedTransactionsFetch(let accountUUID):
