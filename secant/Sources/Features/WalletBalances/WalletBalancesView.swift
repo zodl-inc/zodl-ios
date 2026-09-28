@@ -46,8 +46,9 @@ struct WalletBalancesView: View {
                 // MOB-2020: the fiat line is derived from `store.totalBalance`, which is not yet
                 // known for the selected account while `!store.hasConcreteBalance` -- hide it
                 // alongside the number's own shimmer placeholder rather than showing a fiat value
-                // derived from a stale or zeroed total.
-                if shortened && store.hasConcreteBalance {
+                // derived from a stale or zeroed total. Hidden balances mask it like the number,
+                // so there it renders exactly as it always has.
+                if shortened && (isHidden || store.hasConcreteBalance) {
                     exchangeRate()
                 }
 
@@ -93,13 +94,15 @@ struct WalletBalancesView: View {
         }
     }
 
-    @ViewBuilder private func balanceContent() -> some View {
-        // MOB-2020: `ZatoshiText` (the `shortened` layout) always hides on
-        // `isSensitiveContentHidden`, with no gate of its own; `ZatoshiRepresentationView` (the
-        // full layout) only hides when it is ALSO passed `couldBeHidden: true` -- mirrored here so
-        // hidden balances keep exactly today's precedence over the loading placeholder below.
-        let isHidden = isSensitiveContentHidden && (shortened || couldBeHidden)
+    // MOB-2020: `ZatoshiText` (the `shortened` layout) always hides on `isSensitiveContentHidden`,
+    // with no gate of its own; `ZatoshiRepresentationView` (the full layout) only hides when it is
+    // ALSO passed `couldBeHidden: true` -- mirrored here so hidden balances keep exactly today's
+    // precedence over the loading placeholder.
+    private var isHidden: Bool {
+        isSensitiveContentHidden && (shortened || couldBeHidden)
+    }
 
+    @ViewBuilder private func balanceContent() -> some View {
         HStack(spacing: 0) {
             ZcashSymbol()
                 .frame(width: 32, height: 32)
