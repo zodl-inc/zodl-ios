@@ -27,7 +27,7 @@ struct ConnectHWWalletCoordFlowView: View {
     private var isLedgerFailure: Bool {
         for element in store.path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return true
             default:
                 continue
@@ -102,6 +102,8 @@ struct ConnectHWWalletCoordFlowView: View {
                     AddLedgerHWWalletView(store: store)
                 case let .ledgerDevicePicker(store):
                     LedgerDevicePickerView(store: store)
+                case let .ledgerApproveOnDevice(store):
+                    LedgerApproveOnDeviceView(store: store)
                 case let .ledgerAccount(store):
                     LedgerAccountView(store: store)
                 case let .ledgerDeviceReady(store):

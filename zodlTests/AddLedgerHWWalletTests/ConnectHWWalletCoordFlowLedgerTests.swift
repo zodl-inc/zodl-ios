@@ -7,10 +7,13 @@
 //  pending RestoreInfo spinner), now exercised through the merged `ConnectHWWalletCoordFlow`
 //  (MOB-2020 UI round 2 -- the flow's root is the vendor chooser, and the Ledger instructions
 //  screen that used to be the old AddLedgerHWWalletCoordFlow's own root, along with the device
-//  picker/account/device-ready/connected screens, are `Path` elements with the `ledger`-prefixed
-//  case names). The device picker finds, selects, connects and pairs the Ledger on its own
-//  screen -- a connection-lost failure there just rescans in place, so it has no coordinator-level
-//  navigation of its own to cover here; see AddLedgerHWWalletTests for that behavior
+//  picker/approve/account/device-ready/connected screens, are `Path` elements with the
+//  `ledger`-prefixed case names). MOB-2020 (Android 7cd09f72/aa6d098a): the device picker only
+//  finds and selects a Ledger now -- Connect pushes the Approve on Your Device screen, which runs
+//  the connect-and-pair and carries the coordinator-level navigation this file covers (the
+//  collision check, Rebound, Account Already Added, and Cancel popping back to the picker). A
+//  scan failure on the picker itself just rescans in place, with no coordinator-level navigation
+//  of its own; see AddLedgerHWWalletTests for the element-level pairing/retry/cancel behavior
 //  (Features/CoordFlows/ConnectHWWalletCoordFlow*.swift).
 //
 //  ConnectHWWalletCoordFlow.State is not Equatable (it contains a non-Equatable StackState), so
@@ -42,57 +45,100 @@ import ComposableArchitecture
 
     // MARK: - Device Picker
 
-    @Test func pairingSucceededOnThePickerPushesTheAccountScreen() async throws {
+    // MOB-2020: Connect no longer connects on the picker itself -- it pushes the Approve on Your
+    // Device screen with a copy of the picker's state (keeping `selectedDevice`) and starts the
+    // connect-and-pair THERE, never by sending `.ledgerDevicePicker(.connectDeviceTapped)`
+    // directly (see AddLedgerHWWalletStore's `isApproveScreen` doc comment for why).
+    @Test func approveOnDeviceTappedPushesTheApproveScreenWithTheSelectedDeviceAndStartsPairing() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.selectedDevice = device
         var initialState = ConnectHWWalletCoordFlow.State()
-        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture()
+        let connectedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.connect = { connectedDevice in connectedDevices.withValue { $0.append(connectedDevice) } }
+            $0.ledgerClient.pairAccount = { _ in fixture }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.approveOnDeviceTapped))))
+
+        #expect(store.state.path.count == 2)
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.selectedDevice == device)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the selected device")
+        }
+
+        // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
+        // `ledgerClient.connect` to have been reached instead of asserting synchronously.
+        for _ in 0..<50 {
+            if !connectedDevices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(connectedDevices.value == [device])
+    }
+
+    // MARK: - Ledger Approve on Device
+
+    // MOB-2020 (Android 7cd09f72/aa6d098a): success replaces the approve element in place --
+    // never a push -- so backing out of the account screen lands on the picker, as on Android.
+    @Test func pairingSucceededOnTheApproveScreenReplacesItWithTheAccountScreen() async throws {
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerApproveOnDevice(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
         let fixture = try Self.makePairingFixture()
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
 
-        #expect(store.state.path.count == 2)
+        // Same count as before sending -- a replace, not a push.
+        #expect(store.state.path.count == 1)
         if case .ledgerAccount(let accountState) = store.state.path.last {
             #expect(accountState.pairing == fixture)
         } else {
-            Issue.record("expected .ledgerAccount to be pushed carrying the pairing")
+            Issue.record("expected .ledgerAccount to replace the approve element, carrying the pairing")
         }
     }
 
     @Test func pairingANewLedgerStillShowsItsAccount() async throws {
-        var devicePickerState = AddLedgerHWWallet.State.initial
+        var approveState = AddLedgerHWWallet.State.initial
         // No account carries the pairing's UFVK, so the pre-import check must let this through.
-        devicePickerState.$walletAccounts.withLock { $0 = [Self.walletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
+        approveState.$walletAccounts.withLock { $0 = [Self.walletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.last!
         let fixture = try Self.makePairingFixture(ufvk: "uview1ledgerpairingfixture")
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
 
-        #expect(store.state.path.count == 3)
+        // Same count as before sending -- a replace, not a push.
+        #expect(store.state.path.count == 2)
         if case .ledgerAccount(let accountState) = store.state.path.last {
             #expect(accountState.pairing == fixture)
         } else {
-            Issue.record("expected .ledgerAccount to be pushed carrying the pairing")
+            Issue.record("expected .ledgerAccount to replace the approve element, carrying the pairing")
         }
         #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
         #expect(store.state.alreadyAddedAccount == nil)
     }
 
-    @Test func pairingALedgerAlreadyInTheWalletRaisesAccountAlreadyAddedOnThePicker() async throws {
+    @Test func pairingALedgerAlreadyInTheWalletRaisesAccountAlreadyAddedOnTheApproveScreen() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
-        var devicePickerState = AddLedgerHWWallet.State.initial
-        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
         let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
-        // MOB-2020 (Rebound): this account already has a binding, so the picker still raises
-        // "Account Already Added" -- `.noOp`'s own `exportLedgerBinding` throws
+        // MOB-2020 (Rebound): this account already has a binding, so the approve screen still
+        // raises "Account Already Added" -- `.noOp`'s own `exportLedgerBinding` throws
         // `uninitializedLedgerBinding` by default, which would otherwise take the Rebound branch
         // (see `pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow` below).
         let store = makeStore(initialState: initialState) {
@@ -100,7 +146,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.last!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
 
         // The collision check (and, for an unbound match, the rebind) now runs in an effect --
         // poll for it to land instead of asserting synchronously right after `send`.
@@ -111,9 +157,11 @@ import ComposableArchitecture
 
         #expect(store.state.alreadyAddedAccount == existingAccount)
         #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
-        // The path still ends at the picker -- the collision arm pushes nothing.
+        // The path still ends at the approve screen -- the collision arm neither pushes nor
+        // replaces anything, so the underlying screen shows its header with Cancel only, under
+        // the sheet.
         #expect(store.state.path.count == 2)
-        #expect(isDevicePicker(store.state.path.last))
+        #expect(isApproveOnDevice(store.state.path.last))
     }
 
     // MOB-2020 (Android b013b7c2, Rebound): an unbound match can never sign again, so pairing
@@ -121,11 +169,11 @@ import ComposableArchitecture
     @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
-        var devicePickerState = AddLedgerHWWallet.State.initial
-        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
         let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
         let disconnected = LockIsolated(false)
         let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
@@ -142,7 +190,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.last!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
 
         for _ in 0..<50 {
             if store.state.alreadyAddedAccount != nil { break }
@@ -166,15 +214,15 @@ import ComposableArchitecture
 
     // MOB-2020 (Android b013b7c2, Rebound): a binding write that fails must not strand the user --
     // it falls back to today's "Account Already Added", exactly as if the account had a binding.
-    @Test func aFailedRebindStillRaisesAccountAlreadyAddedOnThePicker() async throws {
+    @Test func aFailedRebindStillRaisesAccountAlreadyAddedOnTheApproveScreen() async throws {
         struct BindingWriteFailure: Error {}
         let matchingUFVK = "uview1ledgerpairingfixture"
         let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
-        var devicePickerState = AddLedgerHWWallet.State.initial
-        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
-        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
         let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
         // `exportLedgerBinding` keeps `.noOp`'s unbound default; only the store itself fails.
         let store = makeStore(initialState: initialState) {
@@ -182,7 +230,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.last!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
 
         for _ in 0..<50 {
             if store.state.isAccountAlreadyAddedSheetPresented { break }
@@ -192,7 +240,33 @@ import ComposableArchitecture
         #expect(store.state.alreadyAddedAccount == existingAccount)
         #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
         #expect(store.state.path.count == 2)
+        #expect(isApproveOnDevice(store.state.path.last))
+    }
+
+    // MOB-2020: Cancel (and the approve screen's own back arrow, which sends the same action)
+    // pops back to the picker. The element's own reducer (AddLedgerHWWalletStore) disconnects and
+    // cancels the pairing; this coordinator only pops -- see ConnectHWWalletCoordFlowStore's
+    // `.cancelTapped` arm for why that split exists.
+    @Test func cancelOnTheApproveScreenDisconnectsAndPopsBackToThePicker() async throws {
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(AddLedgerHWWallet.State.initial))
+        let disconnected = LockIsolated(false)
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.cancelTapped))))
+
+        #expect(store.state.path.count == 1)
         #expect(isDevicePicker(store.state.path.last))
+
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
     }
 
     // MARK: - Account
@@ -575,6 +649,11 @@ import ComposableArchitecture
 
     private func isDevicePicker(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
         if case .ledgerDevicePicker = element { return true }
+        return false
+    }
+
+    private func isApproveOnDevice(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
+        if case .ledgerApproveOnDevice = element { return true }
         return false
     }
 

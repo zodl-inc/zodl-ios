@@ -106,50 +106,40 @@ extension ConnectHWWalletCoordFlow {
 
                 // MARK: - Ledger Device Picker
 
-            case .path(.element(id: _, action: .ledgerDevicePicker(.pairingSucceeded(let pairing)))):
+            case .path(.element(id: _, action: .ledgerDevicePicker(.approveOnDeviceTapped))):
                 for element in state.path {
                     if case .ledgerDevicePicker(var devicePickerState) = element {
-                        // Figma (node 1073:13304) and Android raise "Account Already Added" on the
-                        // device picker itself, right after pairing, instead of making the user step
-                        // through every birthday screen first. The import-time arm
-                        // (`.ledgerDeviceReady(.accountAlreadyImported)`) stays as the backstop for a
-                        // key librustzcash matches at import but that this pre-import check missed.
-                        if let existingAccount = LedgerAccountCollision.existingAccount(
-                            matching: pairing.ufvk,
-                            among: devicePickerState.walletAccounts
-                        ) {
-                            // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
-                            // can never sign again -- store this pairing's binding onto it instead
-                            // of reporting "Account Already Added" for an account that's a dead end.
-                            // The keychain work (the check and, when it applies, the write) runs in
-                            // this effect, never the reducer body, mirroring
-                            // `SendConfirmationStore.ledgerSignRequest`'s own export/catch shape.
-                            return .run { send in
-                                do {
-                                    _ = try walletStorage.exportLedgerBinding(existingAccount.id)
-                                    await send(.ledgerPairingAlreadyAdded(existingAccount))
-                                } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
-                                    do {
-                                        try walletStorage.importLedgerBinding(pairing.binding, existingAccount.id)
-                                        await send(.ledgerPairingRebound(existingAccount))
-                                    } catch {
-                                        // A failing store must not strand the user -- fall back to
-                                        // today's "Account Already Added", exactly as if it had a
-                                        // binding already. Logs only the error's type, never the
-                                        // binding or account data it could carry.
-                                        LoggerProxy.warn("Ledger: storing a rebind binding failed (\(type(of: error)))")
-                                        await send(.ledgerPairingAlreadyAdded(existingAccount))
-                                    }
-                                } catch {
-                                    await send(.ledgerPairingAlreadyAdded(existingAccount))
-                                }
-                            }
-                        }
-                        devicePickerState.pairing = pairing
-                        state.path.append(.ledgerAccount(devicePickerState))
+                        // The approve screen's state starts as a straight copy of the picker's --
+                        // it keeps `selectedDevice`, the same way `.ledgerAccount(…)` below
+                        // carries a picker/approve state forward on success. `isApproveScreen`
+                        // is what tells this shared reducer's `issuePrimaryTapped` a pairing
+                        // issue's retry (reconnect) from a scan issue's (rescan) -- see its own
+                        // doc comment on `AddLedgerHWWallet.State`.
+                        devicePickerState.isApproveScreen = true
+                        state.path.append(.ledgerApproveOnDevice(devicePickerState))
                     }
                 }
+                // Starts the pairing at once, on the JUST-pushed element -- never
+                // `.ledgerDevicePicker(.connectDeviceTapped)`, which would connect right on the
+                // picker (LedgerDevicePickerView's own Connect button sends this action, not
+                // `connectDeviceTapped`, for exactly this reason).
+                if let last = state.path.ids.last {
+                    return .send(.path(.element(id: last, action: .ledgerApproveOnDevice(.connectDeviceTapped))))
+                }
                 return .none
+
+                // MARK: - Ledger Approve on Device
+                //
+                // `.pairingSucceeded`'s own handling lives in ConnectHWWalletCoordFlowStore's
+                // trailing `Reduce`, not here -- see that arm's comment for why: it replaces the
+                // approve element's own case (`.ledgerApproveOnDevice` -> `.ledgerAccount`) at
+                // the SAME id this same action targets, which `.forEach(\.path, …)` must still be
+                // able to route into when it runs its own reducer for this dispatch. Doing that
+                // replace in `coordinatorReduce()`, which (like this whole function) runs BEFORE
+                // `.forEach`, leaves `.forEach` routing into a slot that no longer matches the
+                // case its action expects -- the same "received an action for a missing element"
+                // failure the `.cancelTapped` arm avoids, just via a changed case instead of a
+                // removed one.
 
                 // MARK: - Ledger Account
 
@@ -293,14 +283,14 @@ extension ConnectHWWalletCoordFlow {
     }
 
     /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerDevicePicker`,
-    /// `.ledgerAccount`, `.ledgerDeviceReady` or `.ledgerConnected`) is anywhere on `path`, else
-    /// `.keystone` -- the same "is a Ledger element on the path" rule as
+    /// `.ledgerApproveOnDevice`, `.ledgerAccount`, `.ledgerDeviceReady` or `.ledgerConnected`) is
+    /// anywhere on `path`, else `.keystone` -- the same "is a Ledger element on the path" rule as
     /// `ConnectHWWalletCoordFlowView.isLedgerFailure`. Used to stamp `hardwareWalletVendor` on
     /// every `WalletBirthday.State`/`RestoreInfo.State` this coordinator pushes.
     private func hardwareWalletVendor(on path: StackState<ConnectHWWalletCoordFlow.Path.State>) -> WalletAccount.Vendor {
         for element in path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return .ledger
             default:
                 continue

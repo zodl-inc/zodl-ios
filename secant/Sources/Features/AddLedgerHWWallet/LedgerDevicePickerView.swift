@@ -3,13 +3,13 @@
 //  Zashi
 //
 //  MOB-2020 Phase 1.3: the Bluetooth device list ConnectHWWalletCoordFlow pushes once the
-//  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this is now
-//  the one screen that finds, selects, connects and pairs the Ledger — there is no separate
-//  "Approve on your Ledger" screen; while the Ledger waits for the export approval, the Connect
-//  button shows a spinner. Row styling mirrors AccountsSelectionView's account row; the busy Connect
-//  button mirrors KeystoneDeviceReadyView's accessoryView pattern. A scan/connect/pair failure
-//  shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen; a
-//  swipe-dismiss leaves only the bottom Try again to retry.
+//  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this screen
+//  finds and selects the Ledger; Connect now pushes the Approve on Your Device screen
+//  (LedgerApproveOnDeviceView), which runs the actual connect-and-pair -- this screen never
+//  connects on its own, so its Connect button never shows a spinner. Row styling mirrors
+//  AccountsSelectionView's account row. A scan failure shows as a LedgerIssueSheetContent sheet
+//  (MOB-2020 error states) on top of this screen; a swipe-dismiss leaves only the bottom Try
+//  again to retry. The placeholder rows are LedgerDeviceSkeletons, shared with the approve screen.
 //
 
 import SwiftUI
@@ -43,7 +43,19 @@ struct LedgerDevicePickerView: View {
                     .padding(.top, 8)
 
                 if store.devices.isEmpty {
-                    skeletonDeviceList()
+                    LedgerDeviceSkeletons(isShimmering: store.isScanning) {
+                        // Unchanged from before the extraction: a 164 pt gradient anchored to the
+                        // bottom of the rows, not the rows-spanning fade the approve screen uses.
+                        LinearGradient(
+                            colors: [Asset.Colors.background.color.opacity(0), Asset.Colors.background.color],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 164)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .allowsHitTesting(false)
+                    }
+                    .padding(.top, 32)
                 } else {
                     ScrollView {
                         VStack(spacing: 12) {
@@ -64,27 +76,22 @@ struct LedgerDevicePickerView: View {
                     ) { }
                     .disabled(true)
                     .padding(.bottom, 24)
-                } else if store.isConnecting || store.isPairing {
-                    ZashiButton(
-                        String(localizable: .keystoneAddHWWalletConnect),
-                        accessoryView: ProgressView()
-                    ) {
-                        store.send(.connectDeviceTapped)
-                    }
-                    .disabled(true)
-                    .padding(.bottom, 24)
                 } else if store.canRescan {
                     ZashiButton(String(localizable: .ledgerIssueTryAgain)) {
                         store.send(.startScanning)
                     }
                     .padding(.bottom, 24)
                 } else {
+                    // MOB-2020: pushes the Approve on Your Device screen, which starts the
+                    // connect-and-pair -- never `.connectDeviceTapped` here. The element reducer
+                    // (below the coordinator in the reduce order) would otherwise also see that
+                    // action and connect right on this screen, which no longer shows a spinner for it.
                     ZashiButton(
                         store.issue != nil
                         ? String(localizable: .ledgerIssueTryAgain)
                         : String(localizable: .keystoneAddHWWalletConnect)
                     ) {
-                        store.send(.connectDeviceTapped)
+                        store.send(.approveOnDeviceTapped)
                     }
                     .disabled(store.selectedDevice == nil)
                     .padding(.bottom, 24)
@@ -111,75 +118,6 @@ struct LedgerDevicePickerView: View {
             LedgerIssueSheetContent(issue: issue, context: .connect) {
                 store.send(.issuePrimaryTapped)
             }
-        }
-    }
-
-    // Figma "Search for devices" (1073:10702): three shimmer skeleton cards stand in for the
-    // device list while `store.devices` is empty, whether or not a scan is currently running —
-    // the shimmer itself keys off `store.isScanning`. The bottom fade uses `Asset.Colors.background`,
-    // not `.clear` or white, so it matches whatever `applyScreenBackground()` painted in both color
-    // schemes. A plain `VStack`, not a `ScrollView`.
-    @ViewBuilder private func skeletonDeviceList() -> some View {
-        VStack(spacing: 12) {
-            skeletonCard()
-            skeletonCard()
-            skeletonCard()
-        }
-        .padding(.top, 32)
-        .overlay(alignment: .bottom) {
-            LinearGradient(
-                colors: [Asset.Colors.background.color.opacity(0), Asset.Colors.background.color],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 164)
-            .allowsHitTesting(false)
-        }
-        .accessibilityHidden(true)
-    }
-
-    // Same placeholder chain as `NoTransactionPlaceholder`: `.fill(...)` -> `.shimmer(...)` ->
-    // `.clipShape(...)` -> `.frame(...)`, one per shape, so the shimmer gradient is clipped to
-    // each shape rather than the shape's bounding box.
-    @ViewBuilder private func skeletonCard() -> some View {
-        HStack(spacing: 0) {
-            Circle()
-                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                .shimmer(store.isScanning)
-                .clipShape(Circle())
-                .frame(width: 32, height: 32)
-                .padding(.trailing, 8)
-
-            VStack(alignment: .leading, spacing: 4) {
-                RoundedRectangle(cornerRadius: Design.Radius._xs)
-                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                    .shimmer(store.isScanning)
-                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius._xs))
-                    .frame(width: 100, height: 16)
-
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                    .shimmer(store.isScanning)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                    .frame(width: 68, height: 12)
-            }
-
-            Spacer()
-
-            RoundedRectangle(cornerRadius: Design.Radius._sm)
-                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-                .shimmer(store.isScanning)
-                .clipShape(RoundedRectangle(cornerRadius: Design.Radius._sm))
-                .frame(width: 20, height: 20)
-        }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-                }
         }
     }
 

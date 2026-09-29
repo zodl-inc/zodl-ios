@@ -18,8 +18,9 @@ struct AddLedgerHWWallet {
         var devices: [LedgerBluetoothDevice] = []
         var isScanning = false
         /// The last scan, connect or pair failure -- drives the issue sheet. Cleared whenever a
-        /// device is (re-)selected or a new scan/connect attempt starts. The device picker is
-        /// now the only screen that connects and pairs — see ConnectHWWalletCoordFlowCoordinator.
+        /// device is (re-)selected or a new scan/connect attempt starts. The Approve on Your
+        /// Device screen is now the only screen that connects and pairs — see
+        /// ConnectHWWalletCoordFlowCoordinator.
         var issue: LedgerIssue? = nil
         /// Whether `issue`'s sheet is on screen. A swipe-to-dismiss clears only this flag, so
         /// `issue` stays set and the page keeps only its bottom Try again button -- a rescan
@@ -36,6 +37,16 @@ struct AddLedgerHWWallet {
         var randomSuccessIconIndex = 0
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+
+        /// Set only on the copy of the picker's state that
+        /// `ConnectHWWalletCoordFlowCoordinator`'s `.ledgerDevicePicker(.approveOnDeviceTapped)`
+        /// arm pushes as the Approve on Your Device screen -- never on the picker's own state,
+        /// which this same reducer also drives. `issuePrimaryTapped` reads it to tell a pairing
+        /// issue's retry (reconnect the selected device -- this screen's only retry) from a scan
+        /// issue's retry (rescan -- the picker's only retry): both share this reducer, and
+        /// `selectedDevice` alone can't tell them apart once a device is selected while a stale
+        /// scan issue is still showing.
+        var isApproveScreen = false
 
         /// Whether the picker can offer its own Try again button below the (now empty) device
         /// list: there is a failure showing, and nothing else is already in flight or selected.
@@ -74,8 +85,18 @@ struct AddLedgerHWWallet {
         case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
+        /// The picker's Connect button. A distinct action from `connectDeviceTapped` -- see
+        /// `isApproveScreen`'s doc comment -- so the coordinator, which runs before this
+        /// reducer, can push the Approve on Your Device screen and start the connect-and-pair
+        /// THERE instead of the tap also connecting right on the picker.
+        case approveOnDeviceTapped
         case backToHomeTapped
         case binding(BindingAction<AddLedgerHWWallet.State>)
+        /// Cancel and the Approve on Your Device screen's own back arrow. Cancels the
+        /// connect-and-pair effect and disconnects; popping back to the picker is the
+        /// coordinator's job (ConnectHWWalletCoordFlowStore), since this reducer runs before the
+        /// element is removed from the path.
+        case cancelTapped
         case closeTapped
         case connectDeviceTapped
         case connectTapped
@@ -100,6 +121,7 @@ struct AddLedgerHWWallet {
 
     private enum CancelId {
         case scan
+        case connectAndPair
     }
 
     /// `connectDeviceTapped`'s outcome once its connect-then-pair effect and the approval-timeout
@@ -213,6 +235,13 @@ struct AddLedgerHWWallet {
                 state.isIssueSheetPresented = false
                 return .none
 
+            case .approveOnDeviceTapped:
+                // A no-op here, same shape as `.connectTapped` above: the coordinator
+                // (ConnectHWWalletCoordFlowCoordinator, which runs before this reducer) reacts to
+                // `.ledgerDevicePicker(.approveOnDeviceTapped)` by pushing the Approve on Your
+                // Device screen with a copy of this state and starting its connect-and-pair.
+                return .none
+
             case .connectDeviceTapped:
                 guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
                     return .none
@@ -256,6 +285,10 @@ struct AddLedgerHWWallet {
                         await send(.pairingFailed(issue: .disconnected, connectionLost: true))
                     }
                 }
+                // MOB-2020: the Approve on Your Device screen's Cancel and back arrow cancel
+                // this same effect (`CancelId.connectAndPair`) -- today it was not cancellable,
+                // so leaving mid-pairing left it running to completion in the background.
+                .cancellable(id: CancelId.connectAndPair, cancelInFlight: true)
 
             case .deviceConnected:
                 state.isConnecting = false
@@ -270,21 +303,16 @@ struct AddLedgerHWWallet {
                 state.pairing = pairing
                 return .none
 
-            case let .pairingFailed(issue, connectionLost):
+            case let .pairingFailed(issue, _):
                 state.isConnecting = false
                 state.isPairing = false
                 state.issue = issue
                 state.isIssueSheetPresented = true
-                // A device refusal (connectionLost == false) leaves the transport open and the
-                // selection in place, so Connect can be retried on it. A transport failure
-                // (connectionLost == true) can't be retried on the same link, so the selection
-                // and the stale device list are dropped. Either way this no longer rescans on its
-                // own -- the issue sheet's Try again (`.issuePrimaryTapped`) does that now.
-                guard connectionLost else { return .none }
-                state.selectedDevice = nil
-                state.devices = []
-                state.isScanning = false
-                return .cancel(id: CancelId.scan)
+                // MOB-2020: this now fires only on the Approve on Your Device screen (the picker
+                // no longer connects or pairs itself), which has no scan to fall back on -- so a
+                // failure here always keeps `selectedDevice` and `devices`, even one that lost
+                // the connection, so Retry (`issuePrimaryTapped`) can reconnect the same device.
+                return .none
 
             case .issuePrimaryTapped:
                 state.isIssueSheetPresented = false
@@ -293,9 +321,21 @@ struct AddLedgerHWWallet {
                 // (`.goToAccount`, `.close`, `.none`) just dismisses the sheet, which the line
                 // above already did.
                 guard state.issue?.primaryAction(in: .connect) == .tryAgain else { return .none }
-                // A device refusal kept the open connection and the selection in place, so retry
-                // the same connect/pair request instead of scanning again.
-                return state.selectedDevice != nil ? .send(.connectDeviceTapped) : .send(.startScanning)
+                // MOB-2020: `isApproveScreen`, not `selectedDevice`, tells a pairing issue's
+                // retry from a scan issue's -- see its doc comment. The Approve on Your Device
+                // screen always reconnects and pairs again with the same device; the picker
+                // (which no longer connects) always rescans instead.
+                return state.isApproveScreen ? .send(.connectDeviceTapped) : .send(.startScanning)
+
+            case .cancelTapped:
+                // Popping back to the picker is the coordinator's job -- see the doc comment on
+                // this case. Here: cancel the in-flight connect-and-pair (a no-op if it already
+                // finished) and disconnect, the same two things `.forgetThisDeviceTapped` and
+                // friends already do when leaving the flow entirely.
+                return .merge(
+                    .cancel(id: CancelId.connectAndPair),
+                    .run { _ in await ledgerClient.disconnect() }
+                )
 
             case .accountTapped:
                 state.isAccountSelected.toggle()

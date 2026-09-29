@@ -10118,6 +10118,91 @@
         }
       }
     },
+    "ledger.approve.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approve sharing your viewing key with Zodl. It allows Zodl to view this account’s transactions and generate addresses, but it cannot spend your funds."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aprueba compartir tu clave de visualización con Zodl. Permite que Zodl vea las transacciones de esta cuenta y genere direcciones, pero no puede gastar tus fondos."
+          }
+        }
+      }
+    },
+    "ledger.approve.retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reintentar"
+          }
+        }
+      }
+    },
+    "ledger.approve.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approve on Your Device"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aprueba en tu dispositivo"
+          }
+        }
+      }
+    },
+    "ledger.approve.waitingSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check your device screen to confirm."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revisa la pantalla de tu dispositivo para confirmar."
+          }
+        }
+      }
+    },
+    "ledger.approve.waitingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for approval on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando la aprobación en tu Ledger"
+          }
+        }
+      }
+    },
     "ledger.confirm" : {
       "extractionState" : "manual",
       "localizations" : {
