@@ -10226,13 +10226,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Searching for Devices…"
+            "value" : "Searching for Devices..."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Buscando dispositivos…"
+            "value" : "Buscando dispositivos..."
           }
         }
       }
@@ -10362,13 +10362,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Turn on Bluetooth in Control Center or Settings to connect your Ledger."
+            "value" : "Turn on Bluetooth in Settings to connect to your Ledger."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Activa el Bluetooth desde el Centro de Control o los Ajustes para conectar tu Ledger."
+            "value" : "Activa el Bluetooth en Ajustes para conectarte a tu Ledger."
           }
         }
       }
@@ -10379,13 +10379,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bluetooth Is Off"
+            "value" : "Bluetooth Off"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El Bluetooth está desactivado"
+            "value" : "Bluetooth desactivado"
           }
         }
       }
@@ -10430,7 +10430,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This device can't use Bluetooth, so it can't connect to a Ledger."
+            "value" : "This device can’t use Bluetooth, so it can’t connect to a Ledger device."
           }
         },
         "es" : {
@@ -10906,7 +10906,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zodl couldn't connect to your Ledger. Make sure it's unlocked and nearby, then try again."
+            "value" : "Zodl couldn’t connect to your Ledger. Make sure it’s unlocked and nearby, then try again."
           }
         },
         "es" : {
@@ -10923,7 +10923,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zodl couldn't finish signing with your Ledger. Make sure it's unlocked and nearby, then try again."
+            "value" : "Zodl couldn’t finish signing with your Ledger. Make sure it’s unlocked and nearby, then try again."
           }
         },
         "es" : {
