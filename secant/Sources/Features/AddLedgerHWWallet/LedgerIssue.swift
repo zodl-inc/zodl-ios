@@ -51,7 +51,9 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case deviceMismatch
     /// Not in Figma, draft copy (Android calls it "Ledger Not Paired"). The account has no
     /// stored Ledger binding, so no device can sign for it. Never produced by `init(_:)` --
-    /// `SendConfirmation` reports it directly.
+    /// `SendConfirmation` reports it directly. MOB-2020 (Android e36fedb2/ebc98b38): `.sign`
+    /// offers Pair Ledger, which reopens the connect flow to pair this account again;
+    /// `.connect` has no such affordance since nothing there is missing a pairing.
     case notPaired
     /// Not in Figma; draft copy.
     case transactionNotSignable
@@ -69,7 +71,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
 
     /// The sheet's one button, or none.
     enum PrimaryAction: Equatable, Sendable {
-        case tryAgain, openSettings, goToAccount, close, none
+        case tryAgain, openSettings, goToAccount, close, pairLedger, none
     }
 
     /// How long a scan may run without finding any Ledger before `.noDevicesFound` is shown.
@@ -306,7 +308,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .deviceMismatch:
             return .tryAgain
         case .notPaired:
-            return .none
+            // MOB-2020 (Android e36fedb2/ebc98b38): the sign sheet offers Pair Ledger; the
+            // connect flow never shows `.notPaired` in the first place (its own picker/approve
+            // screens fail with a different issue before an account would ever exist to report
+            // this one about), so `.connect` keeps `.none`.
+            return context == .sign ? .pairLedger : .none
         case .transactionNotSignable:
             return context == .connect ? .close : .none
         case .unknown:
@@ -321,6 +327,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .openSettings: return String(localizable: .ledgerIssueOpenSettings)
         case .goToAccount: return String(localizable: .ledgerIssueGoToAccount)
         case .close: return String(localizable: .generalClose)
+        case .pairLedger: return String(localizable: .ledgerIssueNotPairedCta)
         case .none: return nil
         }
     }

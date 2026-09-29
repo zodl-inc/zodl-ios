@@ -183,6 +183,156 @@ import ComposableArchitecture
         #expect(store.state.signWithKeystoneCoordFlowBinding == false)
     }
 
+    // MARK: - Pair Ledger from the sign sheet (MOB-2020, Android e36fedb2/ebc98b38/d1506d0d)
+
+    /// `sendCoordFlow`'s `sendConfirmation` path element: Pair Ledger stages the connect flow for
+    /// the selected account (target set, path started at `.addLedgerHWWallet`) without touching
+    /// `path` yet, then the sheet's dismissal (once it has actually finished closing) switches
+    /// `path` to `.connectHWWalletCoordFlow` -- one assignment closes sendCoordFlow and opens the
+    /// connect flow at once.
+    @Test func pairLedgerFromSendConfirmationStagesRepairThenOpensConnectFlowOnDismissal() async throws {
+        let account = Self.ledgerAccount()
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.sendCoordFlowState.path.append(.sendConfirmation(SendConfirmation.State.initial))
+        let elementId = try #require(initialState.sendCoordFlowState.path.ids.first)
+        initialState.path = .sendCoordFlow
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.ledgerClient = .noOp
+        }
+
+        store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.pairLedgerTapped)))))
+
+        // Staged, but the switch waits for the sheet to actually finish closing.
+        #expect(store.state.path == .sendCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == account.id)
+        #expect(store.state.connectHWWalletCoordFlowState.path.count == 1)
+        #expect(store.state.connectHWWalletCoordFlowState.path.last?.is(\.addLedgerHWWallet) == true)
+
+        store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.ledgerSignSheetDismissed)))))
+
+        await waitForRootState { store.state.path == .connectHWWalletCoordFlow }
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+        #expect(store.state.isLedgerRepairAwaitingSheetDismissal == false)
+        // The target survives the switch -- the connect flow still needs it once it opens.
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == account.id)
+    }
+
+    /// `scanCoordFlow`'s `requestZecConfirmation` path element -- the second host/element pairing
+    /// the first test doesn't cover.
+    @Test func pairLedgerFromRequestZecOnScanStagesRepairThenOpensConnectFlowOnDismissal() async throws {
+        let account = Self.ledgerAccount()
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.scanCoordFlowState.path.append(.requestZecConfirmation(SendConfirmation.State.initial))
+        let elementId = try #require(initialState.scanCoordFlowState.path.ids.first)
+        initialState.path = .scanCoordFlow
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.ledgerClient = .noOp
+        }
+
+        store.send(.scanCoordFlow(.path(.element(id: elementId, action: .requestZecConfirmation(.pairLedgerTapped)))))
+
+        #expect(store.state.path == .scanCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == account.id)
+
+        store.send(.scanCoordFlow(.path(.element(id: elementId, action: .requestZecConfirmation(.ledgerSignSheetDismissed)))))
+
+        await waitForRootState { store.state.path == .connectHWWalletCoordFlow }
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+    }
+
+    /// `swapAndPayCoordFlow`'s `ledgerConfirmation` -- a scoped child, not a path element.
+    @Test func pairLedgerFromSwapLedgerConfirmationStagesRepairThenOpensConnectFlowOnDismissal() async throws {
+        let account = Self.ledgerAccount()
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.path = .swapAndPayCoordFlow
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.ledgerClient = .noOp
+        }
+
+        store.send(.swapAndPayCoordFlow(.ledgerConfirmation(.pairLedgerTapped)))
+
+        #expect(store.state.path == .swapAndPayCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == account.id)
+
+        store.send(.swapAndPayCoordFlow(.ledgerConfirmation(.ledgerSignSheetDismissed)))
+
+        await waitForRootState { store.state.path == .connectHWWalletCoordFlow }
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+    }
+
+    /// `signWithKeystoneCoordFlow`'s `sendConfirmation` -- the shielding host, whose sheet Root
+    /// presents itself directly over Home (`path` stays `nil` the whole time until the switch).
+    /// The existing `.ledgerShieldingSheetDismissed` arm also fires from the same dismissal and
+    /// stays a no-op here: `signWithKeystoneCoordFlowState.path` is empty because Pair Ledger, like
+    /// Cancel, never pushes anything onto it.
+    @Test func pairLedgerFromShieldingStagesRepairThenOpensConnectFlowOnDismissal() async throws {
+        let account = Self.ledgerAccount()
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.ledgerClient = .noOp
+        }
+
+        store.send(.signWithKeystoneCoordFlow(.sendConfirmation(.pairLedgerTapped)))
+
+        #expect(store.state.path == nil)
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == account.id)
+
+        store.send(.signWithKeystoneCoordFlow(.sendConfirmation(.ledgerSignSheetDismissed)))
+
+        await waitForRootState { store.state.path == .connectHWWalletCoordFlow }
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+        #expect(store.state.signWithKeystoneCoordFlowBinding == false)
+    }
+
+    /// An ordinary dismissal -- nothing staged a repair -- must leave `path` untouched, the same
+    /// "no positive signal to wait for" shape `theSheetClosingAfterCancelLeavesThePopoverClosed`
+    /// above uses for the existing shielding-only mechanism.
+    @Test func anOrdinaryDismissalWithNoPendingRepairLeavesPathUntouched() async throws {
+        var initialState = Root.State.initial
+        initialState.sendCoordFlowState.path.append(.sendConfirmation(SendConfirmation.State.initial))
+        let elementId = try #require(initialState.sendCoordFlowState.path.ids.first)
+        initialState.path = .sendCoordFlow
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.ledgerClient = .noOp
+        }
+
+        // No preceding `.pairLedgerTapped` -- e.g. Cancel Transaction's own dismissal.
+        store.send(.sendCoordFlow(.path(.element(id: elementId, action: .sendConfirmation(.ledgerSignSheetDismissed)))))
+
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        #expect(store.state.path == .sendCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.ledgerRepairTarget == nil)
+    }
+
     // MARK: - Audit follow-up: Root's other safety gates (MOB-2020)
 
     /// `isSensitiveFlowActive`/`canApplyAutoServerSwitch` are pure computed properties over

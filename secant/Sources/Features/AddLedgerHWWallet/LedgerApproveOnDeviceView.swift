@@ -39,7 +39,10 @@ struct LedgerApproveOnDeviceView: View {
         guard let issue = store.issue else { return false }
         switch issue.primaryAction(in: .connect) {
         case .tryAgain, .openSettings: return true
-        case .goToAccount, .close, .none: return false
+        // `.pairLedger` is a `.sign`-only affordance (`.notPaired.primaryAction(in: .connect)` is
+        // always `.none`) -- listed so the switch stays exhaustive over `PrimaryAction`, not
+        // because this screen ever shows it.
+        case .goToAccount, .close, .pairLedger, .none: return false
         }
     }
 

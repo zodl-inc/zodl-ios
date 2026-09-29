@@ -56,6 +56,14 @@ struct ConnectHWWalletCoordFlow {
         var isAccountAlreadyAddedSheetPresented = false
         var isFailureSheetPresented = false
         var isHelpSheetPresented = false
+        /// MOB-2020 (Android d1506d0d): set when Root opened this flow from the sign sheet's Pair
+        /// Ledger, to the account it should pair again -- `nil` while adding a new Ledger.
+        /// `.ledgerApproveOnDevice(.pairingSucceeded)` checks the paired viewing key against this
+        /// account instead of importing a new one when it is set. `.home(.connectHWWalletTapped)`
+        /// always resets this whole state first, which leaves it `nil`; in memory only, like
+        /// `AddLedgerHWWallet.State.selectedDevice` -- process death empties it too, and pairing
+        /// without a target still refuses a second Ledger (see the no-target branch below).
+        var ledgerRepairTarget: AccountUUID? = nil
         var path = StackState<Path.State>()
 
         // support
@@ -134,6 +142,11 @@ struct ConnectHWWalletCoordFlow {
             case let .ledgerPairingRebound(account):
                 // Same as `goToExistingAccountTapped` above, minus ever presenting the sheet.
                 state.alreadyAddedAccount = account
+                // MOB-2020 (Android d1506d0d): a repair that reaches Rebound has paired its
+                // target successfully -- clear it so a later, unrelated pairing never reads it as
+                // a stale target. A no-op when this Rebound came from today's no-target path,
+                // where it is already `nil`.
+                state.ledgerRepairTarget = nil
                 return leaveFlowThroughVendorInstructions(state: state)
 
             case .contactSupportTapped:
@@ -185,10 +198,68 @@ struct ConnectHWWalletCoordFlow {
                 // librustzcash matches at import but that this pre-import check missed.
             case let .path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(pairing)))):
                 guard case .ledgerApproveOnDevice(var approveState) = state.path[id: id] else { return .none }
-                if let existingAccount = LedgerAccountCollision.existingAccount(
+                let existingAccount = LedgerAccountCollision.existingAccount(
                     matching: pairing.ufvk,
                     among: approveState.walletAccounts
-                ) {
+                )
+
+                // MOB-2020 (Android d1506d0d, 6bef6fd2): the sign sheet's Pair Ledger set a
+                // target account to pair again. A viewing key that matches anything else -- no
+                // account, or a different one -- is the wrong Ledger here, reported directly
+                // instead of imported; a key that matches the target is stored onto it whatever
+                // binding it already had, since the one it had may be exactly why the user is
+                // pairing again.
+                if let target = state.ledgerRepairTarget {
+                    guard let existingAccount, existingAccount.id == target else {
+                        // Nothing imported or stored. The target stays set -- Retry
+                        // (`AddLedgerHWWalletStore.issuePrimaryTapped`, `isApproveScreen == true`)
+                        // pairs the same device again against the same target.
+                        approveState.issue = .deviceMismatch
+                        approveState.isIssueSheetPresented = true
+                        approveState.pairing = nil
+                        state.path[id: id] = .ledgerApproveOnDevice(approveState)
+                        return .none
+                    }
+                    // Cleared here, before the store below even runs (mirroring Android's
+                    // `PairLedgerDeviceUseCase.repair`) -- the target's only job was deciding
+                    // whether this Ledger was the right one, which is settled the moment the id
+                    // matches, whatever the store outcome turns out to be.
+                    state.ledgerRepairTarget = nil
+                    return .run { send in
+                        // MOB-2020 (Android 6bef6fd2): stores the pairing's binding whatever
+                        // binding the target already had -- the stored one may be unusable (the
+                        // very reason `.notPaired` on the sign sheet offered Pair Ledger).
+                        // `importLedgerBinding` refuses a duplicate, so the old binding (if any --
+                        // a missing one is fine) is deleted first; it is read back first too, so a
+                        // failed store below can restore it rather than leaving the account with
+                        // no binding at all.
+                        let oldBinding = try? walletStorage.exportLedgerBinding(target)
+                        try? walletStorage.deleteLedgerBinding(target)
+                        do {
+                            try walletStorage.importLedgerBinding(pairing.binding, target)
+                            await send(.ledgerPairingRebound(existingAccount))
+                        } catch {
+                            if let oldBinding {
+                                do {
+                                    try walletStorage.importLedgerBinding(oldBinding, target)
+                                } catch {
+                                    // Best-effort: never logs the binding/account data the error
+                                    // could carry, and a failure here leaves the account no worse
+                                    // off than it was before this attempt.
+                                    LoggerProxy.warn(
+                                        "Ledger: restoring the account's binding after a failed repair failed (\(type(of: error)))"
+                                    )
+                                }
+                            }
+                            // A failing store must not strand the user -- fall back to "Account
+                            // Already Added", exactly as the no-target rebind below does.
+                            LoggerProxy.warn("Ledger: storing a repair binding failed (\(type(of: error)))")
+                            await send(.ledgerPairingAlreadyAdded(existingAccount))
+                        }
+                    }
+                }
+
+                if let existingAccount {
                     // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
                     // can never sign again -- store this pairing's binding onto it instead
                     // of reporting "Account Already Added" for an account that's a dead end.
@@ -216,6 +287,19 @@ struct ConnectHWWalletCoordFlow {
                         }
                     }
                 }
+
+                // MOB-2020 (Android d1506d0d): with no target, the wallet still holds at most one
+                // Ledger account -- an unknown key while one already exists is the wrong Ledger
+                // too, not a second account to add. This is the same guard the target branch
+                // above enforces, kept here for when process death emptied the target in between.
+                if approveState.walletAccounts.contains(where: { $0.vendor == .ledger }) {
+                    approveState.issue = .deviceMismatch
+                    approveState.isIssueSheetPresented = true
+                    approveState.pairing = nil
+                    state.path[id: id] = .ledgerApproveOnDevice(approveState)
+                    return .none
+                }
+
                 // MOB-2020: replaces the approve element in place (not a push), so backing out
                 // of the account screen lands on the picker, as on Android, instead of revealing
                 // a mid-pairing approve screen underneath it.

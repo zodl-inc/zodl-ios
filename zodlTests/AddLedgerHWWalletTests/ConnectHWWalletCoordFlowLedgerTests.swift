@@ -107,7 +107,11 @@ import ComposableArchitecture
     @Test func pairingANewLedgerStillShowsItsAccount() async throws {
         var approveState = AddLedgerHWWallet.State.initial
         // No account carries the pairing's UFVK, so the pre-import check must let this through.
-        approveState.$walletAccounts.withLock { $0 = [Self.walletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
+        // MOB-2020 (Android d1506d0d): the unrelated account is Keystone-vendored, not Ledger --
+        // the wallet holds at most one Ledger account, so a Ledger-vendored one here would now
+        // (correctly) trip the new no-target wrong-Ledger guard this same file's
+        // `anUnknownKeyWithNoTargetWhileALedgerAccountExistsShowsDeviceMismatch` covers.
+        approveState.$walletAccounts.withLock { $0 = [Self.keystoneWalletAccount(idByte: 0x0f, ufvk: "uview1someotherfixture")] }
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
         initialState.path.append(.ledgerApproveOnDevice(approveState))
@@ -242,6 +246,225 @@ import ComposableArchitecture
         #expect(store.state.path.count == 2)
         #expect(isApproveOnDevice(store.state.path.last))
     }
+
+    // MARK: - Ledger Approve on Device: repair mode (MOB-2020, Android d1506d0d/6bef6fd2)
+    //
+    // `ledgerRepairTarget` is what Root sets when the sign sheet's Pair Ledger opens this flow to
+    // pair a specific account again -- see RootLedgerShieldingSheetTests.swift for Root's own side
+    // of staging it.
+
+    @Test func repairingTheTargetWithItsOwnLedgerReplacesTheBindingAndLeavesTheFlow() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let target = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [target] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        let disconnected = LockIsolated(false)
+        let calls = LockIsolated<[String]>([])
+        let deletedAccountId = LockIsolated<AccountUUID?>(nil)
+        let importedAccountId = LockIsolated<AccountUUID?>(nil)
+        let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        // `.noOp`'s own `exportLedgerBinding` already throws `uninitializedLedgerBinding` -- the
+        // target's stored binding is missing or unusable, the very reason Pair Ledger was tapped.
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+            $0.walletStorage.exportLedgerBinding = { _ in
+                calls.withValue { $0.append("export") }
+                throw WalletStorage.WalletStorageError.uninitializedLedgerBinding
+            }
+            $0.walletStorage.deleteLedgerBinding = { accountId in
+                calls.withValue { $0.append("delete") }
+                deletedAccountId.setValue(accountId)
+            }
+            $0.walletStorage.importLedgerBinding = { binding, accountId in
+                calls.withValue { $0.append("import") }
+                importedAccountId.setValue(accountId)
+                importedBinding.setValue(binding)
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        // MOB-2020: target cleared synchronously, before the store effect even starts -- its only
+        // job (deciding whether this Ledger was the right one) is already settled.
+        #expect(store.state.ledgerRepairTarget == nil)
+
+        for _ in 0..<50 {
+            if store.state.alreadyAddedAccount != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == target)
+        // Unlike a bound match on the no-target path, no sheet is ever shown -- same as Rebound.
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        // Deleted (a missing binding is fine) before importing, for the target's id.
+        #expect(calls.value == ["export", "delete", "import"])
+        #expect(deletedAccountId.value == target.id)
+        #expect(importedAccountId.value == target.id)
+        #expect(importedBinding.value == fixture.binding)
+
+        // Leaves exactly the way Rebound always has.
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
+    }
+
+    // MOB-2020 (Android 6bef6fd2): a BOUND target still gets its binding replaced -- the stored
+    // one may be unusable, which is exactly why Pair Ledger was offered in the first place.
+    @Test func repairingABoundTargetAgainReplacesItsBindingRegardless() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let target = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [target] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        let existingBinding = LedgerAccountBinding(
+            deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "b", count: 64)),
+            zip32AccountIndex: Zip32AccountIndex(0)
+        )
+        let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.exportLedgerBinding = { _ in existingBinding }
+            $0.walletStorage.importLedgerBinding = { binding, _ in importedBinding.setValue(binding) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.alreadyAddedAccount != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == target)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(importedBinding.value == fixture.binding)
+    }
+
+    // MOB-2020: a failing store must not strand the user, and must not leave the account worse
+    // off than before the attempt -- the old binding (read back before the delete) is restored,
+    // and the approve screen falls back to "Account Already Added", same as the no-target rebind.
+    @Test func aFailedRepairStoreRestoresTheOldBindingAndShowsAlreadyAdded() async throws {
+        struct BindingWriteFailure: Error {}
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let target = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [target] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        let oldBinding = LedgerAccountBinding(
+            deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "b", count: 64)),
+            zip32AccountIndex: Zip32AccountIndex(0)
+        )
+        let importCount = LockIsolated(0)
+        let restoredBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.exportLedgerBinding = { _ in oldBinding }
+            $0.walletStorage.importLedgerBinding = { binding, _ in
+                let call = importCount.withValue { $0 += 1; return $0 }
+                if call == 1 {
+                    throw BindingWriteFailure()
+                }
+                restoredBinding.setValue(binding)
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.isAccountAlreadyAddedSheetPresented { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == target)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        #expect(store.state.ledgerRepairTarget == nil)
+        #expect(importCount.value == 2)
+        #expect(restoredBinding.value == oldBinding)
+        #expect(store.state.path.count == 2)
+        #expect(isApproveOnDevice(store.state.path.last))
+    }
+
+    // MOB-2020: pairing the target again with any other Ledger is the wrong Ledger -- reported on
+    // the approve screen directly, never imported. The target stays set so Retry repairs again.
+    @Test func repairingTheTargetWithAnotherLedgerShowsDeviceMismatchAndStoresNothing() async throws {
+        let target = Self.walletAccount(idByte: 0x0f, ufvk: "uview1ledgerpairingfixture")
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [target] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: "uview1someotherfixture")
+        let importCalled = LockIsolated(false)
+        let deleteCalled = LockIsolated(false)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.importLedgerBinding = { _, _ in importCalled.setValue(true) }
+            $0.walletStorage.deleteLedgerBinding = { _ in deleteCalled.setValue(true) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.path.count == 2)
+        if case .ledgerApproveOnDevice(let finalApproveState) = store.state.path.last {
+            #expect(finalApproveState.issue == .deviceMismatch)
+            #expect(finalApproveState.isIssueSheetPresented == true)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to stay in place, showing the issue")
+        }
+        #expect(store.state.ledgerRepairTarget == target.id)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(store.state.alreadyAddedAccount == nil)
+        #expect(importCalled.value == false)
+        #expect(deleteCalled.value == false)
+    }
+
+    // MOB-2020 (Android d1506d0d): with no target (adding a Ledger, not repairing one), a key
+    // that matches no account while the wallet already holds a Ledger account is the wrong
+    // Ledger too -- the wallet holds at most one, so this can't be a second account to add.
+    @Test func anUnknownKeyWithNoTargetWhileALedgerAccountExistsShowsDeviceMismatch() async throws {
+        let existingLedgerAccount = Self.walletAccount(idByte: 0x0f, ufvk: "uview1existingledger")
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingLedgerAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: "uview1anotherledger")
+        let importCalled = LockIsolated(false)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.importLedgerBinding = { _, _ in importCalled.setValue(true) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        #expect(store.state.path.count == 2)
+        if case .ledgerApproveOnDevice(let finalApproveState) = store.state.path.last {
+            #expect(finalApproveState.issue == .deviceMismatch)
+            #expect(finalApproveState.isIssueSheetPresented == true)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to stay in place, showing the issue")
+        }
+        #expect(store.state.ledgerRepairTarget == nil)
+        #expect(importCalled.value == false)
+    }
+
+    // MARK: - Ledger Approve on Device: Cancel
 
     // MOB-2020: Cancel (and the approve screen's own back arrow, which sends the same action)
     // pops back to the picker. The element's own reducer (AddLedgerHWWalletStore) disconnects and
@@ -671,6 +894,21 @@ import ComposableArchitecture
             keySource: Account.ledgerKeySource,
             seedFingerprint: nil,
             hdAccountIndex: nil,
+            ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
+            uivk: nil
+        ))
+    }
+
+    /// A non-Ledger fixture (`WalletAccount.vendor == .keystone`) for tests that need an
+    /// unrelated account on `walletAccounts` without tripping the "wallet holds at most one
+    /// Ledger account" wrong-Ledger guard (MOB-2020, Android d1506d0d).
+    private static func keystoneWalletAccount(idByte: UInt8, ufvk: String? = nil) -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+            name: "Keystone",
+            keySource: Account.keystoneKeySource,
+            seedFingerprint: nil,
+            hdAccountIndex: Zip32AccountIndex(0),
             ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
             uivk: nil
         ))

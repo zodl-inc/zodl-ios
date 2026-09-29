@@ -146,6 +146,47 @@ extension Root {
                 state.path = .connectHWWalletCoordFlow
                 return .none
 
+                // MARK: - Ledger: Pair Ledger from the sign sheet
+
+            // MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): every host of `LedgerSignSheetView`
+            // routes "Pair Ledger" here the same way. The sheet's own reducer has already ended
+            // the session, exactly as Cancel Transaction does (`SendConfirmation.pairLedgerTapped`)
+            // -- this only stages the connect flow for the selected account, to be entered in
+            // repair mode, and waits for the sheet to actually finish closing
+            // (`.ledgerSignSheetDismissed` below) before switching `path`: iOS drops a presentation
+            // requested while another is still animating out, the same reasoning
+            // `.ledgerShieldingSheetDismissed` documents below.
+            case .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.pairLedgerTapped)))),
+                .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.pairLedgerTapped)))),
+                .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.pairLedgerTapped)))),
+                .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.pairLedgerTapped)))),
+                .swapAndPayCoordFlow(.ledgerConfirmation(.pairLedgerTapped)),
+                .signWithKeystoneCoordFlow(.sendConfirmation(.pairLedgerTapped)):
+                guard let accountId = state.selectedWalletAccount?.id else { return .none }
+                state.connectHWWalletCoordFlowState = .initial
+                state.connectHWWalletCoordFlowState.ledgerRepairTarget = accountId
+                // Starts at the Ledger instructions screen, skipping the chooser -- the account
+                // being paired again is always a Ledger.
+                state.connectHWWalletCoordFlowState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+                state.isLedgerRepairAwaitingSheetDismissal = true
+                return .none
+
+            case .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.ledgerSignSheetDismissed)))),
+                .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.ledgerSignSheetDismissed)))),
+                .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.ledgerSignSheetDismissed)))),
+                .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.ledgerSignSheetDismissed)))),
+                .swapAndPayCoordFlow(.ledgerConfirmation(.ledgerSignSheetDismissed)),
+                .signWithKeystoneCoordFlow(.sendConfirmation(.ledgerSignSheetDismissed)):
+                // Fires for every dismissal of this sheet, not only a repair's -- an ordinary
+                // Cancel Transaction or a completed signature must leave `path` untouched.
+                guard state.isLedgerRepairAwaitingSheetDismissal else { return .none }
+                state.isLedgerRepairAwaitingSheetDismissal = false
+                // One assignment is both "close that host" and "open the connect flow": `path` is
+                // a single value, whether it held a coord flow (send/scan/swap) or `nil` (the
+                // shielding sheet, up over Home with no `path` of its own).
+                state.path = .connectHWWalletCoordFlow
+                return .none
+
                 // MARK: - Add Keystone HW Wallet from Settings
 
             case .settings(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):

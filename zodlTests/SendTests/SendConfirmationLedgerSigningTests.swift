@@ -508,4 +508,49 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
         }
     }
+
+    // MOB-2020 (Android e36fedb2/ebc98b38): "Pair Ledger" on the `.notPaired` issue sheet ends
+    // the session exactly like Cancel Transaction -- same state resets -- so Root (which observes
+    // this exact action from every host of the sheet) can tell it apart from an ordinary Cancel.
+    @Test func pairLedgerTappedClosesTheSheetAndDropsThePcztStateLikeCancel() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.ledgerAccount()
+            let proposal = Proposal.testOnlyFakeProposal(totalFee: 10_000)
+
+            var initialState = makeState(account: account)
+            initialState.proposal = proposal
+            initialState.isLedgerSignSheetPresented = true
+            initialState.pczt = Pczt([0x01])
+            initialState.pcztWithProofs = Pczt([0x02])
+            initialState.pcztWithSigs = Pczt([0x03])
+            initialState.pcztToShare = Pczt([0x04])
+            initialState.redactedPcztForSigner = Pczt([0x05])
+            initialState.ledgerSigning.phase = .failed
+            initialState.ledgerSigning.issue = .notPaired
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+            }
+
+            await store.send(.pairLedgerTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.pczt = nil
+                $0.pcztWithProofs = nil
+                $0.pcztWithSigs = nil
+                $0.pcztToShare = nil
+                $0.redactedPcztForSigner = nil
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+            await store.finish()
+
+            // Unchanged, same as Cancel -- a following `.confirmWithLedgerTapped` could start over
+            // from the same confirmation screen (not exercised here; Root instead reads this
+            // action itself to leave the screen and open the connect flow in repair mode).
+            #expect(store.state.proposal == proposal)
+        }
+    }
 }

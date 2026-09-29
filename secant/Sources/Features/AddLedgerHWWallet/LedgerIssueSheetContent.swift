@@ -49,6 +49,7 @@ struct LedgerIssueSheetContent: View {
         case .openSettings: return String(localizable: .ledgerIssueOpenSettings)
         case .goToAccount: return String(localizable: .ledgerIssueGoToAccount)
         case .close: return String(localizable: .generalClose)
+        case .pairLedger: return String(localizable: .ledgerIssueNotPairedCta)
         case .none: return nil
         }
     }

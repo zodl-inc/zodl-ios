@@ -10747,19 +10747,36 @@
         }
       }
     },
+    "ledger.issue.notPaired.cta" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pair Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vincular Ledger"
+          }
+        }
+      }
+    },
     "ledger.issue.notPaired.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This account has no Ledger pairing saved in Zodl. Disconnect it in Advanced Settings, then connect your Ledger again."
+            "value" : "This account isn't paired with a Ledger on this phone. Pair your Ledger to sign this transaction."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Esta cuenta no tiene un emparejamiento de Ledger guardado en Zodl. Desconéctala en Configuración Avanzada y vuelve a conectar tu Ledger."
+            "value" : "Esta cuenta no está vinculada con un Ledger en este teléfono. Vincula tu Ledger para firmar esta transacción."
           }
         }
       }
