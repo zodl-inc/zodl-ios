@@ -182,6 +182,154 @@ import ComposableArchitecture
         }
     }
 
+    // MARK: - approveOnDeviceTapped (MOB-2020: the picker's own Connect, Android aac01e65)
+
+    @MainActor @Test func approveOnDeviceTappedBondsAndReportsWhetherTheAppIsRunning() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.isScanning = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.ledgerClient.bond = { bondedDevice in
+                #expect(bondedDevice == device)
+                return true
+            }
+        }
+
+        await store.send(.approveOnDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+            $0.isScanning = false
+        }
+        await store.receive(.deviceBonded(isZcashAppRunning: true)) {
+            $0.isConnecting = false
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func approveOnDeviceTappedIsIgnoredWithoutASelection() async {
+        // selectedDevice is nil; no ledgerClient override, so a reach into bond would trip "has
+        // no test implementation" and fail the test.
+        let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.approveOnDeviceTapped)
+        await store.finish()
+    }
+
+    @MainActor @Test func approveOnDeviceTappedIsIgnoredWhileBusy() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+
+        var connectingState = AddLedgerHWWallet.State()
+        connectingState.selectedDevice = device
+        connectingState.isConnecting = true
+        let connectingStore = TestStore(initialState: connectingState) {
+            AddLedgerHWWallet()
+        }
+        await connectingStore.send(.approveOnDeviceTapped)
+        await connectingStore.finish()
+
+        var pairingState = AddLedgerHWWallet.State()
+        pairingState.selectedDevice = device
+        pairingState.isPairing = true
+        let pairingStore = TestStore(initialState: pairingState) {
+            AddLedgerHWWallet()
+        }
+        await pairingStore.send(.approveOnDeviceTapped)
+        await pairingStore.finish()
+    }
+
+    @MainActor @Test func aBondFailureShowsPairingFailedAndKeepsTheSelection() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.devices = [device]
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.ledgerClient.bond = { _ in throw ZcashError.ledgerTimeout }
+        }
+
+        await store.send(.approveOnDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(.pairingFailed(issue: .pairingFailed, connectionLost: true)) {
+            $0.isConnecting = false
+            $0.issue = .pairingFailed
+            $0.isIssueSheetPresented = true
+        }
+        await store.finish()
+
+        #expect(store.state.selectedDevice == device)
+        #expect(store.state.devices == [device])
+    }
+
+    // MOB-2020 (Android e3480698): a locked device's refusal to bond's app query shows Unlock
+    // Your Ledger, distinct from every other bond failure's Pairing Failed.
+    @MainActor @Test func aLockedDeviceShowsUnlockYourLedger() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.ledgerClient.bond = { _ in throw ZcashError.ledgerDeviceRefused(0x5515, true) }
+        }
+
+        await store.send(.approveOnDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(.pairingFailed(issue: .deviceLocked, connectionLost: true)) {
+            $0.isConnecting = false
+            $0.issue = .deviceLocked
+            $0.isIssueSheetPresented = true
+        }
+        await store.finish()
+    }
+
+    // MOB-2020: Try again on the picker (no isApproveScreen) with a kept selection bonds that
+    // same device again, rather than rescanning.
+    @MainActor @Test func retryAfterABondFailureBondsTheSameDeviceAgain() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.issue = .pairingFailed
+        state.isIssueSheetPresented = true
+        let bondCallCount = LockIsolated(0)
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.ledgerClient.bond = { bondedDevice in
+                bondCallCount.withValue { $0 += 1 }
+                #expect(bondedDevice == device)
+                return false
+            }
+        }
+
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        await store.receive(\.approveOnDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(.deviceBonded(isZcashAppRunning: false)) {
+            $0.isConnecting = false
+        }
+        await store.finish()
+
+        #expect(bondCallCount.value == 1)
+    }
+
     // MARK: - connectDeviceTapped
 
     @MainActor @Test func connectDeviceTappedConnectsThenPairsAndReportsThePairing() async throws {
@@ -331,55 +479,6 @@ import ComposableArchitecture
             $0.isIssueSheetPresented = true
         }
         await store.finish()
-    }
-
-    // MOB-2020 (Android b013b7c2): `ledgerClient.connect` covers both `LedgerSession.connect`'s
-    // Bluetooth step (still bonding) and its open-Zcash-app step (the link already up) -- a
-    // failure of the first is tagged `LedgerBluetoothConnectFailure` and shows "Pairing Failed";
-    // the SAME underlying error, unwrapped exactly as the open-app step's own failure would
-    // arrive, shows "Ledger Disconnected" instead.
-    @MainActor @Test func aBluetoothConnectStepFailureShowsPairingFailedAndTheSameErrorUnwrappedShowsDisconnected() async {
-        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
-
-        var bondingState = AddLedgerHWWallet.State()
-        bondingState.selectedDevice = device
-        let bondingStore = TestStore(initialState: bondingState) {
-            AddLedgerHWWallet()
-        } withDependencies: {
-            $0.continuousClock = SignalledClock()
-            $0.ledgerClient.connect = { _ in throw LedgerBluetoothConnectFailure(underlying: ZcashError.ledgerTimeout) }
-        }
-
-        await bondingStore.send(.connectDeviceTapped) {
-            $0.isConnecting = true
-            $0.issue = nil
-        }
-        await bondingStore.receive(.pairingFailed(issue: .pairingFailed, connectionLost: true)) {
-            $0.isConnecting = false
-            $0.issue = .pairingFailed
-            $0.isIssueSheetPresented = true
-        }
-        await bondingStore.finish()
-
-        var postLinkState = AddLedgerHWWallet.State()
-        postLinkState.selectedDevice = device
-        let postLinkStore = TestStore(initialState: postLinkState) {
-            AddLedgerHWWallet()
-        } withDependencies: {
-            $0.continuousClock = SignalledClock()
-            $0.ledgerClient.connect = { _ in throw ZcashError.ledgerTimeout }
-        }
-
-        await postLinkStore.send(.connectDeviceTapped) {
-            $0.isConnecting = true
-            $0.issue = nil
-        }
-        await postLinkStore.receive(.pairingFailed(issue: .disconnected, connectionLost: true)) {
-            $0.isConnecting = false
-            $0.issue = .disconnected
-            $0.isIssueSheetPresented = true
-        }
-        await postLinkStore.finish()
     }
 
     @MainActor @Test func deviceRefusalKeepsTheSelectionAndShowsTheMessage() async {

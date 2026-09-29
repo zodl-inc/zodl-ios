@@ -117,23 +117,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// message text, for the screen showing it in `context`. Never produces `.accountAlreadyAdded`;
     /// `LedgerAccountCollision` classifies import collisions itself.
     ///
-    /// MOB-2020 (Android b013b7c2): a `LedgerBluetoothConnectFailure` is unwrapped first, marking
-    /// that the failure came from `LedgerSession.connect`'s own Bluetooth step -- the phone was
-    /// still bonding to the device, before any command reached it -- rather than from the
-    /// open-Zcash-app step after the link was up, or from signing. `ledgerDeviceNotFound`,
-    /// `ledgerBluetoothConnectionFailed` and `ledgerTimeout` then read as `.pairingFailed` only
-    /// for that bonding-phase failure in `.connect`; every other case (the same three kinds once
-    /// the link is up, or any context while signing) reads as `.disconnected`, the device having
-    /// been reachable at some point. `ledgerBluetoothPairingRefused` is always `.pairingFailed`
-    /// regardless of context or wrapping -- the one refusal the OS-level Bluetooth pairing dialog
-    /// itself can raise.
-    init(_ error: Error, in context: Context) {
-        var error = error
-        var isBluetoothConnectFailure = false
-        if let wrapped = error as? LedgerBluetoothConnectFailure {
-            error = wrapped.underlying
-            isBluetoothConnectFailure = true
-        }
+    /// MOB-2020 (Android aac01e65): `bonding` is `true` only for step 2's `LedgerClient.bond` --
+    /// the phone was still bonding to the device, before any command reached it -- never for
+    /// step 3, step 4 or signing, which all pass `false` since enrollment's bonding happens once,
+    /// on step 2, before any of them run. `ledgerDeviceNotFound`, `ledgerBluetoothConnectionFailed`
+    /// and `ledgerTimeout` read as `.pairingFailed` only while `bonding` and in `.connect`; every
+    /// other case (the same three kinds once bonded, or any context while signing) reads as
+    /// `.disconnected`, the device having been reachable at some point. `ledgerBluetoothPairingRefused`
+    /// is always `.pairingFailed` regardless of context or `bonding` -- the one refusal the
+    /// OS-level Bluetooth pairing dialog itself can raise.
+    init(_ error: Error, in context: Context, bonding: Bool = false) {
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
             self = .bluetoothUnauthorized
@@ -162,7 +155,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
         case ZcashError.ledgerDeviceNotFound, ZcashError.ledgerBluetoothConnectionFailed, ZcashError.ledgerTimeout:
-            self = (isBluetoothConnectFailure && context == .connect) ? .pairingFailed : .disconnected
+            self = (bonding && context == .connect) ? .pairingFailed : .disconnected
         case ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,

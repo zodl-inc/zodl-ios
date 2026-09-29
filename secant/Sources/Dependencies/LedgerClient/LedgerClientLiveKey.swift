@@ -132,14 +132,7 @@ actor LedgerSession {
             LoggerProxy.event("Ledger: connected")
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
-            // MOB-2020: tag a failure of THIS step -- the raw Bluetooth bond, before any command
-            // reached the device -- so LedgerIssue.init(_:in:) can tell it apart from a failure
-            // once the link is up. A cancellation is not a connection failure to report; it
-            // propagates as itself.
-            if error is CancellationError {
-                throw error
-            }
-            throw LedgerBluetoothConnectFailure(underlying: error)
+            throw error
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
@@ -193,8 +186,8 @@ actor LedgerSession {
     /// the Zcash app (Android 48b8d5bc, 6c9491c7, e3480698).
     ///
     /// - Returns: whether the device reported the Zcash app running already.
-    /// - Throws: the connect step's own failure, unwrapped -- unlike ``connect(_:)``, nothing
-    ///   here is ever a `LedgerBluetoothConnectFailure`. `ZcashError.ledgerDeviceRefused` when
+    /// - Throws: the connect step's own failure, unwrapped -- the caller classifies it with
+    ///   `LedgerIssue.init(_:in:bonding:)`'s `bonding: true`. `ZcashError.ledgerDeviceRefused` when
     ///   the app query finds the device locked (status word `lockedStatusWord`): every step that
     ///   follows would refuse the same way, so this is the one query failure not swallowed. Any
     ///   other failure of the query only leaves the answer unknown, reported as `false`, since

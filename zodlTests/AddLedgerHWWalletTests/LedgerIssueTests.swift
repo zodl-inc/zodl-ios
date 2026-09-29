@@ -17,12 +17,12 @@ import Foundation
     // MARK: - init(_:in:)
 
     // `ZcashError` is not `Sendable`, so this drives a local table with a plain loop instead of
-    // `@Test(arguments:)`. MOB-2020 (Android b013b7c2): each row is checked in three shapes --
-    // wrapped in `LedgerBluetoothConnectFailure` while still bonding in `.connect` ("pairing"),
-    // unwrapped once the link is up in `.connect` ("connect"), and unwrapped in `.sign` ("sign") --
-    // mirroring Android's `LedgerIssueMapperTest` `pairing`/`enrollment`/`signing` columns.
+    // `@Test(arguments:)`. MOB-2020 (Android aac01e65): each row is checked in three shapes --
+    // `bonding: true` in `.connect` (step 2's `LedgerClient.bond`, "bonding"), `bonding: false` in
+    // `.connect` (steps 3/4, "connect"), and `.sign` (always `bonding: false`, "sign") -- mirroring
+    // Android's `LedgerIssueMapperTest` `pairing`/`enrollment`/`signing` columns.
     @Test func classifiesEveryLedgerErrorCase() {
-        typealias Row = (name: String, error: Error, pairing: LedgerIssue, connect: LedgerIssue, sign: LedgerIssue)
+        typealias Row = (name: String, error: Error, bonding: LedgerIssue, connect: LedgerIssue, sign: LedgerIssue)
 
         // Every column maps this error alike -- the common case, unaffected by the wrap/phase
         // split below.
@@ -68,11 +68,11 @@ import Foundation
         ]
 
         for row in rows {
-            let pairing = LedgerIssue(LedgerBluetoothConnectFailure(underlying: row.error), in: .connect)
-            let connect = LedgerIssue(row.error, in: .connect)
+            let bonding = LedgerIssue(row.error, in: .connect, bonding: true)
+            let connect = LedgerIssue(row.error, in: .connect, bonding: false)
             let sign = LedgerIssue(row.error, in: .sign)
-            #expect(pairing == row.pairing, "\(row.name) while still bonding (.connect, wrapped)")
-            #expect(connect == row.connect, "\(row.name) once the link is up (.connect, unwrapped)")
+            #expect(bonding == row.bonding, "\(row.name) while bonding (.connect, bonding: true)")
+            #expect(connect == row.connect, "\(row.name) once bonded (.connect, bonding: false)")
             #expect(sign == row.sign, "\(row.name) while signing (.sign)")
         }
     }

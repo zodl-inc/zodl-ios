@@ -39,27 +39,20 @@ import ComposableArchitecture
         #expect(transportB.closeCount == 0)
     }
 
-    // MARK: - connect's Bluetooth-step tagging (MOB-2020, Android b013b7c2)
+    // MARK: - connect's Bluetooth-step failure (MOB-2020, Android aac01e65: LedgerBluetoothConnectFailure
+    // is gone -- LedgerIssue's own `bonding` parameter, passed by the caller, now tells step 2's
+    // bond apart from every other connect-step failure; see LedgerIssueTests.)
 
-    @Test func connectWrapsABluetoothStepFailureInLedgerBluetoothConnectFailure() async throws {
+    @Test func connectsBluetoothStepFailureThrowsAsIsUnwrapped() async throws {
         struct BluetoothStepFailure: Error, Equatable {}
         let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: BluetoothStepFailure()))
         let session = makeSession(makeScanner: { scanner })
         let device = try await firstDevice(from: scanner)
 
-        do {
+        await #expect(throws: BluetoothStepFailure()) {
             try await session.connect(device)
-            Issue.record("expected connect to throw")
-        } catch let wrapped as LedgerBluetoothConnectFailure {
-            #expect(wrapped.underlying as? BluetoothStepFailure == BluetoothStepFailure())
-        } catch {
-            Issue.record("expected a LedgerBluetoothConnectFailure, got \(error)")
         }
     }
-
-    // `aFailingOpenStepClosesTheTransportAndLeavesTheSessionDisconnected` below already proves the
-    // open-Zcash-app step's own failure stays unwrapped: it asserts `throws: OpenZcashAppFailure()`
-    // exactly, which a wrap would break.
 
     @Test func connectRethrowsACancellationAtTheBluetoothStepAsIs() async throws {
         let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: CancellationError()))
@@ -69,8 +62,6 @@ import ComposableArchitecture
         do {
             try await session.connect(device)
             Issue.record("expected connect to throw")
-        } catch is LedgerBluetoothConnectFailure {
-            Issue.record("a CancellationError must never be wrapped")
         } catch is CancellationError {
             // expected
         } catch {

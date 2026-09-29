@@ -39,14 +39,21 @@ struct AddLedgerHWWallet {
         @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
 
         /// Set only on the copy of the picker's state that
-        /// `ConnectHWWalletCoordFlowCoordinator`'s `.ledgerDevicePicker(.approveOnDeviceTapped)`
-        /// arm pushes as the Approve on Your Device screen -- never on the picker's own state,
-        /// which this same reducer also drives. `issuePrimaryTapped` reads it to tell a pairing
-        /// issue's retry (reconnect the selected device -- this screen's only retry) from a scan
-        /// issue's retry (rescan -- the picker's only retry): both share this reducer, and
-        /// `selectedDevice` alone can't tell them apart once a device is selected while a stale
-        /// scan issue is still showing.
+        /// `ConnectHWWalletCoordFlowCoordinator`'s `.ledgerDevicePicker(.deviceBonded)` arm pushes
+        /// as the Approve on Your Device screen -- never on the picker's own state, which this
+        /// same reducer also drives. `issuePrimaryTapped` reads it to tell a pairing issue's
+        /// retry (reconnect the selected device -- this screen's only retry) from a bond or scan
+        /// issue's retry (bond again, or rescan -- the picker's own retries): both share this
+        /// reducer, and `selectedDevice` alone can't tell an approve-screen retry from a
+        /// picker-screen retry once a device is selected while a stale issue is still showing.
         var isApproveScreen = false
+
+        /// MOB-2020: set only on the copy of the picker's state the coordinator pushes as step 3
+        /// (`.ledgerOpenApp`) when `.deviceBonded`'s device did NOT already report the Zcash app
+        /// running -- that screen opens it automatically on first appearance only when this is
+        /// `true`. `false` (the default) when step 3 is pushed idle, under step 4, because the
+        /// device already ran the app, and on every other screen this reducer drives.
+        var autoOpenZcashApp = false
 
         /// Whether the picker can offer its own Try again button below the (now empty) device
         /// list: there is a failure showing, and nothing else is already in flight or selected.
@@ -85,10 +92,9 @@ struct AddLedgerHWWallet {
         case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
-        /// The picker's Connect button. A distinct action from `connectDeviceTapped` -- see
-        /// `isApproveScreen`'s doc comment -- so the coordinator, which runs before this
-        /// reducer, can push the Approve on Your Device screen and start the connect-and-pair
-        /// THERE instead of the tap also connecting right on the picker.
+        /// The picker's Connect button (MOB-2020, Android aac01e65): bonds `selectedDevice` right
+        /// here, on the picker element -- unlike before, nothing is pushed until the bond
+        /// succeeds or fails. `deviceBonded` reports the outcome.
         case approveOnDeviceTapped
         case backToHomeTapped
         case binding(BindingAction<AddLedgerHWWallet.State>)
@@ -100,6 +106,10 @@ struct AddLedgerHWWallet {
         case closeTapped
         case connectDeviceTapped
         case connectTapped
+        /// MOB-2020 (Android aac01e65): `approveOnDeviceTapped`'s `ledgerClient.bond` succeeded --
+        /// carries whether the device already runs the Zcash app, which
+        /// ConnectHWWalletCoordFlowCoordinator reads to decide what it pushes next.
+        case deviceBonded(isZcashAppRunning: Bool)
         case deviceConnected
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
@@ -121,6 +131,7 @@ struct AddLedgerHWWallet {
 
     private enum CancelId {
         case scan
+        case bond
         case connectAndPair
     }
 
@@ -236,10 +247,36 @@ struct AddLedgerHWWallet {
                 return .none
 
             case .approveOnDeviceTapped:
-                // A no-op here, same shape as `.connectTapped` above: the coordinator
-                // (ConnectHWWalletCoordFlowCoordinator, which runs before this reducer) reacts to
-                // `.ledgerDevicePicker(.approveOnDeviceTapped)` by pushing the Approve on Your
-                // Device screen with a copy of this state and starting its connect-and-pair.
+                // MOB-2020 (Android 48b8d5bc, 6c9491c7, e3480698): bonds right here, on the
+                // picker, instead of pushing first -- a first Bluetooth pairing with the Zcash
+                // app already open freezes the device on its pairing screen, so nothing opens the
+                // app until the bond (and this device's already-running-app answer) is in.
+                guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
+                    return .none
+                }
+                state.isConnecting = true
+                state.issue = nil
+                state.isIssueSheetPresented = false
+                state.isScanning = false
+                return .merge(
+                    .cancel(id: CancelId.scan),
+                    .run { send in
+                        do {
+                            let isZcashAppRunning = try await ledgerClient.bond(device)
+                            await send(.deviceBonded(isZcashAppRunning: isZcashAppRunning))
+                        } catch {
+                            let issue = LedgerIssue(error, in: .connect, bonding: true)
+                            await send(.pairingFailed(issue: issue, connectionLost: true))
+                        }
+                    }
+                    .cancellable(id: CancelId.bond, cancelInFlight: true)
+                )
+
+            case .deviceBonded:
+                // ConnectHWWalletCoordFlowCoordinator's own arm for this action reads
+                // `isZcashAppRunning` and does the actual pushing (coordinatorReduce() runs
+                // before this reducer, per TCA's ordering) -- nothing else to do with it here.
+                state.isConnecting = false
                 return .none
 
             case .connectDeviceTapped:
@@ -321,11 +358,19 @@ struct AddLedgerHWWallet {
                 // (`.goToAccount`, `.close`, `.none`) just dismisses the sheet, which the line
                 // above already did.
                 guard state.issue?.primaryAction(in: .connect) == .tryAgain else { return .none }
-                // MOB-2020: `isApproveScreen`, not `selectedDevice`, tells a pairing issue's
-                // retry from a scan issue's -- see its doc comment. The Approve on Your Device
-                // screen always reconnects and pairs again with the same device; the picker
-                // (which no longer connects) always rescans instead.
-                return state.isApproveScreen ? .send(.connectDeviceTapped) : .send(.startScanning)
+                // MOB-2020 (Android aac01e65): the Approve on Your Device screen always
+                // reconnects and pairs again with the same device (`isApproveScreen`, not
+                // `selectedDevice`, tells its retry apart -- see that property's doc comment).
+                // The picker itself now bonds on Connect, so ITS retry needs telling apart too:
+                // a kept selection (a bond failure) bonds that same device again; no selection
+                // (a plain scan failure) rescans, as before.
+                if state.isApproveScreen {
+                    return .send(.connectDeviceTapped)
+                } else if state.selectedDevice != nil {
+                    return .send(.approveOnDeviceTapped)
+                } else {
+                    return .send(.startScanning)
+                }
 
             case .cancelTapped:
                 // Popping back to the picker is the coordinator's job -- see the doc comment on

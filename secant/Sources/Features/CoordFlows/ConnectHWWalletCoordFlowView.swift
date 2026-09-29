@@ -27,7 +27,7 @@ struct ConnectHWWalletCoordFlowView: View {
     private var isLedgerFailure: Bool {
         for element in store.path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return true
             default:
                 continue
@@ -102,6 +102,10 @@ struct ConnectHWWalletCoordFlowView: View {
                     AddLedgerHWWalletView(store: store)
                 case let .ledgerDevicePicker(store):
                     LedgerDevicePickerView(store: store)
+                case let .ledgerOpenApp(store):
+                    // MOB-2020 X2: temporary placeholder -- X3 (LedgerOpenAppView, Figma
+                    // 1599:11301, built from LedgerStepComponents.swift) replaces this binding.
+                    LedgerApproveOnDeviceView(store: store)
                 case let .ledgerApproveOnDevice(store):
                     LedgerApproveOnDeviceView(store: store)
                 case let .ledgerAccount(store):

@@ -38,16 +38,6 @@ enum LedgerClientError: Error, Equatable, LocalizedError {
     }
 }
 
-/// MOB-2020 (Android b013b7c2): `underlying` failed `LedgerSession.connect`'s own Bluetooth
-/// connect step -- the phone was still bonding to the device, before any command reached it --
-/// rather than the open-Zcash-app step after the link was up. `LedgerIssue.init(_:in:)` unwraps
-/// this to tell "Pairing Failed" apart from "Ledger Disconnected" for the same underlying error.
-/// Not `Equatable`: `LedgerClientError` carries the two-way context split today and cannot carry
-/// an underlying error, so this tag lives here instead, on the raw thrown error, not on a case.
-struct LedgerBluetoothConnectFailure: Error {
-    let underlying: Error
-}
-
 /// One step of a Ledger signing ceremony, as `LedgerClient.signPCZT` reports it.
 enum LedgerSigningEvent: Equatable, Sendable {
     case progress(LedgerSigningProgress)

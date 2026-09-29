@@ -28,6 +28,10 @@ struct ConnectHWWalletCoordFlow {
         // Ledger
         case addLedgerHWWallet(AddLedgerHWWallet)
         case ledgerDevicePicker(AddLedgerHWWallet)
+        /// Step 3, "Open the Zcash App" (MOB-2020, Android aac01e65). Pushed by
+        /// `.ledgerDevicePicker(.deviceBonded)`; `AddLedgerHWWallet.State.autoOpenZcashApp` says
+        /// whether it opens the app on its own as soon as it appears.
+        case ledgerOpenApp(AddLedgerHWWallet)
         case ledgerApproveOnDevice(AddLedgerHWWallet)
         case ledgerAccount(AddLedgerHWWallet)
         case ledgerDeviceReady(AddLedgerHWWallet)
