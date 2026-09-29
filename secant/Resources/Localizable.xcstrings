@@ -11274,6 +11274,108 @@
         }
       }
     },
+    "ledger.openApp.callout.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install it from My Ledger in Ledger Wallet, then come back."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instálala desde My Ledger en Ledger Wallet y vuelve."
+          }
+        }
+      }
+    },
+    "ledger.openApp.callout.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Don’t Have the Zcash App?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿No tienes la app de Zcash?"
+          }
+        }
+      }
+    },
+    "ledger.openApp.check1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm “Open Zcash” on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma «Open Zcash» en tu Ledger"
+          }
+        }
+      }
+    },
+    "ledger.openApp.check2" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep the Zcash app open until setup is done"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén la app de Zcash abierta hasta terminar la configuración"
+          }
+        }
+      }
+    },
+    "ledger.openApp.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm on your Ledger to open the Zcash app."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirma en tu Ledger para abrir la app de Zcash."
+          }
+        }
+      }
+    },
+    "ledger.openApp.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the Zcash App"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la app de Zcash"
+          }
+        }
+      }
+    },
     "ledger.send.unsupportedAddress" : {
       "extractionState" : "manual",
       "localizations" : {

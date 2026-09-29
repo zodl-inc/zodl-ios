@@ -161,6 +161,64 @@ import ComposableArchitecture
         #expect(connectedDevices.value == [device])
     }
 
+    // MARK: - Ledger Open the Zcash App (step 3, MOB-2020, Android 8cf16518/efe21904)
+
+    @Test func zcashAppOpenedPushesTheApproveScreenAndStartsPairing() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var openAppState = AddLedgerHWWallet.State.initial
+        openAppState.selectedDevice = device
+        openAppState.isOpenAppScreen = true
+        openAppState.isOpeningApp = true
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerOpenApp(openAppState))
+        let fixture = try Self.makePairingFixture()
+        let connectedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.connect = { connectedDevice in connectedDevices.withValue { $0.append(connectedDevice) } }
+            $0.ledgerClient.pairAccount = { _ in fixture }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerOpenApp(.zcashAppOpened))))
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.selectedDevice == device)
+            #expect(approveState.isApproveScreen == true)
+            #expect(approveState.isOpeningApp == false)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the selected device")
+        }
+
+        // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
+        // `ledgerClient.connect` to have been reached instead of asserting synchronously.
+        for _ in 0..<50 {
+            if !connectedDevices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(connectedDevices.value == [device])
+    }
+
+    // Android 76e345e5: Back on step 3 pops back to the picker, whether step 3 was reached alone
+    // (auto mode) or by backing out of step 4 onto the idle step 3 first.
+    @Test func cancelOnStep3PopsBackToThePicker() async {
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerOpenApp(AddLedgerHWWallet.State.initial))
+        let disconnected = LockIsolated(false)
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerOpenApp(.cancelTapped))))
+
+        #expect(store.state.path.count == 1)
+        #expect(isDevicePicker(store.state.path.last))
+    }
+
     // MARK: - Ledger Approve on Device
 
     // MOB-2020 (Android 7cd09f72/aa6d098a): success replaces the approve element in place --

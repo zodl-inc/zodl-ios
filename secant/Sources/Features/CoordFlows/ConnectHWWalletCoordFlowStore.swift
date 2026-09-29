@@ -323,6 +323,16 @@ struct ConnectHWWalletCoordFlow {
                 let _ = state.path.popLast()
                 return .none
 
+                // MOB-2020 (Android 76e345e5): pops step 3 back to the picker, the same way and
+                // for the same reason as the approve screen's own arm just above -- this element's
+                // reducer (AddLedgerHWWalletStore's `cancelTapped`) cancels the open-app request
+                // and disconnects; this must stay in this trailing `Reduce`, not coordinatorReduce()
+                // (which runs BEFORE `.forEach`), or `.forEach` cannot route into an element this
+                // same dispatch already popped.
+            case .path(.element(id: _, action: .ledgerOpenApp(.cancelTapped))):
+                let _ = state.path.popLast()
+                return .none
+
             default: return .none
             }
         }

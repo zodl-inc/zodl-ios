@@ -330,6 +330,156 @@ import ComposableArchitecture
         #expect(bondCallCount.value == 1)
     }
 
+    // MARK: - openZcashAppTapped (step 3, MOB-2020, Android 8cf16518/b8175064)
+
+    @MainActor @Test func openZcashAppTappedOpensTheAppAndReportsSuccess() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.autoOpenZcashApp = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.openZcashApp = { openedDevice in
+                #expect(openedDevice == device)
+            }
+        }
+
+        await store.send(.openZcashAppTapped) {
+            $0.autoOpenZcashApp = false
+            $0.isOpeningApp = true
+            $0.issue = nil
+        }
+        await store.receive(\.zcashAppOpened) {
+            $0.isOpeningApp = false
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func openZcashAppTappedIsIgnoredWhileAlreadyOpening() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.isOpeningApp = true
+        // No ledgerClient override: a reach into openZcashApp would trip "has no test
+        // implementation" and fail the test.
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.openZcashAppTapped)
+        await store.finish()
+    }
+
+    @MainActor @Test func aDeclinedOpenShowsOpenAppRejectedAndContinueAsksAgain() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.isOpenAppScreen = true
+        let openCallCount = LockIsolated(0)
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.openZcashApp = { _ in
+                let call = openCallCount.withValue { $0 += 1; return $0 }
+                if call == 1 {
+                    throw ZcashError.ledgerAppOpenRejected
+                }
+            }
+        }
+
+        await store.send(.openZcashAppTapped) {
+            $0.isOpeningApp = true
+            $0.issue = nil
+        }
+        await store.receive(.openingZcashAppFailed(.openAppRejected)) {
+            $0.isOpeningApp = false
+            $0.issue = .openAppRejected
+            $0.isIssueSheetPresented = true
+        }
+
+        // Continue re-asks the device, same action as the on-screen button.
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        await store.receive(\.openZcashAppTapped) {
+            $0.isOpeningApp = true
+            $0.issue = nil
+        }
+        await store.receive(\.zcashAppOpened) {
+            $0.isOpeningApp = false
+        }
+        await store.finish()
+
+        #expect(openCallCount.value == 2)
+    }
+
+    // MOB-2020: a request that never answers must not keep the flow waiting indefinitely -- the
+    // approval-timeout cap wins after five minutes and reads as a lost connection, the same way
+    // an unanswered pairing already does.
+    @MainActor @Test func theFiveMinuteCapReadsDisconnected() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let clock = SignalledClock()
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = clock
+            // Never answers -- the on-device confirmation is what the cap is timing.
+            $0.ledgerClient.openZcashApp = { _ in
+                try await Task.sleep(for: .seconds(999))
+                fatalError("cancelled by the approval-timeout race before reaching this point")
+            }
+        }
+
+        await store.send(.openZcashAppTapped) {
+            $0.isOpeningApp = true
+            $0.issue = nil
+        }
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.openingZcashAppFailed(.disconnected)) {
+            $0.isOpeningApp = false
+            $0.issue = .disconnected
+            $0.isIssueSheetPresented = true
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func cancelTappedCancelsAnInFlightOpenRequest() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let disconnectCallCount = LockIsolated(0)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            // Never answers on its own -- cancelTapped must interrupt this, not wait it out.
+            $0.ledgerClient.openZcashApp = { _ in
+                try await Task.sleep(for: .seconds(999))
+                fatalError("cancelled by cancelTapped before reaching this point")
+            }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.openZcashAppTapped) {
+            $0.isOpeningApp = true
+            $0.issue = nil
+        }
+        await store.send(.cancelTapped)
+        await store.finish()
+
+        #expect(disconnectCallCount.value >= 1)
+    }
+
     // MARK: - connectDeviceTapped
 
     @MainActor @Test func connectDeviceTappedConnectsThenPairsAndReportsThePairing() async throws {

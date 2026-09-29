@@ -105,9 +105,7 @@ struct ConnectHWWalletCoordFlowView: View {
                 case let .ledgerDevicePicker(store):
                     LedgerDevicePickerView(store: store)
                 case let .ledgerOpenApp(store):
-                    // MOB-2020 X2: temporary placeholder -- X3 (LedgerOpenAppView, Figma
-                    // 1599:11301, built from LedgerStepComponents.swift) replaces this binding.
-                    LedgerApproveOnDeviceView(store: store)
+                    LedgerOpenAppView(store: store)
                 case let .ledgerApproveOnDevice(store):
                     LedgerApproveOnDeviceView(store: store)
                 case let .ledgerAccount(store):

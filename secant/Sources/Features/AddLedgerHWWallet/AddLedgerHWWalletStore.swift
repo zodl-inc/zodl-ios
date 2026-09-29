@@ -52,8 +52,19 @@ struct AddLedgerHWWallet {
         /// (`.ledgerOpenApp`) when `.deviceBonded`'s device did NOT already report the Zcash app
         /// running -- that screen opens it automatically on first appearance only when this is
         /// `true`. `false` (the default) when step 3 is pushed idle, under step 4, because the
-        /// device already ran the app, and on every other screen this reducer drives.
+        /// device already ran the app, and on every other screen this reducer drives. Consumed
+        /// (set back to `false`) the moment step 3 actually starts opening the app, so a later
+        /// reappearance -- Back from step 4 -- never re-triggers it; only Continue can from then on.
         var autoOpenZcashApp = false
+
+        /// Set only on the copy of the picker's state pushed as step 3 (`.ledgerOpenApp`) --
+        /// mirrors `isApproveScreen`'s role but for `LedgerOpenAppView`'s own retry: distinguishes
+        /// this reducer's THIRD screen from the picker (bond again) and the approve screen
+        /// (reconnect) in `issuePrimaryTapped`.
+        var isOpenAppScreen = false
+
+        /// Whether step 3 is currently asking the device to open the Zcash app.
+        var isOpeningApp = false
 
         /// Whether the picker can offer its own Try again button below the (now empty) device
         /// list: there is a failure showing, and nothing else is already in flight or selected.
@@ -119,6 +130,12 @@ struct AddLedgerHWWallet {
         case loadedWalletAccounts([WalletAccount], AccountUUID)
         case nextTapped
         case onAppear
+        /// MOB-2020 (Android 8cf16518): step 3's Continue -- and, in auto mode, its own first
+        /// appearance -- asking the bonded device to open the Zcash app.
+        case openZcashAppTapped
+        /// MOB-2020: `openZcashAppTapped`'s request failed or ran out of time; carries the issue
+        /// the shared sheet shows.
+        case openingZcashAppFailed(LedgerIssue)
         case pairingFailed(issue: LedgerIssue, connectionLost: Bool)
         case pairingSucceeded(LedgerPairing)
         case scanFailed(LedgerIssue)
@@ -127,6 +144,9 @@ struct AddLedgerHWWallet {
         case startScanning
         case stopScanning
         case unlockTapped(BlockHeight?)
+        /// MOB-2020: `openZcashAppTapped`'s request succeeded -- ConnectHWWalletCoordFlowCoordinator
+        /// reacts to this to push step 4, which starts pairing.
+        case zcashAppOpened
     }
 
     private enum CancelId {
@@ -140,6 +160,13 @@ struct AddLedgerHWWallet {
     private enum ConnectAndPairOutcome: Sendable {
         case paired(LedgerPairing)
         case failed(issue: LedgerIssue, connectionLost: Bool)
+    }
+
+    /// `openZcashAppTapped`'s outcome once its request and the approval-timeout race
+    /// (`LedgerIssue.racingApprovalTimeout`) have settled.
+    private enum OpenZcashAppOutcome: Sendable {
+        case opened
+        case failed(LedgerIssue)
     }
 
     init() { }
@@ -279,6 +306,58 @@ struct AddLedgerHWWallet {
                 state.isConnecting = false
                 return .none
 
+            case .openZcashAppTapped:
+                // MOB-2020 (Android 8cf16518, b8175064): step 3's Continue, and its own auto
+                // mode's first appearance (LedgerOpenAppView's `onAppear`, gated on
+                // `autoOpenZcashApp`). The request runs on its own only once: consuming the flag
+                // here means a later reappearance -- Back from step 4 -- leaves the screen idle
+                // until Continue is tapped again.
+                guard let device = state.selectedDevice, !state.isOpeningApp else {
+                    return .none
+                }
+                state.autoOpenZcashApp = false
+                state.isOpeningApp = true
+                state.issue = nil
+                state.isIssueSheetPresented = false
+                return .run { send in
+                    let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> OpenZcashAppOutcome in
+                        do {
+                            try await ledgerClient.openZcashApp(device)
+                            return .opened
+                        } catch {
+                            return .failed(LedgerIssue(error, in: .connect))
+                        }
+                    }
+                    switch outcome {
+                    case .completed(.opened):
+                        await send(.zcashAppOpened)
+                    case let .completed(.failed(issue)):
+                        await send(.openingZcashAppFailed(issue))
+                    case .timedOut:
+                        // MOB-2020: unlike connectDeviceTapped's connect()+pairAccount() pair,
+                        // ledgerClient.openZcashApp closes its own transport on every exit --
+                        // cancellation included (LedgerSession.openZcashApp's own `defer`) -- so
+                        // nothing here needs an explicit disconnect.
+                        await send(.openingZcashAppFailed(.disconnected))
+                    }
+                }
+                // MOB-2020: step 3's back arrow sends the same `cancelTapped` the approve screen's
+                // does, which already cancels this id.
+                .cancellable(id: CancelId.connectAndPair, cancelInFlight: true)
+
+            case .zcashAppOpened:
+                // ConnectHWWalletCoordFlowCoordinator's own arm for this action does the actual
+                // pushing (coordinatorReduce() runs before this reducer) -- nothing else to do
+                // with it here.
+                state.isOpeningApp = false
+                return .none
+
+            case let .openingZcashAppFailed(issue):
+                state.isOpeningApp = false
+                state.issue = issue
+                state.isIssueSheetPresented = true
+                return .none
+
             case .connectDeviceTapped:
                 guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
                     return .none
@@ -361,11 +440,14 @@ struct AddLedgerHWWallet {
                 // MOB-2020 (Android aac01e65): the Approve on Your Device screen always
                 // reconnects and pairs again with the same device (`isApproveScreen`, not
                 // `selectedDevice`, tells its retry apart -- see that property's doc comment).
-                // The picker itself now bonds on Connect, so ITS retry needs telling apart too:
-                // a kept selection (a bond failure) bonds that same device again; no selection
-                // (a plain scan failure) rescans, as before.
+                // Step 3 (`isOpenAppScreen`) re-asks the device to open the app. The picker
+                // itself bonds on Connect, so ITS retry needs telling apart too: a kept selection
+                // (a bond failure) bonds that same device again; no selection (a plain scan
+                // failure) rescans, as before.
                 if state.isApproveScreen {
                     return .send(.connectDeviceTapped)
+                } else if state.isOpenAppScreen {
+                    return .send(.openZcashAppTapped)
                 } else if state.selectedDevice != nil {
                     return .send(.approveOnDeviceTapped)
                 } else {

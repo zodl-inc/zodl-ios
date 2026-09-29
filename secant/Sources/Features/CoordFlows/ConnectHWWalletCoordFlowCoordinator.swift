@@ -145,6 +145,7 @@ extension ConnectHWWalletCoordFlow {
                         // from step 4 then lands on that idle step 3.
                         var openAppState = devicePickerState
                         openAppState.isConnecting = false
+                        openAppState.isOpenAppScreen = true
                         openAppState.autoOpenZcashApp = false
                         state.path.append(.ledgerOpenApp(openAppState))
 
@@ -166,11 +167,40 @@ extension ConnectHWWalletCoordFlow {
                         // appears.
                         var openAppState = devicePickerState
                         openAppState.isConnecting = false
+                        openAppState.isOpenAppScreen = true
                         openAppState.autoOpenZcashApp = true
                         state.path.append(.ledgerOpenApp(openAppState))
                     }
                 }
                 return .none
+
+                // MARK: - Ledger Open the Zcash App (step 3, MOB-2020)
+
+                // Android 8cf16518/efe21904: the request succeeded -- pushes step 4, a copy of
+                // this state, which starts pairing at once (see the `.deviceBonded` arm above for
+                // why never `.ledgerOpenApp(.connectDeviceTapped)` directly).
+            case .path(.element(id: _, action: .ledgerOpenApp(.zcashAppOpened))):
+                for element in state.path {
+                    if case .ledgerOpenApp(let openAppState) = element {
+                        var approveState = openAppState
+                        approveState.isOpeningApp = false
+                        approveState.isOpenAppScreen = false
+                        approveState.isApproveScreen = true
+                        state.path.append(.ledgerApproveOnDevice(approveState))
+                    }
+                }
+                if let last = state.path.ids.last {
+                    return .send(.path(.element(id: last, action: .ledgerApproveOnDevice(.connectDeviceTapped))))
+                }
+                return .none
+
+                // `.ledgerOpenApp(.cancelTapped)`'s own pop lives in ConnectHWWalletCoordFlowStore's
+                // trailing `Reduce`, not here -- see that arm's comment (and this file's own
+                // comment on `.ledgerApproveOnDevice(.cancelTapped)`) for why: `coordinatorReduce()`
+                // runs BEFORE `.forEach`, so popping the element here would leave `.forEach` unable
+                // to route this same action into the element's own reducer (AddLedgerHWWalletStore's
+                // `cancelTapped`, which cancels the request and disconnects) -- "received an action
+                // for a missing element".
 
                 // MARK: - Ledger Approve on Device
                 //
