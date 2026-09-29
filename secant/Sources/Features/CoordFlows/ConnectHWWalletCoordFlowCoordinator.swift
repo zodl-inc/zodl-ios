@@ -118,9 +118,32 @@ extension ConnectHWWalletCoordFlow {
                             matching: pairing.ufvk,
                             among: devicePickerState.walletAccounts
                         ) {
-                            state.alreadyAddedAccount = existingAccount
-                            state.isAccountAlreadyAddedSheetPresented = true
-                            return .none
+                            // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
+                            // can never sign again -- store this pairing's binding onto it instead
+                            // of reporting "Account Already Added" for an account that's a dead end.
+                            // The keychain work (the check and, when it applies, the write) runs in
+                            // this effect, never the reducer body, mirroring
+                            // `SendConfirmationStore.ledgerSignRequest`'s own export/catch shape.
+                            return .run { send in
+                                do {
+                                    _ = try walletStorage.exportLedgerBinding(existingAccount.id)
+                                    await send(.ledgerPairingAlreadyAdded(existingAccount))
+                                } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
+                                    do {
+                                        try walletStorage.importLedgerBinding(pairing.binding, existingAccount.id)
+                                        await send(.ledgerPairingRebound(existingAccount))
+                                    } catch {
+                                        // A failing store must not strand the user -- fall back to
+                                        // today's "Account Already Added", exactly as if it had a
+                                        // binding already. Logs only the error's type, never the
+                                        // binding or account data it could carry.
+                                        LoggerProxy.warn("Ledger: storing a rebind binding failed (\(type(of: error)))")
+                                        await send(.ledgerPairingAlreadyAdded(existingAccount))
+                                    }
+                                } catch {
+                                    await send(.ledgerPairingAlreadyAdded(existingAccount))
+                                }
+                            }
                         }
                         devicePickerState.pairing = pairing
                         state.path.append(.ledgerAccount(devicePickerState))

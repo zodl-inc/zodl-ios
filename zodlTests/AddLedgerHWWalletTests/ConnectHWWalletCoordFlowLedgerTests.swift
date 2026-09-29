@@ -90,15 +90,107 @@ import ComposableArchitecture
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
         initialState.path.append(.ledgerDevicePicker(devicePickerState))
-        let store = makeStore(initialState: initialState)
-        let id = store.state.path.ids.last!
         let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        // MOB-2020 (Rebound): this account already has a binding, so the picker still raises
+        // "Account Already Added" -- `.noOp`'s own `exportLedgerBinding` throws
+        // `uninitializedLedgerBinding` by default, which would otherwise take the Rebound branch
+        // (see `pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow` below).
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.exportLedgerBinding = { _ in fixture.binding }
+        }
+        let id = store.state.path.ids.last!
 
         store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        // The collision check (and, for an unbound match, the rebind) now runs in an effect --
+        // poll for it to land instead of asserting synchronously right after `send`.
+        for _ in 0..<50 {
+            if store.state.isAccountAlreadyAddedSheetPresented { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
 
         #expect(store.state.alreadyAddedAccount == existingAccount)
         #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
         // The path still ends at the picker -- the collision arm pushes nothing.
+        #expect(store.state.path.count == 2)
+        #expect(isDevicePicker(store.state.path.last))
+    }
+
+    // MOB-2020 (Android b013b7c2, Rebound): an unbound match can never sign again, so pairing
+    // stores the new binding onto it instead of dead-ending on "Account Already Added".
+    @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        let disconnected = LockIsolated(false)
+        let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        let importedAccountId = LockIsolated<AccountUUID?>(nil)
+        // `.noOp`'s own `exportLedgerBinding` already throws `uninitializedLedgerBinding`
+        // (unbound) and its `importLedgerBinding` already succeeds silently -- only the write
+        // itself needs capturing here.
+        let store = makeStore(initialState: initialState) {
+            $0.ledgerClient.disconnect = { disconnected.setValue(true) }
+            $0.walletStorage.importLedgerBinding = { binding, accountId in
+                importedBinding.setValue(binding)
+                importedAccountId.setValue(accountId)
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.alreadyAddedAccount != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        // Unlike a bound match, no sheet is ever shown.
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(importedAccountId.value == existingAccount.id)
+        #expect(importedBinding.value == fixture.binding)
+
+        // Leaves exactly the way `goToExistingAccountTapped` does:
+        // `.addLedgerHWWallet(.backToHomeTapped)` disconnects the Ledger inside its own effect.
+        for _ in 0..<50 {
+            if disconnected.value { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(disconnected.value)
+    }
+
+    // MOB-2020 (Android b013b7c2, Rebound): a binding write that fails must not strand the user --
+    // it falls back to today's "Account Already Added", exactly as if the account had a binding.
+    @Test func aFailedRebindStillRaisesAccountAlreadyAddedOnThePicker() async throws {
+        struct BindingWriteFailure: Error {}
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        // `exportLedgerBinding` keeps `.noOp`'s unbound default; only the store itself fails.
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.importLedgerBinding = { _, _ in throw BindingWriteFailure() }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.isAccountAlreadyAddedSheetPresented { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
         #expect(store.state.path.count == 2)
         #expect(isDevicePicker(store.state.path.last))
     }
