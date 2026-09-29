@@ -6,9 +6,168 @@
 //
 
 import Foundation
-import UIKit
-import SwiftUI
 import LinkPresentation
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+final class ShareablePNG: NSObject, UIActivityItemSource {
+    private let data: Data
+    let title: String
+
+    init(data: Data, title: String) {
+        self.data = data
+        self.title = title
+
+        super.init()
+    }
+
+    func activityViewControllerPlaceholderItem(
+        _ activityViewController: UIActivityViewController
+    ) -> Any {
+        data as NSData
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        data as NSData
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        UTType.png.identifier
+    }
+
+    func activityViewControllerLinkMetadata(
+        _ activityViewController: UIActivityViewController
+    ) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = title
+        return metadata
+    }
+}
+
+struct ViewingKeyShareItems {
+    let activityItems: [Any]
+
+    init(payload: ViewingKeySharePayload, title: String) {
+        activityItems = [
+            payload.key.rawValue,
+            ShareablePNG(data: payload.png.data, title: title)
+        ]
+    }
+}
+
+struct ViewingKeyNativeShare: Identifiable {
+    let payload: ViewingKeySharePayload
+    let ownership: ViewingKeyShareOwnership
+
+    var id: UUID { payload.id }
+}
+
+struct ViewingKeyActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let ownership: ViewingKeyShareOwnership
+    let onPresented: () -> Void
+    let onCompletion: () -> Void
+
+    init(
+        activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
+        onPresented: @escaping () -> Void,
+        onCompletion: @escaping () -> Void
+    ) {
+        self.activityItems = activityItems
+        self.ownership = ownership
+        self.onPresented = onPresented
+        self.onCompletion = onCompletion
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        Self.makeController(
+            activityItems: activityItems,
+            ownership: ownership,
+            onPresented: onPresented,
+            onCompletion: onCompletion
+        )
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+
+    static func makeController(
+        activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
+        onCompletion: @escaping () -> Void
+    ) -> ViewingKeyActivityViewController {
+        makeController(
+            activityItems: activityItems,
+            ownership: ownership,
+            onPresented: {},
+            onCompletion: onCompletion
+        )
+    }
+
+    static func makeController(
+        activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
+        onPresented: @escaping () -> Void,
+        onCompletion: @escaping () -> Void
+    ) -> ViewingKeyActivityViewController {
+        let controller = ViewingKeyActivityViewController(
+            activityItems: activityItems,
+            ownership: ownership,
+            onPresented: onPresented
+        )
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            ownership.finish()
+            onCompletion()
+        }
+        controller.popoverPresentationController?.sourceView = controller.view
+        controller.popoverPresentationController?.sourceRect = CGRect(
+            x: controller.view.bounds.midX,
+            y: controller.view.bounds.midY,
+            width: 0,
+            height: 0
+        )
+        return controller
+    }
+}
+
+final class ViewingKeyActivityViewController: UIActivityViewController {
+    let didTransferPayload: Bool
+    private let onPresented: () -> Void
+    private var didNotifyPresentation = false
+
+    init(
+        activityItems: [Any],
+        ownership: ViewingKeyShareOwnership,
+        onPresented: @escaping () -> Void
+    ) {
+        let didTransferPayload = ownership.claimNativeOwnership()
+        self.didTransferPayload = didTransferPayload
+        self.onPresented = onPresented
+        super.init(
+            activityItems: didTransferPayload ? activityItems : [],
+            applicationActivities: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard didTransferPayload, !didNotifyPresentation else { return }
+        didNotifyPresentation = true
+        onPresented()
+    }
+}
 
 final class ShareableImage: NSObject, UIActivityItemSource {
     private let image: UIImage

@@ -19,8 +19,11 @@ struct VotingCoordFlowView: View {
             NavigationStack(path: $store.scope(state: \.path, action: \.path)) {
                 rootContent
                     .onAppear {
+                        // The proving caches are warmed from `.serviceConfigLoaded`,
+                        // after the proving policy is fixed: warming is what starts
+                        // the crate's pool, and the pool keeps whichever policy
+                        // started it.
                         store.send(.onAppear)
-                        store.send(.warmProvingCaches)
                     }
             } destination: { destinationStore in
                 // NavigationStack's destination closure is escaping; it needs

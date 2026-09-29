@@ -130,7 +130,8 @@ extension SDKSynchronizerClient: TestDependencyKey {
         updateTransparentAddressTransactions: unimplemented("\(Self.self).updateTransparentAddressTransactions", placeholder: .notFound),
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
-        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data())
+        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
+        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession")
     )
 }
 
@@ -232,7 +233,12 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: { _ in .notFound },
         fetchUTXOsByAddress: { _, _ in .notFound },
         enhanceTransactionBy: { _ in },
-        getTreeState: { _ in Data() }
+        getTreeState: { _ in Data() },
+        // A session cannot be faked: only the SDK can make one, and it opens the
+        // sidecar to do it. Refusing is what "no-op" means here.
+        makeVotingRoundSession: { _, _, _, _, _ in
+            throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
+        }
     )
 
     static let mock = Self.mocked()
@@ -426,7 +432,16 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: @escaping @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
-        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() }
+        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
+        makeVotingRoundSession: @escaping @Sendable (
+            VotingRustBackend,
+            VotingSessionInputs,
+            VotingSessionBinding,
+            VotingTransportRoute,
+            UInt64
+        ) async throws -> VotingRoundSession = { _, _, _, _, _ in
+            throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
+        }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -519,7 +534,8 @@ extension SDKSynchronizerClient {
             updateTransparentAddressTransactions: updateTransparentAddressTransactions,
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
-            getTreeState: getTreeState
+            getTreeState: getTreeState,
+            makeVotingRoundSession: makeVotingRoundSession
         )
     }
 }
