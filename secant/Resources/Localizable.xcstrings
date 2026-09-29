@@ -2945,6 +2945,23 @@
         }
       }
     },
+    "coinVote.confirmSubmission.progressRetrying" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconnecting..."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconectando..."
+          }
+        }
+      }
+    },
     "coinVote.confirmSubmission.progressSubmittingVoteCount" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3196,23 +3213,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This bundle adds %@ ZEC of voting weight."
-          }
-        }
-      }
-    },
-    "coinVote.delegationSigning.duplicateSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That Keystone signature was already scanned for bundle %@ of %@. Sign the current bundle on Keystone, then scan the new QR."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That Keystone signature was already scanned for bundle %@ of %@. Sign the current bundle on Keystone, then scan the new QR."
           }
         }
       }
@@ -3727,23 +3727,6 @@
         }
       }
     },
-    "coinVote.delegationSigning.wrongSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That signature is for a different bundle. Sign bundle %@ of %@ on Keystone, then scan the new QR."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That signature is for a different bundle. Sign bundle %@ of %@ on Keystone, then scan the new QR."
-          }
-        }
-      }
-    },
     "coinVote.error.changeDataSource" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3944,6 +3927,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your shielded balance at the snapshot block was %@, which is below the 0.125 ZEC minimum required to vote."
+          }
+        }
+      }
+    },
+    "coinVote.ineligible.belowMinimumMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your wallet held shielded funds at snapshot block height #%1$@, but less than the %2$@ ZEC minimum this voting round required."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu billetera tenía fondos protegidos en la altura de bloque de la instantánea #%1$@, pero menos del mínimo de %2$@ ZEC que requería esta ronda de votación."
           }
         }
       }
@@ -4307,23 +4307,6 @@
         }
       }
     },
-    "coinVote.pollsList.insufficientBalanceMessage" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your wallet is not eligible for this voting round because it held %1$@ ZEC at snapshot block height #%2$@. A minimum balance of %3$@ ZEC was required to participate."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your wallet is not eligible for this voting round because it held %1$@ ZEC at snapshot block height #%2$@. A minimum balance of %3$@ ZEC was required to participate."
-          }
-        }
-      }
-    },
     "coinVote.pollsList.insufficientBalanceTitle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4337,6 +4320,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Insufficient Balance"
+          }
+        }
+      }
+    },
+    "coinVote.pollsList.legacyRoundMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An earlier version of the app had started submitting your vote for this poll, and it was still being confirmed when the app was updated. To avoid sending anything twice, this version only shows the poll. Anything already confirmed still counts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una versión anterior de la aplicación había empezado a enviar tu voto para esta votación y aún se estaba confirmando cuando se actualizó la aplicación. Para no enviar nada dos veces, esta versión solo muestra la votación. Lo que ya se confirmó sigue contando."
+          }
+        }
+      }
+    },
+    "coinVote.pollsList.legacyRoundTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This poll can't be continued here"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta votación no se puede continuar aquí"
           }
         }
       }
@@ -5142,23 +5159,6 @@
         }
       }
     },
-    "coinVote.store.error.invalidDelegationSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keystone delegation signature tuple (rk, sighash, sig) is inconsistent with the payload being submitted."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keystone delegation signature tuple (rk, sighash, sig) is inconsistent with the payload being submitted."
-          }
-        }
-      }
-    },
     "coinVote.store.error.missingActiveSession" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5189,23 +5189,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "missing hotkey address for delegation PCZT"
-          }
-        }
-      }
-    },
-    "coinVote.store.error.missingKeystoneBundleSignature" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Missing Keystone signature for one or more delegation bundles."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Missing Keystone signature for one or more delegation bundles."
           }
         }
       }
@@ -5329,23 +5312,6 @@
         }
       }
     },
-    "coinVote.store.submissionPreparingProof" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Building vote proof..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Building vote proof..."
-          }
-        }
-      }
-    },
     "coinVote.store.submissionPreparingProofProgress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5363,23 +5329,6 @@
         }
       }
     },
-    "coinVote.store.submissionSendingShares" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending to vote servers..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending to vote servers..."
-          }
-        }
-      }
-    },
     "coinVote.store.submissionSendingSharesProgress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5393,23 +5342,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sending to vote servers (%@/%@)..."
-          }
-        }
-      }
-    },
-    "coinVote.store.submissionWaitingForConfirmation" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for confirmation..."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for confirmation..."
           }
         }
       }
@@ -5444,108 +5376,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your transaction hasn't been confirmed yet. The network may be congested — please wait a moment and try again."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.alreadyBroadcast" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, but your delegation has already been submitted. Do not leave and re-enter the poll; that would discard data needed to finish voting. Please contact support with this code. (POLL-02)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.commitmentUndecodable" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll is on the chain, but the copy on this device is too damaged to restore. Please contact support and quote this code. (POLL-06)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.notBroadcast" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This poll's setup on this device is incomplete, and nothing has been submitted for it yet. You can safely leave the poll and enter it again to rebuild it. (POLL-01)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.secretsLost" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Data this poll needs was lost on this device and could not be recovered, and your delegation was already submitted. Please contact support with this code. (POLL-04)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.secretsRecovered" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your delegation for this poll was recovered from a backup copy on this device, but it could not be restored automatically. Please contact support with this code. (POLL-03)"
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.delegationDiagnosis.undetermined" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The app could not confirm whether your delegation was already submitted, so it has changed nothing. Please try again, and contact support with this code if it keeps happening. (POLL-05)"
           }
         }
       }
@@ -5631,23 +5461,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unable to reach the Zcash lightwalletd server. Please check your internet connection or try switching to a different server in Settings."
-          }
-        }
-      }
-    },
-    "coinVote.store.userError.noReachableVoteServers" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unable to reach any vote server. Please check your internet connection and try again."
           }
         }
       }
@@ -5869,6 +5682,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Some votes could not be submitted."
+          }
+        }
+      }
+    },
+    "coinVote.submission.partialFailureBundlesSkippedMultiple" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@ bundles skipped)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@ paquetes omitidos)"
+          }
+        }
+      }
+    },
+    "coinVote.submission.partialFailureBundlesSkippedSingle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (1 bundle skipped)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (1 paquete omitido)"
           }
         }
       }
@@ -6485,6 +6332,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total"
+          }
+        }
+      }
+    },
+    "currencyConversion.currencies.error" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn’t load the currencies. Please check your connection and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No pudimos cargar las monedas. Verifica tu conexión e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "currencyConversion.currencies.retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intentar de nuevo"
           }
         }
       }
@@ -24202,6 +24083,568 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "RESTAURANDO TU BILLETERA…"
+          }
+        }
+      }
+    },
+    "viewing_key_acknowledge_history" : {
+      "comment" : "MARK: - Viewing Key Export",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I understand this reveals all my transactions, past and future"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entiendo que esto revela todas mis transacciones, pasadas y futuras"
+          }
+        }
+      }
+    },
+    "viewing_key_acknowledge_irreversible" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I understand this cannot be undone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entiendo que esto no se puede deshacer"
+          }
+        }
+      }
+    },
+    "viewing_key_acknowledge_recipient" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I trust the party I'm sharing this with"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confío en la persona o entidad con la que comparto esta clave"
+          }
+        }
+      }
+    },
+    "viewing_key_display_string" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display key string"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar clave en texto"
+          }
+        }
+      }
+    },
+    "viewing_key_export" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportar clave de visualización"
+          }
+        }
+      }
+    },
+    "viewing_key_export_key" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportar clave"
+          }
+        }
+      }
+    },
+    "viewing_key_full_description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full visibility into all wallet activity. Use for watch-only wallets, auditing, or legal compliance."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibilidad completa de toda la actividad de la billetera. Úsala para billeteras de solo lectura, auditorías o para cumplir con requisitos legales."
+          }
+        }
+      }
+    },
+    "viewing_key_full_qr_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only scan in a trusted, private environment"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanea solo en un entorno privado y de confianza"
+          }
+        }
+      }
+    },
+    "viewing_key_full_string_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This key reveals your full send and receive history. Only share with trusted parties."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave revela todo tu historial de envíos y recepciones. Compártela solo con personas o entidades de confianza."
+          }
+        }
+      }
+    },
+    "viewing_key_full_subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full visibility. Handle with care."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibilidad completa. Úsala con cuidado."
+          }
+        }
+      }
+    },
+    "viewing_key_full_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización completa"
+          }
+        }
+      }
+    },
+    "viewing_key_go_back" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go back"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volver"
+          }
+        }
+      }
+    },
+    "viewing_key_hidden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing key hidden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización oculta"
+          }
+        }
+      }
+    },
+    "viewing_key_hide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ocultar clave"
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lets others see incoming transactions only. Safe for accountants and payment verification."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite a otros ver solo las transacciones entrantes. Es seguro compartirla con contadores y usarla para verificar pagos."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_string_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This key is safe to share with accounting software or watch-only wallets."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave se puede compartir de forma segura con software de contabilidad o billeteras de solo lectura."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incoming transactions only."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo transacciones entrantes."
+          }
+        }
+      }
+    },
+    "viewing_key_incoming_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incoming Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización de transacciones entrantes"
+          }
+        }
+      }
+    },
+    "viewing_key_intro" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharing a viewing key lets others monitor your **%@** wallet activity. Never share with anyone you don't trust."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compartir una clave de visualización permite a otros ver la actividad de tu billetera **%@**. Nunca la compartas con alguien en quien no confíes."
+          }
+        }
+      }
+    },
+    "viewing_key_key_string" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Key String"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave en texto"
+          }
+        }
+      }
+    },
+    "viewing_key_qr_code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR Code"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código QR"
+          }
+        }
+      }
+    },
+    "viewing_key_qr_failure_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There was a problem generating your QR code. Try switching to key string instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hubo un problema al generar tu código QR. Intenta mostrar la clave en texto."
+          }
+        }
+      }
+    },
+    "viewing_key_qr_failure_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't generate QR code"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo generar el código QR"
+          }
+        }
+      }
+    },
+    "viewing_key_reveal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reveal key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar clave"
+          }
+        }
+      }
+    },
+    "viewing_key_scan_helper" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan with any compatible wallet to add as watch-only."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanea con cualquier billetera compatible para añadirla como billetera de solo lectura."
+          }
+        }
+      }
+    },
+    "viewing_key_share_failure_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The QR image couldn't be prepared. Try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo preparar la imagen QR. Inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "viewing_key_share_failure_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't share viewing key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo compartir la clave de visualización"
+          }
+        }
+      }
+    },
+    "viewing_key_unavailable_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This viewing key isn't available for this account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta clave de visualización no está disponible para esta cuenta."
+          }
+        }
+      }
+    },
+    "viewing_key_unavailable_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing key unavailable"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clave de visualización no disponible"
+          }
+        }
+      }
+    },
+    "viewing_key_warning_body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anyone with this key can see every transaction you've ever made, and every one you make in the future."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cualquier persona que tenga esta clave puede ver todas las transacciones que hayas realizado y las que realices en el futuro."
+          }
+        }
+      }
+    },
+    "viewing_key_warning_title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before you share your Full Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antes de compartir tu clave de visualización completa"
+          }
+        }
+      }
+    },
+    "viewing_key_your_full" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Full Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu clave de visualización completa"
+          }
+        }
+      }
+    },
+    "viewing_key_your_incoming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Incoming Viewing Key"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu clave de visualización de transacciones entrantes"
           }
         }
       }

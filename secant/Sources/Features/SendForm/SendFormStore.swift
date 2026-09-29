@@ -510,7 +510,7 @@ struct SendForm {
                         state.currencyText = .empty
                     } else {
                         let value: Double = currencyConversion.convert(Zatoshi(state.amount.amount))
-                        state.currencyText = Decimal(value).formatted(.number.precision(.fractionLength(2))).redacted
+                        state.currencyText = currencyConversion.iso4217.formatNumericAmount(value).redacted
                     }
                 } else {
                     if let number = numberFormatter.number(state.currencyText.data) {
