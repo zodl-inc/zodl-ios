@@ -11223,6 +11223,40 @@
         }
       }
     },
+    "ledger.step.navTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect Your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conecta tu Ledger"
+          }
+        }
+      }
+    },
+    "ledger.step.progress" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Step %1$lld of %2$lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Paso %1$lld de %2$lld"
+          }
+        }
+      }
+    },
     "ledgerHW" : {
       "extractionState" : "manual",
       "localizations" : {
