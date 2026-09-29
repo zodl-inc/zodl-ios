@@ -581,16 +581,22 @@ import ComposableArchitecture
         #expect(importCount.value == 1)
     }
 
+    // MOB-2020: before this commit, a binding-write failure left the just-imported SDK account
+    // behind with no usable binding -- it could never sign again. Now it is rolled back first.
     @MainActor @Test func bindingStoreFailureReportsAnImportFailure() async throws {
         let fixture = try Self.makePairingFixture()
         var state = AddLedgerHWWallet.State()
         state.pairing = fixture
         let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
+        let deletedUUIDs = LockIsolated<[AccountUUID]>([])
 
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
-            $0.sdkSynchronizer = .mocked(importAccount: { _, _, _, _, _, _, _ in uuid })
+            $0.sdkSynchronizer = .mocked(
+                importAccount: { _, _, _, _, _, _, _ in uuid },
+                deleteAccount: { deletedUUID in deletedUUIDs.withValue { $0.append(deletedUUID) } }
+            )
             $0.walletStorage = .noOp
             $0.walletStorage.importLedgerBinding = { _, _ in
                 throw WalletStorage.WalletStorageError.alreadyImported
@@ -602,6 +608,57 @@ import ComposableArchitecture
             $0.isImportingAccount = false
         }
         await store.finish()
+
+        #expect(deletedUUIDs.value == [uuid])
+    }
+
+    // MOB-2020: the rollback runs in an unstructured `Task` awaited by `.value` -- not
+    // `.cancellableValue` -- specifically so cancelling `unlockTapped`'s own effect (e.g. the
+    // user backs out mid-import) does not also cancel the deletion and leave the dead account.
+    @MainActor @Test func cancellingTheEffectWhileTheDeletionRunsStillCompletesTheDeletion() async throws {
+        let fixture = try Self.makePairingFixture()
+        var state = AddLedgerHWWallet.State()
+        state.pairing = fixture
+        let uuid = AccountUUID(id: [UInt8](repeating: 0x01, count: 16))
+        let (entered, enteredContinuation) = AsyncStream<Void>.makeStream()
+        let (proceed, proceedContinuation) = AsyncStream<Void>.makeStream()
+        let (completed, completedContinuation) = AsyncStream<AccountUUID>.makeStream()
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.sdkSynchronizer = .mocked(
+                importAccount: { _, _, _, _, _, _, _ in uuid },
+                deleteAccount: { deletedUUID in
+                    enteredContinuation.yield(())
+                    for await _ in proceed { break }
+                    completedContinuation.yield(deletedUUID)
+                }
+            )
+            $0.walletStorage = .noOp
+            $0.walletStorage.importLedgerBinding = { _, _ in
+                throw WalletStorage.WalletStorageError.alreadyImported
+            }
+        }
+        store.exhaustivity = .off
+
+        let task = await store.send(.unlockTapped(nil))
+
+        // Waits until the effect is genuinely parked inside `deleteAccount`, not merely started.
+        var enteredIterator = entered.makeAsyncIterator()
+        await enteredIterator.next()
+
+        // `task.cancel()` cancels the effect's own Task and waits for it to finish unwinding --
+        // which, since the rollback is the unstructured `Task` above, only happens once the
+        // deletion below completes. Racing the two here avoids a deadlock between them.
+        let cancellation = Task { await task.cancel() }
+        proceedContinuation.yield(())
+        proceedContinuation.finish()
+        await cancellation.value
+
+        var completedIterator = completed.makeAsyncIterator()
+        let deletedUUID = await completedIterator.next()
+        #expect(deletedUUID == uuid)
     }
 
     @MainActor @Test func unlockTappedReportsAnAccountThatIsAlreadyInTheWallet() async throws {

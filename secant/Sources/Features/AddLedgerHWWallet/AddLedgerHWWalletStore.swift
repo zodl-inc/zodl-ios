@@ -327,6 +327,25 @@ struct AddLedgerHWWallet {
                         do {
                             try walletStorage.importLedgerBinding(pairing.binding, uuid)
                         } catch {
+                            // MOB-2020: a binding that never got stored leaves the account
+                            // permanently unsignable, so the import is rolled back before the
+                            // failure is reported. Run in an unstructured `Task` and awaited by
+                            // its `.value` -- not `.cancellableValue` -- so the deletion still
+                            // finishes even if this effect is cancelled right now (e.g. the user
+                            // backs out while the write is in flight); Swift's structured
+                            // concurrency has no direct `NonCancellable` scope the way Kotlin's
+                            // `withContext(NonCancellable)` does.
+                            let rollback = Task {
+                                do {
+                                    try await sdkSynchronizer.deleteAccount(uuid)
+                                } catch {
+                                    // Best-effort: a failed rollback must not replace the binding
+                                    // failure reported below, and never logs the raw Rust error
+                                    // string (which could carry UFVK/binding/device-identity data).
+                                    LoggerProxy.warn("Ledger: rolling back an unbound account import failed (\(type(of: error)))")
+                                }
+                            }
+                            await rollback.value
                             await send(.accountImportFailed(error.localizedDescription))
                             return
                         }
