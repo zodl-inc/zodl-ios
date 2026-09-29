@@ -71,6 +71,42 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// How long a scan may run without finding any Ledger before `.noDevicesFound` is shown.
     static let noDevicesFoundTimeout: Duration = .seconds(30)
 
+    /// How long the user's approval on the device may run before a flow gives up waiting for it:
+    /// `AddLedgerHWWalletStore.connectDeviceTapped`'s whole connect-then-pair effect, and
+    /// `LedgerSigningStore`'s connect effect (the on-device "Open Zcash?" prompt) -- never the
+    /// on-device transaction review itself, which has no cap.
+    static let approvalTimeout: Duration = .seconds(300)
+
+    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, or the
+    /// cap won first.
+    enum ApprovalRace<Success: Sendable>: Sendable {
+        case completed(Success)
+        case timedOut
+    }
+
+    /// Races `work` against `approvalTimeout` on `clock`, sibling child tasks of one task group --
+    /// the same shape `AddLedgerHWWalletStore.startScanning` already uses for its no-devices timer.
+    /// Whichever finishes first cancels the other, so the caller's own effect cancellation cancels
+    /// both. `work` must report its own outcome through its return value rather than by sending a
+    /// terminal action itself: once the cap wins, `work`'s task is only cancelled, not stopped
+    /// synchronously, so a send from its losing side could still land after the timeout's own send
+    /// already has, overwriting it.
+    static func racingApprovalTimeout<Success: Sendable>(
+        clock: any Clock<Duration>,
+        work: @escaping @Sendable () async -> Success
+    ) async -> ApprovalRace<Success> {
+        await withTaskGroup(of: ApprovalRace<Success>.self) { group in
+            group.addTask { .completed(await work()) }
+            group.addTask {
+                try? await clock.sleep(for: approvalTimeout)
+                return .timedOut
+            }
+            let outcome = await group.next() ?? .timedOut
+            group.cancelAll()
+            return outcome
+        }
+    }
+
     /// Classifies a Ledger failure by its `ZcashError`/`LedgerClientError` case only, never by
     /// message text. Never produces `.accountAlreadyAdded`; `LedgerAccountCollision` classifies
     /// import collisions itself.

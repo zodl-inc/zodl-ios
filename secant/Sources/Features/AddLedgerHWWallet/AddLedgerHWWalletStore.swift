@@ -102,6 +102,13 @@ struct AddLedgerHWWallet {
         case scan
     }
 
+    /// `connectDeviceTapped`'s outcome once its connect-then-pair effect and the approval-timeout
+    /// race (`LedgerIssue.racingApprovalTimeout`) have settled.
+    private enum ConnectAndPairOutcome: Sendable {
+        case paired(LedgerPairing)
+        case failed(issue: LedgerIssue, connectionLost: Bool)
+    }
+
     init() { }
 
     @Dependency(\.continuousClock) var clock
@@ -208,25 +215,39 @@ struct AddLedgerHWWallet {
                 state.issue = nil
                 state.isIssueSheetPresented = false
                 return .run { send in
-                    do {
-                        try await ledgerClient.connect(device)
-                    } catch {
-                        // A connect failure always leaves the transport unusable, so it is
-                        // reported as needing a new connection even when
-                        // `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would say
-                        // otherwise for this same underlying error.
-                        await send(.pairingFailed(issue: LedgerIssue(error), connectionLost: true))
-                        return
+                    let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectAndPairOutcome in
+                        do {
+                            try await ledgerClient.connect(device)
+                        } catch {
+                            // A connect failure always leaves the transport unusable, so it is
+                            // reported as needing a new connection even when
+                            // `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would say
+                            // otherwise for this same underlying error.
+                            return .failed(issue: LedgerIssue(error), connectionLost: true)
+                        }
+
+                        await send(.deviceConnected)
+
+                        do {
+                            let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
+                            return .paired(pairing)
+                        } catch {
+                            let issue = LedgerIssue(error)
+                            return .failed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect))
+                        }
                     }
-
-                    await send(.deviceConnected)
-
-                    do {
-                        let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
+                    switch outcome {
+                    case let .completed(.paired(pairing)):
                         await send(.pairingSucceeded(pairing))
-                    } catch {
-                        let issue = LedgerIssue(error)
-                        await send(.pairingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect)))
+                    case let .completed(.failed(issue, connectionLost)):
+                        await send(.pairingFailed(issue: issue, connectionLost: connectionLost))
+                    case .timedOut:
+                        // MOB-2020: the user's approval on the device must not keep enrollment
+                        // waiting forever -- the race above already cancelled the connect/pair
+                        // work, so only the cleanup is left: close the transport and report it
+                        // the same way any other lost connection is.
+                        await ledgerClient.disconnect()
+                        await send(.pairingFailed(issue: .disconnected, connectionLost: true))
                     }
                 }
 

@@ -174,6 +174,9 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
+            // MOB-2020: connectDeviceTapped now races this against the approval-timeout cap;
+            // un-advanced, the cap never wins, and the success path below is unaffected by it.
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient.connect = { connectedDevice in
                 #expect(connectedDevice == device)
                 callOrder.withValue { $0.append("connect") }
@@ -200,6 +203,53 @@ import ComposableArchitecture
         await store.finish()
 
         #expect(callOrder.value == ["connect", "pairAccount"])
+    }
+
+    // MOB-2020: before this commit, a pairAccount that never answered left the flow waiting
+    // indefinitely -- the approval-timeout cap now wins after five minutes and reports it the
+    // same way a lost connection during pairing already is.
+    @MainActor @Test func connectDeviceTappedTimesOutAfterFiveMinutesAndDisconnects() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let clock = SignalledClock()
+        let disconnectCallCount = LockIsolated(0)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient.connect = { _ in }
+            // Never answers -- the on-device pairing approval is what the cap is timing.
+            $0.ledgerClient.pairAccount = { _ in
+                try await Task.sleep(for: .seconds(999))
+                fatalError("cancelled by the approval-timeout race before reaching this point")
+            }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
+            $0.isPairing = true
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.pairingFailed(issue: .disconnected, connectionLost: true)) {
+            $0.isPairing = false
+            $0.issue = .disconnected
+            $0.isIssueSheetPresented = true
+            $0.selectedDevice = nil
+            $0.devices = []
+        }
+        await store.finish()
+
+        #expect(disconnectCallCount.value == 1)
     }
 
     @MainActor @Test func connectDeviceTappedIsIgnoredWithoutASelection() async {
@@ -243,6 +293,9 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
+            // MOB-2020: connectDeviceTapped now races this against the approval-timeout cap;
+            // un-advanced, the cap never wins here.
+            $0.continuousClock = SignalledClock()
             // A device-refusal-shaped error thrown from `connect` (rather than `pairAccount`)
             // proves a connect failure is always reported as needing a new connection, regardless
             // of how `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would otherwise
@@ -273,6 +326,9 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         } withDependencies: {
+            // MOB-2020: connectDeviceTapped now races this against the approval-timeout cap;
+            // un-advanced, the cap never wins here.
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient.connect = { _ in }
             $0.ledgerClient.pairAccount = { _ in throw ZcashError.ledgerUserRejected }
         }
@@ -372,7 +428,9 @@ import ComposableArchitecture
             AddLedgerHWWallet()
         } withDependencies: {
             // Overridden so the run below finishes instead of tripping "has no test
-            // implementation" once `.issuePrimaryTapped` re-sends `.connectDeviceTapped`.
+            // implementation" once `.issuePrimaryTapped` re-sends `.connectDeviceTapped`, which
+            // (MOB-2020) now races the reconnect against the approval-timeout cap too.
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient.connect = { _ in }
             $0.ledgerClient.pairAccount = { _ in fixture }
         }

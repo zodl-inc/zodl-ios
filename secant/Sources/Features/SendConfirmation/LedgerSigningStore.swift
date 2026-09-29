@@ -98,6 +98,13 @@ struct LedgerSigning {
         case pickerTimer
     }
 
+    /// `.connect`'s outcome once its connect effect and the approval-timeout race
+    /// (`LedgerIssue.racingApprovalTimeout`) have settled.
+    private enum ConnectOutcome: Sendable {
+        case connected
+        case failed(LedgerIssue)
+    }
+
     @Dependency(\.continuousClock) var clock
     @Dependency(\.ledgerClient) var ledgerClient
 
@@ -222,11 +229,28 @@ struct LedgerSigning {
                 return .merge(
                     .cancel(id: CancelId.scan),
                     .run { send in
-                        do {
-                            try await ledgerClient.connect(device)
+                        // MOB-2020: caps the on-device "Open Zcash?" prompt this connect can wait
+                        // on -- never the on-device transaction review later in the ceremony,
+                        // which this effect has already finished by the time that starts.
+                        let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectOutcome in
+                            do {
+                                try await ledgerClient.connect(device)
+                                return .connected
+                            } catch {
+                                return .failed(LedgerIssue(error))
+                            }
+                        }
+                        switch outcome {
+                        case .completed(.connected):
                             await send(.deviceConnected)
-                        } catch {
-                            await send(.connectionFailed(LedgerIssue(error)))
+                        case let .completed(.failed(issue)):
+                            await send(.connectionFailed(issue))
+                        case .timedOut:
+                            // The race above already cancelled the connect; only the cleanup is
+                            // left, the same way `AddLedgerHWWalletStore.connectDeviceTapped`
+                            // handles its own cap winning.
+                            await ledgerClient.disconnect()
+                            await send(.connectionFailed(.disconnected))
                         }
                     }
                 )

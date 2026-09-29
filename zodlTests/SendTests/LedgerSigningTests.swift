@@ -46,6 +46,9 @@ import ComposableArchitecture
         let store = TestStore(initialState: LedgerSigning.State()) {
             LedgerSigning()
         } withDependencies: {
+            // MOB-2020: `.connect` now races this against the approval-timeout cap; un-advanced,
+            // the cap never wins, and the auto-connect below is unaffected by it.
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
             $0.ledgerClient.connect = { _ in }
         }
@@ -63,6 +66,44 @@ import ComposableArchitecture
         // No `request` yet -- `startSigningIfReady`'s guard fails and nothing further happens.
         await store.receive(\.startSigningIfReady)
         await store.finish()
+    }
+
+    // MOB-2020: before this commit, a connect that never answered (the on-device "Open Zcash?"
+    // prompt going unanswered) left the sheet on `.connecting` indefinitely -- the
+    // approval-timeout cap now wins after five minutes and disconnects.
+    @MainActor @Test func connectTimesOutAfterFiveMinutesAndDisconnects() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        let disconnectCallCount = LockIsolated(0)
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            // Never answers -- the on-device "Open Zcash?" prompt is what the cap is timing.
+            $0.ledgerClient.connect = { _ in try await Task.sleep(for: .seconds(999)) }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.connectionFailed(.disconnected)) {
+            $0.phase = .failed
+            $0.issue = .disconnected
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+
+        #expect(disconnectCallCount.value == 1)
     }
 
     @MainActor @Test func severalDevicesWaitForATap() async {
