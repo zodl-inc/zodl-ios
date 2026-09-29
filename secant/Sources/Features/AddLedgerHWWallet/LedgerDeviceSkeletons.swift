@@ -78,7 +78,9 @@ struct LedgerDeviceSkeletons<Overlay: View>: View {
                 .fill(Design.Surfaces.bgPrimary.color(colorScheme))
                 .overlay {
                     RoundedRectangle(cornerRadius: Design.Radius._xl)
-                        .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                        // Inside the row, so a fade laid over the rows covers the whole border; a
+                        // centred `.stroke` leaves its outer half showing through as an outline.
+                        .strokeBorder(Design.Surfaces.strokeSecondary.color(colorScheme))
                 }
         }
     }
