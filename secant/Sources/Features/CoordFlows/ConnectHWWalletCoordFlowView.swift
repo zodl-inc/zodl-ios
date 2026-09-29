@@ -27,7 +27,7 @@ struct ConnectHWWalletCoordFlowView: View {
     private var isLedgerFailure: Bool {
         for element in store.path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerTurnOn, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return true
             default:
                 continue
@@ -100,6 +100,8 @@ struct ConnectHWWalletCoordFlowView: View {
                     KeystoneConnectedView(store: store)
                 case let .addLedgerHWWallet(store):
                     AddLedgerHWWalletView(store: store)
+                case let .ledgerTurnOn(store):
+                    LedgerTurnOnView(store: store)
                 case let .ledgerDevicePicker(store):
                     LedgerDevicePickerView(store: store)
                 case let .ledgerOpenApp(store):

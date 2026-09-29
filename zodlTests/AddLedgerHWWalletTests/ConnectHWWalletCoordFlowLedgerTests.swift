@@ -31,7 +31,10 @@ import ComposableArchitecture
 
     // MARK: - Self: connectTapped (the instructions screen, now a path element)
 
-    @Test func connectTappedPushesDevicePicker() async {
+    // MOB-2020: Get Started now pushes the Turn On and Unlock step (Figma 1599:11369) instead of
+    // jumping straight to the device picker -- that step's own Continue pushes the picker instead
+    // (see the two tests below).
+    @Test func connectTappedPushesTurnOnStep() async {
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
         let store = makeStore(initialState: initialState)
@@ -39,6 +42,47 @@ import ComposableArchitecture
 
         store.send(.path(.element(id: id, action: .addLedgerHWWallet(.connectTapped))))
 
+        #expect(store.state.path.count == 2)
+        #expect(isTurnOnStep(store.state.path.last))
+    }
+
+    // MARK: - Ledger Turn On (step 1)
+
+    @Test func continuePushesDevicePickerWhenPermissionAlreadyDetermined() async {
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState) {
+            $0.bluetoothPermission = .noOp
+            $0.bluetoothPermission.authorizationStatus = { .allowedAlways }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerTurnOn(.connectTapped))))
+
+        #expect(store.state.path.count == 2)
+        #expect(isDevicePicker(store.state.path.last))
+    }
+
+    @Test func continueRequestsPermissionFirstWhenNotDeterminedThenPushes() async throws {
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+        let requestCount = LockIsolated(0)
+        let store = makeStore(initialState: initialState) {
+            $0.bluetoothPermission = .noOp
+            $0.bluetoothPermission.authorizationStatus = { .notDetermined }
+            $0.bluetoothPermission.requestAuthorization = { requestCount.withValue { $0 += 1 } }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerTurnOn(.connectTapped))))
+
+        // The push follows the `requestAuthorization()` call asynchronously -- poll for it
+        // instead of asserting synchronously, the same as the approve-on-device test below.
+        for _ in 0..<50 {
+            if store.state.path.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(requestCount.value == 1)
         #expect(store.state.path.count == 2)
         #expect(isDevicePicker(store.state.path.last))
     }
@@ -903,6 +947,11 @@ import ComposableArchitecture
             $0.ledgerClient = .noOp
             extra?(&$0)
         }
+    }
+
+    private func isTurnOnStep(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {
+        if case .ledgerTurnOn = element { return true }
+        return false
     }
 
     private func isDevicePicker(_ element: ConnectHWWalletCoordFlow.Path.State?) -> Bool {

@@ -11478,6 +11478,125 @@
         }
       }
     },
+    "ledger.turnOn.callout.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing works best from the home screen. Zodl opens the Zcash app for you in step 3."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La vinculación funciona mejor desde la pantalla de inicio. Zodl abrirá la app de Zcash por ti en el paso 3."
+          }
+        }
+      }
+    },
+    "ledger.turnOn.callout.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Don’t Open the Zcash App Yet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no abras la app de Zcash"
+          }
+        }
+      }
+    },
+    "ledger.turnOn.check1" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger is unlocked and on its home screen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger está desbloqueado y en su pantalla de inicio"
+          }
+        }
+      }
+    },
+    "ledger.turnOn.check2" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth is on for your phone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Bluetooth de tu teléfono está activado"
+          }
+        }
+      }
+    },
+    "ledger.turnOn.check3" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Ledger is near your phone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu Ledger está cerca de tu teléfono"
+          }
+        }
+      }
+    },
+    "ledger.turnOn.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn on your Ledger and enter your PIN."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enciende tu Ledger e introduce tu PIN."
+          }
+        }
+      }
+    },
+    "ledger.turnOn.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn On and Unlock"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enciende y desbloquea"
+          }
+        }
+      }
+    },
     "ledgerHW" : {
       "extractionState" : "manual",
       "localizations" : {

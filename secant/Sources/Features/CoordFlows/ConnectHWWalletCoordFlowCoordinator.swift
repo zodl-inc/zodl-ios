@@ -101,6 +101,30 @@ extension ConnectHWWalletCoordFlow {
                 // MARK: - Add Ledger HW Wallet (instructions, now a path element)
 
             case .path(.element(id: _, action: .addLedgerHWWallet(.connectTapped))):
+                state.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+                return .none
+
+                // MARK: - Ledger Turn On (step 1, Figma 1599:11369/1599:11430)
+
+                // MOB-2020: Continue pushes the device picker, same as the intro's Get Started
+                // used to -- but first, when Bluetooth authorization has never been asked, requests
+                // it (which shows the iOS prompt) and waits for it to settle. `requestAuthorization`
+                // never reports the answer: a denial still pushes the picker, whose own scan
+                // reports "Bluetooth Access Required" (LedgerIssue.bluetoothUnauthorized).
+            case .path(.element(id: _, action: .ledgerTurnOn(.connectTapped))):
+                guard bluetoothPermission.authorizationStatus() == .notDetermined else {
+                    state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+                    return .none
+                }
+                return .run { send in
+                    await bluetoothPermission.requestAuthorization()
+                    await send(.ledgerBluetoothPermissionSettled)
+                }
+
+            case .ledgerBluetoothPermissionSettled:
+                // A no-op if the user already backed out of the Turn On step while the request
+                // was in flight -- only push the picker while it's still the element on top.
+                guard case .ledgerTurnOn = state.path.last else { return .none }
                 state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
                 return .none
 
@@ -302,16 +326,16 @@ extension ConnectHWWalletCoordFlow {
         }
     }
 
-    /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerDevicePicker`,
-    /// `.ledgerOpenApp`, `.ledgerApproveOnDevice`, `.ledgerAccount`, `.ledgerDeviceReady` or
-    /// `.ledgerConnected`) is anywhere on `path`, else `.keystone` -- the same "is a Ledger
-    /// element on the path" rule as `ConnectHWWalletCoordFlowView.isLedgerFailure`. Used to stamp
-    /// `hardwareWalletVendor` on every `WalletBirthday.State`/`RestoreInfo.State` this coordinator
-    /// pushes.
+    /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerTurnOn`,
+    /// `.ledgerDevicePicker`, `.ledgerOpenApp`, `.ledgerApproveOnDevice`, `.ledgerAccount`,
+    /// `.ledgerDeviceReady` or `.ledgerConnected`) is anywhere on `path`, else `.keystone` -- the
+    /// same "is a Ledger element on the path" rule as `ConnectHWWalletCoordFlowView.isLedgerFailure`.
+    /// Used to stamp `hardwareWalletVendor` on every `WalletBirthday.State`/`RestoreInfo.State` this
+    /// coordinator pushes.
     private func hardwareWalletVendor(on path: StackState<ConnectHWWalletCoordFlow.Path.State>) -> WalletAccount.Vendor {
         for element in path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerTurnOn, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return .ledger
             default:
                 continue

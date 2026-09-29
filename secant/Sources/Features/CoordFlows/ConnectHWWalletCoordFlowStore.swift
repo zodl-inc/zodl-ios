@@ -27,6 +27,7 @@ struct ConnectHWWalletCoordFlow {
         case keystoneConnected(AddKeystoneHWWallet)
         // Ledger
         case addLedgerHWWallet(AddLedgerHWWallet)
+        case ledgerTurnOn(AddLedgerHWWallet)
         case ledgerDevicePicker(AddLedgerHWWallet)
         /// Step 3, "Open the Zcash App" (MOB-2020, Android aac01e65). Pushed by
         /// `.ledgerDevicePicker(.deviceBonded)`; `AddLedgerHWWallet.State.autoOpenZcashApp` says
@@ -87,6 +88,10 @@ struct ConnectHWWalletCoordFlow {
         case closeHelpSheetTapped
         case contactSupportTapped
         case goToExistingAccountTapped
+        /// MOB-2020: the Turn On and Unlock step's Continue requested Bluetooth access (it wasn't
+        /// determined yet) and the request has settled, whatever the answer -- see
+        /// `coordinatorReduce()`'s `.ledgerTurnOn(.connectTapped)` arm.
+        case ledgerBluetoothPermissionSettled
         /// MOB-2020 (Android b013b7c2, Rebound): the coordinator's `.ledgerApproveOnDevice(.pairingSucceeded)`
         /// arm found a matched account with a stored binding already, or this pairing's own binding
         /// failed to store onto an unbound match -- either way, present "Account Already Added" the
@@ -102,6 +107,7 @@ struct ConnectHWWalletCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.bluetoothPermission) var bluetoothPermission
     @Dependency(\.walletStorage) var walletStorage
 
     init() { }
