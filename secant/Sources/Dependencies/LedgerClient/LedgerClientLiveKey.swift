@@ -4,6 +4,7 @@
 //
 
 import ComposableArchitecture
+import Foundation
 @preconcurrency import ZcashLightClientKit
 
 /// Finds Ledger devices and opens connections to them.
@@ -12,12 +13,17 @@ import ComposableArchitecture
 /// ``LedgerSession`` can be driven without CoreBluetooth or a physical device.
 protocol LedgerScanning: Sendable {
     func devices() -> AsyncThrowingStream<[LedgerBluetoothDevice], Error>
-    func connect(to device: LedgerBluetoothDevice) async throws -> any LedgerAPDUTransport
+    func connect(to device: LedgerBluetoothDevice, timeout: TimeInterval) async throws -> any LedgerAPDUTransport
 }
 
 extension LedgerBluetoothScanner: LedgerScanning {
-    func connect(to device: LedgerBluetoothDevice) async throws -> any LedgerAPDUTransport {
-        try await connect(to: device, timeout: 60)
+    // Naming this `connect(to:timeout:)` too -- the SDK's own method already has that shape --
+    // would make the call below ambiguous between the two. The local `LedgerBluetoothTransport`
+    // annotation picks the SDK's method (the only one returning that concrete type); the result
+    // then converts to `any LedgerAPDUTransport` for the return. `timeout` just passes through.
+    func connect(to device: LedgerBluetoothDevice, timeout: TimeInterval) async throws -> any LedgerAPDUTransport {
+        let transport: LedgerBluetoothTransport = try await connect(to: device, timeout: timeout)
+        return transport
     }
 }
 
@@ -29,10 +35,11 @@ extension LedgerBluetoothScanner: LedgerScanning {
 /// built as soon as anything reads `@Dependency(\.ledgerClient)` — so building it must never by
 /// itself trigger that prompt.
 ///
-/// `connect` always closes a previously open transport before opening the new one. `pairAccount`
-/// throws ``LedgerClientError/notConnected`` when nothing is open; otherwise it leaves the
-/// transport open whether pairing succeeds or fails, so a failed pairing can be retried over the
-/// same connection.
+/// `connect` always closes a previously open transport before opening the new one, then makes
+/// sure the Zcash app is open on the device -- which may wait for the user to confirm it there --
+/// before returning. `pairAccount` throws ``LedgerClientError/notConnected`` when nothing is open;
+/// otherwise it leaves the transport open whether pairing succeeds or fails, so a failed pairing
+/// can be retried over the same connection.
 ///
 /// `signPCZT` throws the same error when nothing is open. A signing failure leaves the transport
 /// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
@@ -40,12 +47,21 @@ extension LedgerBluetoothScanner: LedgerScanning {
 /// already gone (see docs/LEDGER.md's "transport closed" rule), so the session drops its reference
 /// rather than keep a dead one around for a retry that would only fail again.
 actor LedgerSession {
+    /// `connect`'s own Bluetooth connection timeout.
+    private static let connectTimeout: TimeInterval = 60
+    /// The reconnect timeout `openZcashApp` uses while the device switches apps -- the SDK's own
+    /// app-switch window (`LedgerZcashApp`'s doc comment).
+    private static let appSwitchTimeout: TimeInterval = 10
+
     private nonisolated let makeScanner: @Sendable () -> any LedgerScanning
     private nonisolated let scannerBox = LockIsolated<(any LedgerScanning)?>(nil)
     private let pair: @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing
     private nonisolated let sign: @Sendable (
         any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
     ) async throws -> Pczt
+    private let openZcashApp: @Sendable (
+        any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+    ) async throws -> any LedgerAPDUTransport
     private var transport: (any LedgerAPDUTransport)?
 
     init(
@@ -53,11 +69,15 @@ actor LedgerSession {
         pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing,
         sign: @escaping @Sendable (
             any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
-        ) async throws -> Pczt
+        ) async throws -> Pczt,
+        openZcashApp: @escaping @Sendable (
+            any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+        ) async throws -> any LedgerAPDUTransport
     ) {
         self.makeScanner = makeScanner
         self.pair = pair
         self.sign = sign
+        self.openZcashApp = openZcashApp
     }
 
     /// The scanner, created on first use and reused after that.
@@ -82,11 +102,25 @@ actor LedgerSession {
             await previous.close()
         }
         LoggerProxy.event("Ledger: connecting to a \(device.model.productName)")
+        let opened: any LedgerAPDUTransport
         do {
-            transport = try await scanner().connect(to: device)
+            opened = try await scanner().connect(to: device, timeout: Self.connectTimeout)
             LoggerProxy.event("Ledger: connected")
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
+            throw error
+        }
+
+        LoggerProxy.event("Ledger: opening the Zcash app if needed")
+        do {
+            transport = try await openZcashApp(opened) {
+                try await self.scanner().connect(to: device, timeout: Self.appSwitchTimeout)
+            }
+            LoggerProxy.event("Ledger: the Zcash app is open")
+        } catch {
+            transport = nil
+            await opened.close()
+            LoggerProxy.warn("Ledger: opening the Zcash app failed (\(Self.errorTag(error)))")
             throw error
         }
     }
@@ -238,6 +272,9 @@ extension LedgerClient: DependencyKey {
             },
             sign: { transport, pczt, accountUUID, binding, progress in
                 try await sdkSynchronizer.signPCZTWithLedger(pczt, accountUUID, binding, transport, progress)
+            },
+            openZcashApp: { transport, reconnect in
+                try await LedgerZcashApp.ensureZcashAppOpen(transport: transport, reconnect: reconnect)
             }
         )
 
