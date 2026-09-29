@@ -69,7 +69,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     }
 
     /// How long a scan may run without finding any Ledger before `.noDevicesFound` is shown.
-    static let noDevicesFoundTimeout: Duration = .seconds(20)
+    static let noDevicesFoundTimeout: Duration = .seconds(30)
 
     /// Classifies a Ledger failure by its `ZcashError`/`LedgerClientError` case only, never by
     /// message text. Never produces `.accountAlreadyAdded`; `LedgerAccountCollision` classifies
