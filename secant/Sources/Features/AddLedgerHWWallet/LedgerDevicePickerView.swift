@@ -2,14 +2,18 @@
 //  LedgerDevicePickerView.swift
 //  Zashi
 //
-//  MOB-2020 Phase 1.3: the Bluetooth device list ConnectHWWalletCoordFlow pushes once the
-//  instructions screen's CTA is tapped. Per the Figma "Select Your Device" review, this screen
-//  finds and selects the Ledger; Connect now pushes the Approve on Your Device screen
+//  MOB-2020 Phase 1.3: the Bluetooth device list ConnectHWWalletCoordFlow pushes once the Turn On
+//  and Unlock step's Continue is tapped. Restyled to Figma's step 2 (1599:11869 searching,
+//  1599:11500 unselected, 1599:11578 selected, part of node 1599:12387's frame): the shared step
+//  header/nav title, a back arrow that pops to step 1 instead of a close X that left the whole
+//  flow, and a device row redrawn as a single-line name with a radio instead of ZashiToggle. This
+//  screen finds and selects the Ledger; Connect now pushes the Approve on Your Device screen
 //  (LedgerApproveOnDeviceView), which runs the actual connect-and-pair -- this screen never
-//  connects on its own, so its Connect button never shows a spinner. Row styling mirrors
-//  AccountsSelectionView's account row. A scan failure shows as a LedgerIssueSheetContent sheet
-//  (MOB-2020 error states) on top of this screen; a swipe-dismiss leaves only the bottom Try
-//  again to retry. The placeholder rows are LedgerDeviceSkeletons, shared with the approve screen.
+//  connects on its own, though its Connect button reflects isConnecting while the phone pairs, the
+//  way the searching state's button already reflects isScanning. A scan failure shows as a
+//  LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen; a swipe-dismiss
+//  leaves only the bottom Try again to retry. The placeholder rows are LedgerDeviceSkeletons,
+//  shared with the approve screen.
 //
 
 import SwiftUI
@@ -27,20 +31,10 @@ struct LedgerDevicePickerView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
-                Asset.Assets.Partners.ledgerTitleLogo.image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(height: 40)
-                    .padding(.top, 16)
-
-                Text(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle)
-                    .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                    .padding(.top, 24)
-
-                Text(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingDesc : .ledgerDevicePickerDesc)
-                    .zFont(size: 14, style: Design.Text.tertiary)
-                    .lineSpacing(1.5)
-                    .padding(.top, 8)
+                LedgerStepHeader(
+                    title: String(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle),
+                    subtitle: String(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingDesc : .ledgerDevicePickerDesc)
+                )
 
                 if store.devices.isEmpty {
                     LedgerDeviceSkeletons(isShimmering: store.isScanning) {
@@ -55,7 +49,7 @@ struct LedgerDevicePickerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .allowsHitTesting(false)
                     }
-                    .padding(.top, 32)
+                    .padding(.top, 24)
                 } else {
                     ScrollView {
                         VStack(spacing: 12) {
@@ -64,45 +58,20 @@ struct LedgerDevicePickerView: View {
                             }
                         }
                     }
-                    .padding(.top, 32)
+                    .padding(.top, 24)
                 }
 
                 Spacer()
 
-                if store.isScanning && store.devices.isEmpty {
-                    ZashiButton(
-                        String(localizable: .ledgerDevicePickerSearching),
-                        prefixView: ProgressView()
-                    ) { }
-                    .disabled(true)
+                connectButton()
                     .padding(.bottom, 24)
-                } else if store.canRescan {
-                    ZashiButton(String(localizable: .ledgerIssueTryAgain)) {
-                        store.send(.startScanning)
-                    }
-                    .padding(.bottom, 24)
-                } else {
-                    // MOB-2020: pushes the Approve on Your Device screen, which starts the
-                    // connect-and-pair -- never `.connectDeviceTapped` here. The element reducer
-                    // (below the coordinator in the reduce order) would otherwise also see that
-                    // action and connect right on this screen, which no longer shows a spinner for it.
-                    ZashiButton(
-                        store.issue != nil
-                        ? String(localizable: .ledgerIssueTryAgain)
-                        : String(localizable: .keystoneAddHWWalletConnect)
-                    ) {
-                        store.send(.approveOnDeviceTapped)
-                    }
-                    .disabled(store.selectedDevice == nil)
-                    .padding(.bottom, 24)
-                }
             }
+            .padding(.top, 12)
             .screenHorizontalPadding()
             .onAppear { store.send(.startScanning) }
             .onDisappear { store.send(.stopScanning) }
-            .zashiBackV2(background: false) {
-                store.send(.forgetThisDeviceTapped)
-            }
+            .ledgerStepNavTitle(step: 2)
+            .zashiBack()
             .zashiSheet(isPresented: $store.isIssueSheetPresented) {
                 issueSheetContent()
             }
@@ -121,7 +90,47 @@ struct LedgerDevicePickerView: View {
         }
     }
 
+    @ViewBuilder private func connectButton() -> some View {
+        if store.isScanning && store.devices.isEmpty {
+            ZashiButton(
+                String(localizable: .ledgerDevicePickerSearching),
+                minHeight: 48,
+                prefixView: ProgressView()
+            ) { }
+            .disabled(true)
+        } else if store.canRescan {
+            ZashiButton(String(localizable: .ledgerIssueTryAgain), minHeight: 48) {
+                store.send(.startScanning)
+            }
+        } else if store.isConnecting {
+            // MOB-2020: the other executor's connection logic sets this while the phone pairs
+            // over Bluetooth -- mirrors the searching button above (spinner, disabled).
+            ZashiButton(
+                String(localizable: .ledgerSignWithConnecting),
+                minHeight: 48,
+                prefixView: ProgressView()
+            ) { }
+            .disabled(true)
+        } else {
+            // MOB-2020: pushes the Approve on Your Device screen, which starts the
+            // connect-and-pair -- never `.connectDeviceTapped` here. The element reducer
+            // (below the coordinator in the reduce order) would otherwise also see that
+            // action and connect right on this screen, which no longer shows a spinner for it.
+            ZashiButton(
+                store.issue != nil
+                ? String(localizable: .ledgerIssueTryAgain)
+                : String(localizable: .keystoneAddHWWalletConnect),
+                minHeight: 48
+            ) {
+                store.send(.approveOnDeviceTapped)
+            }
+            .disabled(store.selectedDevice == nil)
+        }
+    }
+
     @ViewBuilder private func deviceRow(_ device: LedgerBluetoothDevice) -> some View {
+        let isSelected = store.selectedDevice?.id == device.id
+
         Button {
             store.send(.deviceTapped(device))
         } label: {
@@ -136,31 +145,54 @@ struct LedgerDevicePickerView: View {
                     }
                     .padding(.trailing, 12)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(device.model.productName)
-                        .zFont(.semiBold, size: 14, style: Design.Text.primary)
-
-                    if let name = device.name {
-                        Text(name)
-                            .zFont(size: 12, style: Design.Text.tertiary)
-                    }
-                }
+                Text(device.name ?? device.model.productName)
+                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                    .lineLimit(1)
 
                 Spacer()
 
-                ZashiToggle(
-                    isOn: Binding(
-                        get: { store.selectedDevice?.id == device.id },
-                        set: { _ in store.send(.deviceTapped(device)) }
-                    )
-                )
+                radio(isSelected: isSelected)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background {
                 RoundedRectangle(cornerRadius: Design.Radius._xl)
-                    .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
+                    .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Design.Radius._xl)
+                            .stroke(
+                                isSelected
+                                ? Design.Surfaces.bgAlt.color(colorScheme)
+                                : Design.Surfaces.strokeSecondary.color(colorScheme),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    }
             }
+            // Figma's small card shadow, the same two-layer pair used across the app -- shown
+            // only for the selected row, via opacity rather than branching the view so the row's
+            // identity (and any implicit animation) stays stable across selection changes.
+            .shadow(color: .black.opacity(isSelected ? 0.02 : 0), radius: 0.66667, x: 0, y: 1.33333)
+            .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 1.33333, x: 0, y: 1.33333)
+        }
+    }
+
+    @ViewBuilder private func radio(isSelected: Bool) -> some View {
+        if isSelected {
+            Circle()
+                .fill(Design.Btns.Primary.bg.color(colorScheme))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Asset.Assets.check.image
+                        .zImage(size: 12, style: Design.Btns.Primary.fg)
+                }
+        } else {
+            Circle()
+                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Circle()
+                        .stroke(Design.Checkboxes.offStroke.color(colorScheme), lineWidth: 1)
+                }
         }
     }
 }

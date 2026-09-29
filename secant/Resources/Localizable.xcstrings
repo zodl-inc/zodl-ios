@@ -10260,13 +10260,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select the Ledger device you'd like to connect."
+            "value" : "After you tap Connect, check that the code on your phone matches the one on your Ledger."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Selecciona el dispositivo Ledger que deseas conectar."
+            "value" : "Después de tocar Conectar, comprueba que el código de tu teléfono coincida con el de tu Ledger."
           }
         }
       }
@@ -10328,13 +10328,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select Your Device"
+            "value" : "Select Your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Selecciona tu dispositivo"
+            "value" : "Selecciona tu Ledger"
           }
         }
       }
