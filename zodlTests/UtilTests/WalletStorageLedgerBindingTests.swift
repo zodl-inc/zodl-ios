@@ -97,6 +97,67 @@ import os
         }
     }
 
+    // MOB-2020: a stored value that no longer decodes -- garbage bytes, or a field that no
+    // longer parses -- must read as no binding at all, same as a missing item, rather than
+    // surfacing `KeychainError.decoding` to `SendConfirmationStore.ledgerSignRequest`.
+    @Test func exportLedgerBindingThrowsUninitializedWhenStoredBytesAreNotABinding() {
+        let storedData = Data("not a binding".utf8)
+        let secItem = SecItemClient(
+            copyMatching: { _, result in
+                result = storedData as CFTypeRef
+                return errSecSuccess
+            },
+            add: { _, _ in errSecSuccess },
+            update: { _, _ in errSecSuccess },
+            delete: { _ in errSecSuccess }
+        )
+
+        let walletStorage = WalletStorage(secItem: secItem)
+        let accountId = AccountUUID(id: [UInt8](repeating: 0x09, count: 16))
+
+        let error = #expect(throws: WalletStorage.WalletStorageError.self) {
+            try walletStorage.exportLedgerBinding(accountId: accountId)
+        }
+
+        guard case .uninitializedLedgerBinding = error else {
+            Issue.record("Expected .uninitializedLedgerBinding, got \(String(describing: error))")
+            return
+        }
+    }
+
+    // `Zip32AccountIndex.new`/`init(_:)` isn't reachable with an out-of-range value from Swift
+    // (it requires the UInt range), so the bytes are hand-written JSON instead -- the same way a
+    // future incompatible encoding could turn up in the keychain.
+    @Test func exportLedgerBindingThrowsUninitializedWhenTheAccountIndexIsOutsideUInt32() {
+        for index in ["4294967296", "-1"] {
+            let json = """
+            {"deviceIdentity":"tpk0-\(String(repeating: "a", count: 64))","zip32AccountIndex":{"index":\(index)}}
+            """
+            let storedData = Data(json.utf8)
+            let secItem = SecItemClient(
+                copyMatching: { _, result in
+                    result = storedData as CFTypeRef
+                    return errSecSuccess
+                },
+                add: { _, _ in errSecSuccess },
+                update: { _, _ in errSecSuccess },
+                delete: { _ in errSecSuccess }
+            )
+
+            let walletStorage = WalletStorage(secItem: secItem)
+            let accountId = AccountUUID(id: [UInt8](repeating: 0x0a, count: 16))
+
+            let error = #expect(throws: WalletStorage.WalletStorageError.self) {
+                try walletStorage.exportLedgerBinding(accountId: accountId)
+            }
+
+            guard case .uninitializedLedgerBinding = error else {
+                Issue.record("Expected .uninitializedLedgerBinding for index \(index), got \(String(describing: error))")
+                return
+            }
+        }
+    }
+
     @Test func importLedgerBindingThrowsAlreadyImportedOnDuplicate() throws {
         let secItem = SecItemClient(
             copyMatching: { _, _ in errSecSuccess },
