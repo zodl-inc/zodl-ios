@@ -83,6 +83,65 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MOB-2020: before this commit, every device dropping out of range while the picker was up
+    // left `phase == .selectingDevice` forever -- there was no timer at all once past `.scanning`.
+    @MainActor @Test func anEmptiedPickerFailsWithNoDevicesAfterTheTimeout() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        var state = LedgerSigning.State()
+        state.phase = .selectingDevice
+        state.devices = [device]
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+        }
+
+        await store.send(.devicesUpdated([])) {
+            $0.devices = []
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.noDevicesFoundTimeout)
+        await store.receive(\.scanTimedOut) {
+            $0.phase = .failed
+            $0.issue = .noDevicesFound
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func aDeviceAppearingBeforeThePickerTimeoutCancelsIt() async throws {
+        let deviceA = Self.device(name: "Nano X A")
+        let deviceB = Self.device(name: "Nano X B")
+        let clock = SignalledClock()
+        var state = LedgerSigning.State()
+        state.phase = .selectingDevice
+        state.devices = [deviceA]
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+        }
+
+        await store.send(.devicesUpdated([])) {
+            $0.devices = []
+        }
+        await clock.sleepDeadlines.countReached(1)
+
+        // The device is back before the timer fires -- this cancels it instead of letting the
+        // picker fail out from under the user.
+        await store.send(.devicesUpdated([deviceA, deviceB])) {
+            $0.devices = [deviceA, deviceB]
+        }
+        await store.finish()
+    }
+
     @MainActor @Test func scanTimeoutShowsNoDevicesFound() async {
         let clock = SignalledClock()
         let (scanStream, scanContinuation) = AsyncThrowingStream<[LedgerBluetoothDevice], Error>.makeStream()
@@ -366,9 +425,13 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @MainActor @Test func aWrongLedgerRetryScansAgain() async throws {
+    // MOB-2020: before this commit, a lone device on the retry scan auto-connected silently even
+    // right after that same device was rejected as the wrong Ledger. Now the picker shows it
+    // instead, and only an explicit tap connects (and clears the flag).
+    @MainActor @Test func aWrongLedgerRetryShowsThePickerForALoneDeviceAndTappingItConnects() async throws {
         let device = Self.device(name: "Nano X")
         let request = try Self.signRequest()
+        let connectCallCount = LockIsolated(0)
         var state = LedgerSigning.State()
         state.devices = [device]
         state.selectedDevice = device
@@ -380,6 +443,13 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.yield([device])
+                    continuation.finish()
+                }
+            }
             $0.ledgerClient.signPCZT = { _, _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.finish(throwing: ZcashError.ledgerDeviceMismatch)
@@ -394,6 +464,7 @@ import ComposableArchitecture
             $0.phase = .failed
             $0.issue = .deviceMismatch
             $0.isConnectionLost = true
+            $0.isPickerRequired = true
         }
 
         await store.send(.tryAgainTapped) {
@@ -404,7 +475,37 @@ import ComposableArchitecture
         await store.receive(\.startScanning) {
             $0.issue = nil
         }
+        // The retry scan finds the very same lone device, but the wrong-Ledger flag keeps it
+        // from auto-connecting -- the picker shows it instead.
+        await store.receive(\.devicesUpdated) {
+            $0.devices = [device]
+            $0.phase = .selectingDevice
+        }
+        #expect(connectCallCount.value == 0)
+
+        // Tapping the device answers "is this the right Ledger" -- it clears the flag and
+        // connects.
+        await store.send(.deviceTapped(device)) {
+            $0.selectedDevice = device
+            $0.isPickerRequired = false
+        }
+        await store.receive(\.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
+        }
+        await store.receive(\.startSigningIfReady) {
+            $0.phase = .signing(.identifyingDevice)
+        }
+        await store.receive(.signingFailed(issue: .deviceMismatch, connectionLost: true)) {
+            $0.phase = .failed
+            $0.issue = .deviceMismatch
+            $0.isPickerRequired = true
+        }
         await store.finish()
+
+        #expect(connectCallCount.value == 1)
     }
 
     @MainActor @Test func aNotSignableTransactionIsNotRestartable() async throws {

@@ -48,6 +48,10 @@ struct LedgerSigning {
         /// failure. Read only by `failedPrimaryAction` below.
         var hasOpenedSettings = false
         var isConnectionLost = false
+        /// Set on a `.deviceMismatch` failure (the wrong Ledger connected) and cleared once the
+        /// user taps a device. While set, the next scan shows the picker even for a lone device
+        /// instead of auto-connecting to it -- that lone device may be the same wrong Ledger.
+        var isPickerRequired = false
         var request: SignRequest?
 
         /// `LedgerIssueSheetContent`'s primary button for the current `issue`, in the `.sign`
@@ -87,6 +91,11 @@ struct LedgerSigning {
     enum CancelId {
         case scan
         case sign
+        // MOB-2020: the empty-picker timeout below. Chained onto `.scan` (never on its own),
+        // so cancelling the scan -- every existing call site already does, and the parent's
+        // `.resetPCZTs`/`.ledgerSignCancelTapped` need no changes -- cancels this too, while a
+        // device reappearing can still cancel just this timer without touching the live scan.
+        case pickerTimer
     }
 
     @Dependency(\.continuousClock) var clock
@@ -144,16 +153,36 @@ struct LedgerSigning {
 
             case let .devicesUpdated(devices):
                 state.devices = devices
-                guard state.phase == .scanning else {
+                if state.phase == .scanning {
+                    // MOB-2020: a lone device auto-connects UNLESS the last session already met
+                    // the wrong Ledger -- that lone device may be the very same wrong one, so the
+                    // picker shows it instead of reconnecting silently.
+                    if devices.count == 1, let device = devices.first, !state.isPickerRequired {
+                        state.selectedDevice = device
+                        return .send(.connect)
+                    } else if !devices.isEmpty {
+                        state.phase = .selectingDevice
+                    }
                     return .none
                 }
-                if devices.count == 1, let device = devices.first {
-                    state.selectedDevice = device
-                    return .send(.connect)
-                } else if devices.count > 1 {
-                    state.phase = .selectingDevice
+                // MOB-2020: once the picker is showing, every device dropping out of range must
+                // not hang forever -- start the same no-devices timer the scan's own timeout
+                // uses, restarted (`cancelInFlight: true`) each time the list re-empties, and
+                // cancelled below the moment a device is back.
+                guard state.phase == .selectingDevice else {
+                    return .none
                 }
-                return .none
+                guard devices.isEmpty else {
+                    return .cancel(id: CancelId.pickerTimer)
+                }
+                return .run { send in
+                    do {
+                        try await clock.sleep(for: LedgerIssue.noDevicesFoundTimeout)
+                        await send(.scanTimedOut)
+                    } catch {}
+                }
+                .cancellable(id: CancelId.pickerTimer, cancelInFlight: true)
+                .cancellable(id: CancelId.scan)
 
             case let .scanFailed(issue):
                 // Same shape as `connectionFailed`: a scan-level failure (e.g. Bluetooth powered
@@ -162,12 +191,17 @@ struct LedgerSigning {
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = true
-                return .none
+                // The scan child task group cancels its OWN no-devices timer internally; the
+                // picker's empty-list timer, started later from `devicesUpdated`, is a separate
+                // effect and needs its own cancel.
+                return .cancel(id: CancelId.pickerTimer)
 
             case .scanTimedOut:
-                // Ignored once a device has already turned up, or once the scan is no longer the
-                // one running (it already failed, was cancelled, or already timed out once).
-                guard state.phase == .scanning, state.devices.isEmpty else { return .none }
+                // Ignored once a device has already turned up, or once neither timer's phase is
+                // still current (already failed, was cancelled, or already timed out once).
+                guard state.phase == .scanning || state.phase == .selectingDevice, state.devices.isEmpty else {
+                    return .none
+                }
                 state.phase = .failed
                 state.issue = .noDevicesFound
                 state.isConnectionLost = true
@@ -175,6 +209,9 @@ struct LedgerSigning {
 
             case let .deviceTapped(device):
                 state.selectedDevice = device
+                // A tap answers "is this the right Ledger" itself -- the flag's job (skip the
+                // silent one-device auto-connect) is done once the user has chosen explicitly.
+                state.isPickerRequired = false
                 return .send(.connect)
 
             case .connect:
@@ -214,6 +251,12 @@ struct LedgerSigning {
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = true
+                // MOB-2020: a wrong-Ledger connect (the SDK checked the device before the sign
+                // request even landed) gets the same picker-on-next-scan treatment signing's own
+                // `.deviceMismatch` does below.
+                if issue == .deviceMismatch {
+                    state.isPickerRequired = true
+                }
                 return .none
 
             case let .signRequested(request):
@@ -265,6 +308,11 @@ struct LedgerSigning {
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = connectionLost
+                // MOB-2020: after the wrong Ledger, the NEXT scan must show the picker even for a
+                // lone device instead of silently reconnecting to what may be that same device.
+                if issue == .deviceMismatch {
+                    state.isPickerRequired = true
+                }
                 return .none
 
             case .openSettingsTapped:
