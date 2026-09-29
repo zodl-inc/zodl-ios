@@ -84,10 +84,17 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .bluetoothUnsupported
         case ZcashError.ledgerDeviceNotFound:
             self = .noDevicesFound
+        case ZcashError.ledgerWrongApp(0):
+            // Status word 0 is the SDK's sentinel for a timed-out app switch -- neither
+            // `LedgerErrors.swift`'s FFI fallback nor `LedgerZcashApp`'s app-switch poll ever
+            // throws it for a real reply, since no device sends a genuine 0x0000 status word.
+            // The device is unlocked, just too slow to reconnect, so this reads as a disconnect
+            // rather than a lock.
+            self = .disconnected
         case ZcashError.ledgerWrongApp, ZcashError.ledgerDeviceRefused(_, true):
-            // `ledgerWrongApp` and a transient device refusal (such as a locked device) both
-            // clear on their own once the user unlocks the device or opens the app, so they
-            // share copy telling the user to do exactly that.
+            // `ledgerWrongApp` (carrying a real status word) and a transient device refusal
+            // (such as a locked device) both clear on their own once the user unlocks the
+            // device or opens the app, so they share copy telling the user to do exactly that.
             self = .deviceLocked
         case ZcashError.ledgerBluetoothPairingRefused:
             self = .pairingFailed
