@@ -22,6 +22,8 @@ struct ExportViewingKeysView: View {
                 .applyScreenBackground()
                 .zashiSheet(
                     isPresented: consentBinding(isPresented: store.isConsentPresented),
+                    // The consent view pads itself, so its scroll fallback spans the whole sheet.
+                    horizontalPadding: 0,
                     backgroundColor: Design.Surfaces.bgSecondary.color(colorScheme),
                     onDismiss: { _ = withAnimation { store.send(.consentDismissed) } }
                 ) {

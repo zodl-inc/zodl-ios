@@ -7,6 +7,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-09-23
+
 ### Added
 
 - [MOB-1877] Export incoming or full viewing keys from Advanced Settings, including for Keystone wallets. Choose a key type, confirm full-key privacy warnings, then reveal its QR code or text and share it with a trusted service. Available in English and Spanish.
@@ -18,8 +20,13 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-1364] Turning on Tor from Currency Conversion now protects requests immediately, without requiring an app restart. If Tor cannot connect, requests stay protected.
+- [MOB-1697] Cancelling the payment warning after scanning a payment request now closes the confirmation cleanly and returns to the send form.
 - [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
 - [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
+- [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.
+- [MOB-1916] When a coinholder poll submission hits a brief network problem, the app now tries again on its own and shows "Reconnecting..." while it waits.
+- [MOB-1916] When a coinholder poll submission fails, the screen now says it failed instead of still reading as in progress.
 
 ## [3.14.1] - 2026-09-17
 

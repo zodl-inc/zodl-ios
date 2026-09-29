@@ -116,7 +116,7 @@ import Testing
 
     // MARK: - Retryability and message detail
 
-    @Test func aTransportFailureIsRetryable() throws {
+    @Test func aTransportFailureRerunsTheFailedBundles() throws {
         let report = try Self.makeReport(
             kind: "failures",
             failures: [VotingRoundHostDecisionTests.Failure(kind: "transport", message: "connection reset")]
@@ -124,7 +124,58 @@ import Testing
 
         #expect(
             VotingRoundHostDecision.decide(report)
-                == VotingRoundHostDecision.failed(message: "connection reset", retryable: true)
+                == VotingRoundHostDecision.rerunFailedBundles(message: "connection reset", seconds: 2)
+        )
+    }
+
+    @Test func aBusyFailureRerunsTheFailedBundles() throws {
+        let report = try Self.makeReport(
+            kind: "failures",
+            failures: [VotingRoundHostDecisionTests.Failure(kind: "busy", message: "the round is held")]
+        )
+
+        #expect(
+            VotingRoundHostDecision.decide(report)
+                == VotingRoundHostDecision.rerunFailedBundles(message: "the round is held", seconds: 2)
+        )
+    }
+
+    @Test func failuresThatAreAllTransientRerunWithTheFirstMessage() throws {
+        let report = try Self.makeReport(
+            kind: "failures",
+            failures: [
+                VotingRoundHostDecisionTests.Failure(kind: "transport", message: "connection reset"),
+                VotingRoundHostDecisionTests.Failure(kind: "busy", message: "the round is held")
+            ]
+        )
+
+        #expect(
+            VotingRoundHostDecision.decide(report)
+                == VotingRoundHostDecision.rerunFailedBundles(message: "connection reset", seconds: 2)
+        )
+    }
+
+    @Test func aProtocolFailureStillShowsTheSheet() throws {
+        let report = try Self.makeReport(
+            kind: "failures",
+            failures: [VotingRoundHostDecisionTests.Failure(kind: "protocol", message: "unexpected answer")]
+        )
+
+        #expect(
+            VotingRoundHostDecision.decide(report)
+                == VotingRoundHostDecision.failed(message: "unexpected answer", retryable: true)
+        )
+    }
+
+    @Test func aStorageFailureStillShowsTheSheet() throws {
+        let report = try Self.makeReport(
+            kind: "failures",
+            failures: [VotingRoundHostDecisionTests.Failure(kind: "storage", message: "disk full")]
+        )
+
+        #expect(
+            VotingRoundHostDecision.decide(report)
+                == VotingRoundHostDecision.failed(message: "disk full", retryable: true)
         )
     }
 

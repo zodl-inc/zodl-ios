@@ -536,10 +536,10 @@ extension VotingTestSuite {
     }
 
     /// A `plan_refreshed` drive event carrying the run's own work tally -- the
-    /// narration a run sends before it stops to ask for Keystone signatures, or
-    /// to report any other quiescence. `totalProposals` positive is what moves
-    /// `batchSubmissionStatus` to `.submitting` (`applySubmissionProgress`), so
-    /// a fixture describing that handoff needs one of these ahead of the report.
+    /// narration a run sends first, before it stops to ask for Keystone
+    /// signatures or to report any other quiescence. Any drive event moves
+    /// `batchSubmissionStatus` to `.submitting`; this one also sets the
+    /// submission's total.
     func planRefreshedEvent(completedProposals: UInt32, totalProposals: UInt32) throws -> VotingRoundDriveEvent {
         try driveEvent("""
         {
