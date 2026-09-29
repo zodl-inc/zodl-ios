@@ -33,6 +33,11 @@ enum VotingRoundHostDecision: Equatable, Sendable {
     /// planned for it. Terminal: re-running the round will not retry it.
     case chainTerminal(message: String)
     case retryLater(seconds: Double)
+    /// Every failure the run recorded is one a later run clears on its own --
+    /// the network, a busy store -- and the crate isolated each to its bundle,
+    /// so running the round again redoes only those bundles. `message` is the
+    /// first failure's, for when the re-runs run out.
+    case rerunFailedBundles(message: String, seconds: Double)
     case failed(message: String, retryable: Bool)
 
     /// The host's next move for one run's report.
@@ -84,6 +89,15 @@ enum VotingRoundHostDecision: Equatable, Sendable {
 
     private static let recoveryStalledDelay: Double = 30
     private static let passBudgetDelay: Double = 2
+    private static let failedBundlesRerunDelay: Double = 2
+
+    /// Failure kinds a later run clears on its own, the Android app's set: the
+    /// network, or a store another pass is holding. Never a wrong request or a
+    /// failed proof, which fail the same way every time.
+    private static let rerunnableFailureKinds: Set<VotingRoundStepFailureKind> = [
+        VotingRoundStepFailureKind.transport,
+        VotingRoundStepFailureKind.busy
+    ]
     private static let chainTerminalFallback = "submission ended without confirmation"
 
     /// Failure kinds worth another run: a transient environment rather than a
@@ -97,10 +111,18 @@ enum VotingRoundHostDecision: Equatable, Sendable {
     ]
 
     /// The first failure a run recorded is the one that explains the rest:
-    /// later ones are usually the same cause reported for another bundle.
+    /// later ones are usually the same cause reported for another bundle. When
+    /// every failure is one a later run clears on its own, the round is run
+    /// again instead of failing.
     private static func failedDecision(_ failures: [VotingRoundStepFailureRecord]) -> VotingRoundHostDecision {
         guard let failure = failures.first?.failure else {
             return VotingRoundHostDecision.failed(message: "voting failed", retryable: false)
+        }
+        if failures.allSatisfy({ Self.rerunnableFailureKinds.contains($0.failure.kind) }) {
+            return VotingRoundHostDecision.rerunFailedBundles(
+                message: failure.message,
+                seconds: Self.failedBundlesRerunDelay
+            )
         }
         return VotingRoundHostDecision.failed(
             message: failure.message,

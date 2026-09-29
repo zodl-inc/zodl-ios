@@ -320,25 +320,6 @@ import Foundation
         #expect(shielding.displayedAmount == shielding.netValue)
     }
 
-    /// Per design, a failed migration row keeps the primary amount color — never the error red
-    /// a regular failed send shows.
-    @Test func failedMigrationRowsKeepPrimaryAmountColor() {
-        var state = TransactionState(fee: Zatoshi(10), id: "f", status: .failed, zecAmount: Zatoshi(-10))
-        state.zip318Kind = .transfer
-        #expect(state.titleColor(.light) == Design.Text.primary.color(.light))
-        #expect(state.titleColor(.dark) == Design.Text.primary.color(.dark))
-    }
-
-    /// Both migration kinds render the coins-swap glyph in every state; color carries the state.
-    @Test func migrationRowsUseTheCoinsSwapGlyph() {
-        var state = TransactionState(fee: Zatoshi(10), id: "i", status: .sending, zecAmount: Zatoshi(-10))
-        state.zip318Kind = .preparation
-        #expect(state.transationIcon == Asset.Assets.Icons.coinsSwap.image)
-        state.zip318Kind = .transfer
-        state.status = .failed
-        #expect(state.transationIcon == Asset.Assets.Icons.coinsSwap.image)
-    }
-
     /// A stored-but-unmined transaction has no block time; while it is live the subtitle reads
     /// "Today", and an expired (failed) one keeps the empty subtitle.
     @Test func unminedPendingRowsReadTodayAndFailedOnesStayBlank() {

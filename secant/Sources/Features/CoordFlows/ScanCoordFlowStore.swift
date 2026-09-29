@@ -72,20 +72,22 @@ struct ScanCoordFlow {
     init() { }
 
     var body: some Reducer<State, Action> {
-        coordinatorReduce()
+        CombineReducers {
+            coordinatorReduce()
 
-        Scope(state: \.scanState, action: \.scan) {
-            Scan()
-        }
+            Scope(state: \.scanState, action: \.scan) {
+                Scan()
+            }
 
-        Reduce { state, action in
-            switch action {
-            case .onAppear:
-                // __LD TESTED
-                state.scanState.checkers = [.zcashAddressScanChecker, .requestZecScanChecker]
-                return .none
+            Reduce { state, action in
+                switch action {
+                case .onAppear:
+                    // __LD TESTED
+                    state.scanState.checkers = [.zcashAddressScanChecker, .requestZecScanChecker]
+                    return .none
 
-            default: return .none
+                default: return .none
+                }
             }
         }
         .forEach(\.path, action: \.path)
