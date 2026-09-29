@@ -14,7 +14,6 @@ import SwiftUI
 import ComposableArchitecture
 
 struct LedgerOpenAppView: View {
-    @Environment(\.openURL) private var openURL
     @Perception.Bindable var store: StoreOf<AddLedgerHWWallet>
 
     init(store: StoreOf<AddLedgerHWWallet>) {
@@ -78,14 +77,10 @@ struct LedgerOpenAppView: View {
     // LedgerDevicePickerView's and LedgerApproveOnDeviceView's own `issueSheetContent()`.
     @ViewBuilder private func issueSheetContent() -> some View {
         if let issue = store.issue {
+            // LedgerIssueSheetContent's primary button opens Settings itself for `.openSettings`
+            // before calling back; the reducer only re-asks the device to open the app for
+            // `.tryAgain`.
             LedgerIssueSheetContent(issue: issue, context: .connect) {
-                // Mirrors LedgerApproveOnDeviceView's own Retry: Open Settings is this view's job
-                // before `.issuePrimaryTapped` dismisses the sheet -- the reducer only re-asks the
-                // device to open the app for `.tryAgain`.
-                if store.issue?.primaryAction(in: .connect) == .openSettings,
-                   let url = URL(string: UIApplication.openSettingsURLString) {
-                    openURL(url)
-                }
                 store.send(.issuePrimaryTapped)
             }
         }
