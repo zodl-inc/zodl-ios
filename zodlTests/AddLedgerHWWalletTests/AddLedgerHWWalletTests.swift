@@ -162,6 +162,26 @@ import ComposableArchitecture
         }
     }
 
+    @MainActor @Test func aSignalStrengthUpdateKeepsTheSelection() async {
+        // An advertising Ledger is republished every time its signal strength changes, so the
+        // selection has to follow the device's identifier, not the value it had when tapped.
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -48)
+        let weaker = LedgerBluetoothDevice(id: device.id, name: "Nano X", model: .nanoX, rssi: -51)
+        var state = AddLedgerHWWallet.State()
+        state.devices = [device]
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.deviceTapped(device)) {
+            $0.selectedDevice = device
+        }
+        await store.send(.devicesUpdated([weaker])) {
+            $0.devices = [weaker]
+            $0.selectedDevice = weaker
+        }
+    }
+
     // MARK: - connectDeviceTapped
 
     @MainActor @Test func connectDeviceTappedConnectsThenPairsAndReportsThePairing() async throws {
