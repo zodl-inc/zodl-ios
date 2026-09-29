@@ -39,6 +39,45 @@ import ComposableArchitecture
         #expect(transportB.closeCount == 0)
     }
 
+    // MARK: - connect's Bluetooth-step tagging (MOB-2020, Android b013b7c2)
+
+    @Test func connectWrapsABluetoothStepFailureInLedgerBluetoothConnectFailure() async throws {
+        struct BluetoothStepFailure: Error, Equatable {}
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: BluetoothStepFailure()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        do {
+            try await session.connect(device)
+            Issue.record("expected connect to throw")
+        } catch let wrapped as LedgerBluetoothConnectFailure {
+            #expect(wrapped.underlying as? BluetoothStepFailure == BluetoothStepFailure())
+        } catch {
+            Issue.record("expected a LedgerBluetoothConnectFailure, got \(error)")
+        }
+    }
+
+    // `aFailingOpenStepClosesTheTransportAndLeavesTheSessionDisconnected` below already proves the
+    // open-Zcash-app step's own failure stays unwrapped: it asserts `throws: OpenZcashAppFailure()`
+    // exactly, which a wrap would break.
+
+    @Test func connectRethrowsACancellationAtTheBluetoothStepAsIs() async throws {
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: CancellationError()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        do {
+            try await session.connect(device)
+            Issue.record("expected connect to throw")
+        } catch is LedgerBluetoothConnectFailure {
+            Issue.record("a CancellationError must never be wrapped")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+    }
+
     @Test func pairAccountUsesTheConnectedTransportAndKeepsItOpenOnSuccess() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
@@ -696,16 +735,21 @@ private final class FakeLedgerAPDUTransport: LedgerAPDUTransport, @unchecked Sen
 }
 
 /// Vends one device through `devices()` and hands out `transportsToReturn` in call order from
-/// `connect(to:timeout:)`, regardless of which device was passed.
+/// `connect(to:timeout:)`, regardless of which device was passed. `failAt` makes one specific
+/// `connect(to:timeout:)` call (by its zero-based index) throw instead of dispensing a transport --
+/// mirroring Android's `ScriptedTransport(failAt = ...)` -- for the tests below that need
+/// `LedgerSession.connect`'s own Bluetooth step to fail.
 private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
     private let transportsToReturn: [FakeLedgerAPDUTransport]
     private let log: EventLog?
+    private let failAt: (index: Int, error: Error)?
     private let connectCallCount = LockIsolated<Int>(0)
     private let _connectCalls = LockIsolated<[(deviceID: UUID, timeout: TimeInterval)]>([])
 
-    init(transportsToReturn: [FakeLedgerAPDUTransport], log: EventLog? = nil) {
+    init(transportsToReturn: [FakeLedgerAPDUTransport], log: EventLog? = nil, failAt: (index: Int, error: Error)? = nil) {
         self.transportsToReturn = transportsToReturn
         self.log = log
+        self.failAt = failAt
     }
 
     /// Every `connect(to:timeout:)` call, in order, as the device it targeted and the timeout it
@@ -730,6 +774,11 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
             return current
         }
         _connectCalls.withValue { $0.append((device.id, timeout)) }
+
+        if let failAt, failAt.index == index {
+            log?.append("connect-\(index)-failed")
+            throw failAt.error
+        }
 
         guard transportsToReturn.indices.contains(index) else {
             fatalError("FakeLedgerScanning: no fake transport queued for connect() call #\(index)")

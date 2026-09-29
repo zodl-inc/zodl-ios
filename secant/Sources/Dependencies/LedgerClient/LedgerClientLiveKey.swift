@@ -119,7 +119,14 @@ actor LedgerSession {
             LoggerProxy.event("Ledger: connected")
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
-            throw error
+            // MOB-2020: tag a failure of THIS step -- the raw Bluetooth bond, before any command
+            // reached the device -- so LedgerIssue.init(_:in:) can tell it apart from a failure
+            // once the link is up. A cancellation is not a connection failure to report; it
+            // propagates as itself.
+            if error is CancellationError {
+                throw error
+            }
+            throw LedgerBluetoothConnectFailure(underlying: error)
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")

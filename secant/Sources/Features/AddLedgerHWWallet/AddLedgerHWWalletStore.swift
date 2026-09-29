@@ -157,7 +157,7 @@ struct AddLedgerHWWallet {
                                     await send(.devicesUpdated(batch))
                                 }
                             } catch {
-                                await send(.scanFailed(LedgerIssue(error)))
+                                await send(.scanFailed(LedgerIssue(error, in: .connect)))
                             }
                             return true
                         }
@@ -221,9 +221,9 @@ struct AddLedgerHWWallet {
                         } catch {
                             // A connect failure always leaves the transport unusable, so it is
                             // reported as needing a new connection even when
-                            // `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would say
-                            // otherwise for this same underlying error.
-                            return .failed(issue: LedgerIssue(error), connectionLost: true)
+                            // `LedgerIssue(error, in: .connect).retryNeedsNewConnection(in: .connect)`
+                            // would say otherwise for this same underlying error.
+                            return .failed(issue: LedgerIssue(error, in: .connect), connectionLost: true)
                         }
 
                         await send(.deviceConnected)
@@ -232,7 +232,7 @@ struct AddLedgerHWWallet {
                             let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
                             return .paired(pairing)
                         } catch {
-                            let issue = LedgerIssue(error)
+                            let issue = LedgerIssue(error, in: .connect)
                             return .failed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect))
                         }
                     }

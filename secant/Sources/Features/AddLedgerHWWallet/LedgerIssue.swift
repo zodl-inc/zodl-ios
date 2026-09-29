@@ -22,7 +22,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case bluetoothOff
     /// Not in Figma; draft copy.
     case bluetoothUnsupported
-    /// Figma "No Devices Found."
+    /// Figma "No Devices Found." Only ever produced by the scan itself timing out
+    /// (`AddLedgerHWWalletStore`/`LedgerSigningStore`'s `scanTimedOut`) -- never by `init(_:in:)`,
+    /// since a connect attempt's own "no such device" failure now reads as `.pairingFailed` or
+    /// `.disconnected` (MOB-2020, Android b013b7c2): `ledgerDeviceNotFound` is a connect-time
+    /// error, not something the scan (`LedgerBluetoothScanner.devices()`) itself ever throws.
     case noDevicesFound
     /// Figma "Unlock Your Ledger."
     case deviceLocked
@@ -108,9 +112,26 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     }
 
     /// Classifies a Ledger failure by its `ZcashError`/`LedgerClientError` case only, never by
-    /// message text. Never produces `.accountAlreadyAdded`; `LedgerAccountCollision` classifies
-    /// import collisions itself.
-    init(_ error: Error) {
+    /// message text, for the screen showing it in `context`. Never produces `.accountAlreadyAdded`;
+    /// `LedgerAccountCollision` classifies import collisions itself.
+    ///
+    /// MOB-2020 (Android b013b7c2): a `LedgerBluetoothConnectFailure` is unwrapped first, marking
+    /// that the failure came from `LedgerSession.connect`'s own Bluetooth step -- the phone was
+    /// still bonding to the device, before any command reached it -- rather than from the
+    /// open-Zcash-app step after the link was up, or from signing. `ledgerDeviceNotFound`,
+    /// `ledgerBluetoothConnectionFailed` and `ledgerTimeout` then read as `.pairingFailed` only
+    /// for that bonding-phase failure in `.connect`; every other case (the same three kinds once
+    /// the link is up, or any context while signing) reads as `.disconnected`, the device having
+    /// been reachable at some point. `ledgerBluetoothPairingRefused` is always `.pairingFailed`
+    /// regardless of context or wrapping -- the one refusal the OS-level Bluetooth pairing dialog
+    /// itself can raise.
+    init(_ error: Error, in context: Context) {
+        var error = error
+        var isBluetoothConnectFailure = false
+        if let wrapped = error as? LedgerBluetoothConnectFailure {
+            error = wrapped.underlying
+            isBluetoothConnectFailure = true
+        }
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
             self = .bluetoothUnauthorized
@@ -118,8 +139,6 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .bluetoothOff
         case ZcashError.ledgerBluetoothUnsupported:
             self = .bluetoothUnsupported
-        case ZcashError.ledgerDeviceNotFound:
-            self = .noDevicesFound
         case ZcashError.ledgerWrongApp(0):
             // Status word 0 is the SDK's sentinel for a timed-out app switch -- neither
             // `LedgerErrors.swift`'s FFI fallback nor `LedgerZcashApp`'s app-switch poll ever
@@ -140,11 +159,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .openAppRejected
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
+        case ZcashError.ledgerDeviceNotFound, ZcashError.ledgerBluetoothConnectionFailed, ZcashError.ledgerTimeout:
+            self = (isBluetoothConnectFailure && context == .connect) ? .pairingFailed : .disconnected
         case ZcashError.ledgerBluetoothDisconnected,
-            ZcashError.ledgerTimeout,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,
-            ZcashError.ledgerBluetoothConnectionFailed,
             LedgerClientError.notConnected:
             self = .disconnected
         case ZcashError.ledgerAppTooOld:

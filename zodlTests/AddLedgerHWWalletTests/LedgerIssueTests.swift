@@ -14,44 +14,66 @@ import Foundation
 @Suite struct LedgerIssueTests {
     private struct UnrelatedError: Error {}
 
-    // MARK: - init(_:)
+    // MARK: - init(_:in:)
 
-    // `ZcashError` is not `Sendable`, so this drives a local (Error, LedgerIssue) table with a
-    // plain loop instead of `@Test(arguments:)`.
+    // `ZcashError` is not `Sendable`, so this drives a local table with a plain loop instead of
+    // `@Test(arguments:)`. MOB-2020 (Android b013b7c2): each row is checked in three shapes --
+    // wrapped in `LedgerBluetoothConnectFailure` while still bonding in `.connect` ("pairing"),
+    // unwrapped once the link is up in `.connect` ("connect"), and unwrapped in `.sign` ("sign") --
+    // mirroring Android's `LedgerIssueMapperTest` `pairing`/`enrollment`/`signing` columns.
     @Test func classifiesEveryLedgerErrorCase() {
-        let cases: [(Error, LedgerIssue)] = [
-            (ZcashError.ledgerBluetoothUnauthorized, .bluetoothUnauthorized),
-            (ZcashError.ledgerBluetoothPoweredOff, .bluetoothOff),
-            (ZcashError.ledgerBluetoothUnsupported, .bluetoothUnsupported),
-            (ZcashError.ledgerDeviceNotFound, .noDevicesFound),
-            (ZcashError.ledgerWrongApp(0), .disconnected),
-            (ZcashError.ledgerWrongApp(0x6E00), .deviceLocked),
-            (ZcashError.ledgerWrongApp(0x6E01), .deviceLocked),
-            (ZcashError.ledgerDeviceRefused(0x6985, true), .deviceLocked),
-            (ZcashError.ledgerBluetoothPairingRefused, .pairingFailed),
-            (ZcashError.ledgerAppNotInstalled, .appNotInstalled),
-            (ZcashError.ledgerAppOpenRejected, .openAppRejected),
-            (ZcashError.ledgerUserRejected, .requestRejected),
-            (ZcashError.ledgerBluetoothDisconnected, .disconnected),
-            (ZcashError.ledgerTimeout, .disconnected),
-            (ZcashError.ledgerTransportClosed, .disconnected),
-            (ZcashError.ledgerTransportFailed(UnrelatedError()), .disconnected),
-            (ZcashError.ledgerBluetoothConnectionFailed(nil), .disconnected),
-            (LedgerClientError.notConnected, .disconnected),
-            (ZcashError.ledgerAppTooOld("3.5.0"), .appTooOld),
-            (ZcashError.ledgerDerivationBudgetExhausted, .derivationBudgetExhausted),
-            (ZcashError.ledgerDeviceMismatch, .deviceMismatch),
-            (ZcashError.ledgerTransactionNotSignable("some SDK reason"), .transactionNotSignable),
-            (ZcashError.ledgerCapsMismatch("some SDK reason"), .transactionNotSignable),
-            (ZcashError.ledgerDeviceRefused(0x6985, false), .unknown),
-            (ZcashError.ledgerMalformedReply("bad reply"), .unknown),
-            (ZcashError.ledgerInvalidInput("bad input"), .unknown),
-            (ZcashError.ledgerInternal("internal"), .unknown),
-            (URLError(.badURL), .unknown)
+        typealias Row = (name: String, error: Error, pairing: LedgerIssue, connect: LedgerIssue, sign: LedgerIssue)
+
+        // Every column maps this error alike -- the common case, unaffected by the wrap/phase
+        // split below.
+        func every(_ name: String, _ error: Error, _ issue: LedgerIssue) -> Row {
+            (name, error, issue, issue, issue)
+        }
+
+        let rows: [Row] = [
+            every("bluetoothUnauthorized", ZcashError.ledgerBluetoothUnauthorized, .bluetoothUnauthorized),
+            every("bluetoothPoweredOff", ZcashError.ledgerBluetoothPoweredOff, .bluetoothOff),
+            every("bluetoothUnsupported", ZcashError.ledgerBluetoothUnsupported, .bluetoothUnsupported),
+            // `ledgerDeviceNotFound`, `ledgerTimeout` and `ledgerBluetoothConnectionFailed` now
+            // read as `.pairingFailed` only while still bonding; once the link is up, or while
+            // signing, the device WAS reachable, so they read as `.disconnected` instead --
+            // `ledgerDeviceNotFound` no longer means "no devices" at all (see its doc comment).
+            ("deviceNotFound", ZcashError.ledgerDeviceNotFound, .pairingFailed, .disconnected, .disconnected),
+            every("wrongAppTimedOut", ZcashError.ledgerWrongApp(0), .disconnected),
+            every("wrongAppWithStatusWordA", ZcashError.ledgerWrongApp(0x6E00), .deviceLocked),
+            every("wrongAppWithStatusWordB", ZcashError.ledgerWrongApp(0x6E01), .deviceLocked),
+            every("deviceRefusedTransient", ZcashError.ledgerDeviceRefused(0x6985, true), .deviceLocked),
+            // Always `.pairingFailed`, wrapped or not -- the one refusal the OS-level Bluetooth
+            // pairing dialog itself raises.
+            every("bluetoothPairingRefused", ZcashError.ledgerBluetoothPairingRefused, .pairingFailed),
+            every("appNotInstalled", ZcashError.ledgerAppNotInstalled, .appNotInstalled),
+            every("appOpenRejected", ZcashError.ledgerAppOpenRejected, .openAppRejected),
+            every("userRejected", ZcashError.ledgerUserRejected, .requestRejected),
+            every("bluetoothDisconnected", ZcashError.ledgerBluetoothDisconnected, .disconnected),
+            ("timeout", ZcashError.ledgerTimeout, .pairingFailed, .disconnected, .disconnected),
+            every("transportClosed", ZcashError.ledgerTransportClosed, .disconnected),
+            every("transportFailed", ZcashError.ledgerTransportFailed(UnrelatedError()), .disconnected),
+            ("bluetoothConnectionFailed", ZcashError.ledgerBluetoothConnectionFailed(nil), .pairingFailed, .disconnected, .disconnected),
+            every("notConnected", LedgerClientError.notConnected, .disconnected),
+            every("appTooOld", ZcashError.ledgerAppTooOld("3.5.0"), .appTooOld),
+            every("derivationBudgetExhausted", ZcashError.ledgerDerivationBudgetExhausted, .derivationBudgetExhausted),
+            every("deviceMismatch", ZcashError.ledgerDeviceMismatch, .deviceMismatch),
+            every("transactionNotSignable", ZcashError.ledgerTransactionNotSignable("some SDK reason"), .transactionNotSignable),
+            every("capsMismatch", ZcashError.ledgerCapsMismatch("some SDK reason"), .transactionNotSignable),
+            every("deviceRefusedPermanent", ZcashError.ledgerDeviceRefused(0x6985, false), .unknown),
+            every("malformedReply", ZcashError.ledgerMalformedReply("bad reply"), .unknown),
+            every("invalidInput", ZcashError.ledgerInvalidInput("bad input"), .unknown),
+            every("internal", ZcashError.ledgerInternal("internal"), .unknown),
+            every("nonLedgerError", URLError(.badURL), .unknown)
         ]
 
-        for (error, expected) in cases {
-            #expect(LedgerIssue(error) == expected, "\(error) should classify as \(expected)")
+        for row in rows {
+            let pairing = LedgerIssue(LedgerBluetoothConnectFailure(underlying: row.error), in: .connect)
+            let connect = LedgerIssue(row.error, in: .connect)
+            let sign = LedgerIssue(row.error, in: .sign)
+            #expect(pairing == row.pairing, "\(row.name) while still bonding (.connect, wrapped)")
+            #expect(connect == row.connect, "\(row.name) once the link is up (.connect, unwrapped)")
+            #expect(sign == row.sign, "\(row.name) while signing (.sign)")
         }
     }
 

@@ -137,7 +137,7 @@ struct LedgerSigning {
                                     await send(.devicesUpdated(batch))
                                 }
                             } catch {
-                                await send(.scanFailed(LedgerIssue(error)))
+                                await send(.scanFailed(LedgerIssue(error, in: .sign)))
                             }
                             return true
                         }
@@ -237,7 +237,7 @@ struct LedgerSigning {
                                 try await ledgerClient.connect(device)
                                 return .connected
                             } catch {
-                                return .failed(LedgerIssue(error))
+                                return .failed(LedgerIssue(error, in: .sign))
                             }
                         }
                         switch outcome {
@@ -269,8 +269,8 @@ struct LedgerSigning {
                 guard state.phase == .connecting else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
                 // connection-lost regardless of what
-                // `LedgerIssue(error).retryNeedsNewConnection(in: .sign)` would classify the
-                // underlying error as -- same rule AddLedgerHWWallet's own `connectDeviceTapped`
+                // `LedgerIssue(error, in: .sign).retryNeedsNewConnection(in: .sign)` would classify
+                // the underlying error as -- same rule AddLedgerHWWallet's own `connectDeviceTapped`
                 // follows.
                 state.phase = .failed
                 state.issue = issue
@@ -312,7 +312,7 @@ struct LedgerSigning {
                             }
                         }
                     } catch {
-                        let issue = LedgerIssue(error)
+                        let issue = LedgerIssue(error, in: .sign)
                         await send(.signingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .sign)))
                     }
                 }
