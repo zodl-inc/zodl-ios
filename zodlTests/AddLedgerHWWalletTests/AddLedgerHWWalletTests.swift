@@ -245,8 +245,8 @@ import ComposableArchitecture
         } withDependencies: {
             // A device-refusal-shaped error thrown from `connect` (rather than `pairAccount`)
             // proves a connect failure is always reported as needing a new connection, regardless
-            // of how `LedgerIssue(error).retryNeedsNewConnection` would otherwise classify this
-            // same underlying error.
+            // of how `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would otherwise
+            // classify this same underlying error.
             $0.ledgerClient.connect = { _ in throw ZcashError.ledgerUserRejected }
         }
 

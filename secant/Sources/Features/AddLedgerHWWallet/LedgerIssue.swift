@@ -270,20 +270,25 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         }
     }
 
-    /// `true` when a retry must scan and connect again, rather than repeat the request on the
-    /// connection that is still open. A device refusal (`.deviceLocked`, `.requestRejected`,
-    /// `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the transport usable for
-    /// another attempt; `.accountAlreadyAdded` and `.notPaired` need no retry at all. Everything
-    /// else needs a fresh scan and connection: the transport is gone, or a different or restarted
-    /// device must be connected (`.deviceMismatch`, `.appTooOld` after the update, and
-    /// `.unknown`, where a clean reconnect is the safe retry).
-    var retryNeedsNewConnection: Bool {
+    /// `true` when a retry in `context` must scan and connect again, rather than repeat the
+    /// request on the connection that is still open. A device refusal (`.deviceLocked`,
+    /// `.requestRejected`, `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the
+    /// transport usable for another attempt in `.connect`, where every retry reconnects anyway
+    /// once a device is selected; `.accountAlreadyAdded` and `.notPaired` need no retry at all.
+    /// While signing, though, `.deviceLocked` and `.derivationBudgetExhausted` need a fresh
+    /// connection too: the device has to be unlocked, switched to the Zcash app, or have that app
+    /// restarted, and only a fresh `LedgerSession.connect` runs the open-Zcash-app step again.
+    /// Everything else needs a fresh scan and connection in both contexts: the transport is gone,
+    /// or a different or restarted device must be connected (`.deviceMismatch`, `.appTooOld`
+    /// after the update, and `.unknown`, where a clean reconnect is the safe retry).
+    func retryNeedsNewConnection(in context: Context) -> Bool {
         switch self {
         case .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
             .pairingFailed, .appNotInstalled, .openAppRejected, .disconnected, .appTooOld, .deviceMismatch, .unknown:
             return true
-        case .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
-            .transactionNotSignable:
+        case .deviceLocked, .derivationBudgetExhausted:
+            return context == .sign
+        case .requestRejected, .accountAlreadyAdded, .notPaired, .transactionNotSignable:
             return false
         }
     }

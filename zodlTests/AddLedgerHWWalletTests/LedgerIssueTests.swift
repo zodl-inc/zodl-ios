@@ -3,7 +3,7 @@
 //  zodlTests
 //
 //  Covers LedgerIssue's classification of a Ledger failure (init(_:)), its per-context copy and
-//  primary action, and retryNeedsNewConnection (Features/AddLedgerHWWallet/LedgerIssue.swift).
+//  primary action, and retryNeedsNewConnection(in:) (Features/AddLedgerHWWallet/LedgerIssue.swift).
 //
 
 import Testing
@@ -185,22 +185,36 @@ import Foundation
         }
     }
 
+    // MOB-2020: `.deviceLocked` and `.derivationBudgetExhausted` are the only rows where the two
+    // contexts differ -- while signing, a fresh connection re-opens the Zcash app; while
+    // connecting, every retry reconnects anyway once a device is selected, so the same-link
+    // answer from before this commit still holds there.
     @Test func retryNeedsNewConnectionMatchesTheTable() {
-        let needsNewConnection: [LedgerIssue] = [
-            .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
-            .pairingFailed, .appNotInstalled, .openAppRejected, .disconnected, .appTooOld, .deviceMismatch, .unknown
-        ]
-        let reusesConnection: [LedgerIssue] = [
-            .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
-            .transactionNotSignable
+        typealias Row = (issue: LedgerIssue, connect: Bool, sign: Bool)
+        let table: [Row] = [
+            (.bluetoothUnauthorized, true, true),
+            (.bluetoothOff, true, true),
+            (.bluetoothUnsupported, true, true),
+            (.noDevicesFound, true, true),
+            (.deviceLocked, false, true),
+            (.pairingFailed, true, true),
+            (.appNotInstalled, true, true),
+            (.openAppRejected, true, true),
+            (.requestRejected, false, false),
+            (.disconnected, true, true),
+            (.accountAlreadyAdded, false, false),
+            (.appTooOld, true, true),
+            (.derivationBudgetExhausted, false, true),
+            (.deviceMismatch, true, true),
+            (.notPaired, false, false),
+            (.transactionNotSignable, false, false),
+            (.unknown, true, true)
         ]
 
-        #expect(needsNewConnection.count + reusesConnection.count == LedgerIssue.allCases.count)
-        for issue in needsNewConnection {
-            #expect(issue.retryNeedsNewConnection, "\(issue) should need a new connection")
-        }
-        for issue in reusesConnection {
-            #expect(!issue.retryNeedsNewConnection, "\(issue) should reuse the open connection")
+        #expect(table.count == LedgerIssue.allCases.count)
+        for row in table {
+            #expect(row.issue.retryNeedsNewConnection(in: .connect) == row.connect, "\(row.issue) .connect")
+            #expect(row.issue.retryNeedsNewConnection(in: .sign) == row.sign, "\(row.issue) .sign")
         }
     }
 }

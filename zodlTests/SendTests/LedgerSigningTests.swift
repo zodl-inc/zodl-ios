@@ -247,8 +247,15 @@ import ComposableArchitecture
         #expect(signPCZTCallCount.value == 2)
     }
 
-    @MainActor @Test func aLockedLedgerRetriesOnTheOpenConnection() async throws {
+    // MOB-2020: before this commit, `.deviceLocked` while signing reused `isConnectionLost ==
+    // false` (same as `.connect`) and Try again went straight back to signing on the old link --
+    // never calling `ledgerClient.connect` again, so a device that needed the Zcash app reopened
+    // could never get there. `retryNeedsNewConnection(in: .sign)` now says otherwise for
+    // `.deviceLocked`, so Try again rescans and reconnects instead.
+    @MainActor @Test func aLockedLedgerWhileSigningReconnectsOnTryAgain() async throws {
+        let device = Self.device(name: "Nano X")
         let request = try Self.signRequest()
+        let connectCallCount = LockIsolated(0)
         let signPCZTCallCount = LockIsolated(0)
         var state = LedgerSigning.State()
         state.phase = .connected
@@ -257,7 +264,15 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             LedgerSigning()
         } withDependencies: {
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.yield([device])
+                    continuation.finish()
+                }
+            }
             $0.ledgerClient.signPCZT = { _, _, _ in
                 signPCZTCallCount.withValue { $0 += 1 }
                 return AsyncThrowingStream { continuation in
@@ -271,26 +286,42 @@ import ComposableArchitecture
         await store.send(.startSigningIfReady) {
             $0.phase = .signing(.identifyingDevice)
         }
-        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: false)) {
+        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: true)) {
             $0.phase = .failed
             $0.issue = .deviceLocked
-            $0.isConnectionLost = false
+            $0.isConnectionLost = true
         }
 
-        // Try again resumes signing on the still-open connection -- no rescan.
+        // Try again now rescans -- a fresh connection reopens the Zcash app -- instead of
+        // retrying on the held transport.
         await store.send(.tryAgainTapped) {
-            $0.phase = .connected
+            $0.devices = []
+            $0.selectedDevice = nil
+            $0.phase = .scanning
+        }
+        await store.receive(\.startScanning) {
             $0.issue = nil
+        }
+        await store.receive(\.devicesUpdated) {
+            $0.devices = [device]
+            $0.selectedDevice = device
+        }
+        await store.receive(\.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
         }
         await store.receive(\.startSigningIfReady) {
             $0.phase = .signing(.identifyingDevice)
         }
-        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: false)) {
+        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: true)) {
             $0.phase = .failed
             $0.issue = .deviceLocked
         }
         await store.finish()
 
+        #expect(connectCallCount.value == 1)
         #expect(signPCZTCallCount.value == 2)
     }
 

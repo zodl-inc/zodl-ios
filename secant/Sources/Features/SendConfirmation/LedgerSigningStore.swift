@@ -207,9 +207,10 @@ struct LedgerSigning {
                 // result must not overwrite a ceremony that already failed.
                 guard state.phase == .connecting else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
-                // connection-lost regardless of what `LedgerIssue(error).retryNeedsNewConnection`
-                // would classify the underlying error as -- same rule AddLedgerHWWallet's own
-                // `connectDeviceTapped` follows.
+                // connection-lost regardless of what
+                // `LedgerIssue(error).retryNeedsNewConnection(in: .sign)` would classify the
+                // underlying error as -- same rule AddLedgerHWWallet's own `connectDeviceTapped`
+                // follows.
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = true
@@ -245,7 +246,7 @@ struct LedgerSigning {
                         }
                     } catch {
                         let issue = LedgerIssue(error)
-                        await send(.signingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection))
+                        await send(.signingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .sign)))
                     }
                 }
                 .cancellable(id: CancelId.sign, cancelInFlight: true)

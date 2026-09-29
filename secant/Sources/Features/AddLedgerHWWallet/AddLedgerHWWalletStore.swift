@@ -213,8 +213,8 @@ struct AddLedgerHWWallet {
                     } catch {
                         // A connect failure always leaves the transport unusable, so it is
                         // reported as needing a new connection even when
-                        // `LedgerIssue(error).retryNeedsNewConnection` would say otherwise for
-                        // this same underlying error.
+                        // `LedgerIssue(error).retryNeedsNewConnection(in: .connect)` would say
+                        // otherwise for this same underlying error.
                         await send(.pairingFailed(issue: LedgerIssue(error), connectionLost: true))
                         return
                     }
@@ -226,7 +226,7 @@ struct AddLedgerHWWallet {
                         await send(.pairingSucceeded(pairing))
                     } catch {
                         let issue = LedgerIssue(error)
-                        await send(.pairingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection))
+                        await send(.pairingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect)))
                     }
                 }
 
