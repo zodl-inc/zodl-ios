@@ -11,6 +11,9 @@ extension LedgerClient {
     static let noOp = Self(
         scanDevices: { AsyncThrowingStream { $0.finish() } },
         connect: { _ in },
+        bond: { _ in false },
+        openZcashApp: { _ in },
+        pairDevice: { _, _ in throw LedgerClientError.notConnected },
         pairAccount: { _ in throw LedgerClientError.notConnected },
         disconnect: { },
         signPCZT: { _, _, _ in AsyncThrowingStream { $0.finish(throwing: LedgerClientError.notConnected) } }

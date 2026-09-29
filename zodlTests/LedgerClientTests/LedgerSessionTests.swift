@@ -586,6 +586,286 @@ import ComposableArchitecture
 
         #expect(transport.exchangeTimeouts.first == LedgerDevice.defaultPairingReadTimeout)
     }
+
+    // MARK: - bond (MOB-2020)
+
+    @Test func bondReturnsTrueWhenTheDeviceAlreadyRunsTheZcashApp() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let session = makeSession(
+            makeScanner: { scanner },
+            currentApp: { _ in LedgerRunningApp(name: "Zcash", version: "3.9.3") }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let isZcashAppRunning = try await session.bond(device)
+
+        #expect(isZcashAppRunning)
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func bondReturnsFalseWhenAnotherAppIsRunning() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let session = makeSession(
+            makeScanner: { scanner },
+            currentApp: { _ in LedgerRunningApp(name: "BOLOS", version: "1.0") }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let isZcashAppRunning = try await session.bond(device)
+
+        #expect(!isZcashAppRunning)
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func bondRethrowsALockedRefusalAndStillClosesTheTransport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let locked = ZcashError.ledgerDeviceRefused(0x5515, true)
+        let session = makeSession(
+            makeScanner: { scanner },
+            currentApp: { _ in throw locked }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: locked) {
+            try await session.bond(device)
+        }
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func bondTurnsAnyOtherAppQueryFailureIntoFalseAndStillClosesTheTransport() async throws {
+        struct SomeQueryFailure: Error {}
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let session = makeSession(
+            makeScanner: { scanner },
+            currentApp: { _ in throw SomeQueryFailure() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let isZcashAppRunning = try await session.bond(device)
+
+        #expect(!isZcashAppRunning)
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func bondsConnectFailureThrowsAsIsNeverWrapped() async throws {
+        struct BondConnectFailure: Error, Equatable {}
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: BondConnectFailure()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: BondConnectFailure()) {
+            try await session.bond(device)
+        }
+    }
+
+    @Test func bondClosesItsTransportEvenWhenCancelled() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let started = LockIsolated<Bool>(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            currentApp: { _ in
+                started.withValue { $0 = true }
+                while true {
+                    try await Task.sleep(nanoseconds: 5_000_000)
+                }
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let task = Task {
+            try? await session.bond(device)
+        }
+        try await eventually { started.value }
+        task.cancel()
+        _ = await task.value
+
+        try await eventually { transport.closeCount == 1 }
+    }
+
+    // MARK: - openZcashApp operation (MOB-2020)
+    //
+    // Distinct from the "openZcashApp" section above, which is `connect(_:)`'s own use of the
+    // same underlying open step -- these exercise the new standalone `LedgerClient.openZcashApp`
+    // operation, `LedgerSession.openZcashApp(_:)`.
+
+    @Test func openZcashAppOperationClosesTheTransportItOpenedOnSuccess() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        try await session.openZcashApp(device)
+
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func openZcashAppOperationClosesBothTransportsWhenTheOpenStepReconnects() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reopened = FakeLedgerAPDUTransport(name: "reopened")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reopened])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { transport, _ in
+                #expect((transport as? FakeLedgerAPDUTransport) === connected)
+                return reopened
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.openZcashApp(device)
+
+        #expect(connected.closeCount == 1)
+        #expect(reopened.closeCount == 1)
+    }
+
+    @Test func openZcashAppOperationClosesTheFirstTransportOnFailure() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, _ in throw OpenZcashAppFailure() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: OpenZcashAppFailure()) {
+            try await session.openZcashApp(device)
+        }
+        #expect(connected.closeCount == 1)
+    }
+
+    @Test func openZcashAppOperationsConnectFailureThrowsAsIsNeverWrapped() async throws {
+        struct OpenAppConnectFailure: Error, Equatable {}
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: OpenAppConnectFailure()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: OpenAppConnectFailure()) {
+            try await session.openZcashApp(device)
+        }
+    }
+
+    @Test func openZcashAppOperationUsesSixtySecondsAndItsReconnectUsesTenOnTheSameDevice() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, reconnect in try await reconnect() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.openZcashApp(device)
+
+        #expect(scanner.connectCalls.map(\.timeout) == [60, 10])
+        #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
+    }
+
+    // MARK: - pairDevice (MOB-2020)
+
+    @Test func pairDeviceReturnsThePairingAndClosesEveryTransportItHeld() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let paired = FakeLedgerAPDUTransport(name: "paired")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let fixture = try makePairingFixture()
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, zip32AccountIndex, _ in
+                #expect(zip32AccountIndex == Zip32AccountIndex(0))
+                #expect((receivedTransport as? FakeLedgerAPDUTransport) === opened)
+                return (.success(fixture), paired)
+            },
+            openZcashApp: { transport, _ in
+                #expect((transport as? FakeLedgerAPDUTransport) === connected)
+                return opened
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let pairing = try await session.pairDevice(device, Zip32AccountIndex(0))
+
+        #expect(pairing == fixture)
+        #expect(connected.closeCount == 1)
+        #expect(opened.closeCount == 1)
+        #expect(paired.closeCount == 1)
+    }
+
+    @Test func pairDeviceClosesEveryTransportItHeldOnAPairingFailure() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let failedLive = FakeLedgerAPDUTransport(name: "failedLive")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { _, _, _ in (.failure(PairingFailure()), failedLive) },
+            openZcashApp: { _, _ in opened }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: PairingFailure()) {
+            try await session.pairDevice(device, Zip32AccountIndex(0))
+        }
+
+        #expect(connected.closeCount == 1)
+        #expect(opened.closeCount == 1)
+        #expect(failedLive.closeCount == 1)
+    }
+
+    @Test func pairDeviceClosesTheFirstTransportWhenTheOpenStepFails() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, _ in throw OpenZcashAppFailure() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: OpenZcashAppFailure()) {
+            try await session.pairDevice(device, Zip32AccountIndex(0))
+        }
+        #expect(connected.closeCount == 1)
+    }
+
+    @Test func pairDevicesConnectFailureThrowsAsIsNeverWrapped() async throws {
+        struct PairDeviceConnectFailure: Error, Equatable {}
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: PairDeviceConnectFailure()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: PairDeviceConnectFailure()) {
+            try await session.pairDevice(device, Zip32AccountIndex(0))
+        }
+    }
+
+    @Test func pairDeviceReconnectsToTheSameDeviceWithTheRightTimeouts() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let appReconnected = FakeLedgerAPDUTransport(name: "appReconnected")
+        let pairReconnected = FakeLedgerAPDUTransport(name: "pairReconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, appReconnected, pairReconnected])
+        let fixture = try makePairingFixture()
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                return (.success(fixture), fresh)
+            },
+            openZcashApp: { _, reconnect in try await reconnect() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let pairing = try await session.pairDevice(device, Zip32AccountIndex(0))
+
+        #expect(pairing == fixture)
+        #expect(scanner.connectCalls.map(\.timeout) == [60, 10, 60])
+        #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
+    }
 }
 
 // MARK: - Fixture
@@ -607,6 +887,7 @@ private struct PairingFailure: Error, Equatable {}
 private struct PairShouldNotBeCalled: Error {}
 private struct SignShouldNotBeCalled: Error {}
 private struct OpenZcashAppFailure: Error, Equatable {}
+private struct CurrentAppShouldNotBeCalled: Error {}
 
 /// A fixed, valid `AccountUUID` for tests that never inspect its bytes.
 private func makeAccountUUID() -> AccountUUID {
@@ -640,9 +921,14 @@ private func makeSession(
     },
     openZcashApp: @escaping @Sendable (
         any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
-    ) async throws -> any LedgerAPDUTransport = { transport, _ in transport }
+    ) async throws -> any LedgerAPDUTransport = { transport, _ in transport },
+    // `bond`'s own seam onto `LedgerZcashApp.currentApp` -- defaults to failing the test if
+    // reached, unless a test overrides it, same as `pair` and `sign` above.
+    currentApp: @escaping @Sendable (any LedgerAPDUTransport) async throws -> LedgerRunningApp = { _ in
+        throw CurrentAppShouldNotBeCalled()
+    }
 ) -> LedgerSession {
-    LedgerSession(makeScanner: makeScanner, pair: pair, sign: sign, openZcashApp: openZcashApp)
+    LedgerSession(makeScanner: makeScanner, pair: pair, sign: sign, openZcashApp: openZcashApp, currentApp: currentApp)
 }
 
 // MARK: - Fakes
