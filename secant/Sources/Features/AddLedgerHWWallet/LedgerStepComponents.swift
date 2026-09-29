@@ -103,7 +103,8 @@ private struct LedgerStepChecklistRow: View {
     }
 }
 
-/// Background `Design.Surfaces.bgSecondary`, corner radius 16, padding 16, 16 pt between rows.
+/// Background `Design.Surfaces.bgSecondary`, corner radius 16, padding 16, 16 pt between rows;
+/// always the full content width, however short its rows are.
 struct LedgerStepChecklistCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -115,6 +116,7 @@ struct LedgerStepChecklistCard: View {
                 LedgerStepChecklistRow(number: index + 1, text: item)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
@@ -172,10 +174,11 @@ struct LedgerStepOverviewList: View {
 
 // MARK: - Info callout
 
-/// Background `Design.Utility.HyperBlue._50`, corner radius 16, padding 16; a leading 20 pt
-/// `alertCircle` tinted `HyperBlue._600`; 12 pt gap to a semibold 14/20 title and, 4 pt below, a
-/// regular 12/16 message, both `HyperBlue._600`. Deliberately not `ZashiInfoCallout`, whose values
-/// don't match this Figma callout.
+/// Background `Design.Utility.HyperBlue._50`, corner radius 16, padding 16, always the full
+/// content width; a leading 20 pt outlined `alertCircleOutline` (Figma's `alert-circle`) tinted
+/// `HyperBlue._600`; 12 pt gap to a semibold 14/20 title and, 4 pt below, a regular 12/16 message,
+/// both `HyperBlue._600`. Deliberately not `ZashiInfoCallout`, whose values don't match this Figma
+/// callout.
 struct LedgerStepCallout: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -184,7 +187,7 @@ struct LedgerStepCallout: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Asset.Assets.Icons.alertCircle.image
+            Asset.Assets.Icons.alertCircleOutline.image
                 .zImage(size: 20, style: Design.Utility.HyperBlue._600)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -196,6 +199,7 @@ struct LedgerStepCallout: View {
             }
             .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
