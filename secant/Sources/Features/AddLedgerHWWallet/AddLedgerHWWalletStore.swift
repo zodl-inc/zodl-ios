@@ -121,7 +121,6 @@ struct AddLedgerHWWallet {
         /// carries whether the device already runs the Zcash app, which
         /// ConnectHWWalletCoordFlowCoordinator reads to decide what it pushes next.
         case deviceBonded(isZcashAppRunning: Bool)
-        case deviceConnected
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
@@ -359,30 +358,24 @@ struct AddLedgerHWWallet {
                 return .none
 
             case .connectDeviceTapped:
+                // MOB-2020 (Android aac01e65, 4f7b031e, e838559b): the approve element's own
+                // Connect/auto-start -- pairs on a fresh connection of its own (`pairDevice`)
+                // instead of the old connect()-then-pairAccount() pair. One atomic call, so
+                // there is no separate "connected" checkpoint to report mid-flight any more.
                 guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
                     return .none
                 }
-                state.isConnecting = true
+                state.isPairing = true
                 state.issue = nil
                 state.isIssueSheetPresented = false
                 return .run { send in
                     let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectAndPairOutcome in
                         do {
-                            try await ledgerClient.connect(device)
-                        } catch {
-                            // A connect failure always leaves the transport unusable, so it is
-                            // reported as needing a new connection even when
-                            // `LedgerIssue(error, in: .connect).retryNeedsNewConnection(in: .connect)`
-                            // would say otherwise for this same underlying error.
-                            return .failed(issue: LedgerIssue(error, in: .connect), connectionLost: true)
-                        }
-
-                        await send(.deviceConnected)
-
-                        do {
-                            let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
+                            let pairing = try await ledgerClient.pairDevice(device, Zip32AccountIndex(0))
                             return .paired(pairing)
                         } catch {
+                            // MOB-2020: classified as setup, not bonding -- the picker's own
+                            // `bond` already handled that phase before this screen ever runs.
                             let issue = LedgerIssue(error, in: .connect)
                             return .failed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect))
                         }
@@ -393,11 +386,10 @@ struct AddLedgerHWWallet {
                     case let .completed(.failed(issue, connectionLost)):
                         await send(.pairingFailed(issue: issue, connectionLost: connectionLost))
                     case .timedOut:
-                        // MOB-2020: the user's approval on the device must not keep enrollment
-                        // waiting forever -- the race above already cancelled the connect/pair
-                        // work, so only the cleanup is left: close the transport and report it
-                        // the same way any other lost connection is.
-                        await ledgerClient.disconnect()
+                        // MOB-2020: unlike the old connect()+pairAccount() pair, ledgerClient.pairDevice
+                        // closes every transport it held on every exit, cancellation included
+                        // (LedgerSession.pairDevice's own `defer`) -- nothing here needs an
+                        // explicit disconnect.
                         await send(.pairingFailed(issue: .disconnected, connectionLost: true))
                     }
                 }
@@ -405,14 +397,6 @@ struct AddLedgerHWWallet {
                 // this same effect (`CancelId.connectAndPair`) -- today it was not cancellable,
                 // so leaving mid-pairing left it running to completion in the background.
                 .cancellable(id: CancelId.connectAndPair, cancelInFlight: true)
-
-            case .deviceConnected:
-                state.isConnecting = false
-                state.isPairing = true
-                // The scan is cancelled below; isScanning must say so too, since nothing else
-                // flips it back once the effect it belonged to is torn down.
-                state.isScanning = false
-                return .cancel(id: CancelId.scan)
 
             case let .pairingSucceeded(pairing):
                 state.isPairing = false

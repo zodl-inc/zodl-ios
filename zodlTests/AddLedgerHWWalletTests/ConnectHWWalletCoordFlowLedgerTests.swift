@@ -128,11 +128,13 @@ import ComposableArchitecture
         var initialState = ConnectHWWalletCoordFlow.State()
         initialState.path.append(.ledgerDevicePicker(devicePickerState))
         let fixture = try Self.makePairingFixture()
-        let connectedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let pairedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
         let store = makeStore(initialState: initialState) {
             $0.continuousClock = SignalledClock()
-            $0.ledgerClient.connect = { connectedDevice in connectedDevices.withValue { $0.append(connectedDevice) } }
-            $0.ledgerClient.pairAccount = { _ in fixture }
+            $0.ledgerClient.pairDevice = { pairedDevice, _ in
+                pairedDevices.withValue { $0.append(pairedDevice) }
+                return fixture
+            }
         }
         let id = store.state.path.ids.first!
 
@@ -153,12 +155,12 @@ import ComposableArchitecture
         }
 
         // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
-        // `ledgerClient.connect` to have been reached instead of asserting synchronously.
+        // `ledgerClient.pairDevice` to have been reached instead of asserting synchronously.
         for _ in 0..<50 {
-            if !connectedDevices.value.isEmpty { break }
+            if !pairedDevices.value.isEmpty { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(connectedDevices.value == [device])
+        #expect(pairedDevices.value == [device])
     }
 
     // MARK: - Ledger Open the Zcash App (step 3, MOB-2020, Android 8cf16518/efe21904)
@@ -173,11 +175,13 @@ import ComposableArchitecture
         initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
         initialState.path.append(.ledgerOpenApp(openAppState))
         let fixture = try Self.makePairingFixture()
-        let connectedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let pairedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
         let store = makeStore(initialState: initialState) {
             $0.continuousClock = SignalledClock()
-            $0.ledgerClient.connect = { connectedDevice in connectedDevices.withValue { $0.append(connectedDevice) } }
-            $0.ledgerClient.pairAccount = { _ in fixture }
+            $0.ledgerClient.pairDevice = { pairedDevice, _ in
+                pairedDevices.withValue { $0.append(pairedDevice) }
+                return fixture
+            }
         }
         let id = store.state.path.ids.last!
 
@@ -193,12 +197,12 @@ import ComposableArchitecture
         }
 
         // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
-        // `ledgerClient.connect` to have been reached instead of asserting synchronously.
+        // `ledgerClient.pairDevice` to have been reached instead of asserting synchronously.
         for _ in 0..<50 {
-            if !connectedDevices.value.isEmpty { break }
+            if !pairedDevices.value.isEmpty { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(connectedDevices.value == [device])
+        #expect(pairedDevices.value == [device])
     }
 
     // Android 76e345e5: Back on step 3 pops back to the picker, whether step 3 was reached alone

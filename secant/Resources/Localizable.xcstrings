@@ -10118,36 +10118,53 @@
         }
       }
     },
+    "ledger.approve.callout.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zodl only gets what it needs to show your balance and prepare payments. Every payment still needs your approval on your Ledger."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zodl solo obtiene lo necesario para mostrar tu saldo y preparar pagos. Cada pago sigue necesitando tu aprobación en tu Ledger."
+          }
+        }
+      }
+    },
+    "ledger.approve.callout.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Recovery Phrase Stays Safe"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu frase de recuperación sigue segura"
+          }
+        }
+      }
+    },
     "ledger.approve.message" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Approve sharing your viewing key with Zodl. It allows Zodl to view this account’s transactions and generate addresses, but it cannot spend your funds."
+            "value" : "Your Ledger will ask to share your Zcash account with Zodl. Check the request and approve it."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Aprueba compartir tu clave de visualización con Zodl. Permite que Zodl vea las transacciones de esta cuenta y genere direcciones, pero no puede gastar tus fondos."
-          }
-        }
-      }
-    },
-    "ledger.approve.retry" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retry"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Reintentar"
+            "value" : "Tu Ledger te pedirá compartir tu cuenta de Zcash con Zodl. Revisa la solicitud y apruébala."
           }
         }
       }
@@ -10158,13 +10175,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Approve on Your Device"
+            "value" : "Approve on Your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Aprueba en tu dispositivo"
+            "value" : "Aprueba en tu Ledger"
           }
         }
       }
@@ -10175,13 +10192,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Check your device screen to confirm."
+            "value" : "Check your Ledger screen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Revisa la pantalla de tu dispositivo para confirmar."
+            "value" : "Revisa la pantalla de tu Ledger."
           }
         }
       }
@@ -10192,13 +10209,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Waiting for approval on your Ledger"
+            "value" : "Waiting for approval"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Esperando la aprobación en tu Ledger"
+            "value" : "Esperando la aprobación"
           }
         }
       }
