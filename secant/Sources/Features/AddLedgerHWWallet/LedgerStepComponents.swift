@@ -9,6 +9,11 @@
 //  Plain `String` inputs and no store dependency, so this executor's own screens (the intro,
 //  LedgerTurnOnView) and the parallel executor's steps 3/4 can all build on it.
 //
+//  Also home to `LedgerWaitingIndicator` (Figma's "Waiting Indicator", node 1439:28709): step 4's
+//  approve screen and the send confirmation flow's Ledger sign sheet (LedgerSignSheet.swift) both
+//  draw their spinner-plus-title status from it, so it lives here rather than in either feature's
+//  own file.
+//
 
 import SwiftUI
 
@@ -205,5 +210,49 @@ struct LedgerStepCallout: View {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
                 .fill(Design.Utility.HyperBlue._50.color(colorScheme))
         }
+    }
+}
+
+// MARK: - Waiting indicator
+
+/// Figma "Waiting Indicator" (node 1439:28709): a 24 pt `loading-02` spinner that completes one
+/// turn per second, 12 pt below it a semibold 16 text-primary title, and, only when `subtitle` is
+/// given, a regular 14 text-primary line 4 pt under that -- all centred and at most 280 pt wide.
+/// `.fixedSize(horizontal: false, vertical: true)` on both lines keeps long text wrapping instead
+/// of truncating inside a host that re-measures height, such as the sign sheet's `zashiSheet`.
+struct LedgerWaitingIndicator: View {
+    @State private var isRotating = false
+
+    let title: String
+    let subtitle: String?
+
+    init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Asset.Assets.Icons.loading.image
+                .zImage(size: 24, style: Design.Text.primary)
+                .rotationEffect(.degrees(isRotating ? 360 : 0))
+                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isRotating)
+                .onAppear { isRotating = true }
+
+            VStack(spacing: 4) {
+                Text(title)
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: 280)
     }
 }
