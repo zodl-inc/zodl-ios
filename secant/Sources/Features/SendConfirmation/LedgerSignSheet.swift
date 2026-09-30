@@ -111,6 +111,9 @@ extension LedgerSignSheetView {
         case .connecting:
             LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithConnecting))
 
+        case .openingZcashApp:
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithOpeningApp))
+
         case .connected:
             LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithPreparing))
 

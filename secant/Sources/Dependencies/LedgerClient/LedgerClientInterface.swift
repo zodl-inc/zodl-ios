@@ -50,8 +50,11 @@ struct LedgerClient {
     var scanDevices: @Sendable () -> AsyncThrowingStream<[LedgerBluetoothDevice], Error> = {
         AsyncThrowingStream { $0.finish() }
     }
-    /// Connects to a device, closing any previously open connection first.
-    var connect: @Sendable (LedgerBluetoothDevice) async throws -> Void
+    /// Connects to a device, closing any previously open connection first. The second argument is
+    /// awaited once, just before the on-device Zcash app is asked to open, and only when the
+    /// device isn't already running it -- MOB-2020's "open the Zcash app" report, so a caller can
+    /// tell the user to look at the device while `connect` itself still reads `.connecting`.
+    var connect: @Sendable (LedgerBluetoothDevice, @escaping @Sendable () async -> Void) async throws -> Void
     /// MOB-2020: bonds with a device on its own connection, before the Zcash app is opened on
     /// it -- a first Bluetooth pairing with the app already open freezes the device on its
     /// pairing screen. Closes its connection before returning; never touches the one

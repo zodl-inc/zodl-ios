@@ -111,7 +111,7 @@ actor LedgerSession {
         scanner().devices()
     }
 
-    func connect(_ device: LedgerBluetoothDevice) async throws {
+    func connect(_ device: LedgerBluetoothDevice, willOpenZcashApp: @escaping @Sendable () async -> Void) async throws {
         if let previous = transport {
             transport = nil
             await previous.close()
@@ -124,6 +124,17 @@ actor LedgerSession {
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
             throw error
+        }
+
+        // MOB-2020: the same `currentApp` seam `bond(_:)` uses, asked once so a caller can tell
+        // the user to look at the device before the open request (below) shows its own "Open
+        // Zcash?" prompt there. Unlike `bond(_:)`, any failure here -- including cancellation --
+        // is swallowed: this query is a courtesy report, not a gate, so it never changes what
+        // happens next. `willOpenZcashApp` is not called at all when the query fails or the
+        // device already runs the Zcash app.
+        if let runningApp = try? await currentApp(opened), !runningApp.isZcash {
+            LoggerProxy.event("Ledger: the Zcash app isn't running yet, reporting before opening it")
+            await willOpenZcashApp()
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
@@ -421,7 +432,7 @@ extension LedgerClient: DependencyKey {
 
         return Self(
             scanDevices: { session.scanDevices() },
-            connect: { device in try await session.connect(device) },
+            connect: { device, report in try await session.connect(device, willOpenZcashApp: report) },
             bond: { device in try await session.bond(device) },
             openZcashApp: { device in try await session.openZcashApp(device) },
             pairDevice: { device, zip32AccountIndex in try await session.pairDevice(device, zip32AccountIndex) },

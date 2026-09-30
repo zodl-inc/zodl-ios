@@ -26,8 +26,8 @@ import ComposableArchitecture
         let session = makeSession(makeScanner: { scanner })
         let device = try await firstDevice(from: scanner)
 
-        try await session.connect(device)
-        try await session.connect(device)
+        try await session.connect(device) { }
+        try await session.connect(device) { }
 
         #expect(log.events == ["connect-0", "close-A", "connect-1"])
         #expect(transportA.closeCount == 1)
@@ -45,7 +45,7 @@ import ComposableArchitecture
         let device = try await firstDevice(from: scanner)
 
         await #expect(throws: BluetoothStepFailure()) {
-            try await session.connect(device)
+            try await session.connect(device) { }
         }
     }
 
@@ -55,7 +55,7 @@ import ComposableArchitecture
         let device = try await firstDevice(from: scanner)
 
         do {
-            try await session.connect(device)
+            try await session.connect(device) { }
             Issue.record("expected connect to throw")
         } catch is CancellationError {
             // expected
@@ -69,7 +69,7 @@ import ComposableArchitecture
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
         let session = makeSession(makeScanner: { scanner })
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         await session.disconnect()
 
@@ -110,7 +110,7 @@ import ComposableArchitecture
         _ = session.scanDevices()
         #expect(creationLog.events.count == 1)
 
-        try await session.connect(device)
+        try await session.connect(device) { }
         #expect(creationLog.events.count == 1)
     }
 
@@ -146,7 +146,7 @@ import ComposableArchitecture
             }
         )
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         let accountUUID = makeAccountUUID()
         let binding = try makeBinding()
@@ -188,7 +188,7 @@ import ComposableArchitecture
             }
         )
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         await #expect(throws: ZcashError.ledgerUserRejected) {
             for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
@@ -211,7 +211,7 @@ import ComposableArchitecture
             }
         )
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         await #expect(throws: ZcashError.ledgerTransportClosed) {
             for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
@@ -233,7 +233,7 @@ import ComposableArchitecture
             }
         )
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         let accountUUID = makeAccountUUID()
         let binding = try makeBinding()
@@ -281,14 +281,14 @@ import ComposableArchitecture
         )
 
         let deviceA = try await firstDevice(from: scanner)
-        try await session.connect(deviceA)
+        try await session.connect(deviceA) { }
 
         let stream = session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding())
 
         try await eventually { callCount.value > 0 }
 
         let deviceB = try await firstDevice(from: scanner)
-        try await session.connect(deviceB)
+        try await session.connect(deviceB) { }
 
         released.setValue(true)
 
@@ -321,7 +321,7 @@ import ComposableArchitecture
             }
         )
         let device = try await firstDevice(from: scanner)
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         // Reaches the transport the open step returned, not the one `connect` opened.
         for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
@@ -338,7 +338,7 @@ import ComposableArchitecture
         let device = try await firstDevice(from: scanner)
 
         await #expect(throws: OpenZcashAppFailure()) {
-            try await session.connect(device)
+            try await session.connect(device) { }
         }
 
         #expect(connected.closeCount == 1)
@@ -361,10 +361,81 @@ import ComposableArchitecture
         )
         let device = try await firstDevice(from: scanner)
 
-        try await session.connect(device)
+        try await session.connect(device) { }
 
         #expect(scanner.connectCalls.map(\.timeout) == [60, 10])
         #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
+    }
+
+    // MARK: - connect's "opening the Zcash app" report (MOB-2020)
+    //
+    // `connect`'s second argument fires once, right after the Bluetooth step, using the same
+    // `currentApp` seam `bond(_:)` uses -- and only when the device isn't already running the
+    // Zcash app. Every case still reaches the open step and completes the connect, proven below
+    // by signing on the transport it keeps, same as the "openZcashApp" section above.
+
+    @Test func connectReportsForANonZcashAnswerAndTheConnectStillCompletes() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let reportCount = LockIsolated(0)
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            },
+            currentApp: { _ in LedgerRunningApp(name: "BOLOS", version: "1.0") }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.connect(device) { reportCount.withValue { $0 += 1 } }
+
+        #expect(reportCount.value == 1)
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        #expect(signer.wasCalled)
+    }
+
+    @Test func connectDoesNotReportWhenTheZcashAppIsAlreadyRunningAndStillCompletes() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let reportCount = LockIsolated(0)
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            },
+            currentApp: { _ in LedgerRunningApp(name: "Zcash", version: "3.9.3") }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.connect(device) { reportCount.withValue { $0 += 1 } }
+
+        #expect(reportCount.value == 0)
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        #expect(signer.wasCalled)
+    }
+
+    @Test func connectDoesNotReportWhenTheAppQueryFailsAndStillCompletes() async throws {
+        struct AppQueryFailure: Error {}
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let reportCount = LockIsolated(0)
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            },
+            currentApp: { _ in throw AppQueryFailure() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.connect(device) { reportCount.withValue { $0 += 1 } }
+
+        #expect(reportCount.value == 0)
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        #expect(signer.wasCalled)
     }
 
     // MARK: - The live `pair` closure's shape
@@ -727,8 +798,11 @@ private func makeSession(
     openZcashApp: @escaping @Sendable (
         any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
     ) async throws -> any LedgerAPDUTransport = { transport, _ in transport },
-    // `bond`'s own seam onto `LedgerZcashApp.currentApp` -- defaults to failing the test if
-    // reached, unless a test overrides it, same as `pair` and `sign` above.
+    // `bond`'s own seam onto `LedgerZcashApp.currentApp`, also reached by `connect`'s own
+    // "opening the Zcash app" report (MOB-2020) -- defaults to failing a `bond` test if reached
+    // unconfigured, unless that test overrides it, same as `pair` and `sign` above. `connect`
+    // instead swallows any failure here with `try?`, the same as a real query failure would, so
+    // every `connect`-only test above keeps passing against this default without configuring it.
     currentApp: @escaping @Sendable (any LedgerAPDUTransport) async throws -> LedgerRunningApp = { _ in
         throw CurrentAppShouldNotBeCalled()
     }

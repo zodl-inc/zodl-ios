@@ -11478,6 +11478,23 @@
         }
       }
     },
+    "ledger.signWith.openingApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the Zcash app on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la app de Zcash en tu Ledger"
+          }
+        }
+      }
+    },
     "ledger.signWith.preparing" : {
       "extractionState" : "manual",
       "localizations" : {
