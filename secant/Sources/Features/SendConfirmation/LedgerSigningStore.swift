@@ -66,6 +66,19 @@ struct LedgerSigning {
         var failedPrimaryAction: LedgerIssue.PrimaryAction {
             issue == .bluetoothUnauthorized && hasOpenedSettings ? .tryAgain : (issue?.primaryAction(in: .sign) ?? .none)
         }
+
+        /// Whether the ceremony has reached (or passed) the device showing the transaction for
+        /// review -- the sign sheet's description switches to the final confirm copy once this is
+        /// true, and shows `ledgerSignSheetDescBeforeReview` while it's false.
+        var hasReachedReview: Bool {
+            switch phase {
+            case .signing(.awaitingReviewOnDevice), .signing(.signing), .signing(.complete), .signed:
+                return true
+            case .scanning, .selectingDevice, .connecting, .openingZcashApp, .connected,
+                 .signing(.identifyingDevice), .signing(.streaming), .failed:
+                return false
+            }
+        }
     }
 
     enum Action: Equatable {

@@ -732,6 +732,49 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MOB-2020: the sign sheet's description switches from the "before review" copy to the final
+    // confirm copy once the ceremony has reached (or passed) on-device review (Figma annotation
+    // 1638:268) -- covers every `Phase`/`LedgerSigningProgress` case.
+    @Test func hasReachedReviewIsTrueOnlyFromReviewOnward() {
+        var state = LedgerSigning.State()
+
+        state.phase = .scanning
+        #expect(!state.hasReachedReview)
+
+        state.phase = .selectingDevice
+        #expect(!state.hasReachedReview)
+
+        state.phase = .connecting
+        #expect(!state.hasReachedReview)
+
+        state.phase = .openingZcashApp
+        #expect(!state.hasReachedReview)
+
+        state.phase = .connected
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.identifyingDevice)
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.streaming(sent: 1, total: 2))
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.awaitingReviewOnDevice)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signing(.signing)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signing(.complete)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signed
+        #expect(state.hasReachedReview)
+
+        state.phase = .failed
+        #expect(!state.hasReachedReview)
+    }
+
     // MARK: - Fixtures
 
     private static func device(name: String) -> LedgerBluetoothDevice {

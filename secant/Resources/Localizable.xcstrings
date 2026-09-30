@@ -11444,6 +11444,23 @@
         }
       }
     },
+    "ledger.signSheet.descBeforeReview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your Ledger unlocked and nearby."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén tu Ledger desbloqueado y cerca."
+          }
+        }
+      }
+    },
     "ledger.signSheet.title" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -59,7 +59,7 @@ struct LedgerSignSheetView: View {
                         .zFont(.semiBold, size: 20, style: Design.Text.primary)
                         .padding(.top, 12)
 
-                    Text(localizable: .ledgerSignSheetDesc)
+                    Text(localizable: store.ledgerSigning.hasReachedReview ? .ledgerSignSheetDesc : .ledgerSignSheetDescBeforeReview)
                         .zFont(size: 14, style: Design.Text.tertiary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
