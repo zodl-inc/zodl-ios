@@ -13,8 +13,8 @@ extension Decimal {
     var simplified: Decimal {
         guard self != 0 else { return 0 }
 
-        /// Tolerance 0.5%
-        let tolerance: Decimal = 0.005
+        /// Tolerance 0.2% (MOB-1435: tightened from 0.5% to reduce rounding of fine-precision amounts)
+        let tolerance: Decimal = 0.002
         /// At least 2 floating points
         let minimumFractionDigits = 2
         /// At most 8 floating points
