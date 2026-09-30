@@ -7,9 +7,10 @@
 //  too -- see `RootCoordinator`'s `.signWithKeystoneRequested`). Presented as a `zashiSheet` over
 //  the screen the user confirmed from while the Ledger signs -- only "Cancel Transaction" closes
 //  it, via `.interactiveDismissDisabled()`. The status block below copies (not moves) that former
-//  screen's `statusContent`/`deviceRow`, without its bone-coloured card. A failed ceremony instead
-//  shows `LedgerIssueSheetContent`, the same Ledger error-state sheet `AddLedgerHWWallet`'s device
-//  picker uses.
+//  screen's `statusContent`, without its bone-coloured card; its device list instead shares
+//  `LedgerDeviceCard` with enrollment's own picker (LedgerStepComponents.swift). A failed
+//  ceremony instead shows `LedgerIssueSheetContent`, the same Ledger error-state sheet
+//  `AddLedgerHWWallet`'s device picker uses.
 //
 //  MOB-2020: Figma 1439:28498 ("Confirmation Screen v2", the iOS 26 bottom sheet) redraws every
 //  spinner state as `LedgerWaitingIndicator` (node 1439:28709, shared with step 4's approve
@@ -21,8 +22,6 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct LedgerSignSheetView: View {
-    @Environment(\.colorScheme) private var colorScheme
-
     @Perception.Bindable var store: StoreOf<SendConfirmation>
 
     var body: some View {
@@ -98,13 +97,19 @@ extension LedgerSignSheetView {
             LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithScanning))
 
         case .selectingDevice:
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 Text(localizable: .ledgerSignWithSelectDevice)
                     .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
 
-                ForEach(store.ledgerSigning.devices) { device in
-                    deviceRow(device, colorScheme)
+                VStack(spacing: 8) {
+                    ForEach(store.ledgerSigning.devices) { device in
+                        Button {
+                            store.send(.ledgerSigning(.deviceTapped(device)))
+                        } label: {
+                            LedgerDeviceCard(device: device, isSelected: false)
+                        }
+                    }
                 }
             }
 
@@ -132,35 +137,6 @@ extension LedgerSignSheetView {
             // `body` renders `LedgerIssueSheetContent` instead of this content while
             // `phase == .failed` -- this case only keeps the switch exhaustive over `Phase`.
             EmptyView()
-        }
-    }
-
-    @ViewBuilder private func deviceRow(_ device: LedgerBluetoothDevice, _ colorScheme: ColorScheme) -> some View {
-        Button {
-            store.send(.ledgerSigning(.deviceTapped(device)))
-        } label: {
-            HStack(spacing: 0) {
-                Asset.Assets.Partners.ledgerMark.image
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .padding(8)
-                    .background {
-                        Circle()
-                            .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                    }
-                    .padding(.trailing, 8)
-
-                Text(device.model.productName)
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                    .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-            }
         }
     }
 }

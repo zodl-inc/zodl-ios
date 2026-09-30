@@ -21,7 +21,6 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct LedgerDevicePickerView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @Perception.Bindable var store: StoreOf<AddLedgerHWWallet>
 
     init(store: StoreOf<AddLedgerHWWallet>) {
@@ -134,65 +133,7 @@ struct LedgerDevicePickerView: View {
         Button {
             store.send(.deviceTapped(device))
         } label: {
-            HStack(spacing: 0) {
-                Asset.Assets.Partners.ledgerMark.image
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .padding(8)
-                    .background {
-                        Circle()
-                            .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                    }
-                    .padding(.trailing, 12)
-
-                Text(device.name ?? device.model.productName)
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                radio(isSelected: isSelected)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._xl)
-                    .fill(Design.Surfaces.bgPrimary.color(colorScheme))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Design.Radius._xl)
-                            .stroke(
-                                isSelected
-                                ? Design.Surfaces.bgAlt.color(colorScheme)
-                                : Design.Surfaces.strokeSecondary.color(colorScheme),
-                                lineWidth: isSelected ? 2 : 1
-                            )
-                    }
-            }
-            // Figma's small card shadow, the same two-layer pair used across the app -- shown
-            // only for the selected row, via opacity rather than branching the view so the row's
-            // identity (and any implicit animation) stays stable across selection changes.
-            .shadow(color: .black.opacity(isSelected ? 0.02 : 0), radius: 0.66667, x: 0, y: 1.33333)
-            .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 1.33333, x: 0, y: 1.33333)
-        }
-    }
-
-    @ViewBuilder private func radio(isSelected: Bool) -> some View {
-        if isSelected {
-            Circle()
-                .fill(Design.Btns.Primary.bg.color(colorScheme))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Asset.Assets.check.image
-                        .zImage(size: 12, style: Design.Btns.Primary.fg)
-                }
-        } else {
-            Circle()
-                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Circle()
-                        .stroke(Design.Checkboxes.offStroke.color(colorScheme), lineWidth: 1)
-                }
+            LedgerDeviceCard(device: device, isSelected: isSelected)
         }
     }
 }
