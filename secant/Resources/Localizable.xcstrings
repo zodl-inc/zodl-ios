@@ -11501,13 +11501,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Preparing the transaction"
+            "value" : "Preparing your transaction"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Preparando la transacción"
+            "value" : "Preparando tu transacción"
+          }
+        }
+      }
+    },
+    "ledger.signWith.review" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check and approve on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revisa y aprueba en tu Ledger"
           }
         }
       }
@@ -11535,13 +11552,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select your Ledger"
+            "value" : "Choose your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Selecciona tu Ledger"
+            "value" : "Elige tu Ledger"
           }
         }
       }
@@ -11552,13 +11569,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending the transaction to your Ledger"
+            "value" : "Sending the details to your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Enviando la transacción a tu Ledger"
+            "value" : "Enviando los detalles a tu Ledger"
           }
         }
       }
@@ -11569,13 +11586,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Signing the transaction"
+            "value" : "Signing your transaction"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Firmando la transacción"
+            "value" : "Firmando tu transacción"
           }
         }
       }

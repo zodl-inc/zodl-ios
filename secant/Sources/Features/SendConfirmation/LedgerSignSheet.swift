@@ -121,8 +121,9 @@ extension LedgerSignSheetView {
             LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithSending))
 
         case .signing(.awaitingReviewOnDevice):
-            // The sheet's own description is already the instruction -- nothing more to show.
-            EmptyView()
+            // The designer's final copy (Figma 1635:60-1635:1417) adds a status line here too,
+            // with the same spinner every other phase shows -- no longer "nothing more to show".
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithReview))
 
         case .signing(.signing), .signing(.complete), .signed:
             LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithSigning))
