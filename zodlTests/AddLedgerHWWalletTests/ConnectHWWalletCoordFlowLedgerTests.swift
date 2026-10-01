@@ -106,7 +106,7 @@ import ComposableArchitecture
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(isZcashAppRunning: false)))))
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: false)))))
 
         #expect(store.state.path.count == 2)
         if case .ledgerOpenApp(let openAppState) = store.state.path.last {
@@ -138,7 +138,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(isZcashAppRunning: true)))))
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: true)))))
 
         #expect(store.state.path.count == 3)
         if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
@@ -161,6 +161,53 @@ import ComposableArchitecture
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(pairedDevices.value == [device])
+    }
+
+    // MOB-2020: a tap on another row can change the picker's own `selectedDevice` while an
+    // earlier tap's bond is still running (AddLedgerHWWalletTests' own
+    // `tappingARowWhileBondingIsIgnored` covers the tap itself) -- this arm must carry the device
+    // the bond actually completed with, never whatever the picker ends up holding by the time its
+    // outcome arrives.
+    @Test func deviceBondedTrustsItsOwnDeviceOverThePickersSelection() async throws {
+        let deviceA = LedgerBluetoothDevice(id: UUID(), name: "Nano X A", model: .nanoX, rssi: -40)
+        let deviceB = LedgerBluetoothDevice(id: UUID(), name: "Nano X B", model: .nanoX, rssi: -55)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.selectedDevice = deviceB
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture()
+        let pairedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { pairedDevice, _ in
+                pairedDevices.withValue { $0.append(pairedDevice) }
+                return fixture
+            }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: deviceA, isZcashAppRunning: true)))))
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
+            #expect(openAppState.selectedDevice == deviceA)
+        } else {
+            Issue.record("expected an idle .ledgerOpenApp carrying the bonded device")
+        }
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.selectedDevice == deviceA)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the bonded device")
+        }
+
+        // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
+        // `ledgerClient.pairDevice` to have been reached instead of asserting synchronously. A
+        // stale `selectedDevice` would pair with deviceB instead.
+        for _ in 0..<50 {
+            if !pairedDevices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pairedDevices.value == [deviceA])
     }
 
     // MARK: - Ledger Open the Zcash App (step 3, MOB-2020, Android 8cf16518/efe21904)

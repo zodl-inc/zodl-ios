@@ -118,9 +118,11 @@ struct AddLedgerHWWallet {
         case connectDeviceTapped
         case connectTapped
         /// MOB-2020 (Android aac01e65): `approveOnDeviceTapped`'s `ledgerClient.bond` succeeded --
-        /// carries whether the device already runs the Zcash app, which
-        /// ConnectHWWalletCoordFlowCoordinator reads to decide what it pushes next.
-        case deviceBonded(isZcashAppRunning: Bool)
+        /// carries the device that was bonded (never read off `selectedDevice`: a tap on another
+        /// row while the bond was running could otherwise have changed it) and whether that
+        /// device already runs the Zcash app, which ConnectHWWalletCoordFlowCoordinator reads to
+        /// decide what it pushes next.
+        case deviceBonded(device: LedgerBluetoothDevice, isZcashAppRunning: Bool)
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
@@ -267,6 +269,11 @@ struct AddLedgerHWWallet {
                 return .cancel(id: CancelId.scan)
 
             case let .deviceTapped(device):
+                // MOB-2020: ignored while a bond from an earlier tap is still running -- Android
+                // disables the rows for the same reason. Without this guard, a tap mid-bond swaps
+                // `selectedDevice` out from under `approveOnDeviceTapped`'s in-flight bond, and
+                // `.deviceBonded` would then report a device nothing here ever selected.
+                guard !state.isConnecting else { return .none }
                 state.selectedDevice = device
                 state.issue = nil
                 state.isIssueSheetPresented = false
@@ -289,7 +296,7 @@ struct AddLedgerHWWallet {
                     .run { send in
                         do {
                             let isZcashAppRunning = try await ledgerClient.bond(device)
-                            await send(.deviceBonded(isZcashAppRunning: isZcashAppRunning))
+                            await send(.deviceBonded(device: device, isZcashAppRunning: isZcashAppRunning))
                         } catch {
                             let issue = LedgerIssue(error, in: .connect, bonding: true)
                             await send(.pairingFailed(issue: issue, connectionLost: true))

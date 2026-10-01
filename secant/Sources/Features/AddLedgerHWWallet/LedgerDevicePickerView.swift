@@ -174,6 +174,7 @@ struct LedgerDevicePickerView: View {
             .shadow(color: .black.opacity(isSelected ? 0.02 : 0), radius: 0.66667, x: 0, y: 1.33333)
             .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 1.33333, x: 0, y: 1.33333)
         }
+        .disabled(store.isConnecting)
     }
 
     @ViewBuilder private func radio(isSelected: Bool) -> some View {

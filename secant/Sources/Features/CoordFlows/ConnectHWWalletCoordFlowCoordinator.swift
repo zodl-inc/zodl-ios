@@ -133,9 +133,11 @@ extension ConnectHWWalletCoordFlow {
                 // MOB-2020 (Android aac01e65): the picker's own Connect (`.approveOnDeviceTapped`)
                 // bonds right there now (AddLedgerHWWalletStore), never pushing anything until
                 // the bond settles -- this arm only reacts to its outcome. Both branches copy the
-                // picker's state (keeping `selectedDevice`), the same way `.ledgerAccount(…)`
-                // below carries a picker/approve state forward on success.
-            case let .path(.element(id: _, action: .ledgerDevicePicker(.deviceBonded(isZcashAppRunning)))):
+                // picker's state, then overwrite `selectedDevice` with the device the action
+                // itself carries -- never the picker's own `selectedDevice`, which a tap on
+                // another row could have changed while the bond was still running -- the same way
+                // `.ledgerAccount(…)` below carries a picker/approve state forward on success.
+            case let .path(.element(id: _, action: .ledgerDevicePicker(.deviceBonded(device, isZcashAppRunning)))):
                 for element in state.path {
                     guard case .ledgerDevicePicker(let devicePickerState) = element else { continue }
                     if isZcashAppRunning {
@@ -144,12 +146,14 @@ extension ConnectHWWalletCoordFlow {
                         // which starts pairing at once, same as a fresh push always has. Back
                         // from step 4 then lands on that idle step 3.
                         var openAppState = devicePickerState
+                        openAppState.selectedDevice = device
                         openAppState.isConnecting = false
                         openAppState.isOpenAppScreen = true
                         openAppState.autoOpenZcashApp = false
                         state.path.append(.ledgerOpenApp(openAppState))
 
                         var approveState = devicePickerState
+                        approveState.selectedDevice = device
                         approveState.isConnecting = false
                         approveState.isApproveScreen = true
                         state.path.append(.ledgerApproveOnDevice(approveState))
@@ -166,6 +170,7 @@ extension ConnectHWWalletCoordFlow {
                         // The app is elsewhere -- step 3 opens it automatically as soon as it
                         // appears.
                         var openAppState = devicePickerState
+                        openAppState.selectedDevice = device
                         openAppState.isConnecting = false
                         openAppState.isOpenAppScreen = true
                         openAppState.autoOpenZcashApp = true

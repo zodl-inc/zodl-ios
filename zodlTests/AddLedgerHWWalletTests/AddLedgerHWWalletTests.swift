@@ -182,6 +182,25 @@ import ComposableArchitecture
         }
     }
 
+    // Android disables the rows while connecting: a tap on another row must not swap the
+    // selection out from under a bond that is already running.
+    @MainActor @Test func tappingARowWhileBondingIsIgnored() async {
+        let deviceA = LedgerBluetoothDevice(id: UUID(), name: "Nano X A", model: .nanoX, rssi: -40)
+        let deviceB = LedgerBluetoothDevice(id: UUID(), name: "Nano X B", model: .nanoX, rssi: -55)
+        var state = AddLedgerHWWallet.State()
+        state.isConnecting = true
+        state.devices = [deviceA, deviceB]
+        state.selectedDevice = deviceA
+        // No ledgerClient override: an ignored tap must never touch the transport, or a reach
+        // into bond would trip "has no test implementation".
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.deviceTapped(deviceB))
+        await store.finish()
+    }
+
     // MARK: - approveOnDeviceTapped (MOB-2020: the picker's own Connect, Android aac01e65)
 
     @MainActor @Test func approveOnDeviceTappedBondsAndReportsWhetherTheAppIsRunning() async throws {
@@ -204,7 +223,7 @@ import ComposableArchitecture
             $0.issue = nil
             $0.isScanning = false
         }
-        await store.receive(.deviceBonded(isZcashAppRunning: true)) {
+        await store.receive(.deviceBonded(device: device, isZcashAppRunning: true)) {
             $0.isConnecting = false
         }
         await store.finish()
@@ -322,7 +341,7 @@ import ComposableArchitecture
             $0.isConnecting = true
             $0.issue = nil
         }
-        await store.receive(.deviceBonded(isZcashAppRunning: false)) {
+        await store.receive(.deviceBonded(device: device, isZcashAppRunning: false)) {
             $0.isConnecting = false
         }
         await store.finish()
