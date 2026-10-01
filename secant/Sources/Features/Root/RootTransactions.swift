@@ -275,9 +275,9 @@ extension Root {
                 // unconditionally appends one synthetic row per in-flight swap-to-ZEC, so a
                 // genuinely empty on-chain fetch would otherwise still produce a non-empty
                 // `identifiedArray` and defeat this guard for any user with such a swap pending.
-                // Both lists still get `transactionsUpdated` so one that WAS mid-load can clear its
-                // placeholder, and the poller is armed from the KEPT `state.transactions`, never
-                // from this fetch's result, so a still-pending kept row keeps its 30 s reconciler.
+                // Both lists still get `transactionsUpdated`, and the poller is armed from the KEPT
+                // `state.transactions`, never from this fetch's result, so a still-pending kept row
+                // keeps its 30 s reconciler.
                 //
                 // MOB-1855: `state.transactionsAccountId == accountUUID` on top of the pre-existing
                 // conditions -- the array being "kept" here must actually belong to the account THIS
@@ -299,11 +299,6 @@ extension Root {
                         reconciliationPoller(for: state.transactions, state: state),
                         .send(.home(.transactionList(.transactionsUpdated))),
                         .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
-                        // MOB-2020: the selected account's fetch DID answer, even though the answer
-                        // was ignored as spurious -- either list still mid-load (freshly invalidated
-                        // by a switch, say) must stop showing its placeholder over the KEPT rows.
-                        .send(.home(.transactionList(.loadingFinished))),
-                        .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                         coalescedFollowUp
                     )
                 }
@@ -346,8 +341,8 @@ extension Root {
                     // MOB-2020: the selected account's fetch has answered, whether or not either
                     // list happens to be subscribed right now -- explicit, rather than left to each
                     // list's own `$transactions` publisher subscription, which only exists once
-                    // `.onAppear` has run (never, on a cold launch that hasn't shown Home yet) and
-                    // which used to also carry the ONLY signal that ended the loading state.
+                    // `.onAppear` has run (never, on a cold launch that hasn't shown Home yet).
+                    // See `TransactionList.Action.loadingFinished`.
                     return .merge(
                         pendingTransactionsPoller,
                         .send(.home(.smartBanner(.evaluatePriority6))),
@@ -360,13 +355,10 @@ extension Root {
                 // `state.transactions` -- most commonly when switching between two accounts that both
                 // have no transactions. The write above is skipped in that case, so nothing downstream
                 // of the shared `$transactions` publisher fires, and neither list's `.loadingFinished`
-                // gets sent by the write branch above either. Both transaction lists' own
-                // `.loadingFinished` is what clears their `isInvalidated` flag (set by
-                // `accountSwitchedEffect` in `RootCoordinator.swift` on every switch), so without
-                // sending it here directly, an unchanged-but-completed fetch would leave them stuck
-                // showing their loading placeholder forever. `.transactionsUpdated` is sent alongside
+                // gets sent by the write branch above either. `.transactionsUpdated` is sent alongside
                 // it, unchanged from before MOB-2020, purely so derived state (e.g. See All's search
                 // results) still recomputes on this path exactly as it always has.
+                // See `TransactionList.Action.loadingFinished`.
                 //
                 // Only worth sending while a list is actually still showing that placeholder. A
                 // steady sync re-dispatches this fetch every 0.2s and usually yields an unchanged

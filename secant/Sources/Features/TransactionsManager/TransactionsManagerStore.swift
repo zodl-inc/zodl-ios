@@ -148,13 +148,7 @@ struct TransactionsManager {
                 }
                 return .none
 
-            // MOB-2020: `.transactionsUpdated` used to also clear `isInvalidated` -- but it fires on
-            // EVERY write to the shared `$transactions`, including the one `accountSwitchedEffect`
-            // (`RootCoordinator.swift`) makes to CLEAR the array for the account just left. That
-            // clearing write was ending the loading state before the newly-selected account's own
-            // fetch had answered, so See All rendered its empty state for however long the fetch
-            // took. `isInvalidated` is now cleared only by `.loadingFinished`, which Root sends once
-            // the selected account's fetch has actually answered (`RootTransactions.swift`).
+            // See `TransactionList.Action.loadingFinished`.
             case .transactionsUpdated:
                 return .send(.updateTransactionsAccordingToSearchTerm)
 
