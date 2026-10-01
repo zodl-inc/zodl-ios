@@ -170,7 +170,7 @@ import ComposableArchitecture
 
     // MOB-2020 (Android b013b7c2, Rebound): an unbound match can never sign again, so pairing
     // stores the new binding onto it instead of dead-ending on "Account Already Added".
-    @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow() async throws {
+    @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndShowsConnected() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
         var approveState = AddLedgerHWWallet.State.initial
@@ -207,8 +207,13 @@ import ComposableArchitecture
         #expect(importedAccountId.value == existingAccount.id)
         #expect(importedBinding.value == fixture.binding)
 
-        // Leaves exactly the way `goToExistingAccountTapped` does:
-        // `.addLedgerHWWallet(.backToHomeTapped)` disconnects the Ledger inside its own effect.
+        // Shows Connected, the same as a fresh import -- not a disconnect-and-leave.
+        #expect(isConnected(store.state.path.last))
+        #expect(disconnected.value == false)
+
+        let connectedId = store.state.path.ids.last!
+        store.send(.path(.element(id: connectedId, action: .ledgerConnected(.closeTapped))))
+
         for _ in 0..<50 {
             if disconnected.value { break }
             try await Task.sleep(for: .milliseconds(20))
@@ -303,7 +308,7 @@ import ComposableArchitecture
     // pair a specific account again -- see RootLedgerShieldingSheetTests.swift for Root's own side
     // of staging it.
 
-    @Test func repairingTheTargetWithItsOwnLedgerReplacesTheBindingAndLeavesTheFlow() async throws {
+    @Test func repairingTheTargetWithItsOwnLedgerReplacesTheBindingAndShowsConnected() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let target = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
         var approveState = AddLedgerHWWallet.State.initial
@@ -358,7 +363,13 @@ import ComposableArchitecture
         #expect(importedAccountId.value == target.id)
         #expect(importedBinding.value == fixture.binding)
 
-        // Leaves exactly the way Rebound always has.
+        // Shows Connected, the same as the no-target Rebound above.
+        #expect(isConnected(store.state.path.last))
+        #expect(disconnected.value == false)
+
+        let connectedId = store.state.path.ids.last!
+        store.send(.path(.element(id: connectedId, action: .ledgerConnected(.closeTapped))))
+
         for _ in 0..<50 {
             if disconnected.value { break }
             try await Task.sleep(for: .milliseconds(20))

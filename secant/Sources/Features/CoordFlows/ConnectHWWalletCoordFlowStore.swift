@@ -89,8 +89,8 @@ struct ConnectHWWalletCoordFlow {
         /// way that arm always has.
         case ledgerPairingAlreadyAdded(WalletAccount)
         /// MOB-2020 (Android b013b7c2, Rebound): the matched account had no stored binding, and the
-        /// coordinator's own effect just stored this pairing's binding onto it -- leave exactly the
-        /// way `goToExistingAccountTapped` does, with no sheet ever shown.
+        /// coordinator's own effect just stored this pairing's binding onto it -- show Connected
+        /// the way a fresh import's `.accountImportSucceeded` does, with no sheet ever shown.
         case ledgerPairingRebound(WalletAccount)
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
@@ -140,14 +140,18 @@ struct ConnectHWWalletCoordFlow {
                 return .none
 
             case let .ledgerPairingRebound(account):
-                // Same as `goToExistingAccountTapped` above, minus ever presenting the sheet.
+                // Unlike `goToExistingAccountTapped` above, this never leaves the flow -- it
+                // shows Connected, the same as a fresh import's `.accountImportSucceeded` arm
+                // (ConnectHWWalletCoordFlowCoordinator.swift), with Close doing the leaving once
+                // the user taps it.
                 state.alreadyAddedAccount = account
                 // MOB-2020 (Android d1506d0d): a repair that reaches Rebound has paired its
                 // target successfully -- clear it so a later, unrelated pairing never reads it as
                 // a stale target. A no-op when this Rebound came from today's no-target path,
                 // where it is already `nil`.
                 state.ledgerRepairTarget = nil
-                return leaveFlowThroughVendorInstructions(state: state)
+                state.path.append(.ledgerConnected(AddLedgerHWWallet.State.initial))
+                return .none
 
             case .contactSupportTapped:
                 state.isFailureSheetPresented = false
