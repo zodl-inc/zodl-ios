@@ -774,7 +774,8 @@ struct SendConfirmation {
                     .cancel(id: CancelId.addProofs),
                     .cancel(id: CancelId.ledgerSignRequest),
                     .cancel(id: LedgerSigning.CancelId.sign),
-                    .cancel(id: LedgerSigning.CancelId.scan)
+                    .cancel(id: LedgerSigning.CancelId.scan),
+                    .cancel(id: LedgerSigning.CancelId.connect)
                 )
 
             case .ledgerSignSheetDismissed:
