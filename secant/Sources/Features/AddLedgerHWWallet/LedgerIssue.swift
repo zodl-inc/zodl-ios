@@ -34,7 +34,8 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case pairingFailed
     /// Not in Figma; Android's copy.
     case appNotInstalled
-    /// Not in Figma; Android's copy.
+    /// `.connect`/`.pairing` not in Figma, Android's copy; `.sign` is Figma's sign-sheet frame 9,
+    /// "Zcash App Not Opened" (node 1652:235).
     case openAppRejected
     /// Figma "Import Rejected" in `.connect`; `.sign`'s "Transaction Rejected" is draft copy.
     case requestRejected
@@ -218,7 +219,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .appNotInstalled:
             return String(localizable: .ledgerIssueAppNotInstalledTitle)
         case .openAppRejected:
-            return String(localizable: .ledgerIssueOpenAppRejectedTitle)
+            switch context {
+            case .connect, .pairing: return String(localizable: .ledgerIssueOpenAppRejectedTitle)
+            case .sign: return String(localizable: .ledgerIssueOpenAppRejectedSignTitle)
+            }
         case .requestRejected:
             switch context {
             case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedTitle)
@@ -264,7 +268,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .appNotInstalled:
             return String(localizable: .ledgerIssueAppNotInstalledMessage)
         case .openAppRejected:
-            return String(localizable: .ledgerIssueOpenAppRejectedMessage)
+            switch context {
+            case .connect, .pairing: return String(localizable: .ledgerIssueOpenAppRejectedMessage)
+            case .sign: return String(localizable: .ledgerIssueOpenAppRejectedSignMessage)
+            }
         case .requestRejected:
             switch context {
             case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedMessage)

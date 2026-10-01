@@ -11121,6 +11121,40 @@
         }
       }
     },
+    "ledger.issue.openAppRejected.sign.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You declined opening the Zcash app on your Ledger. Try again and confirm “Open Zcash” on your device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste abrir la app de Zcash en tu Ledger. Inténtalo de nuevo y confirma “Open Zcash” en tu dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.issue.openAppRejected.sign.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zcash App Not Opened"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se abrió la app de Zcash"
+          }
+        }
+      }
+    },
     "ledger.issue.openAppRejected.title" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -82,8 +82,8 @@ import Foundation
 
     @Test func connectAndSignCopyDifferOnlyWhereTheContextChangesTheMeaning() {
         // Arrays, not Sets: LedgerIssue is deliberately not Hashable, only Equatable.
-        let contextVaryingTitle: [LedgerIssue] = [.requestRejected]
-        let contextVaryingMessage: [LedgerIssue] = [.requestRejected, .disconnected, .unknown]
+        let contextVaryingTitle: [LedgerIssue] = [.requestRejected, .openAppRejected]
+        let contextVaryingMessage: [LedgerIssue] = [.requestRejected, .disconnected, .unknown, .openAppRejected]
 
         for issue in LedgerIssue.allCases {
             let connectTitle = issue.title(in: .connect)
@@ -136,26 +136,34 @@ import Foundation
 
     // MARK: - The two new states' copy
 
-    // Not Figma states (figmaStatesUseTheirKeys below is Figma-only), so their own small table:
-    // both cases share one title and one message across `.connect` and `.sign` (per
-    // connectAndSignCopyDifferOnlyWhereTheContextChangesTheMeaning above), sourced from their own
-    // catalog keys.
+    // Not Figma states (figmaStatesUseTheirKeys below is Figma-only), so their own small table.
+    // `.appNotInstalled` shares one title and one message across every context, sourced from its
+    // own catalog keys. `.openAppRejected` shares its enrollment keys across `.connect` and
+    // `.pairing` the same way, but `.sign` now has its own Figma-backed keys (frame 9, 1652:235),
+    // so its row carries both.
     @Test func appNotInstalledAndOpenAppRejectedUseTheirKeys() {
-        let states: [(issue: LedgerIssue, title: String, message: String)] = [
+        let states: [(issue: LedgerIssue, title: String, message: String, signTitle: String, signMessage: String)] = [
             (.appNotInstalled,
+             String(localizable: .ledgerIssueAppNotInstalledTitle),
+             String(localizable: .ledgerIssueAppNotInstalledMessage),
              String(localizable: .ledgerIssueAppNotInstalledTitle),
              String(localizable: .ledgerIssueAppNotInstalledMessage)),
             (.openAppRejected,
              String(localizable: .ledgerIssueOpenAppRejectedTitle),
-             String(localizable: .ledgerIssueOpenAppRejectedMessage))
+             String(localizable: .ledgerIssueOpenAppRejectedMessage),
+             String(localizable: .ledgerIssueOpenAppRejectedSignTitle),
+             String(localizable: .ledgerIssueOpenAppRejectedSignMessage))
         ]
 
         for state in states {
-            for context in [LedgerIssue.Context.connect, .sign] {
+            for context in [LedgerIssue.Context.connect, .pairing] {
                 #expect(state.issue.title(in: context) == state.title, "\(state.issue) \(context) title")
                 #expect(state.issue.message(in: context) == state.message, "\(state.issue) \(context) message")
                 #expect(state.issue.primaryAction(in: context) == .tryAgain, "\(state.issue) \(context) primary action")
             }
+            #expect(state.issue.title(in: .sign) == state.signTitle, "\(state.issue) .sign title")
+            #expect(state.issue.message(in: .sign) == state.signMessage, "\(state.issue) .sign message")
+            #expect(state.issue.primaryAction(in: .sign) == .tryAgain, "\(state.issue) .sign primary action")
         }
     }
 
