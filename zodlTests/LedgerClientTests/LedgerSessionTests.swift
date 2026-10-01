@@ -562,6 +562,50 @@ import ComposableArchitecture
         #expect(secondPairing == fixture)
     }
 
+    // MOB-2020: `self.transport = liveTransport` used to run unconditionally after
+    // the `await pair(...)` above -- a `disconnect()` from Close or Back can run during that
+    // await (the actor isn't isolated across it), and adopting whatever `pair` reports as live
+    // afterward would put back a transport the session already tore down.
+    @Test func aDisconnectDuringPairingIsNotOverwrittenByTheReconnectedTransport() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let pairStarted = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { _, _, _ in
+                pairStarted.setValue(true)
+                // Suspended exactly where the SDK's own read-before-export retry would be --
+                // until the test's `disconnect()` call closes the transport `pairAccount` was
+                // handed -- then reports a different transport as the live one, the same shape a
+                // real reconnect result takes.
+                while connected.closeCount == 0 {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return (.success(fixture), reconnected)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        async let pairingResult = session.pairAccount(Zip32AccountIndex(0))
+        try await eventually { pairStarted.value }
+
+        await session.disconnect()
+
+        let pairing = try await pairingResult
+        #expect(pairing == fixture)
+        // The reconnected transport must not be adopted -- it was reported live only after
+        // disconnect() had already torn the session down -- so a following operation that needs
+        // a transport finds nothing connected...
+        await #expect(throws: LedgerClientError.notConnected) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+        // ...and the transport pairAccount was handed is closed rather than left open and orphaned.
+        #expect(reconnected.closeCount == 1)
+    }
+
     // MARK: - The live `pair` closure's shape
 
     // `LedgerSession`'s own `pair` closure type carries no `readTimeout` -- it is a

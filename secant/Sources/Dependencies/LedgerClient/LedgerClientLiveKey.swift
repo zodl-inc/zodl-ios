@@ -39,10 +39,13 @@ extension LedgerBluetoothScanner: LedgerScanning {
 /// sure the Zcash app is open on the device -- which may wait for the user to confirm it there --
 /// before returning, and remembers the device for `pairAccount`'s own reconnect below.
 /// `pairAccount` throws ``LedgerClientError/notConnected`` when nothing is open; otherwise it
-/// always adopts the transport the SDK reports as live once pairing returns, whether it succeeded
-/// or failed -- the SDK's own read-before-export retry (MOB-2020) may have reconnected on a fresh
+/// adopts the transport the SDK reports as live once pairing returns, whether it succeeded or
+/// failed -- the SDK's own read-before-export retry (MOB-2020) may have reconnected on a fresh
 /// transport, and a session still holding the old one would hand a dead transport to a later retry
-/// or signing.
+/// or signing -- but only when this session's own transport is still the one pairing started
+/// with (MOB-2020): a `disconnect()` (Close or Back) can run during that `await`,
+/// and adopting a transport reported live after that would put back one the session already tore
+/// down, so this closes it instead.
 ///
 /// `signPCZT` throws the same error when nothing is open. A signing failure leaves the transport
 /// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
@@ -154,8 +157,20 @@ actor LedgerSession {
         // The SDK's own read-before-export retry may have reconnected on a fresh transport --
         // adopt whatever it reports as live first, whether pairing succeeded or failed, so a
         // session still holding the old (possibly SDK-closed) one never hands it to a later retry
-        // or signing.
-        self.transport = liveTransport
+        // or signing. But only when this session's own transport is still the one `pair` was
+        // called with -- a `disconnect()` (Close or Back) can run during the `await` above, and
+        // adopting the transport it reports live then would put back one the session already
+        // tore down. Compared by reference, the same way `dropTransport(ifStillOpen:)` below
+        // does: `LedgerAPDUTransport` is not class-bound, but both the live and fake conformances
+        // are reference types.
+        if let current = self.transport, current as AnyObject === transport as AnyObject {
+            self.transport = liveTransport
+        } else if liveTransport as AnyObject !== transport as AnyObject {
+            // Not the transport this call started with and not already closed by that
+            // disconnect() (which would make this a redundant double close) -- close it so it
+            // isn't leaked open and orphaned.
+            await liveTransport.close()
+        }
         switch result {
         case let .success(pairing):
             LoggerProxy.event("Ledger: paired (Zcash app \(pairing.appVersion))")
