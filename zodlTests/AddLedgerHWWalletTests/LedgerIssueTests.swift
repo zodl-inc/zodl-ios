@@ -11,7 +11,9 @@ import Foundation
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite struct LedgerIssueTests {
+// `.timeLimit` is SignalledClock's own backstop (TestSupport/SignalledClock.swift): a wait that
+// genuinely never fires is recorded as a failure here instead of hanging the run.
+@Suite(.timeLimit(.minutes(1))) struct LedgerIssueTests {
     private struct UnrelatedError: Error {}
 
     // MARK: - init(_:in:)
@@ -237,6 +239,41 @@ import Foundation
         for row in table {
             #expect(row.issue.retryNeedsNewConnection(in: .connect) == row.connect, "\(row.issue) .connect")
             #expect(row.issue.retryNeedsNewConnection(in: .sign) == row.sign, "\(row.issue) .sign")
+        }
+    }
+
+    // MARK: - racingApprovalTimeout's .cancelled outcome
+
+    // MOB-2020: without this fix, cancelling the caller's task while `work` was
+    // still suspended still read as `.timedOut` -- the timer's own `CancellationError` was
+    // swallowed by `try?` -- so a caller ran its time-cap cleanup (disconnect, a "Disconnected"
+    // send) for what was really a cancel, e.g. the user cancelling mid-approval-wait.
+    @Test func racingApprovalTimeoutReportsCancelledRatherThanTimedOutWhenCancelled() async throws {
+        let clock = SignalledClock()
+        let workStarted = SignalledRecords<Void>()
+
+        let race = Task {
+            await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> Int in
+                workStarted.recordCall()
+                // Parked exactly like a real connect waiting on the on-device prompt -- must not
+                // itself decide the race's outcome; only the enclosing task's own cancellation
+                // does.
+                try? await Task.sleep(for: .seconds(999))
+                return 1
+            }
+        }
+
+        await workStarted.countReached(1)
+        // The timeout timer's sleep is parked (and only then recorded) before cancelling, so the
+        // cancel below is guaranteed to land on a settled race, not one still starting.
+        await clock.sleepDeadlines.countReached(1)
+
+        race.cancel()
+        let outcome = await race.value
+
+        guard case .cancelled = outcome else {
+            Issue.record("expected .cancelled, got \(outcome)")
+            return
         }
     }
 }

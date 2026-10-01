@@ -257,6 +257,11 @@ struct LedgerSigning {
                             // handles its own cap winning.
                             await ledgerClient.disconnect()
                             await send(.connectionFailed(.disconnected))
+                        case .cancelled:
+                            // MOB-2020: the ceremony was torn down, not timed out --
+                            // nothing to clean up here; whichever teardown site cancelled this
+                            // effect already does its own.
+                            break
                         }
                     }
                     .cancellable(id: CancelId.connect, cancelInFlight: true)

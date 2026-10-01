@@ -248,6 +248,11 @@ struct AddLedgerHWWallet {
                         // the same way any other lost connection is.
                         await ledgerClient.disconnect()
                         await send(.pairingFailed(issue: .disconnected, connectionLost: true))
+                    case .cancelled:
+                        // MOB-2020: the ceremony was torn down, not timed out --
+                        // nothing to clean up here; whichever teardown site cancelled this effect
+                        // already does its own.
+                        break
                     }
                 }
 
