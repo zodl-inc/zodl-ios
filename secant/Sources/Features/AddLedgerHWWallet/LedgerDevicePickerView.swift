@@ -7,13 +7,13 @@
 //  1599:11500 unselected, 1599:11578 selected, part of node 1599:12387's frame): the shared step
 //  header/nav title, a back arrow that pops to step 1 instead of a close X that left the whole
 //  flow, and a device row redrawn as a single-line name with a radio instead of ZashiToggle. This
-//  screen finds and selects the Ledger; Connect now pushes the Approve on Your Device screen
-//  (LedgerApproveOnDeviceView), which runs the actual connect-and-pair -- this screen never
-//  connects on its own, though its Connect button reflects isConnecting while the phone pairs, the
-//  way the searching state's button already reflects isScanning. A scan failure shows as a
-//  LedgerIssueSheetContent sheet (MOB-2020 error states) on top of this screen; a swipe-dismiss
-//  leaves only the bottom Try again to retry. The placeholder rows are LedgerDeviceSkeletons,
-//  shared with the approve screen.
+//  screen finds and selects the Ledger; Connect (`.approveOnDeviceTapped`) bonds right here, and
+//  its button reflects isConnecting while that bond runs, the way the searching state's button
+//  already reflects isScanning -- the coordinator pushes the Approve on Your Device screen
+//  (LedgerApproveOnDeviceView), which runs the actual connect-and-pair, only once the bond
+//  settles. A scan failure shows as a LedgerIssueSheetContent sheet (MOB-2020 error states) on top
+//  of this screen; a swipe-dismiss leaves only the bottom Try again to retry. The placeholder rows
+//  are LedgerDeviceSkeletons, shared with the approve screen.
 //
 
 import SwiftUI
@@ -83,7 +83,9 @@ struct LedgerDevicePickerView: View {
     // directly in that trailing closure.
     @ViewBuilder private func issueSheetContent() -> some View {
         if let issue = store.issue {
-            LedgerIssueSheetContent(issue: issue, context: .connect) {
+            // MOB-2020: `.pairing`, not `.connect` -- this sheet shows both a scan failure and a
+            // step 2 bond failure, and the two contexts' copy differs only for `.deviceLocked`.
+            LedgerIssueSheetContent(issue: issue, context: .pairing) {
                 store.send(.issuePrimaryTapped)
             }
         }
@@ -102,19 +104,20 @@ struct LedgerDevicePickerView: View {
                 store.send(.startScanning)
             }
         } else if store.isConnecting {
-            // MOB-2020: the other executor's connection logic sets this while the phone pairs
-            // over Bluetooth -- mirrors the searching button above (spinner, disabled).
+            // MOB-2020: `.approveOnDeviceTapped` sets this while the phone bonds with the
+            // selected Ledger. Android keeps "Connect" with a spinner here rather than reusing
+            // the sign sheet's own status string, which can reword independently of this screen.
             ZashiButton(
-                String(localizable: .ledgerSignWithConnecting),
+                String(localizable: .keystoneAddHWWalletConnect),
                 minHeight: 48,
                 prefixView: ProgressView()
             ) { }
             .disabled(true)
         } else {
-            // MOB-2020: pushes the Approve on Your Device screen, which starts the
-            // connect-and-pair -- never `.connectDeviceTapped` here. The element reducer
-            // (below the coordinator in the reduce order) would otherwise also see that
-            // action and connect right on this screen, which no longer shows a spinner for it.
+            // MOB-2020: Connect sends `.approveOnDeviceTapped`, which bonds right on this
+            // screen -- never `.connectDeviceTapped` here. The coordinator pushes the Open the
+            // Zcash App and/or Approve on Your Device screens only once `.deviceBonded` reports
+            // the bond's outcome.
             ZashiButton(
                 store.issue != nil
                 ? String(localizable: .ledgerIssueTryAgain)
@@ -135,5 +138,6 @@ struct LedgerDevicePickerView: View {
         } label: {
             LedgerDeviceCard(device: device, isSelected: isSelected)
         }
+        .disabled(store.isConnecting)
     }
 }

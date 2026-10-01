@@ -6,8 +6,9 @@
 //  numbered step (node 1599:12387's frame) -- the nav-bar step title, the wordmark/title/subtitle
 //  header, the numbered checklist card (steps 1 and 3), the numbered overview list (the intro
 //  only), the info callout, and the number badge the checklist and overview rows both draw from.
-//  Plain `String` inputs and no store dependency, so this executor's own screens (the intro,
-//  LedgerTurnOnView) and the parallel executor's steps 3/4 can all build on it.
+//  Plain `String` inputs and no store dependency, so the intro (AddLedgerHWWalletView),
+//  LedgerTurnOnView, LedgerDevicePickerView, LedgerOpenAppView and LedgerApproveOnDeviceView can
+//  all build on it.
 //
 //  Also home to `LedgerWaitingIndicator` (Figma's "Waiting Indicator", node 1439:28709): step 4's
 //  approve screen and the send confirmation flow's Ledger sign sheet (LedgerSignSheet.swift) both

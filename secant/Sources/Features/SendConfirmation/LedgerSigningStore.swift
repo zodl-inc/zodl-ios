@@ -109,7 +109,8 @@ struct LedgerSigning {
         case stopScanning
     }
 
-    // Not `private`: the parent (`SendConfirmation`) cancels both directly from `.resetPCZTs`.
+    // Not `private`: the parent (`SendConfirmation`) cancels every case directly from
+    // `.resetPCZTs` and `.ledgerSignCancelTapped`.
     enum CancelId {
         case scan
         case sign
@@ -118,6 +119,11 @@ struct LedgerSigning {
         // `.resetPCZTs`/`.ledgerSignCancelTapped` need no changes -- cancels this too, while a
         // device reappearing can still cancel just this timer without touching the live scan.
         case pickerTimer
+        // MOB-2020: `.connect`'s own race against the approval timeout. Tearing
+        // the ceremony down while it waits on the on-device "Open Zcash?" prompt must cancel this
+        // too, or a stale `.connectionFailed` from the old connect can land on a brand new
+        // attempt's `.connecting` phase (see every cancel site below and in SendConfirmationStore).
+        case connect
     }
 
     /// `.connect`'s outcome once its connect effect and the approval-timeout race
@@ -245,8 +251,9 @@ struct LedgerSigning {
 
             case .connect:
                 // MOB-2020: `.openingZcashApp` is still mid-connect (the report already fired,
-                // the connect effect hasn't settled) -- the same non-cancellable-effect guard
-                // `.connecting` has always needed, extended to cover it too.
+                // the connect effect hasn't settled) -- the same guard against starting a second
+                // connect on top of one already in flight that `.connecting` has always needed,
+                // extended to cover it too.
                 guard let device = state.selectedDevice, state.phase != .connecting, state.phase != .openingZcashApp else {
                     return .none
                 }
@@ -278,30 +285,39 @@ struct LedgerSigning {
                             // handles its own cap winning.
                             await ledgerClient.disconnect()
                             await send(.connectionFailed(.disconnected))
+                        case .cancelled:
+                            // MOB-2020: the ceremony was torn down, not timed out --
+                            // nothing to clean up here; whichever teardown site cancelled this
+                            // effect already does its own.
+                            break
                         }
                     }
+                    .cancellable(id: CancelId.connect, cancelInFlight: true)
                 )
 
             case .openingZcashApp:
                 // MOB-2020: a late report must not resurrect a ceremony that already failed or
-                // moved on -- same non-cancellable-`connect` reasoning as `.deviceConnected` and
-                // `.connectionFailed` below, which is also why they now accept this phase too.
+                // moved on -- same reasoning as `.deviceConnected` and `.connectionFailed` below:
+                // the connect effect is cancellable now (`CancelId.connect`), but a report already
+                // in flight when a teardown's cancel takes effect can still land, so this guard is
+                // the second line of defence, which is also why those two now accept this phase too.
                 guard state.phase == .connecting else { return .none }
                 state.phase = .openingZcashApp
                 return .none
 
             case .deviceConnected:
-                // `.connect`'s effect is not cancellable, so a connect already in flight can still
-                // report back later -- a late result must not overwrite a ceremony that already
-                // failed (e.g. via `.pairingMissing`). `.openingZcashApp` is still that same
-                // in-flight connect, just past its report.
+                // `.connect`'s effect is cancellable now (`CancelId.connect`), but a result
+                // already in flight when a teardown's cancel takes effect can still land -- this
+                // guard is the second line of defence so a late result never overwrites a
+                // ceremony that already failed (e.g. via `.pairingMissing`). `.openingZcashApp` is
+                // still that same in-flight connect, just past its report.
                 guard state.phase == .connecting || state.phase == .openingZcashApp else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
 
             case let .connectionFailed(issue):
-                // Same non-cancellable-`connect` reasoning as `.deviceConnected` above: a late
-                // result must not overwrite a ceremony that already failed.
+                // Same reasoning as `.deviceConnected` above: a late result must not overwrite a
+                // ceremony that already failed, even though `.connect`'s effect is cancellable now.
                 guard state.phase == .connecting || state.phase == .openingZcashApp else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
                 // connection-lost regardless of what
@@ -325,12 +341,12 @@ struct LedgerSigning {
 
             case .pairingMissing:
                 // No device is ever going to sign for this account -- fail the ceremony outright
-                // and cancel any scan/sign still in flight (the `connect` effect can't be
-                // cancelled; the guards above handle a late result from it).
+                // and cancel any scan/sign/connect still in flight (the guards above are still
+                // the backstop for a result already in flight when this cancel takes effect).
                 state.phase = .failed
                 state.issue = .notPaired
                 state.isConnectionLost = false
-                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign))
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign), .cancel(id: CancelId.connect))
 
             case .startSigningIfReady:
                 guard state.phase == .connected, let request = state.request else {
@@ -394,7 +410,7 @@ struct LedgerSigning {
                 return .send(.startSigningIfReady)
 
             case .stopScanning:
-                return .cancel(id: CancelId.scan)
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.connect))
             }
         }
     }

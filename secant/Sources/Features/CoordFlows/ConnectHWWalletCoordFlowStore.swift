@@ -98,8 +98,8 @@ struct ConnectHWWalletCoordFlow {
         /// way that arm always has.
         case ledgerPairingAlreadyAdded(WalletAccount)
         /// MOB-2020 (Android b013b7c2, Rebound): the matched account had no stored binding, and the
-        /// coordinator's own effect just stored this pairing's binding onto it -- leave exactly the
-        /// way `goToExistingAccountTapped` does, with no sheet ever shown.
+        /// coordinator's own effect just stored this pairing's binding onto it -- show Connected
+        /// the way a fresh import's `.accountImportSucceeded` does, with no sheet ever shown.
         case ledgerPairingRebound(WalletAccount)
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
@@ -150,14 +150,18 @@ struct ConnectHWWalletCoordFlow {
                 return .none
 
             case let .ledgerPairingRebound(account):
-                // Same as `goToExistingAccountTapped` above, minus ever presenting the sheet.
+                // Unlike `goToExistingAccountTapped` above, this never leaves the flow -- it
+                // shows Connected, the same as a fresh import's `.accountImportSucceeded` arm
+                // (ConnectHWWalletCoordFlowCoordinator.swift), with Close doing the leaving once
+                // the user taps it.
                 state.alreadyAddedAccount = account
                 // MOB-2020 (Android d1506d0d): a repair that reaches Rebound has paired its
                 // target successfully -- clear it so a later, unrelated pairing never reads it as
                 // a stale target. A no-op when this Rebound came from today's no-target path,
                 // where it is already `nil`.
                 state.ledgerRepairTarget = nil
-                return leaveFlowThroughVendorInstructions(state: state)
+                state.path.append(.ledgerConnected(AddLedgerHWWallet.State.initial))
+                return .none
 
             case .contactSupportTapped:
                 state.isFailureSheetPresented = false
@@ -270,18 +274,33 @@ struct ConnectHWWalletCoordFlow {
                 }
 
                 if let existingAccount {
+                    // MOB-2020: the Rebound path below is only for a LEDGER
+                    // account that lost its binding -- not a non-Ledger account that merely
+                    // shares this pairing's UFVK (a Zodl seed account, or a Keystone
+                    // account, that shares the Ledger's recovery phrase). Such an account
+                    // has no Ledger binding to lose, so `exportLedgerBinding` throws the
+                    // identical `uninitializedLedgerBinding`, and rebinding it would hand a
+                    // Ledger binding to an account nothing else expects to have one.
+                    // Android filters to Ledger accounts first.
+                    guard existingAccount.vendor == .ledger else {
+                        return .send(.ledgerPairingAlreadyAdded(existingAccount))
+                    }
                     // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
                     // can never sign again -- store this pairing's binding onto it instead
                     // of reporting "Account Already Added" for an account that's a dead end.
-                    // The keychain work (the check and, when it applies, the write) runs in
-                    // this effect, never the reducer body, mirroring
-                    // `SendConfirmationStore.ledgerSignRequest`'s own export/catch shape.
+                    // `importLedgerBinding` refuses a duplicate, so an existing binding that
+                    // merely failed to decode (still `uninitializedLedgerBinding`, the same as a
+                    // missing one) is deleted first -- a missing one is fine too. The keychain
+                    // work (the check, the delete, and the write) runs in this effect, never the
+                    // reducer body, mirroring `SendConfirmationStore.ledgerSignRequest`'s own
+                    // export/catch shape.
                     return .run { send in
                         do {
                             _ = try walletStorage.exportLedgerBinding(existingAccount.id)
                             await send(.ledgerPairingAlreadyAdded(existingAccount))
                         } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
                             do {
+                                try? walletStorage.deleteLedgerBinding(existingAccount.id)
                                 try walletStorage.importLedgerBinding(pairing.binding, existingAccount.id)
                                 await send(.ledgerPairingRebound(existingAccount))
                             } catch {

@@ -65,6 +65,12 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     enum Context: Equatable, Sendable {
         /// The connect flow is `AddLedgerHWWallet`'s scan/connect/pair flow.
         case connect
+        /// Step 2's bond (`LedgerClient.bond`), while the phone is still bonding to the selected
+        /// device -- before steps 3/4 ever run. The device picker's issue sheet uses this context
+        /// for a bond failure and for a scan failure alike. Behaves exactly like `.connect`
+        /// everywhere except `.deviceLocked`'s message, so the two contexts' copy is identical in
+        /// every other case.
+        case pairing
         /// The Ledger sign sheet.
         case sign
     }
@@ -83,11 +89,15 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// on-device transaction review itself, which has no cap.
     static let approvalTimeout: Duration = .seconds(300)
 
-    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, or the
-    /// cap won first.
+    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, the cap
+    /// won first, or the caller's own task was cancelled while the race was still running.
     enum ApprovalRace<Success: Sendable>: Sendable {
         case completed(Success)
         case timedOut
+        /// MOB-2020: distinct from `.timedOut` -- a cancelled wait is not a timed-out
+        /// one, and a caller must not run its time-cap cleanup (disconnect, a "Disconnected" send)
+        /// for what was really a cancel, e.g. the user cancelling mid-approval-wait.
+        case cancelled
     }
 
     /// Races `work` against `approvalTimeout` on `clock`, sibling child tasks of one task group --
@@ -97,6 +107,15 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// terminal action itself: once the cap wins, `work`'s task is only cancelled, not stopped
     /// synchronously, so a send from its losing side could still land after the timeout's own send
     /// already has, overwriting it.
+    ///
+    /// MOB-2020: cancelling the CALLER's task (e.g. `LedgerSigning`'s `.connect`
+    /// effect, torn down by Cancel Transaction) cancels both children at once, and `work` is free
+    /// to catch that cancellation and still "complete" on its own terms (e.g. `.connect`'s own
+    /// `do`/`catch` around `ledgerClient.connect` turns a `CancellationError` into a completed
+    /// `.failed(...)`) -- so which child `group.next()` picks up first is a genuine race, not
+    /// something `work`'s own behaviour can be relied on to settle. The caller's own
+    /// `Task.isCancelled`, checked once the race has settled, is what actually tells a cancel apart
+    /// from a real timeout or a real completion.
     static func racingApprovalTimeout<Success: Sendable>(
         clock: any Clock<Duration>,
         work: @escaping @Sendable () async -> Success
@@ -104,12 +123,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         await withTaskGroup(of: ApprovalRace<Success>.self) { group in
             group.addTask { .completed(await work()) }
             group.addTask {
-                try? await clock.sleep(for: approvalTimeout)
-                return .timedOut
+                do {
+                    try await clock.sleep(for: approvalTimeout)
+                    return .timedOut
+                } catch {
+                    return .cancelled
+                }
             }
             let outcome = await group.next() ?? .timedOut
             group.cancelAll()
-            return outcome
+            return Task.isCancelled ? .cancelled : outcome
         }
     }
 
@@ -117,16 +140,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// message text, for the screen showing it in `context`. Never produces `.accountAlreadyAdded`;
     /// `LedgerAccountCollision` classifies import collisions itself.
     ///
-    /// MOB-2020 (Android aac01e65): `bonding` is `true` only for step 2's `LedgerClient.bond` --
-    /// the phone was still bonding to the device, before any command reached it -- never for
-    /// step 3, step 4 or signing, which all pass `false` since enrollment's bonding happens once,
-    /// on step 2, before any of them run. `ledgerDeviceNotFound`, `ledgerBluetoothConnectionFailed`
-    /// and `ledgerTimeout` read as `.pairingFailed` only while `bonding` and in `.connect`; every
-    /// other case (the same three kinds once bonded, or any context while signing) reads as
-    /// `.disconnected`, the device having been reachable at some point. `ledgerBluetoothPairingRefused`
-    /// is always `.pairingFailed` regardless of context or `bonding` -- the one refusal the
-    /// OS-level Bluetooth pairing dialog itself can raise.
-    init(_ error: Error, in context: Context, bonding: Bool = false) {
+    /// MOB-2020 (Android aac01e65): `.pairing` applies only to step 2's `LedgerClient.bond` --
+    /// the phone was still bonding to the device, before any command reached it -- never to step
+    /// 3, step 4 or signing, which all pass `.connect`/`.sign` since enrollment's bonding happens
+    /// once, on step 2, before any of them run. `ledgerDeviceNotFound`, `ledgerBluetoothConnectionFailed`
+    /// and `ledgerTimeout` read as `.pairingFailed` only in `.pairing`; every other case (the same
+    /// three kinds once bonded, or any context while signing) reads as `.disconnected`, the device
+    /// having been reachable at some point. `ledgerBluetoothPairingRefused` is always
+    /// `.pairingFailed` regardless of context -- the one refusal the OS-level Bluetooth pairing
+    /// dialog itself can raise.
+    init(_ error: Error, in context: Context) {
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
             self = .bluetoothUnauthorized
@@ -155,7 +178,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
         case ZcashError.ledgerDeviceNotFound, ZcashError.ledgerBluetoothConnectionFailed, ZcashError.ledgerTimeout:
-            self = (bonding && context == .connect) ? .pairingFailed : .disconnected
+            self = context == .pairing ? .pairingFailed : .disconnected
         case ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,
@@ -198,7 +221,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueOpenAppRejectedTitle)
         case .requestRejected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueRequestRejectedTitle)
+            case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedTitle)
             case .sign: return String(localizable: .ledgerIssueRequestRejectedSignTitle)
             }
         case .disconnected:
@@ -232,7 +255,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .noDevicesFound:
             return String(localizable: .ledgerIssueNoDevicesFoundMessage)
         case .deviceLocked:
-            return String(localizable: .ledgerIssueDeviceLockedMessage)
+            switch context {
+            case .connect, .sign: return String(localizable: .ledgerIssueDeviceLockedMessage)
+            case .pairing: return String(localizable: .ledgerIssueDeviceLockedPairingMessage)
+            }
         case .pairingFailed:
             return String(localizable: .ledgerIssuePairingFailedMessage)
         case .appNotInstalled:
@@ -241,12 +267,12 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueOpenAppRejectedMessage)
         case .requestRejected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueRequestRejectedMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedMessage)
             case .sign: return String(localizable: .ledgerIssueRequestRejectedSignMessage)
             }
         case .disconnected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueDisconnectedMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueDisconnectedMessage)
             case .sign: return String(localizable: .ledgerIssueDisconnectedSignMessage)
             }
         case .accountAlreadyAdded:
@@ -263,7 +289,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueNotSignableMessage)
         case .unknown:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueUnknownMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueUnknownMessage)
             case .sign: return String(localizable: .ledgerIssueUnknownSignMessage)
             }
         }
@@ -277,7 +303,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .bluetoothOff:
             return .tryAgain
         case .bluetoothUnsupported:
-            return context == .connect ? .close : .none
+            return context != .sign ? .close : .none
         case .noDevicesFound:
             return .tryAgain
         case .deviceLocked:
@@ -293,7 +319,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .disconnected:
             return .tryAgain
         case .accountAlreadyAdded:
-            return context == .connect ? .goToAccount : .none
+            return context != .sign ? .goToAccount : .none
         case .appTooOld:
             return .tryAgain
         case .derivationBudgetExhausted:
@@ -307,7 +333,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             // this one about), so `.connect` keeps `.none`.
             return context == .sign ? .pairLedger : .none
         case .transactionNotSignable:
-            return context == .connect ? .close : .none
+            return context != .sign ? .close : .none
         case .unknown:
             return .tryAgain
         }

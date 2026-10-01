@@ -118,9 +118,11 @@ struct AddLedgerHWWallet {
         case connectDeviceTapped
         case connectTapped
         /// MOB-2020 (Android aac01e65): `approveOnDeviceTapped`'s `ledgerClient.bond` succeeded --
-        /// carries whether the device already runs the Zcash app, which
-        /// ConnectHWWalletCoordFlowCoordinator reads to decide what it pushes next.
-        case deviceBonded(isZcashAppRunning: Bool)
+        /// carries the device that was bonded (never read off `selectedDevice`: a tap on another
+        /// row while the bond was running could otherwise have changed it) and whether that
+        /// device already runs the Zcash app, which ConnectHWWalletCoordFlowCoordinator reads to
+        /// decide what it pushes next.
+        case deviceBonded(device: LedgerBluetoothDevice, isZcashAppRunning: Bool)
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
@@ -267,6 +269,11 @@ struct AddLedgerHWWallet {
                 return .cancel(id: CancelId.scan)
 
             case let .deviceTapped(device):
+                // MOB-2020: ignored while a bond from an earlier tap is still running -- Android
+                // disables the rows for the same reason. Without this guard, a tap mid-bond swaps
+                // `selectedDevice` out from under `approveOnDeviceTapped`'s in-flight bond, and
+                // `.deviceBonded` would then report a device nothing here ever selected.
+                guard !state.isConnecting else { return .none }
                 state.selectedDevice = device
                 state.issue = nil
                 state.isIssueSheetPresented = false
@@ -289,9 +296,9 @@ struct AddLedgerHWWallet {
                     .run { send in
                         do {
                             let isZcashAppRunning = try await ledgerClient.bond(device)
-                            await send(.deviceBonded(isZcashAppRunning: isZcashAppRunning))
+                            await send(.deviceBonded(device: device, isZcashAppRunning: isZcashAppRunning))
                         } catch {
-                            let issue = LedgerIssue(error, in: .connect, bonding: true)
+                            let issue = LedgerIssue(error, in: .pairing)
                             await send(.pairingFailed(issue: issue, connectionLost: true))
                         }
                     }
@@ -338,6 +345,10 @@ struct AddLedgerHWWallet {
                         // cancellation included (LedgerSession.openZcashApp's own `defer`) -- so
                         // nothing here needs an explicit disconnect.
                         await send(.openingZcashAppFailed(.disconnected))
+                    case .cancelled:
+                        // MOB-2020: the step was left (`cancelTapped`), not timed out -- there's
+                        // no issue to show, and openZcashApp closes its own transport.
+                        break
                     }
                 }
                 // MOB-2020: step 3's back arrow sends the same `cancelTapped` the approve screen's
@@ -391,6 +402,11 @@ struct AddLedgerHWWallet {
                         // (LedgerSession.pairDevice's own `defer`) -- nothing here needs an
                         // explicit disconnect.
                         await send(.pairingFailed(issue: .disconnected, connectionLost: true))
+                    case .cancelled:
+                        // MOB-2020: the ceremony was torn down, not timed out --
+                        // nothing to clean up here; whichever teardown site cancelled this effect
+                        // already does its own.
+                        break
                     }
                 }
                 // MOB-2020: the Approve on Your Device screen's Cancel and back arrow cancel

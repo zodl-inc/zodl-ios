@@ -106,7 +106,7 @@ import ComposableArchitecture
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(isZcashAppRunning: false)))))
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: false)))))
 
         #expect(store.state.path.count == 2)
         if case .ledgerOpenApp(let openAppState) = store.state.path.last {
@@ -138,7 +138,7 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(isZcashAppRunning: true)))))
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: true)))))
 
         #expect(store.state.path.count == 3)
         if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
@@ -161,6 +161,53 @@ import ComposableArchitecture
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(pairedDevices.value == [device])
+    }
+
+    // MOB-2020: a tap on another row can change the picker's own `selectedDevice` while an
+    // earlier tap's bond is still running (AddLedgerHWWalletTests' own
+    // `tappingARowWhileBondingIsIgnored` covers the tap itself) -- this arm must carry the device
+    // the bond actually completed with, never whatever the picker ends up holding by the time its
+    // outcome arrives.
+    @Test func deviceBondedTrustsItsOwnDeviceOverThePickersSelection() async throws {
+        let deviceA = LedgerBluetoothDevice(id: UUID(), name: "Nano X A", model: .nanoX, rssi: -40)
+        let deviceB = LedgerBluetoothDevice(id: UUID(), name: "Nano X B", model: .nanoX, rssi: -55)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.selectedDevice = deviceB
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture()
+        let pairedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { pairedDevice, _ in
+                pairedDevices.withValue { $0.append(pairedDevice) }
+                return fixture
+            }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: deviceA, isZcashAppRunning: true)))))
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
+            #expect(openAppState.selectedDevice == deviceA)
+        } else {
+            Issue.record("expected an idle .ledgerOpenApp carrying the bonded device")
+        }
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.selectedDevice == deviceA)
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the bonded device")
+        }
+
+        // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
+        // `ledgerClient.pairDevice` to have been reached instead of asserting synchronously. A
+        // stale `selectedDevice` would pair with deviceB instead.
+        for _ in 0..<50 {
+            if !pairedDevices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pairedDevices.value == [deviceA])
     }
 
     // MARK: - Ledger Open the Zcash App (step 3, MOB-2020, Android 8cf16518/efe21904)
@@ -311,7 +358,7 @@ import ComposableArchitecture
 
     // MOB-2020 (Android b013b7c2, Rebound): an unbound match can never sign again, so pairing
     // stores the new binding onto it instead of dead-ending on "Account Already Added".
-    @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndLeavesTheFlow() async throws {
+    @Test func pairingAnUnboundExistingLedgerAccountReboundsItAndShowsConnected() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
         var approveState = AddLedgerHWWallet.State.initial
@@ -348,13 +395,68 @@ import ComposableArchitecture
         #expect(importedAccountId.value == existingAccount.id)
         #expect(importedBinding.value == fixture.binding)
 
-        // Leaves exactly the way `goToExistingAccountTapped` does:
-        // `.addLedgerHWWallet(.backToHomeTapped)` disconnects the Ledger inside its own effect.
+        // Shows Connected, the same as a fresh import -- not a disconnect-and-leave.
+        #expect(isConnected(store.state.path.last))
+        #expect(disconnected.value == false)
+
+        let connectedId = store.state.path.ids.last!
+        store.send(.path(.element(id: connectedId, action: .ledgerConnected(.closeTapped))))
+
         for _ in 0..<50 {
             if disconnected.value { break }
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(disconnected.value)
+    }
+
+    // MOB-2020: an undecodable binding still reads as `uninitializedLedgerBinding` from
+    // `exportLedgerBinding`, the same as a genuinely missing one -- but the keychain item itself
+    // is still there, so `importLedgerBinding` must delete it first or it fails as a duplicate,
+    // landing the user on "Account Already Added" for exactly the account the rebind was meant
+    // to fix.
+    @Test func pairingAnUnreadableBindingDeletesItBeforeReimporting() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        // The unreadable keychain item: present until `deleteLedgerBinding` clears it.
+        let itemExists = LockIsolated(true)
+        let calls = LockIsolated<[String]>([])
+        let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.exportLedgerBinding = { _ in
+                calls.withValue { $0.append("export") }
+                throw WalletStorage.WalletStorageError.uninitializedLedgerBinding
+            }
+            $0.walletStorage.deleteLedgerBinding = { _ in
+                calls.withValue { $0.append("delete") }
+                itemExists.setValue(false)
+            }
+            $0.walletStorage.importLedgerBinding = { binding, _ in
+                calls.withValue { $0.append("import") }
+                if itemExists.value {
+                    throw WalletStorage.WalletStorageError.alreadyImported
+                }
+                importedBinding.setValue(binding)
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.alreadyAddedAccount != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(calls.value == ["export", "delete", "import"])
+        #expect(importedBinding.value == fixture.binding)
     }
 
     // MOB-2020 (Android b013b7c2, Rebound): a binding write that fails must not strand the user --
@@ -394,7 +496,7 @@ import ComposableArchitecture
     // pair a specific account again -- see RootLedgerShieldingSheetTests.swift for Root's own side
     // of staging it.
 
-    @Test func repairingTheTargetWithItsOwnLedgerReplacesTheBindingAndLeavesTheFlow() async throws {
+    @Test func repairingTheTargetWithItsOwnLedgerReplacesTheBindingAndShowsConnected() async throws {
         let matchingUFVK = "uview1ledgerpairingfixture"
         let target = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
         var approveState = AddLedgerHWWallet.State.initial
@@ -449,7 +551,13 @@ import ComposableArchitecture
         #expect(importedAccountId.value == target.id)
         #expect(importedBinding.value == fixture.binding)
 
-        // Leaves exactly the way Rebound always has.
+        // Shows Connected, the same as the no-target Rebound above.
+        #expect(isConnected(store.state.path.last))
+        #expect(disconnected.value == false)
+
+        let connectedId = store.state.path.ids.last!
+        store.send(.path(.element(id: connectedId, action: .ledgerConnected(.closeTapped))))
+
         for _ in 0..<50 {
             if disconnected.value { break }
             try await Task.sleep(for: .milliseconds(20))
@@ -631,6 +739,44 @@ import ComposableArchitecture
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(disconnected.value)
+    }
+
+    // MOB-2020: the Rebound path above is for a LEDGER account that lost its
+    // binding -- not a non-Ledger account that merely shares the pairing's UFVK (a Zodl seed
+    // account, or a Keystone account, that shares the Ledger's recovery phrase). Such an account
+    // has no Ledger binding to lose, so `exportLedgerBinding` throws the identical
+    // `uninitializedLedgerBinding` -- the vendor, not the thrown error, is what must gate the
+    // rebind. Android filters to Ledger accounts first.
+    @Test func pairingAMatchingNonLedgerAccountRaisesAccountAlreadyAddedWithoutRebinding() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.zodlWalletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        let didImport = LockIsolated(false)
+        // `.noOp`'s own `exportLedgerBinding` already throws `uninitializedLedgerBinding` for any
+        // account with no stored binding -- a non-Ledger match throws it for the same reason a
+        // Ledger match that lost its binding does, so only the vendor check can tell them apart.
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.importLedgerBinding = { _, _ in didImport.setValue(true) }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.isAccountAlreadyAddedSheetPresented { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == true)
+        #expect(didImport.value == false)
+        #expect(store.state.path.count == 2)
+        #expect(isApproveOnDevice(store.state.path.last))
     }
 
     // MARK: - Account
@@ -1055,6 +1201,20 @@ import ComposableArchitecture
             keySource: Account.keystoneKeySource,
             seedFingerprint: nil,
             hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
+            uivk: nil
+        ))
+    }
+
+    /// A non-Ledger match for the rebind-guard test above -- same shape as `walletAccount(idByte:ufvk:)`
+    /// but with no key source, matching a Zodl seed account (`WalletAccount.vendor == .zcash`).
+    private static func zodlWalletAccount(idByte: UInt8, ufvk: String? = nil) -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
+            name: "Zodl",
+            keySource: nil,
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
             ufvk: ufvk.map { UnifiedFullViewingKey(validatedEncoding: $0) },
             uivk: nil
         ))
