@@ -216,6 +216,56 @@ import ComposableArchitecture
         #expect(disconnected.value)
     }
 
+    // MOB-2020: an undecodable binding still reads as `uninitializedLedgerBinding` from
+    // `exportLedgerBinding`, the same as a genuinely missing one -- but the keychain item itself
+    // is still there, so `importLedgerBinding` must delete it first or it fails as a duplicate,
+    // landing the user on "Account Already Added" for exactly the account the rebind was meant
+    // to fix.
+    @Test func pairingAnUnreadableBindingDeletesItBeforeReimporting() async throws {
+        let matchingUFVK = "uview1ledgerpairingfixture"
+        let existingAccount = Self.walletAccount(idByte: 0x0f, ufvk: matchingUFVK)
+        var approveState = AddLedgerHWWallet.State.initial
+        approveState.$walletAccounts.withLock { $0 = [existingAccount] }
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerApproveOnDevice(approveState))
+        let fixture = try Self.makePairingFixture(ufvk: matchingUFVK)
+        // The unreadable keychain item: present until `deleteLedgerBinding` clears it.
+        let itemExists = LockIsolated(true)
+        let calls = LockIsolated<[String]>([])
+        let importedBinding = LockIsolated<LedgerAccountBinding?>(nil)
+        let store = makeStore(initialState: initialState) {
+            $0.walletStorage.exportLedgerBinding = { _ in
+                calls.withValue { $0.append("export") }
+                throw WalletStorage.WalletStorageError.uninitializedLedgerBinding
+            }
+            $0.walletStorage.deleteLedgerBinding = { _ in
+                calls.withValue { $0.append("delete") }
+                itemExists.setValue(false)
+            }
+            $0.walletStorage.importLedgerBinding = { binding, _ in
+                calls.withValue { $0.append("import") }
+                if itemExists.value {
+                    throw WalletStorage.WalletStorageError.alreadyImported
+                }
+                importedBinding.setValue(binding)
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerApproveOnDevice(.pairingSucceeded(fixture)))))
+
+        for _ in 0..<50 {
+            if store.state.alreadyAddedAccount != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.state.alreadyAddedAccount == existingAccount)
+        #expect(store.state.isAccountAlreadyAddedSheetPresented == false)
+        #expect(calls.value == ["export", "delete", "import"])
+        #expect(importedBinding.value == fixture.binding)
+    }
+
     // MOB-2020 (Android b013b7c2, Rebound): a binding write that fails must not strand the user --
     // it falls back to today's "Account Already Added", exactly as if the account had a binding.
     @Test func aFailedRebindStillRaisesAccountAlreadyAddedOnTheApproveScreen() async throws {

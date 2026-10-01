@@ -274,15 +274,19 @@ struct ConnectHWWalletCoordFlow {
                     // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
                     // can never sign again -- store this pairing's binding onto it instead
                     // of reporting "Account Already Added" for an account that's a dead end.
-                    // The keychain work (the check and, when it applies, the write) runs in
-                    // this effect, never the reducer body, mirroring
-                    // `SendConfirmationStore.ledgerSignRequest`'s own export/catch shape.
+                    // `importLedgerBinding` refuses a duplicate, so an existing binding that
+                    // merely failed to decode (still `uninitializedLedgerBinding`, the same as a
+                    // missing one) is deleted first -- a missing one is fine too. The keychain
+                    // work (the check, the delete, and the write) runs in this effect, never the
+                    // reducer body, mirroring `SendConfirmationStore.ledgerSignRequest`'s own
+                    // export/catch shape.
                     return .run { send in
                         do {
                             _ = try walletStorage.exportLedgerBinding(existingAccount.id)
                             await send(.ledgerPairingAlreadyAdded(existingAccount))
                         } catch WalletStorage.WalletStorageError.uninitializedLedgerBinding {
                             do {
+                                try? walletStorage.deleteLedgerBinding(existingAccount.id)
                                 try walletStorage.importLedgerBinding(pairing.binding, existingAccount.id)
                                 await send(.ledgerPairingRebound(existingAccount))
                             } catch {
