@@ -118,11 +118,22 @@ extension ConnectHWWalletCoordFlow {
                             matching: pairing.ufvk,
                             among: devicePickerState.walletAccounts
                         ) {
-                            // MOB-2020 (Android b013b7c2, Rebound): a match with no stored binding
-                            // can never sign again -- store this pairing's binding onto it instead
-                            // of reporting "Account Already Added" for an account that's a dead end.
-                            // The keychain work (the check and, when it applies, the write) runs in
-                            // this effect, never the reducer body, mirroring
+                            // MOB-2020: the Rebound path below is only for a LEDGER
+                            // account that lost its binding -- not a non-Ledger account that merely
+                            // shares this pairing's UFVK (a Zodl seed account, or a Keystone
+                            // account, that shares the Ledger's recovery phrase). Such an account
+                            // has no Ledger binding to lose, so `exportLedgerBinding` throws the
+                            // identical `uninitializedLedgerBinding`, and rebinding it would hand a
+                            // Ledger binding to an account nothing else expects to have one.
+                            // Android filters to Ledger accounts first.
+                            guard existingAccount.vendor == .ledger else {
+                                return .send(.ledgerPairingAlreadyAdded(existingAccount))
+                            }
+                            // MOB-2020 (Android b013b7c2, Rebound): a Ledger match with no stored
+                            // binding can never sign again -- store this pairing's binding onto it
+                            // instead of reporting "Account Already Added" for an account that's a
+                            // dead end. The keychain work (the check and, when it applies, the
+                            // write) runs in this effect, never the reducer body, mirroring
                             // `SendConfirmationStore.ledgerSignRequest`'s own export/catch shape.
                             return .run { send in
                                 do {
