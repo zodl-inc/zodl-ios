@@ -24,8 +24,8 @@ struct LedgerSigning {
             case connecting
             // MOB-2020: the Bluetooth link is open and `LedgerSession.connect` has asked the
             // device which app it runs and found it isn't the Zcash app -- the on-device "Open
-            // Zcash?" prompt is showing. No Figma node covers this state; the sheet's copy
-            // (`ledger.signWith.openingApp`) is a placeholder until product sends final wording.
+            // Zcash?" prompt is showing. Figma's "Ledger Send State" frame 4 shows exactly that
+            // copy, "Open the Zcash app on your Ledger" (`ledger.signWith.openingApp`).
             case openingZcashApp
             case connected
             case signing(LedgerSigningProgress)
