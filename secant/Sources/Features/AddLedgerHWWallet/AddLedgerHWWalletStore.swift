@@ -345,6 +345,10 @@ struct AddLedgerHWWallet {
                         // cancellation included (LedgerSession.openZcashApp's own `defer`) -- so
                         // nothing here needs an explicit disconnect.
                         await send(.openingZcashAppFailed(.disconnected))
+                    case .cancelled:
+                        // MOB-2020: the step was left (`cancelTapped`), not timed out -- there's
+                        // no issue to show, and openZcashApp closes its own transport.
+                        break
                     }
                 }
                 // MOB-2020: step 3's back arrow sends the same `cancelTapped` the approve screen's
@@ -398,6 +402,11 @@ struct AddLedgerHWWallet {
                         // (LedgerSession.pairDevice's own `defer`) -- nothing here needs an
                         // explicit disconnect.
                         await send(.pairingFailed(issue: .disconnected, connectionLost: true))
+                    case .cancelled:
+                        // MOB-2020: the ceremony was torn down, not timed out --
+                        // nothing to clean up here; whichever teardown site cancelled this effect
+                        // already does its own.
+                        break
                     }
                 }
                 // MOB-2020: the Approve on Your Device screen's Cancel and back arrow cancel

@@ -136,9 +136,10 @@ extension Root {
                 return .send(.home(.walletAccountTapped(account)))
 
             case let .connectHWWalletCoordFlow(.ledgerPairingRebound(account)):
-                // MOB-2020 (Android b013b7c2, Rebound): switches to the account exactly like
-                // `goToExistingAccountTapped` above -- the flow itself closes the same way, through
-                // the `.addLedgerHWWallet(.backToHomeTapped)` arm this action's own effect sends.
+                // MOB-2020 (Android b013b7c2, Rebound): switches to the account right away, while
+                // the Store's own arm pushes the Connected screen (same as a fresh import) --
+                // closing it is a separate step, through the `.ledgerConnected(.closeTapped)` arm
+                // above, once the user taps Close.
                 return .send(.home(.walletAccountTapped(account)))
 
             case .home(.connectHWWalletTapped):

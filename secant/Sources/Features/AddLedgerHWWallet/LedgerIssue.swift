@@ -89,11 +89,15 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// on-device transaction review itself, which has no cap.
     static let approvalTimeout: Duration = .seconds(300)
 
-    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, or the
-    /// cap won first.
+    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, the cap
+    /// won first, or the caller's own task was cancelled while the race was still running.
     enum ApprovalRace<Success: Sendable>: Sendable {
         case completed(Success)
         case timedOut
+        /// MOB-2020: distinct from `.timedOut` -- a cancelled wait is not a timed-out
+        /// one, and a caller must not run its time-cap cleanup (disconnect, a "Disconnected" send)
+        /// for what was really a cancel, e.g. the user cancelling mid-approval-wait.
+        case cancelled
     }
 
     /// Races `work` against `approvalTimeout` on `clock`, sibling child tasks of one task group --
@@ -103,6 +107,15 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// terminal action itself: once the cap wins, `work`'s task is only cancelled, not stopped
     /// synchronously, so a send from its losing side could still land after the timeout's own send
     /// already has, overwriting it.
+    ///
+    /// MOB-2020: cancelling the CALLER's task (e.g. `LedgerSigning`'s `.connect`
+    /// effect, torn down by Cancel Transaction) cancels both children at once, and `work` is free
+    /// to catch that cancellation and still "complete" on its own terms (e.g. `.connect`'s own
+    /// `do`/`catch` around `ledgerClient.connect` turns a `CancellationError` into a completed
+    /// `.failed(...)`) -- so which child `group.next()` picks up first is a genuine race, not
+    /// something `work`'s own behaviour can be relied on to settle. The caller's own
+    /// `Task.isCancelled`, checked once the race has settled, is what actually tells a cancel apart
+    /// from a real timeout or a real completion.
     static func racingApprovalTimeout<Success: Sendable>(
         clock: any Clock<Duration>,
         work: @escaping @Sendable () async -> Success
@@ -110,12 +123,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         await withTaskGroup(of: ApprovalRace<Success>.self) { group in
             group.addTask { .completed(await work()) }
             group.addTask {
-                try? await clock.sleep(for: approvalTimeout)
-                return .timedOut
+                do {
+                    try await clock.sleep(for: approvalTimeout)
+                    return .timedOut
+                } catch {
+                    return .cancelled
+                }
             }
             let outcome = await group.next() ?? .timedOut
             group.cancelAll()
-            return outcome
+            return Task.isCancelled ? .cancelled : outcome
         }
     }
 

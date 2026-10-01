@@ -219,8 +219,9 @@ import ComposableArchitecture
         let request = try Self.signRequest()
         let signPCZTCallCount = LockIsolated(0)
         // MOB-2020: `.deviceConnected` is now guarded on `phase == .connecting` (a late result
-        // from the non-cancellable `connect` effect must not resurrect a ceremony that already
-        // failed), so this starts mid-connect rather than at the default `.scanning`.
+        // from `connect`'s effect -- cancellable via `CancelId.connect` now, but a result already
+        // in flight when a teardown cancels it can still land -- must not resurrect a ceremony
+        // that already failed), so this starts mid-connect rather than at the default `.scanning`.
         var initialState = LedgerSigning.State()
         initialState.phase = .connecting
         let store = TestStore(initialState: initialState) {
@@ -623,10 +624,55 @@ import ComposableArchitecture
         // now Pair Ledger, not the "no retry" `.none` this asserted before.
         #expect(store.state.failedPrimaryAction == .pairLedger)
 
-        // A late result from the non-cancellable `connect` effect must not overwrite the ceremony
-        // that already failed above -- both are no-ops now that `phase` is `.failed`.
+        // A late result from `connect`'s effect must not overwrite the ceremony that already
+        // failed above -- both are no-ops now that `phase` is `.failed` (the effect is
+        // cancellable via `CancelId.connect` now, but this guard is still the backstop for a
+        // result already in flight when `.pairingMissing` cancels it).
         await store.send(.deviceConnected)
         await store.send(.connectionFailed(.disconnected))
+        await store.finish()
+    }
+
+    // MOB-2020: without this fix, `.connect`'s effect had no cancel id, so
+    // tearing the ceremony down while it waited on the on-device "Open Zcash?" prompt left it
+    // running -- it could still report back later and flip a brand new attempt's `.connecting`
+    // phase to `.failed` out from under it. `.stopScanning` is one of the teardown sites
+    // `CancelId.connect` now covers (SendConfirmation's own Cancel Transaction button cancels the
+    // same id directly, from outside this reducer).
+    @MainActor @Test func stoppingTheCeremonyCancelsAnInFlightConnect() async throws {
+        let device = Self.device(name: "Nano X")
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+        let connectStarted = SignalledRecords<Void>()
+        let clock = SignalledClock()
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in
+                connectStarted.recordCall()
+                // Parked on the on-device prompt -- never resolves on its own, so only cancelling
+                // the effect itself can end this.
+                try await Task.sleep(for: .seconds(999))
+            }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await connectStarted.countReached(1)
+        // The approval-timeout race's timer sleep is parked (and only then recorded) before
+        // stopping, so the stop below is guaranteed to land on a settled race, not one still
+        // starting.
+        await clock.sleepDeadlines.countReached(1)
+
+        await store.send(.stopScanning)
+
+        // No `.connectionFailed` ever arrives -- exhaustive `finish()` would catch an unreceived
+        // action -- and `finish()` itself fails if the connect effect is still running.
         await store.finish()
     }
 
