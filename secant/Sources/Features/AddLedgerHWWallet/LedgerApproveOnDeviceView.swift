@@ -8,13 +8,13 @@
 //  `.ledgerOpenApp(.zcashAppOpened)` arms, both of which also send `connectDeviceTapped` at once,
 //  so pairing (AddLedgerHWWalletStore's `ledgerClient.pairDevice`) starts as soon as this screen
 //  appears. While it runs, the shared placeholder rows (LedgerDeviceSkeletons) show under a fade
-//  and a waiting indicator, with the primary Connect button disabled; after a failure the rows and
-//  indicator hide and the shared LedgerIssueSheetContent sheet shows on top, with Connect now
-//  enabled to retry -- it runs the sheet's own primary action. Cancel and the back arrow both
-//  cancel the pairing, disconnect and pop back to the picker (AddLedgerHWWalletStore's
-//  `.cancelTapped`, and ConnectHWWalletCoordFlowStore's own arm for it, since the coordinator runs
-//  before this element's own reducer and cannot safely pop it there -- see the coordinator's doc
-//  comment).
+//  and a waiting indicator, with the primary button (Connect) disabled; after a failure the rows
+//  and indicator hide and the shared LedgerIssueSheetContent sheet shows on top, with the primary
+//  button relabeled Retry and enabled -- it runs the sheet's own primary action. Cancel and the
+//  back arrow both cancel the pairing, disconnect and pop back to the picker
+//  (AddLedgerHWWalletStore's `.cancelTapped`, and ConnectHWWalletCoordFlowStore's own arm for it,
+//  since the coordinator runs before this element's own reducer and cannot safely pop it there --
+//  see the coordinator's doc comment).
 //
 
 import SwiftUI
@@ -74,11 +74,17 @@ struct LedgerApproveOnDeviceView: View {
                     message: String(localizable: .ledgerApproveCalloutMessage)
                 )
 
-                ZashiButton(String(localizable: .keystoneAddHWWalletConnect), minHeight: 48) {
+                ZashiButton(
+                    store.issue != nil
+                    ? String(localizable: .ledgerApproveRetry)
+                    : String(localizable: .keystoneAddHWWalletConnect),
+                    minHeight: 48
+                ) {
                     // Mirrors LedgerIssueSheetContent's own primary button: Open Settings is this
                     // view's job before `.issuePrimaryTapped` dismisses the sheet -- the reducer
-                    // only retries the pairing for `.tryAgain`. Connect is disabled until a
-                    // failure sets an issue, so `.tryAgain` is the only case reachable here.
+                    // only retries the pairing for `.tryAgain`. This button is disabled until a
+                    // failure sets an issue, so `.tryAgain` is the only case reachable here -- the
+                    // label above reads Retry exactly when that happens.
                     if store.issue?.primaryAction(in: .connect) == .openSettings,
                        let url = URL(string: UIApplication.openSettingsURLString) {
                         openURL(url)

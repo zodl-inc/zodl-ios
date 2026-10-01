@@ -10169,6 +10169,23 @@
         }
       }
     },
+    "ledger.approve.retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reintentar"
+          }
+        }
+      }
+    },
     "ledger.approve.title" : {
       "extractionState" : "manual",
       "localizations" : {
