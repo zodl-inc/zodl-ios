@@ -87,7 +87,8 @@ struct LedgerSigning {
         case stopScanning
     }
 
-    // Not `private`: the parent (`SendConfirmation`) cancels both directly from `.resetPCZTs`.
+    // Not `private`: the parent (`SendConfirmation`) cancels every case directly from
+    // `.resetPCZTs` and `.ledgerSignCancelTapped`.
     enum CancelId {
         case scan
         case sign
@@ -96,6 +97,11 @@ struct LedgerSigning {
         // `.resetPCZTs`/`.ledgerSignCancelTapped` need no changes -- cancels this too, while a
         // device reappearing can still cancel just this timer without touching the live scan.
         case pickerTimer
+        // MOB-2020: `.connect`'s own race against the approval timeout. Tearing
+        // the ceremony down while it waits on the on-device "Open Zcash?" prompt must cancel this
+        // too, or a stale `.connectionFailed` from the old connect can land on a brand new
+        // attempt's `.connecting` phase (see every cancel site below and in SendConfirmationStore).
+        case connect
     }
 
     /// `.connect`'s outcome once its connect effect and the approval-timeout race
@@ -253,19 +259,21 @@ struct LedgerSigning {
                             await send(.connectionFailed(.disconnected))
                         }
                     }
+                    .cancellable(id: CancelId.connect, cancelInFlight: true)
                 )
 
             case .deviceConnected:
-                // `.connect`'s effect is not cancellable, so a connect already in flight can still
-                // report back later -- a late result must not overwrite a ceremony that already
-                // failed (e.g. via `.pairingMissing`).
+                // `.connect`'s effect is cancellable now (`CancelId.connect`), but a result
+                // already in flight when a teardown's cancel takes effect can still land -- this
+                // guard is the second line of defence so a late result never overwrites a
+                // ceremony that already failed (e.g. via `.pairingMissing`).
                 guard state.phase == .connecting else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
 
             case let .connectionFailed(issue):
-                // Same non-cancellable-`connect` reasoning as `.deviceConnected` above: a late
-                // result must not overwrite a ceremony that already failed.
+                // Same reasoning as `.deviceConnected` above: a late result must not overwrite a
+                // ceremony that already failed, even though `.connect`'s effect is cancellable now.
                 guard state.phase == .connecting else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
                 // connection-lost regardless of what
@@ -289,12 +297,12 @@ struct LedgerSigning {
 
             case .pairingMissing:
                 // No device is ever going to sign for this account -- fail the ceremony outright
-                // and cancel any scan/sign still in flight (the `connect` effect can't be
-                // cancelled; the guards above handle a late result from it).
+                // and cancel any scan/sign/connect still in flight (the guards above are still
+                // the backstop for a result already in flight when this cancel takes effect).
                 state.phase = .failed
                 state.issue = .notPaired
                 state.isConnectionLost = false
-                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign))
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign), .cancel(id: CancelId.connect))
 
             case .startSigningIfReady:
                 guard state.phase == .connected, let request = state.request else {
@@ -358,7 +366,7 @@ struct LedgerSigning {
                 return .send(.startSigningIfReady)
 
             case .stopScanning:
-                return .cancel(id: CancelId.scan)
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.connect))
             }
         }
     }
