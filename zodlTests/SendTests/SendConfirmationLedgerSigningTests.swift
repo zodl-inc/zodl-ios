@@ -553,4 +553,60 @@ import ComposableArchitecture
             #expect(store.state.proposal == proposal)
         }
     }
+
+    // MOB-2020: "Cancel Transaction" must cancel a connect that is still suspended on the
+    // on-device "Open Zcash?" prompt, not just reset the sheet's state -- this stays fully
+    // exhaustive (no `store.exhaustivity = .off`) so `store.finish()`'s own "still running" check
+    // is live; that check is silently skipped under `.off`, which would make this pass whether or
+    // not the connect is actually cancelled.
+    @Test func ledgerSignCancelTappedCancelsAConnectStillSuspendedInLedgerClientConnect() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+            let connectStarted = LockIsolated(false)
+            let clock = SignalledClock()
+
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+            initialState.ledgerSigning.devices = [device]
+            initialState.ledgerSigning.selectedDevice = device
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.continuousClock = clock
+                $0.ledgerClient = .noOp
+                $0.ledgerClient.connect = { _ in
+                    connectStarted.setValue(true)
+                    // Parked on the on-device prompt -- never resolves on its own, so only
+                    // cancelling the effect itself can end this.
+                    try await Task.sleep(for: .seconds(999))
+                }
+            }
+
+            await store.send(.ledgerSigning(.connect)) {
+                $0.ledgerSigning.phase = .connecting
+            }
+
+            for _ in 0..<50 {
+                if connectStarted.value { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(connectStarted.value)
+            // The approval-timeout race's timer sleep is parked (and only then recorded) before
+            // cancelling, so the cancel below is guaranteed to land on a settled race.
+            await clock.sleepDeadlines.countReached(1)
+
+            await store.send(.ledgerSignCancelTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+
+            // No `.connectionFailed` ever arrives -- exhaustive mode would catch an unreceived
+            // action -- and this fails if the connect effect is still running.
+            await store.finish()
+        }
+    }
 }
