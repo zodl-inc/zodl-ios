@@ -106,6 +106,51 @@ import ComposableArchitecture
         #expect(disconnectCallCount.value == 1)
     }
 
+    // MOB-2020: the five-minute cap also covers a connect still waiting once the on-device "Open
+    // Zcash?" prompt has already reported -- `.openingZcashApp` is the same in-flight connect as
+    // `.connecting`, just past its report, so the cap must keep timing it there too.
+    @MainActor @Test func theFiveMinuteCapFiresWhileTheZcashAppIsOpening() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        let disconnectCallCount = LockIsolated(0)
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            // Reports, then never answers -- same as connectTimesOutAfterFiveMinutesAndDisconnects
+            // above, but past the on-device "Open Zcash?" report.
+            $0.ledgerClient.connect = { _, report in
+                await report()
+                try await Task.sleep(for: .seconds(999))
+            }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.openingZcashApp) {
+            $0.phase = .openingZcashApp
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.connectionFailed(.disconnected)) {
+            $0.phase = .failed
+            $0.issue = .disconnected
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+
+        #expect(disconnectCallCount.value == 1)
+    }
+
     @MainActor @Test func severalDevicesWaitForATap() async {
         let deviceA = Self.device(name: "Nano X A")
         let deviceB = Self.device(name: "Nano X B")
