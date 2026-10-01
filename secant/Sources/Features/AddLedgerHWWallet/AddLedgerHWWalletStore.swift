@@ -298,7 +298,7 @@ struct AddLedgerHWWallet {
                             let isZcashAppRunning = try await ledgerClient.bond(device)
                             await send(.deviceBonded(device: device, isZcashAppRunning: isZcashAppRunning))
                         } catch {
-                            let issue = LedgerIssue(error, in: .connect, bonding: true)
+                            let issue = LedgerIssue(error, in: .pairing)
                             await send(.pairingFailed(issue: issue, connectionLost: true))
                         }
                     }

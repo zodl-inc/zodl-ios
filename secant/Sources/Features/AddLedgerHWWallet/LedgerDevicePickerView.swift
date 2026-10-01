@@ -84,7 +84,9 @@ struct LedgerDevicePickerView: View {
     // directly in that trailing closure.
     @ViewBuilder private func issueSheetContent() -> some View {
         if let issue = store.issue {
-            LedgerIssueSheetContent(issue: issue, context: .connect) {
+            // MOB-2020: `.pairing`, not `.connect` -- this sheet shows both a scan failure and a
+            // step 2 bond failure, and the two contexts' copy differs only for `.deviceLocked`.
+            LedgerIssueSheetContent(issue: issue, context: .pairing) {
                 store.send(.issuePrimaryTapped)
             }
         }

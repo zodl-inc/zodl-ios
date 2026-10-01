@@ -10832,6 +10832,23 @@
         }
       }
     },
+    "ledger.issue.deviceLocked.pairing.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock your Ledger to continue."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desbloquea tu Ledger para continuar."
+          }
+        }
+      }
+    },
     "ledger.issue.deviceLocked.title" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -155,7 +155,7 @@ actor LedgerSession {
     ///
     /// - Returns: whether the device reported the Zcash app running already.
     /// - Throws: the connect step's own failure, unwrapped -- the caller classifies it with
-    ///   `LedgerIssue.init(_:in:bonding:)`'s `bonding: true`. `ZcashError.ledgerDeviceRefused` when
+    ///   `LedgerIssue.init(_:in:)`'s `.pairing` context. `ZcashError.ledgerDeviceRefused` when
     ///   the app query finds the device locked (status word `lockedStatusWord`): every step that
     ///   follows would refuse the same way, so this is the one query failure not swallowed. Any
     ///   other failure of the query only leaves the answer unknown, reported as `false`, since
