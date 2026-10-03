@@ -16,7 +16,7 @@ extension GiftCardClient: DependencyKey {
         Self(
             isGiftCardLink: { GiftCardLink.isCandidate($0) },
             parse: { link in
-                // TODO: [gift-cards] Wire to the wallet SDK's gift card link parser once it ships
+                // TODO: [MOB-2142] Wire to the wallet SDK's gift card link parser once it ships
                 // (origin, network, birthday height, stated amount, message; the secret stays
                 // inside the SDK). Map its errors onto `GiftCardClientError`:
                 // NotAGiftLink → .notAGiftCardLink, UnsupportedVersion → .unsupportedVersion,
@@ -28,7 +28,7 @@ extension GiftCardClient: DependencyKey {
                 throw GiftCardClientError.unavailable
             },
             open: { link in
-                // TODO: [gift-cards] Wire to the wallet SDK's gift card redeemer: create it for
+                // TODO: [MOB-2142] Wire to the wallet SDK's gift card redeemer: create it for
                 // `link` (isolated temporary synchronizer, same network and lightwalletd endpoint as
                 // the wallet), wrap it in a `GiftCardSession` and `await registry.insert(session)`.
                 // If the calling task was cancelled meanwhile, close the session instead of
