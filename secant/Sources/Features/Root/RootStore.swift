@@ -16,6 +16,7 @@ struct Root {
         enum Path {
             case addKeystoneHWWalletCoordFlow
             case currencyConversionSetup
+            case giftCardCoordFlow
             case migrationCoordFlow
             case receive
             case requestZecCoordFlow
@@ -306,6 +307,7 @@ struct Root {
 
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
+        var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
@@ -340,6 +342,9 @@ struct Root {
                 return true
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
+                return true
+            case .giftCardCoordFlow:
+                // Redeeming broadcasts a transaction (under the transaction guard).
                 return true
             case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
@@ -489,6 +494,7 @@ struct Root {
 
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
+        case giftCardCoordFlow(GiftCardCoordFlow.Action)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
@@ -589,6 +595,7 @@ struct Root {
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
     @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.flexaHandler) var flexaHandler
+    @Dependency(\.giftCard) var giftCard
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.migrationTickInterval) var migrationTickInterval
@@ -694,6 +701,10 @@ struct Root {
             CurrencyConversionSetup()
         }
 
+        Scope(state: \.giftCardCoordFlowState, action: \.giftCardCoordFlow) {
+            GiftCardCoordFlow()
+        }
+
         Scope(state: \.signWithKeystoneCoordFlowState, action: \.signWithKeystoneCoordFlow) {
             SignWithKeystoneCoordFlow()
         }
@@ -729,6 +740,8 @@ struct Root {
         swapsReduce()
         
         checkFundsReduce()
+
+        giftCardsReduce()
     }
     
     /// The `onChange` wrapper must observe every reducer that can mutate an input of

@@ -173,6 +173,16 @@ private extension RootView {
                                 )
                                 .transition(.move(edge: .trailing))
                                 .zIndex(1)
+                            } else if path == .giftCardCoordFlow {
+                                GiftCardCoordFlowView(
+                                    store:
+                                        store.scope(
+                                            state: \.giftCardCoordFlowState,
+                                            action: \.giftCardCoordFlow),
+                                    tokenName: tokenName
+                                )
+                                .transition(.move(edge: .trailing))
+                                .zIndex(1)
                             } else if path == .addKeystoneHWWalletCoordFlow {
                                 AddKeystoneHWWalletCoordFlowView(
                                     store:

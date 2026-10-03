@@ -11,6 +11,17 @@ import ComposableArchitecture
 extension HomeView {
     @ViewBuilder func moreContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            ActionRow(
+                icon: Asset.Assets.Icons.coinsHand.image,
+                title: String(localizable: .giftCardTitle),
+                desc: String(localizable: .giftCardHomeDesc),
+                divider: true
+            ) {
+                store.send(.redeemGiftCardTapped)
+            }
+            .accessibilityIdentifier(AccessibilityID.MoreSheet.redeemGiftCard)
+            .padding(.top, 32)
+
             if !store.isKeystoneAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
@@ -24,7 +35,6 @@ extension HomeView {
                     store.send(.flexaTapped)
                 }
                 .disabled(walletStatus.isNotReadyForFullySyncedOperation)
-                .padding(.top, 32)
                 .padding(.bottom, store.isKeystoneAccountActive ? 24 : 0)
             }
 

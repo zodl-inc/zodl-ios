@@ -25,6 +25,7 @@ enum AccessibilityID {
 
     enum MoreSheet {
         static let moreInMore = "moreSheet.moreInMore"
+        static let redeemGiftCard = "moreSheet.redeemGiftCard"
     }
 
     enum Settings {
