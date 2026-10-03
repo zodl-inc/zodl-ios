@@ -78,7 +78,8 @@ struct GiftCardHandle: Hashable, Sendable {
 
 /// What a synced card holds.
 enum GiftCardStatus: Equatable, Sendable {
-    /// Funds that can be redeemed right now. `spendable` is what the user receives, after the fee.
+    /// Funds that can be redeemed right now. `spendable` is the card's value; the network fee is
+    /// paid from it, so the user receives slightly less.
     case ready(spendable: Zatoshi)
     /// The card has been funded but the funds need more confirmations before they can be spent.
     case pending(amount: Zatoshi, confirmationsNeeded: Int?)

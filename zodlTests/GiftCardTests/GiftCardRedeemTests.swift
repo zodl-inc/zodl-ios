@@ -16,7 +16,7 @@ import ComposableArchitecture
 // Serialized: mutates the process-global `@Shared(.inMemory(.selectedWalletAccount))` slot.
 @Suite(.serialized) @MainActor struct GiftCardRedeemTests {
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000&amount=0.1".redacted
-    private static let orchardUA = UnifiedAddress(validatedEncoding: "utest1orchardonlyfixture", networkType: .testnet)
+    nonisolated(unsafe) private static let orchardUA = UnifiedAddress(validatedEncoding: "utest1orchardonlyfixture", networkType: .testnet)
 
     private var testWalletAccount: WalletAccount {
         WalletAccount(
@@ -182,8 +182,17 @@ import ComposableArchitecture
         #expect(openCalls.value == 0)
     }
 
-    @Test func buildWithoutGiftCardSupportSaysSo() async {
-        let store = TestStore(initialState: GiftCardRedeem.State(link: Self.link)) {
+    // MARK: - Live client (the wallet SDK's parser, offline)
+
+    /// Vizor's published, never-funded mainnet reference vector (32 zero bytes of entropy).
+    private static let vizorMainnetLink = [
+        "https://link.vizor.cash/payment-links/open#v3=",
+        "WyJtYWluIiwiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsMzQ4MzE0MSwiMTAwMDAwMCIsImtuaWdodE1hZ2ljIiwx",
+        "MS4xNzQ3LCJJdCdzIGEgZ3JlYXQgZGF5IHRvIHNoaWVsZCB5b3VyIFpFQyDwn5uh77iPIl0"
+    ].joined()
+
+    private func liveStore(link: String) -> TestStore<GiftCardRedeem.State, GiftCardRedeem.Action> {
+        let store = TestStore(initialState: GiftCardRedeem.State(link: link.redacted)) {
             GiftCardRedeem()
         } withDependencies: {
             $0.giftCard = .liveValue
@@ -191,9 +200,45 @@ import ComposableArchitecture
             $0.sdkSynchronizer = .mocked()
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
+        return store
+    }
+
+    @Test func liveClientReadsTheCardAndRejectsAnotherNetwork() async {
+        let store = liveStore(link: Self.vizorMainnetLink)
 
         await store.send(.onAppear) {
-            $0.step = .unavailable
+            $0.summary = GiftCardSummary(
+                origin: .vizor,
+                networkType: .mainnet,
+                birthdayHeight: 3_483_141,
+                statedAmount: Zatoshi(1_000_000),
+                message: "It's a great day to shield your ZEC 🛡️"
+            )
+            $0.step = .wrongNetwork
+        }
+    }
+
+    @Test func liveClientReportsADamagedLink() async {
+        let store = liveStore(link: Self.link.data)
+
+        await store.send(.onAppear) {
+            $0.step = .invalidLink
+        }
+    }
+
+    @Test func liveClientReportsAnUnsupportedVersion() async {
+        let store = liveStore(link: "https://gift.zodl.com/#v=2&key=zgifttest1fixture&height=3000000")
+
+        await store.send(.onAppear) {
+            $0.step = .unsupportedVersion
+        }
+    }
+
+    @Test func liveClientReportsNotAGiftCardLink() async {
+        let store = liveStore(link: "https://example.com/#v=1&key=zgifttest1fixture&height=3000000")
+
+        await store.send(.onAppear) {
+            $0.step = .invalidLink
         }
     }
 
