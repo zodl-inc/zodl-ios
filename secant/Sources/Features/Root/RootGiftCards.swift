@@ -8,8 +8,8 @@
 import ComposableArchitecture
 import Foundation
 
-/// Routing for the "Redeem gift card" flow: Home's entry point and gift card links found by the
-/// scanners of the Scan and Send flows.
+/// Routing for the "Redeem gift card" flow: Home's entry point, gift card links found by the
+/// scanners of the Scan and Send flows, and gift card links the app was opened with.
 extension Root {
     func giftCardsReduce() -> Reduce<Root.State, Root.Action> {
         Reduce { state, action in
@@ -38,10 +38,22 @@ extension Root {
         }
     }
 
+    /// Handles a gift card link the app was opened with: opens the flow now if nothing on screen
+    /// stands in the way, otherwise keeps the link until it can (`canOpenGiftCardFlow`).
+    func receiveGiftCardLink(_ link: RedactableString, state: inout Root.State) -> Effect<Root.Action> {
+        LoggerProxy.event("[GiftCard] link received")
+        guard state.canOpenGiftCardFlow else {
+            state.pendingGiftCardLink = link
+            return .none
+        }
+        return openGiftCardFlow(link: link, state: &state)
+    }
+
     /// Presents a fresh gift card flow: on the card behind `link`, or on the scanner when `link`
     /// is `nil`. A card still open from a previous visit is closed first.
     func openGiftCardFlow(link: RedactableString?, state: inout Root.State) -> Effect<Root.Action> {
         let staleHandles = state.giftCardCoordFlowState.openHandles
+        state.pendingGiftCardLink = nil
         state.giftCardCoordFlowState = link.map { GiftCardCoordFlow.State(link: $0) } ?? .initial
         state.path = .giftCardCoordFlow
         exchangeRate.refreshExchangeRateUSD()

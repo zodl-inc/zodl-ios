@@ -276,6 +276,10 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
+        /// A gift card link the app was opened with while the flow could not be shown yet (no
+        /// wallet on screen, the splash/authentication still up, or a payment flow in progress).
+        /// Opened as soon as `canOpenGiftCardFlow` turns true. A bearer secret: never logged.
+        var pendingGiftCardLink: RedactableString?
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -350,6 +354,16 @@ struct Root {
                  .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
+        }
+
+        /// Whether a gift card link the app was opened with can take over the screen now: the
+        /// wallet is on Home with nothing that could lose a payment in progress on top of it.
+        var canOpenGiftCardFlow: Bool {
+            destinationState.destination == .home
+                && splashAppeared
+                && !isSensitiveFlowActive
+                && !isServerSetupVisible
+                && bgTask == nil
         }
 
         /// True once the synchronizer has told us enough to believe an automatic switch (which
@@ -759,6 +773,10 @@ struct Root {
                 }
                 LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
                 return .send(.autoServerCandidateReady(pending.endpoint, pending.benchmarkedAt))
+            }
+            .onChange(of: \.canOpenGiftCardFlow) { _, state in
+                guard state.canOpenGiftCardFlow, let link = state.pendingGiftCardLink else { return .none }
+                return openGiftCardFlow(link: link, state: &state)
             }
     }
 

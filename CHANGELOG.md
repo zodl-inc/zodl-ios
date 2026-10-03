@@ -9,7 +9,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Added
 
-- [MOB-TBD] Redeem Zcash gift cards. Choose Redeem gift card from the More menu on Home and scan the card's QR code or paste its link (Zodl and Vizor gift links are supported), or scan a gift card where you would scan an address. Zodl checks the card, shows how much it holds and any message from the sender, and moves the funds to a shielded address of your selected account. A small network fee is paid from the card. A card whose funds still need confirmations is checked again automatically; a card that was already redeemed, isn't funded yet, or is for another network says so.
+- [MOB-TBD] Redeem Zcash gift cards. Choose Redeem gift card from the More menu on Home and scan the card's QR code or paste its link (Zodl and Vizor gift links are supported), scan a gift card where you would scan an address, or open a gift.zodl.com link on your phone. Zodl checks the card, shows how much it holds and any message from the sender, and moves the funds to a shielded address of your selected account. A small network fee is paid from the card. A card whose funds still need confirmations is checked again automatically; a card that was already redeemed, isn't funded yet, or is for another network says so.
 
 ## [3.15.0] - 2026-09-23
 

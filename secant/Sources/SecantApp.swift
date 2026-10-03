@@ -40,6 +40,11 @@ struct SecantApp: App {
                 appDelegate.scheduleSchedulerBackgroundTask()
             }
             .onOpenURL { url in
+                // Gift card links are routed by `RootView` (`.destination(.deeplink)`) and carry a
+                // spending secret, so they must never reach a third-party handler.
+                guard !GiftCardLink.isGiftCardURL(url) else {
+                    return
+                }
                 if featureFlags.flexa {
                     Flexa.processUniversalLink(url: url)
                 }
