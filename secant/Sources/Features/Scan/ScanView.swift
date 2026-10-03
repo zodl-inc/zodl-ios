@@ -107,6 +107,12 @@ struct ScanView: View {
                                     }
                                 }
                             } else {
+                                if store.isPasteEnabled {
+                                    secondaryButton(String(localizable: .scanPasteLink)) {
+                                        store.send(.pasteTapped)
+                                    }
+                                }
+
                                 primaryButton(String(localizable: .generalCancel)) {
                                     store.send(.cancelTapped)
                                 }
@@ -148,6 +154,26 @@ struct ScanView: View {
                 }
         }
         .padding(.bottom, 40)
+    }
+
+    /// Same geometry as `primaryButton`, dark like the torch and library buttons, so the camera's
+    /// main action stays Cancel.
+    private func secondaryButton(_ text: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+        } label: {
+            Text(text)
+                .font(.custom(FontFamily.Inter.semiBold.name, size: 16))
+                .foregroundColor(Asset.Colors.ZDesign.shark50.color)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .fill(Asset.Colors.ZDesign.shark900.color)
+                }
+        }
+        .padding(.bottom, 12)
     }
 
     /// PHASE 7: the disabled "Signing…" pill that replaces the Cancel button while

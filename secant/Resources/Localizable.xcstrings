@@ -16694,6 +16694,57 @@
         }
       }
     },
+    "scan.pasteEmpty" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There's nothing to paste. Copy the gift card link first."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay nada que pegar. Copia primero el enlace de la tarjeta de regalo."
+          }
+        }
+      }
+    },
+    "scan.pasteLink" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste link"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pegar enlace"
+          }
+        }
+      }
+    },
+    "scan.pasteUnsupported" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The copied text isn't a gift card link."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El texto copiado no es un enlace de tarjeta de regalo."
+          }
+        }
+      }
+    },
     "scan.severalCodesFound" : {
       "extractionState" : "manual",
       "localizations" : {

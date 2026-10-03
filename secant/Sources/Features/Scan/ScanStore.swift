@@ -21,6 +21,8 @@ struct Scan {
         case noQRCodeFound
         case severalQRCodesFound
         case keystoneCheckOnly
+        case nothingToPaste
+        case unsupportedPaste
     }
     
     @ObservableState
@@ -36,6 +38,9 @@ struct Scan {
         var isTorchAvailable = false
         var isTorchOn = false
         var isRPFound = false
+        /// Shows a "Paste link" button that runs the pasteboard's text through the same checkers
+        /// as a scanned code (used by the gift card flow).
+        var isPasteEnabled = false
         var progress: Int?
         var expectedParts = 0
         var reportedParts = 0
@@ -81,6 +86,7 @@ struct Scan {
     @Dependency(\.captureDevice) var captureDevice
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.keystoneHandler) var keystoneHandler
+    @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.qrImageDetector) var qrImageDetector
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.uriParser) var uriParser
@@ -93,7 +99,10 @@ struct Scan {
         case libraryImage(UIImage?)
         case onAppear
         case onDisappear
+        case pasteTapped
         case foundAddress(RedactableString)
+        /// A gift card link (a bearer secret, hence redacted). See `GiftCardScanChecker`.
+        case foundGiftCard(RedactableString)
         case foundString(String)
         case foundRequestZec(ParserResult)
         case foundAccounts(ZcashAccounts)
@@ -231,6 +240,24 @@ struct Scan {
                 state.isAnythingFound = true
                 return .none
 
+            case .foundGiftCard:
+                state.isAnythingFound = true
+                return .none
+
+            case .pasteTapped:
+                guard !state.isAnythingFound else {
+                    return .none
+                }
+                guard let text = pasteboard.getString(), !text.data.isEmpty else {
+                    return .send(.scanFailed(.nothingToPaste))
+                }
+                for checker in state.checkers {
+                    if let action = checker.checker.checkQRCode(text.data) {
+                        return .send(action)
+                    }
+                }
+                return .send(.scanFailed(.unsupportedPaste))
+
             case .cancelTapped:
                 return .none
                 
@@ -277,6 +304,10 @@ struct Scan {
                     state.info = String(localizable: .scanSeveralCodesFound)
                 case .keystoneCheckOnly:
                     state.info = ""
+                case .nothingToPaste:
+                    state.info = String(localizable: .scanPasteEmpty)
+                case .unsupportedPaste:
+                    state.info = String(localizable: .scanPasteUnsupported)
                 }
                 return .concatenate(
                     .cancel(id: state.cancelId),
