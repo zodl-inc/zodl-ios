@@ -78,7 +78,7 @@ extension GiftCardClient {
     }
 
     /// Maps the SDK's parse failure onto `GiftCardClientError`. The SDK reports every parse failure
-    /// as `rustParseGiftCardLink` with a fixed message per cause (`rust/src/gift.rs` in the SDK):
+    /// as `rustParseGiftCardLink` with a fixed message per cause (`rust/src/liberated_payment.rs` in the SDK):
     /// not a link at all, an unsupported link version, a card for another network, or a damaged
     /// link (missing, repeated, invalid or oversized fields, or a key that cannot be derived).
     static func parseError(_ error: Error) -> GiftCardClientError {
@@ -86,10 +86,10 @@ extension GiftCardClient {
             return .invalidLink
         }
         let reason = message.lowercased()
-        if reason.contains("not a gift card link") {
+        if reason.contains("not a liberated payment link") || reason.contains("not a gift card link") {
             return .notAGiftCardLink
         }
-        if reason.contains("unsupported gift card link version") {
+        if reason.contains("unsupported payment link version") || reason.contains("unsupported gift card link version") {
             return .unsupportedVersion
         }
         if reason.contains("unsupported network") || reason.contains("different network") {
