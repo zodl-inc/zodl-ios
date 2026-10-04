@@ -21,6 +21,8 @@ import ComposableArchitecture
         #expect(GiftCardLink.isCandidate(Self.zodlLink))
         #expect(GiftCardLink.isCandidate(Self.vizorLink))
         #expect(GiftCardLink.isCandidate("  HTTPS://GIFT.ZODL.COM/#v=1&key=zgift1fixture\n"))
+        // The host may be written without the `/` browsers insert before the fragment.
+        #expect(GiftCardLink.isCandidate("https://gift.zodl.com#v=1&key=zgift1fixture&height=1"))
     }
 
     @Test func ignoresEverythingElse() {

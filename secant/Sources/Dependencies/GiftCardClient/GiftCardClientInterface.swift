@@ -111,12 +111,14 @@ enum GiftCardClientError: Error, Equatable, Sendable {
 /// keeps the scanner from handing arbitrary text to the parser.
 enum GiftCardLink {
     static let zodlPrefix = "https://gift.zodl.com/"
+    /// The same host written without the `/` that browsers insert before the fragment.
+    static let zodlBarePrefix = "https://gift.zodl.com#"
     static let vizorPrefix = "https://link.vizor.cash/payment-links/open"
     static let zodlHost = "gift.zodl.com"
 
     static func isCandidate(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return hasPrefix(trimmed, zodlPrefix) || hasPrefix(trimmed, vizorPrefix)
+        return hasPrefix(trimmed, zodlPrefix) || hasPrefix(trimmed, zodlBarePrefix) || hasPrefix(trimmed, vizorPrefix)
     }
 
     /// `true` for a URL the app was opened with that belongs to the gift card flow, whatever
