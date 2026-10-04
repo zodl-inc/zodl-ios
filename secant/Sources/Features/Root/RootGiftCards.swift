@@ -24,10 +24,19 @@ extension Root {
                 // redeem flow instead. Nothing has been sent from these flows at scan time.
                 return openGiftCardFlow(link: link, state: &state)
 
+            case .giftCardCoordFlow(.redeem(.opened(_))):
+                // The card wallet and the main wallet share one database queue, so the main
+                // wallet's sync (and everything it triggers) would slow the card's check and sweep.
+                // Pause it while a card is open; it resumes when the flow closes.
+                return .run { _ in sdkSynchronizer.stop() }
+
             case .giftCardCoordFlow(.scan(.cancelTapped)),
                     .giftCardCoordFlow(.redeem(.delegate(.dismiss))):
                 state.path = nil
-                return .send(.giftCardCoordFlow(.cleanUp))
+                return .merge(
+                    .send(.giftCardCoordFlow(.cleanUp)),
+                    .run { _ in try? await sdkSynchronizer.start(true) }
+                )
 
             case .giftCardCoordFlow(.redeem(.delegate(.redeemed))):
                 return .send(.fetchTransactionsForTheSelectedAccount)

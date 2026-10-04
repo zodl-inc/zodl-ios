@@ -140,10 +140,10 @@ extension GiftCardClient {
     ) async throws -> GiftCardRedeemer {
         do {
             do {
-                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint)
+                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
             } catch ZcashError.giftCardRedeemerAlreadyActive {
                 await registry.closeAll()
-                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint)
+                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
             }
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
@@ -164,9 +164,15 @@ extension GiftCardClient {
             throw GiftCardClientError.unknownHandle
         }
         @Dependency(\.transactionGuard) var transactionGuard
+        let requested = Date()
+        LoggerProxy.event("[GiftCard] redeem: waiting for the transaction guard")
         do {
             return try await transactionGuard.withSubmission(timeout: submissionGuardTimeout) {
-                try await session.sendAll(to: toAddress)
+                let acquired = Date()
+                LoggerProxy.event("[GiftCard] redeem: guard acquired after \(Int(acquired.timeIntervalSince(requested)))s")
+                let txId = try await session.sendAll(to: toAddress)
+                LoggerProxy.event("[GiftCard] redeem: swept after \(Int(Date().timeIntervalSince(acquired)))s")
+                return txId
             }
         } catch let error as GiftCardClientError {
             throw error
@@ -351,7 +357,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
         await close()
         let replacement: GiftCardRedeemer
         do {
-            replacement = try GiftCardRedeemer(card: card, network: network, endpoint: endpoint)
+            replacement = try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
         } catch ZcashError.giftCardRedeemerAlreadyActive {
