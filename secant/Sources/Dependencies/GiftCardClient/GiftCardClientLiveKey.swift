@@ -216,7 +216,7 @@ extension GiftCardSummary {
         switch card.origin {
         case .zodl:
             origin = .zodl
-        case .vizorV1, .vizorV2, .vizorV3:
+        case .legacyV1, .legacyV2, .legacyV3:
             origin = .vizor
         }
         self.init(
