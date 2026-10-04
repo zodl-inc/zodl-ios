@@ -18,6 +18,11 @@ extension GiftCardCoordFlow {
                 return .none
 
             case .cleanUp:
+                // Nothing open: the scanner is already fresh, and `.giftCardScanner` would mint a
+                // new cancel ID for no reason.
+                guard state.redeemState != nil else {
+                    return .none
+                }
                 let handles = state.openHandles
                 // Dropping the card's state cancels its in-flight work (`ifLet`); the card's
                 // wallet is closed afterwards, outside of it.
