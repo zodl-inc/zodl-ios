@@ -386,6 +386,11 @@ struct SDKSynchronizerClient: Sendable {
         _ route: VotingTransportRoute,
         _ epoch: UInt64
     ) async throws -> VotingRoundSession
+
+    /// The wallet's own SDK synchronizer, for the SDK APIs that take one as an argument rather
+    /// than being called on it: a gift card sweep records its claim in it (see
+    /// `GiftCardClient.redeem`). `nil` wherever there is no real synchronizer (tests, previews).
+    var mainWalletSynchronizer: @Sendable () -> (any Synchronizer)? = { nil }
 }
 
 extension SDKSynchronizerClient {

@@ -131,7 +131,10 @@ extension SDKSynchronizerClient: TestDependencyKey {
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
         getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
-        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession")
+        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession"),
+        // Not `unimplemented`: `nil` is a real answer (no wallet to record a gift card claim in),
+        // and the gift card client asks for it on every sweep.
+        mainWalletSynchronizer: { nil }
     )
 }
 
@@ -238,7 +241,8 @@ extension SDKSynchronizerClient {
         // sidecar to do it. Refusing is what "no-op" means here.
         makeVotingRoundSession: { _, _, _, _, _ in
             throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
-        }
+        },
+        mainWalletSynchronizer: { nil }
     )
 
     static let mock = Self.mocked()
@@ -441,7 +445,8 @@ extension SDKSynchronizerClient {
             UInt64
         ) async throws -> VotingRoundSession = { _, _, _, _, _ in
             throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
-        }
+        },
+        mainWalletSynchronizer: @escaping @Sendable () -> (any Synchronizer)? = { nil }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -535,7 +540,8 @@ extension SDKSynchronizerClient {
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
             getTreeState: getTreeState,
-            makeVotingRoundSession: makeVotingRoundSession
+            makeVotingRoundSession: makeVotingRoundSession,
+            mainWalletSynchronizer: mainWalletSynchronizer
         )
     }
 }

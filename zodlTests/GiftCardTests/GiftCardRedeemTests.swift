@@ -445,10 +445,153 @@ import ComposableArchitecture
         #expect(!replaced)
         #expect(closed.value == 1)
     }
+
+    // MARK: - Live wiring: the claim is recorded in the main wallet as trusted (ZIP 315)
+
+    /// A real synchronizer that is never prepared or started: the tests only check that the sweep
+    /// is handed this instance. The app tests cannot conform to `Synchronizer` themselves.
+    private static func makeMainWallet() -> any Synchronizer {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GiftCardRedeemTests-\(UUID().uuidString)", isDirectory: true)
+        let initializer = Initializer(
+            cacheDbURL: nil,
+            fsBlockDbRoot: directory.appendingPathComponent("fs_cache", isDirectory: true),
+            generalStorageURL: directory,
+            dataDbURL: directory.appendingPathComponent("data.db"),
+            torDirURL: directory.appendingPathComponent("tor", isDirectory: true),
+            endpoint: LightWalletEndpoint(address: "localhost", port: 9067, secure: false),
+            network: ZcashNetworkBuilder.network(for: .testnet),
+            spendParamsURL: directory.appendingPathComponent("sapling-spend.params"),
+            outputParamsURL: directory.appendingPathComponent("sapling-output.params"),
+            saplingParamsSourceURL: .default,
+            alias: .custom("giftcardtests"),
+            loggingPolicy: .noLogging,
+            isTorEnabled: false,
+            isExchangeRateEnabled: false
+        )
+        return SDKSynchronizer(initializer: initializer)
+    }
+
+    /// The redeem screen over the live client and a registry holding `session`: parsing comes from
+    /// the mock, opening hands out the registered card, and checking and redeeming go through the
+    /// live wiring, with `mainWallet` as the wallet's own synchronizer.
+    private func liveWiringStore(
+        session: FakeGiftCardSession,
+        mainWallet: (any Synchronizer)?
+    ) async -> TestStore<GiftCardRedeem.State, GiftCardRedeem.Action> {
+        let registry = GiftCardSessionRegistry()
+        let handle = await registry.insert(session)
+        let live = GiftCardClient.live(registry: registry)
+        var client = GiftCardClient.mock(scenario(.ready))
+        client.open = { _ in handle }
+        client.check = live.check
+        client.redeem = live.redeem
+        client.cleanup = live.cleanup
+
+        let state = GiftCardRedeem.State(link: Self.link)
+        let account = testWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = account }
+
+        nonisolated(unsafe) let mainWallet = mainWallet
+        let sdkSynchronizer = SDKSynchronizerClient.mocked(
+            getCustomUnifiedAddress: { _, _ in Self.orchardUA },
+            mainWalletSynchronizer: { mainWallet }
+        )
+
+        let store = TestStore(initialState: state) {
+            GiftCardRedeem()
+        } withDependencies: {
+            $0.giftCard = client
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.transactionGuard = .testValue
+            $0.sdkSynchronizer = sdkSynchronizer
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        return store
+    }
+
+    private func redeemThroughTheLiveWiring(_ store: TestStore<GiftCardRedeem.State, GiftCardRedeem.Action>) async {
+        await store.send(.onAppear)
+        await store.receive(\.opened)
+        await store.receive(\.statusLoaded) {
+            $0.step = .ready(spendable: Zatoshi(10_000_000))
+        }
+        await store.send(.redeemTapped) {
+            $0.step = .redeeming(amount: Zatoshi(10_000_000))
+        }
+        await store.receive(\.redeemSucceeded) {
+            $0.step = .success(amount: Zatoshi(10_000_000))
+            $0.txId = FakeGiftCardSession.txId
+        }
+        await store.receive(\.delegate.redeemed)
+    }
+
+    @Test func redeemRecordsTheClaimInTheMainWallet() async {
+        let mainWallet = Self.makeMainWallet()
+        let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(10_000_000)),
+            closed: LockIsolated(0),
+            reopened: LockIsolated(0),
+            recordedIn: recordedIn
+        )
+        let store = await liveWiringStore(session: session, mainWallet: mainWallet)
+
+        await redeemThroughTheLiveWiring(store)
+
+        // The sweep was handed the wallet's own synchronizer, exactly once.
+        #expect(recordedIn.value == [ObjectIdentifier(mainWallet)])
+    }
+
+    @Test func claimThatCouldNotBeRecordedStillSucceeds() async {
+        let mainWallet = Self.makeMainWallet()
+        let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(10_000_000)),
+            closed: LockIsolated(0),
+            reopened: LockIsolated(0),
+            recordsClaim: false,
+            recordedIn: recordedIn
+        )
+        let store = await liveWiringStore(session: session, mainWallet: mainWallet)
+
+        // Same states as a recorded claim: the funds are on their way either way, and the wallet
+        // finds an unrecorded claim on chain.
+        await redeemThroughTheLiveWiring(store)
+
+        #expect(recordedIn.value == [ObjectIdentifier(mainWallet)])
+        #expect(store.state.step == .success(amount: Zatoshi(10_000_000)))
+    }
+
+    @Test func liveRedeemWithoutAMainWalletStillSucceeds() async throws {
+        let registry = GiftCardSessionRegistry()
+        let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(10_000_000)),
+            closed: LockIsolated(0),
+            reopened: LockIsolated(0),
+            recordedIn: recordedIn
+        )
+        let handle = await registry.insert(session)
+        let client = GiftCardClient.live(registry: registry)
+
+        let txId = try await withDependencies {
+            $0.transactionGuard = .testValue
+            $0.sdkSynchronizer = .mocked()
+        } operation: {
+            try await client.redeem(handle, Self.orchardUA.stringEncoded)
+        }
+
+        #expect(txId == FakeGiftCardSession.txId)
+        #expect(recordedIn.value == [nil])
+    }
 }
 
 /// A `GiftCardSession` stand-in: `sendAll` reports a rejected broadcast (or a given client error),
-/// and `reopen` hands out a session for the same card whose sweep succeeds.
+/// and `reopen` hands out a session for the same card whose sweep succeeds. A successful sweep
+/// notes which synchronizer it was asked to record the claim in, and reports it recorded unless
+/// `recordsClaim` is off.
 private struct FakeGiftCardSession: GiftCardSession {
     static let txId = "fade00fade00fade00fade00fade00fade00fade00fade00fade00fade00fade"
 
@@ -457,6 +600,8 @@ private struct FakeGiftCardSession: GiftCardSession {
     var sendAllError: GiftCardClientError?
     let closed: LockIsolated<Int>
     let reopened: LockIsolated<Int>
+    var recordsClaim = true
+    var recordedIn = LockIsolated<[ObjectIdentifier?]>([])
 
     func progress() -> AsyncStream<Double> {
         AsyncStream { $0.finish() }
@@ -466,20 +611,27 @@ private struct FakeGiftCardSession: GiftCardSession {
         held
     }
 
-    func sendAll(to address: String) async throws -> String {
+    func sendAll(to address: String, recordIn mainWallet: GiftCardClaimDestination?) async throws -> GiftCardSweep {
         if let sendAllError {
             throw sendAllError
         }
         if submissionFails {
             throw GiftCardSubmissionFailed()
         }
-        return Self.txId
+        recordedIn.withValue { $0.append(mainWallet.map { ObjectIdentifier($0.synchronizer) }) }
+        return GiftCardSweep(txId: Self.txId, recordedInMainWallet: recordsClaim && mainWallet != nil)
     }
 
     func reopen() async throws -> any GiftCardSession {
         await close()
         reopened.withValue { $0 += 1 }
-        return FakeGiftCardSession(held: held, closed: closed, reopened: reopened)
+        return FakeGiftCardSession(
+            held: held,
+            closed: closed,
+            reopened: reopened,
+            recordsClaim: recordsClaim,
+            recordedIn: recordedIn
+        )
     }
 
     func close() async {

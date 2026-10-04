@@ -565,7 +565,8 @@ extension SDKSynchronizerClient: DependencyKey {
                     route: route,
                     epoch: epoch
                 )
-            }
+            },
+            mainWalletSynchronizer: { synchronizer }
         )
     }
 }

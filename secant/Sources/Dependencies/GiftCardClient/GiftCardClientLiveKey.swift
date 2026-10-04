@@ -159,20 +159,31 @@ extension GiftCardClient {
     /// Sweeps the card into `toAddress`. Broadcast-sensitive: the sweep must never overlap a server
     /// switch, exactly like the wallet's own sends (see AGENTS.md, "Transaction guard"). The guard
     /// is taken here, once, and never by callers.
+    ///
+    /// The claim is recorded in the wallet's own synchronizer as a trusted transaction (ZIP 315):
+    /// it shows in the history at once and is spendable after 3 confirmations instead of 10. The
+    /// SDK writes it straight to the wallet database, so this works while the main synchronizer is
+    /// stopped for the card (see `RootGiftCards`). A claim that could not be recorded is only
+    /// logged: the wallet then finds it on chain like any other receive.
     private static func redeem(_ handle: GiftCardHandle, to toAddress: String, registry: GiftCardSessionRegistry) async throws -> String {
         guard let session = await registry.session(for: handle) else {
             throw GiftCardClientError.unknownHandle
         }
         @Dependency(\.transactionGuard) var transactionGuard
+        @Dependency(\.sdkSynchronizer) var sdkSynchronizer
+        let mainWallet = sdkSynchronizer.mainWalletSynchronizer().map(GiftCardClaimDestination.init)
         let requested = Date()
         LoggerProxy.event("[GiftCard] redeem: waiting for the transaction guard")
         do {
             return try await transactionGuard.withSubmission(timeout: submissionGuardTimeout) {
                 let acquired = Date()
                 LoggerProxy.event("[GiftCard] redeem: guard acquired after \(Int(acquired.timeIntervalSince(requested)))s")
-                let txId = try await session.sendAll(to: toAddress)
+                let sweep = try await session.sendAll(to: toAddress, recordIn: mainWallet)
                 LoggerProxy.event("[GiftCard] redeem: swept after \(Int(Date().timeIntervalSince(acquired)))s")
-                return txId
+                if !sweep.recordedInMainWallet {
+                    LoggerProxy.warn("[GiftCard] redeem: the claim was not recorded in the wallet; it will show once synced")
+                }
+                return sweep.txId
             }
         } catch let error as GiftCardClientError {
             throw error
@@ -236,15 +247,34 @@ protocol GiftCardSession: Sendable {
     func progress() -> AsyncStream<Double>
     /// Syncs (if needed) and reports what the card holds.
     func status() async throws -> GiftCardStatus
-    /// Sends everything, minus the fee, to `address` and returns the transaction id. Throws
-    /// `GiftCardSubmissionFailed` when a transaction was created but no server accepted it: the
-    /// session is then spent and must be replaced with `reopen()` before another attempt.
-    func sendAll(to address: String) async throws -> String
+    /// Sends everything, minus the fee, to `address`, records the accepted claim in `mainWallet`
+    /// (the synchronizer of the wallet `address` belongs to) as a trusted transaction, and
+    /// returns what happened. Throws `GiftCardSubmissionFailed` when a transaction was created but
+    /// no server accepted it: the session is then spent and must be replaced with `reopen()`
+    /// before another attempt. Failing to record never throws.
+    func sendAll(to address: String, recordIn mainWallet: GiftCardClaimDestination?) async throws -> GiftCardSweep
     /// Closes this session and returns a fresh one for the same card, which checks and sweeps the
     /// card anew. Used after a failed submission; see `sendAll`.
     func reopen() async throws -> any GiftCardSession
     /// Stops the card's synchronizer and deletes its files.
     func close() async
+}
+
+/// The wallet's own synchronizer, carried to the card's redeemer so it can record the claim there.
+/// `Synchronizer` is not `Sendable`, but the SDK's synchronizers are made to be called from any
+/// task (the app's `SDKSynchronizerClient` closures share one the same way), and the redeemer only
+/// calls `recordTrustedTransaction` on it, which goes straight to the wallet database.
+struct GiftCardClaimDestination: @unchecked Sendable {
+    let synchronizer: any Synchronizer
+}
+
+/// A sweep a server accepted.
+struct GiftCardSweep: Equatable, Sendable {
+    /// The id of the first transaction a server accepted.
+    let txId: String
+    /// Whether the wallet's own synchronizer stored the claim as a trusted transaction. When it
+    /// did not, the wallet learns about the claim from the chain, as an ordinary receive.
+    let recordedInMainWallet: Bool
 }
 
 /// A sweep whose transaction was created but not accepted by any server. The card wallet holds
@@ -307,7 +337,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
         }
     }
 
-    func sendAll(to address: String) async throws -> String {
+    func sendAll(to address: String, recordIn mainWallet: GiftCardClaimDestination?) async throws -> GiftCardSweep {
         guard let recipient = try? UnifiedAddress(encoding: address, network: networkType) else {
             LoggerProxy.error("[GiftCard] the redeem address is not a unified address of this network")
             throw GiftCardClientError.redeemFailed
@@ -320,7 +350,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
 
         let outcome: GiftCardRedeemer.SubmissionOutcome
         do {
-            outcome = try await redeemer.redeemReportingOutcome(to: recipient, memo: memo)
+            outcome = try await redeemer.redeemReportingOutcome(to: recipient, memo: memo, recordIn: mainWallet)
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
         } catch ZcashError.giftCardRedeemerCleanedUp {
@@ -350,7 +380,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
         guard let txId = outcome.txId else {
             throw GiftCardSubmissionFailed()
         }
-        return txId
+        return GiftCardSweep(txId: txId, recordedInMainWallet: outcome.recordedInDestination)
     }
 
     func reopen() async throws -> any GiftCardSession {
@@ -382,12 +412,19 @@ extension GiftCardRedeemer {
         let txId: String?
         /// One line per transaction that was not accepted; never contains the link.
         let failures: [String]
+        /// Whether the destination synchronizer stored the accepted claim as trusted.
+        let recordedInDestination: Bool
     }
 
-    /// `redeem(to:)`, with its results reduced on the actor: the SDK's submit results are not
-    /// `Sendable`, so they must not cross back to the caller.
-    func redeemReportingOutcome(to recipient: UnifiedAddress, memo: Memo?) async throws -> SubmissionOutcome {
-        let results = try await redeem(to: recipient, memo: memo)
+    /// `redeem(to:memo:recordIn:)`, with its results reduced on the actor: the SDK's submit
+    /// results are not `Sendable`, so they must not cross back to the caller.
+    func redeemReportingOutcome(
+        to recipient: UnifiedAddress,
+        memo: Memo?,
+        recordIn destination: GiftCardClaimDestination?
+    ) async throws -> SubmissionOutcome {
+        let redemption = try await redeem(to: recipient, memo: memo, recordIn: destination?.synchronizer)
+        let results = redemption.results
         var txId: String?
         var failures: [String] = []
         for result in results {
@@ -402,7 +439,7 @@ extension GiftCardRedeemer {
                 failures.append("submission not attempted")
             }
         }
-        return SubmissionOutcome(txId: txId, failures: failures)
+        return SubmissionOutcome(txId: txId, failures: failures, recordedInDestination: redemption.recordedInDestination)
     }
 }
 
