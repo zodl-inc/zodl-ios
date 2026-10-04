@@ -8634,13 +8634,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A small network fee is paid from the gift card. The amount above is what you'll receive."
+            "value" : "A small network fee is paid from the gift card, so you'll receive slightly less than the amount above."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "La tarjeta de regalo paga una pequeña tarifa de red. El monto de arriba es lo que recibirás."
+            "value" : "La tarjeta de regalo paga una pequeña tarifa de red, así que recibirás un poco menos que el monto de arriba."
+          }
+        }
+      }
+    },
+    "giftCard.redeem.memo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gift card"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tarjeta de regalo"
           }
         }
       }

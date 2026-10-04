@@ -255,6 +255,26 @@ struct GiftCardRedeemerSession: GiftCardSession {
 
     var networkType: NetworkType { network.networkType }
 
+    /// The memo the sweep carries to the user's own wallet: a fixed label, then the sender's
+    /// message when the card has one. Trimmed on a character boundary to fit a memo.
+    static func redeemMemo(message: String?) -> Memo? {
+        let label = String(localizable: .giftCardRedeemMemo)
+        var text = label
+        if let message = message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
+            let separator = " · "
+            var room = MemoBytes.capacity - label.utf8.count - separator.utf8.count
+            var trimmed = message
+            while room > 0, trimmed.utf8.count > room {
+                trimmed.removeLast()
+            }
+            if room <= 0 { trimmed = "" }
+            if !trimmed.isEmpty {
+                text = "\(label)\(separator)\(trimmed)"
+            }
+        }
+        return try? Memo(string: text)
+    }
+
     /// The SDK does not report the card wallet's sync progress (`check()` only returns once the
     /// wallet is up to date), so the stream finishes at once and the screen shows an indeterminate
     /// wait. A card's history is short, so the sync is usually a matter of seconds.
@@ -287,9 +307,14 @@ struct GiftCardRedeemerSession: GiftCardSession {
             throw GiftCardClientError.redeemFailed
         }
 
+        // The sweep carries a memo so the incoming transaction explains itself in the user's
+        // history: a fixed label plus the sender's message from the card, trimmed to the memo
+        // size on a character boundary. The memo is encrypted to the user's own address.
+        let memo = Self.redeemMemo(message: card.message)
+
         let outcome: GiftCardRedeemer.SubmissionOutcome
         do {
-            outcome = try await redeemer.redeemReportingOutcome(to: recipient)
+            outcome = try await redeemer.redeemReportingOutcome(to: recipient, memo: memo)
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
         } catch ZcashError.giftCardRedeemerCleanedUp {
@@ -355,8 +380,8 @@ extension GiftCardRedeemer {
 
     /// `redeem(to:)`, with its results reduced on the actor: the SDK's submit results are not
     /// `Sendable`, so they must not cross back to the caller.
-    func redeemReportingOutcome(to recipient: UnifiedAddress) async throws -> SubmissionOutcome {
-        let results = try await redeem(to: recipient)
+    func redeemReportingOutcome(to recipient: UnifiedAddress, memo: Memo?) async throws -> SubmissionOutcome {
+        let results = try await redeem(to: recipient, memo: memo)
         var txId: String?
         var failures: [String] = []
         for result in results {

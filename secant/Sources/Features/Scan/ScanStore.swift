@@ -249,13 +249,16 @@ struct Scan {
                     return .none
                 }
                 guard let text = pasteboard.getString(), !text.data.isEmpty else {
+                    LoggerProxy.event("[Scan] paste: nothing to paste")
                     return .send(.scanFailed(.nothingToPaste))
                 }
                 for checker in state.checkers {
                     if let action = checker.checker.checkQRCode(text.data) {
+                        LoggerProxy.event("[Scan] paste: matched checker \(checker.checker.id), \(text.data.count) chars")
                         return .send(action)
                     }
                 }
+                LoggerProxy.event("[Scan] paste: unsupported, \(text.data.count) chars, \(state.checkers.count) checkers")
                 return .send(.scanFailed(.unsupportedPaste))
 
             case .cancelTapped:

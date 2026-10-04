@@ -15,6 +15,21 @@ import ComposableArchitecture
 @Suite(.serialized) @MainActor struct GiftCardCoordFlowTests {
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000".redacted
 
+    @Test func pastedLinkOpensTheRedeemScreen() async {
+        let store = TestStore(initialState: GiftCardCoordFlow.State()) {
+            GiftCardCoordFlow()
+        } withDependencies: {
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+            $0.giftCard = .mock()
+            $0.pasteboard.getString = { Self.link }
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.scan(.pasteTapped))
+        await store.receive(\.scan.foundGiftCard)
+        #expect(store.state.redeemState?.link == Self.link)
+    }
+
     @Test func scannedCardOpensTheRedeemScreen() async {
         let store = TestStore(initialState: GiftCardCoordFlow.State()) {
             GiftCardCoordFlow()

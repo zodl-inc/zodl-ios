@@ -486,3 +486,28 @@ private struct FakeGiftCardSession: GiftCardSession {
         closed.withValue { $0 += 1 }
     }
 }
+
+@Suite struct GiftCardRedeemMemoTests {
+    @Test func cardWithoutMessageGetsTheLabelOnly() throws {
+        let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: nil))
+        #expect(memo == (try Memo(string: "Gift card")))
+    }
+
+    @Test func cardMessageFollowsTheLabel() throws {
+        let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: "  Welcome to Zcash Summit \n"))
+        #expect(memo == (try Memo(string: "Gift card · Welcome to Zcash Summit")))
+    }
+
+    @Test func longMessageIsTrimmedToFitAMemo() throws {
+        let message = String(repeating: "é", count: 400)   // 800 bytes
+        let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: message))
+        guard case .text(let text) = memo else {
+            Issue.record("expected a text memo")
+            return
+        }
+        let string = text.string
+        #expect(string.hasPrefix("Gift card · é"))
+        #expect(string.utf8.count <= MemoBytes.capacity)
+        #expect(!string.hasSuffix("\u{FFFD}"))
+    }
+}
