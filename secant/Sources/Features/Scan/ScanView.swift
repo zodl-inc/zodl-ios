@@ -101,6 +101,13 @@ struct ScanView: View {
                                     store.send(.cancelTapped)
                                 }
                             } else if !store.isCameraEnabled {
+                                // No camera, or permission denied: pasting is still a way in.
+                                if store.isPasteEnabled {
+                                    secondaryButton(String(localizable: .scanPasteLink)) {
+                                        store.send(.pasteTapped)
+                                    }
+                                }
+
                                 primaryButton(String(localizable: .scanOpenSettings)) {
                                     if let url = URL(string: UIApplication.openSettingsURLString) {
                                         openURL(url)
