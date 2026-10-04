@@ -283,6 +283,71 @@ import ComposableArchitecture
         }
     }
 
+    /// A broadcast that fails once: Retry re-checks the card through the handle it already has
+    /// (the client swaps the card's wallet underneath it), finds the funds still there, and the
+    /// next tap sweeps them.
+    @Test func retryAfterAFailedRedeemChecksTheSameCardAndThenSucceeds() async {
+        let openCalls = LockIsolated(0)
+        let redeemedTo = LockIsolated<[String]>([])
+        let store = makeStore(scenario: scenario(.redeemFailsOnce), redeemedTo: redeemedTo, openCalls: openCalls)
+
+        await store.send(.onAppear)
+        await store.receive(\.opened)
+        await store.receive(\.statusLoaded) {
+            $0.step = .ready(spendable: Zatoshi(10_000_000))
+        }
+        let handle = store.state.handle
+
+        await store.send(.redeemTapped) {
+            $0.step = .redeeming(amount: Zatoshi(10_000_000))
+        }
+        await store.receive(\.redeemFailed) {
+            $0.step = .failure(amount: Zatoshi(10_000_000))
+        }
+        #expect(store.state.canRetry)
+
+        await store.send(.retryTapped) {
+            $0.step = .checking
+        }
+        await store.receive(\.statusLoaded) {
+            $0.step = .ready(spendable: Zatoshi(10_000_000))
+        }
+        #expect(store.state.handle == handle)
+        #expect(openCalls.value == 1)
+
+        await store.send(.redeemTapped) {
+            $0.step = .redeeming(amount: Zatoshi(10_000_000))
+        }
+        await store.receive(\.redeemSucceeded) {
+            $0.step = .success(amount: Zatoshi(10_000_000))
+            $0.txId = GiftCardClient.MockScenario.ready.txId
+        }
+        await store.receive(\.delegate.redeemed)
+        #expect(redeemedTo.value.count == 2)
+    }
+
+    /// A card whose wallet is gone (its handle is unknown to the client) is opened again on Retry
+    /// instead of being checked through the dead handle forever.
+    @Test func unknownHandleOnCheckMakesRetryOpenTheCardAgain() async {
+        let openCalls = LockIsolated(0)
+        var base = scenario(.ready)
+        base.checkError = .unknownHandle
+        let store = makeStore(scenario: base, openCalls: openCalls)
+
+        await store.send(.onAppear)
+        await store.receive(\.opened)
+        await store.receive(\.checkFailed) {
+            $0.step = .checkFailed
+            $0.handle = nil
+        }
+
+        await store.send(.retryTapped) {
+            $0.step = .checking
+        }
+        await store.receive(\.opened)
+        #expect(openCalls.value == 2)
+    }
+
     @Test func redeemIsUnavailableWithoutAnAccount() async {
         let store = makeStore(scenario: scenario(.ready), withAccount: false)
 
@@ -301,5 +366,123 @@ import ComposableArchitecture
 
         await store.send(.closeTapped)
         await store.receive(\.delegate.dismiss)
+    }
+
+    // MARK: - Live wiring: a failed submission replaces the card's session under its handle
+
+    @Test func liveRedeemReplacesTheCardSessionAfterAFailedSubmission() async throws {
+        let registry = GiftCardSessionRegistry()
+        let closed = LockIsolated(0)
+        let reopened = LockIsolated(0)
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(10_000_000)),
+            submissionFails: true,
+            closed: closed,
+            reopened: reopened
+        )
+        let handle = await registry.insert(session)
+        let client = GiftCardClient.live(registry: registry)
+
+        await #expect(throws: GiftCardClientError.redeemFailed) {
+            try await withDependencies {
+                $0.transactionGuard = .testValue
+            } operation: {
+                _ = try await client.redeem(handle, Self.orchardUA.stringEncoded)
+            }
+        }
+        // The spent session was closed and a fresh one took its place under the same handle.
+        #expect(closed.value == 1)
+        #expect(reopened.value == 1)
+
+        let status = try await client.check(handle)
+        #expect(status == .ready(spendable: Zatoshi(10_000_000)))
+
+        let txId = try await withDependencies {
+            $0.transactionGuard = .testValue
+        } operation: {
+            try await client.redeem(handle, Self.orchardUA.stringEncoded)
+        }
+        #expect(txId == FakeGiftCardSession.txId)
+        #expect(reopened.value == 1)
+
+        await client.cleanup(handle)
+        #expect(closed.value == 2)
+        let remaining = await registry.session(for: handle)
+        #expect(remaining == nil)
+    }
+
+    @Test func liveRedeemFailureWithoutASubmissionKeepsTheSession() async throws {
+        let registry = GiftCardSessionRegistry()
+        let closed = LockIsolated(0)
+        let reopened = LockIsolated(0)
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(10_000_000)),
+            sendAllError: .networkMismatch,
+            closed: closed,
+            reopened: reopened
+        )
+        let handle = await registry.insert(session)
+        let client = GiftCardClient.live(registry: registry)
+
+        await #expect(throws: GiftCardClientError.networkMismatch) {
+            try await withDependencies {
+                $0.transactionGuard = .testValue
+            } operation: {
+                _ = try await client.redeem(handle, Self.orchardUA.stringEncoded)
+            }
+        }
+        #expect(closed.value == 0)
+        #expect(reopened.value == 0)
+    }
+
+    @Test func registryClosesAReplacementForAHandleThatIsGone() async {
+        let registry = GiftCardSessionRegistry()
+        let closed = LockIsolated(0)
+        let replacement = FakeGiftCardSession(held: .empty, closed: closed, reopened: LockIsolated(0))
+
+        let replaced = await registry.replace(GiftCardHandle(), with: replacement)
+
+        #expect(!replaced)
+        #expect(closed.value == 1)
+    }
+}
+
+/// A `GiftCardSession` stand-in: `sendAll` reports a rejected broadcast (or a given client error),
+/// and `reopen` hands out a session for the same card whose sweep succeeds.
+private struct FakeGiftCardSession: GiftCardSession {
+    static let txId = "fade00fade00fade00fade00fade00fade00fade00fade00fade00fade00fade"
+
+    let held: zodl_internal.GiftCardStatus
+    var submissionFails = false
+    var sendAllError: GiftCardClientError?
+    let closed: LockIsolated<Int>
+    let reopened: LockIsolated<Int>
+
+    func progress() -> AsyncStream<Double> {
+        AsyncStream { $0.finish() }
+    }
+
+    func status() async throws -> zodl_internal.GiftCardStatus {
+        held
+    }
+
+    func sendAll(to address: String) async throws -> String {
+        if let sendAllError {
+            throw sendAllError
+        }
+        if submissionFails {
+            throw GiftCardSubmissionFailed()
+        }
+        return Self.txId
+    }
+
+    func reopen() async throws -> any GiftCardSession {
+        await close()
+        reopened.withValue { $0 += 1 }
+        return FakeGiftCardSession(held: held, closed: closed, reopened: reopened)
+    }
+
+    func close() async {
+        closed.withValue { $0 += 1 }
     }
 }

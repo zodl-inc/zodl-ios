@@ -172,6 +172,11 @@ struct GiftCardRedeem {
             case .openFailed(let error), .checkFailed(let error):
                 state.syncProgress = nil
                 state.step = step(for: error)
+                if error == .unknownHandle {
+                    // The card's wallet is gone (it could not be reopened after a failed sweep),
+                    // so Retry must open the card again rather than check a handle that is dead.
+                    state.handle = nil
+                }
                 return .cancel(id: state.cancelId)
 
             case .progressUpdated(let progress):

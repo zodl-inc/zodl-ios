@@ -55,23 +55,7 @@ extension GiftCardClient: DependencyKey {
                 }
             },
             redeem: { handle, toAddress in
-                guard let session = await registry.session(for: handle) else {
-                    throw GiftCardClientError.unknownHandle
-                }
-                // Broadcast-sensitive: the sweep must never overlap a server switch, exactly like the
-                // wallet's own sends (see AGENTS.md, "Transaction guard"). The guard is taken here,
-                // once, and never by callers.
-                @Dependency(\.transactionGuard) var transactionGuard
-                do {
-                    return try await transactionGuard.withSubmission(timeout: submissionGuardTimeout) {
-                        try await session.sendAll(to: toAddress)
-                    }
-                } catch let error as GiftCardClientError {
-                    throw error
-                } catch {
-                    LoggerProxy.error("[GiftCard] redeem failed: \(error.localizedDescription)")
-                    throw GiftCardClientError.redeemFailed
-                }
+                try await Self.redeem(handle, to: toAddress, registry: registry)
             },
             cleanup: { handle in
                 await registry.close(handle)
@@ -133,7 +117,7 @@ extension GiftCardClient {
         let endpoint = zcashSDKEnvironment.endpoint()
 
         let redeemer = try await Self.makeRedeemer(card: card, network: network, endpoint: endpoint, registry: registry)
-        let session = GiftCardRedeemerSession(redeemer: redeemer, networkType: network.networkType)
+        let session = GiftCardRedeemerSession(redeemer: redeemer, card: card, network: network, endpoint: endpoint)
 
         // A screen that went away while the card was being opened must not leave the card's
         // wallet behind: close it instead of registering it.
@@ -171,6 +155,53 @@ extension GiftCardClient {
             throw GiftCardClientError.checkFailed
         }
     }
+
+    /// Sweeps the card into `toAddress`. Broadcast-sensitive: the sweep must never overlap a server
+    /// switch, exactly like the wallet's own sends (see AGENTS.md, "Transaction guard"). The guard
+    /// is taken here, once, and never by callers.
+    private static func redeem(_ handle: GiftCardHandle, to toAddress: String, registry: GiftCardSessionRegistry) async throws -> String {
+        guard let session = await registry.session(for: handle) else {
+            throw GiftCardClientError.unknownHandle
+        }
+        @Dependency(\.transactionGuard) var transactionGuard
+        do {
+            return try await transactionGuard.withSubmission(timeout: submissionGuardTimeout) {
+                try await session.sendAll(to: toAddress)
+            }
+        } catch let error as GiftCardClientError {
+            throw error
+        } catch is GiftCardSubmissionFailed {
+            // The card wallet now treats the notes as spent until the transaction expires, so this
+            // session cannot sweep again. Swap in a fresh one under the same handle: the screen's
+            // Retry re-checks the card through that handle and finds the funds still there (or
+            // gone, if the broadcast did land after all).
+            await Self.replaceAfterFailedSubmission(handle, session: session, registry: registry)
+            throw GiftCardClientError.redeemFailed
+        } catch {
+            LoggerProxy.error("[GiftCard] redeem failed: \(error.localizedDescription)")
+            throw GiftCardClientError.redeemFailed
+        }
+    }
+
+    /// Replaces `session`, whose last sweep was created but not accepted, with a fresh session for
+    /// the same card under the same handle. If the card was closed meanwhile (the flow was left),
+    /// the replacement is closed again instead of being registered. If no replacement can be made,
+    /// the handle is dropped: the next `check` reports it unknown and the screen starts over.
+    private static func replaceAfterFailedSubmission(
+        _ handle: GiftCardHandle,
+        session: any GiftCardSession,
+        registry: GiftCardSessionRegistry
+    ) async {
+        do {
+            let replacement = try await session.reopen()
+            if await registry.replace(handle, with: replacement) {
+                LoggerProxy.event("[GiftCard] reopened the card wallet after a failed submission")
+            }
+        } catch {
+            LoggerProxy.error("[GiftCard] could not reopen the card wallet after a failed submission: \(error.localizedDescription)")
+            await registry.close(handle)
+        }
+    }
 }
 
 extension GiftCardSummary {
@@ -199,16 +230,30 @@ protocol GiftCardSession: Sendable {
     func progress() -> AsyncStream<Double>
     /// Syncs (if needed) and reports what the card holds.
     func status() async throws -> GiftCardStatus
-    /// Sends everything, minus the fee, to `address` and returns the transaction id.
+    /// Sends everything, minus the fee, to `address` and returns the transaction id. Throws
+    /// `GiftCardSubmissionFailed` when a transaction was created but no server accepted it: the
+    /// session is then spent and must be replaced with `reopen()` before another attempt.
     func sendAll(to address: String) async throws -> String
+    /// Closes this session and returns a fresh one for the same card, which checks and sweeps the
+    /// card anew. Used after a failed submission; see `sendAll`.
+    func reopen() async throws -> any GiftCardSession
     /// Stops the card's synchronizer and deletes its files.
     func close() async
 }
 
+/// A sweep whose transaction was created but not accepted by any server. The card wallet holds
+/// its notes as spent until the transaction expires, so the same redeemer cannot sweep again.
+struct GiftCardSubmissionFailed: Error { }
+
 /// `GiftCardSession` over the wallet SDK's `GiftCardRedeemer`.
 struct GiftCardRedeemerSession: GiftCardSession {
     let redeemer: GiftCardRedeemer
-    let networkType: NetworkType
+    /// Kept so that `reopen()` can create a redeemer for the same card, on the same server.
+    let card: GiftCard
+    let network: ZcashNetwork
+    let endpoint: LightWalletEndpoint
+
+    var networkType: NetworkType { network.networkType }
 
     /// The SDK does not report the card wallet's sync progress (`check()` only returns once the
     /// wallet is up to date), so the stream finishes at once and the screen shows an indeterminate
@@ -251,19 +296,43 @@ struct GiftCardRedeemerSession: GiftCardSession {
             throw GiftCardClientError.unknownHandle
         } catch ZcashError.giftCardNothingToRedeem {
             // Checked as ready, but nothing is spendable any more: the card was redeemed elsewhere
-            // meanwhile, or an earlier submission of this redeemer failed and the notes are locked
-            // until that transaction expires. Nothing was broadcast now.
+            // meanwhile. Nothing was created or broadcast now, so the session stays usable.
             LoggerProxy.error("[GiftCard] nothing to redeem")
             throw GiftCardClientError.redeemFailed
+        } catch ZcashError.giftCardRedeemerNotReady {
+            LoggerProxy.error("[GiftCard] redeem attempted before the card was checked")
+            throw GiftCardClientError.redeemFailed
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The SDK reports a rejected broadcast as a result, not an error; an error thrown here
+            // comes from proposing, creating or submitting the transaction. The transaction may
+            // already exist in the card wallet by then, with its notes marked spent, so the
+            // session is treated as spent either way: replacing it only costs a short re-sync.
+            LoggerProxy.error("[GiftCard] redeem failed: \(error.localizedDescription)")
+            throw GiftCardSubmissionFailed()
         }
 
         for failure in outcome.failures {
             LoggerProxy.error("[GiftCard] \(failure)")
         }
         guard let txId = outcome.txId else {
-            throw GiftCardClientError.redeemFailed
+            throw GiftCardSubmissionFailed()
         }
         return txId
+    }
+
+    func reopen() async throws -> any GiftCardSession {
+        await close()
+        let replacement: GiftCardRedeemer
+        do {
+            replacement = try GiftCardRedeemer(card: card, network: network, endpoint: endpoint)
+        } catch ZcashError.giftCardNetworkMismatch {
+            throw GiftCardClientError.networkMismatch
+        } catch ZcashError.giftCardRedeemerAlreadyActive {
+            throw GiftCardClientError.checkFailed
+        }
+        return GiftCardRedeemerSession(redeemer: replacement, card: card, network: network, endpoint: endpoint)
     }
 
     func close() async {
@@ -322,6 +391,19 @@ actor GiftCardSessionRegistry {
 
     func session(for handle: GiftCardHandle) -> (any GiftCardSession)? {
         sessions[handle]
+    }
+
+    /// Swaps the session kept under `handle` for `session`. The previous session is not closed
+    /// here: the caller has closed it already. Returns `false`, after closing `session`, when
+    /// `handle` is no longer open, so a card closed while its replacement was being made cannot
+    /// come back to life.
+    func replace(_ handle: GiftCardHandle, with session: any GiftCardSession) async -> Bool {
+        guard sessions[handle] != nil else {
+            await session.close()
+            return false
+        }
+        sessions[handle] = session
+        return true
     }
 
     func close(_ handle: GiftCardHandle) async {

@@ -23,6 +23,9 @@ extension GiftCardClient {
         var statedAmount: Zatoshi? = Zatoshi(10_000_000)
         var checkError: GiftCardClientError?
         var redeemError: GiftCardClientError?
+        /// How many `redeem` calls throw `redeemError` before one succeeds; `nil` means every one
+        /// does. Models a broadcast that fails once and goes through on the retry.
+        var redeemFailuresBeforeSuccess: Int?
         var txId = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
         /// Progress values reported before `check` answers.
         var progressSteps: [Double] = [0.25, 0.5, 0.75, 1.0]
@@ -34,6 +37,7 @@ extension GiftCardClient {
         static let empty = MockScenario(status: .empty)
         static let testnet = MockScenario(networkType: .testnet)
         static let redeemFails = MockScenario(redeemError: .redeemFailed)
+        static let redeemFailsOnce = MockScenario(redeemError: .redeemFailed, redeemFailuresBeforeSuccess: 1)
         static let checkFails = MockScenario(checkError: .checkFailed)
     }
 
@@ -42,7 +46,8 @@ extension GiftCardClient {
     /// fragment is empty is reported as damaged, so the invalid-link screen can be exercised too.
     /// It is not a parser and never derives anything from the link's secret.
     static func mock(_ scenario: MockScenario = .ready) -> Self {
-        Self(
+        let redeemAttempts = LockIsolated(0)
+        return Self(
             isGiftCardLink: { GiftCardLink.isCandidate($0) },
             parse: { link in
                 guard GiftCardLink.isCandidate(link) else {
@@ -81,7 +86,11 @@ extension GiftCardClient {
                 if scenario.delay > .zero {
                     try await Task.sleep(for: scenario.delay)
                 }
-                if let error = scenario.redeemError {
+                let attempt = redeemAttempts.withValue { value in
+                    value += 1
+                    return value
+                }
+                if let error = scenario.redeemError, scenario.redeemFailuresBeforeSuccess.map({ attempt <= $0 }) ?? true {
                     throw error
                 }
                 return scenario.txId
