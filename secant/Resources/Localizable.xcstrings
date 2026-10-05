@@ -10056,13 +10056,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Install and open the Zcash app"
+            "value" : "Install the Zcash app. Zodl opens it for you; confirm on the device"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Instala y abre la app de Zcash"
+            "value" : "Instala la app de Zcash. Zodl la abre por ti; confírmalo en el dispositivo"
           }
         }
       }
@@ -10267,6 +10267,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Cuenta ya agregada"
+          }
+        }
+      }
+    },
+    "ledger.issue.appNotInstalled.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Zcash app isn't installed on your Ledger. Install it with Ledger Live, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La app de Zcash no está instalada en tu Ledger. Instálala con Ledger Live y vuelve a intentarlo."
+          }
+        }
+      }
+    },
+    "ledger.issue.appNotInstalled.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install the Zcash App"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala la app de Zcash"
           }
         }
       }
@@ -10675,6 +10709,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "No se puede firmar esta transacción"
+          }
+        }
+      }
+    },
+    "ledger.issue.openAppRejected.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You declined opening the Zcash app on your Ledger. Try again and confirm it on the device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste abrir la app de Zcash en tu Ledger. Vuelve a intentarlo y confírmalo en el dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.issue.openAppRejected.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the Zcash App"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la app de Zcash"
           }
         }
       }

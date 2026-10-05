@@ -28,6 +28,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case deviceLocked
     /// Figma "Pairing Failed."
     case pairingFailed
+    /// Not in Figma; Android's copy.
+    case appNotInstalled
+    /// Not in Figma; Android's copy.
+    case openAppRejected
     /// Figma "Import Rejected" in `.connect`; `.sign`'s "Transaction Rejected" is draft copy.
     case requestRejected
     /// Figma "Ledger Disconnected"; the `.sign` message is draft copy.
@@ -87,6 +91,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .deviceLocked
         case ZcashError.ledgerBluetoothPairingRefused:
             self = .pairingFailed
+        case ZcashError.ledgerAppNotInstalled:
+            self = .appNotInstalled
+        case ZcashError.ledgerAppOpenRejected:
+            self = .openAppRejected
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
         case ZcashError.ledgerBluetoothDisconnected,
@@ -127,6 +135,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueDeviceLockedTitle)
         case .pairingFailed:
             return String(localizable: .ledgerIssuePairingFailedTitle)
+        case .appNotInstalled:
+            return String(localizable: .ledgerIssueAppNotInstalledTitle)
+        case .openAppRejected:
+            return String(localizable: .ledgerIssueOpenAppRejectedTitle)
         case .requestRejected:
             switch context {
             case .connect: return String(localizable: .ledgerIssueRequestRejectedTitle)
@@ -166,6 +178,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueDeviceLockedMessage)
         case .pairingFailed:
             return String(localizable: .ledgerIssuePairingFailedMessage)
+        case .appNotInstalled:
+            return String(localizable: .ledgerIssueAppNotInstalledMessage)
+        case .openAppRejected:
+            return String(localizable: .ledgerIssueOpenAppRejectedMessage)
         case .requestRejected:
             switch context {
             case .connect: return String(localizable: .ledgerIssueRequestRejectedMessage)
@@ -211,6 +227,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return .tryAgain
         case .pairingFailed:
             return .tryAgain
+        case .appNotInstalled:
+            return .tryAgain
+        case .openAppRejected:
+            return .tryAgain
         case .requestRejected:
             return .tryAgain
         case .disconnected:
@@ -253,7 +273,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     var retryNeedsNewConnection: Bool {
         switch self {
         case .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
-            .pairingFailed, .disconnected, .appTooOld, .deviceMismatch, .unknown:
+            .pairingFailed, .appNotInstalled, .openAppRejected, .disconnected, .appTooOld, .deviceMismatch, .unknown:
             return true
         case .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
             .transactionNotSignable:

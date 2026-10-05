@@ -27,6 +27,8 @@ import Foundation
             (ZcashError.ledgerWrongApp(0x6E00), .deviceLocked),
             (ZcashError.ledgerDeviceRefused(0x6985, true), .deviceLocked),
             (ZcashError.ledgerBluetoothPairingRefused, .pairingFailed),
+            (ZcashError.ledgerAppNotInstalled, .appNotInstalled),
+            (ZcashError.ledgerAppOpenRejected, .openAppRejected),
             (ZcashError.ledgerUserRejected, .requestRejected),
             (ZcashError.ledgerBluetoothDisconnected, .disconnected),
             (ZcashError.ledgerTimeout, .disconnected),
@@ -79,6 +81,31 @@ import Foundation
                 #expect(connectMessage != signMessage, "\(issue) message should differ by context")
             } else {
                 #expect(connectMessage == signMessage, "\(issue) message should not differ by context")
+            }
+        }
+    }
+
+    // MARK: - The two new states' copy
+
+    // Not Figma states (figmaStatesUseTheirKeys below is Figma-only), so their own small table:
+    // both cases share one title and one message across `.connect` and `.sign` (per
+    // connectAndSignCopyDifferOnlyWhereTheContextChangesTheMeaning above), sourced from their own
+    // catalog keys.
+    @Test func appNotInstalledAndOpenAppRejectedUseTheirKeys() {
+        let states: [(issue: LedgerIssue, title: String, message: String)] = [
+            (.appNotInstalled,
+             String(localizable: .ledgerIssueAppNotInstalledTitle),
+             String(localizable: .ledgerIssueAppNotInstalledMessage)),
+            (.openAppRejected,
+             String(localizable: .ledgerIssueOpenAppRejectedTitle),
+             String(localizable: .ledgerIssueOpenAppRejectedMessage))
+        ]
+
+        for state in states {
+            for context in [LedgerIssue.Context.connect, .sign] {
+                #expect(state.issue.title(in: context) == state.title, "\(state.issue) \(context) title")
+                #expect(state.issue.message(in: context) == state.message, "\(state.issue) \(context) message")
+                #expect(state.issue.primaryAction(in: context) == .tryAgain, "\(state.issue) \(context) primary action")
             }
         }
     }
@@ -136,6 +163,8 @@ import Foundation
             (.noDevicesFound, .tryAgain, .tryAgain),
             (.deviceLocked, .tryAgain, .tryAgain),
             (.pairingFailed, .tryAgain, .tryAgain),
+            (.appNotInstalled, .tryAgain, .tryAgain),
+            (.openAppRejected, .tryAgain, .tryAgain),
             (.requestRejected, .tryAgain, .tryAgain),
             (.disconnected, .tryAgain, .tryAgain),
             (.accountAlreadyAdded, .goToAccount, .none),
@@ -157,7 +186,7 @@ import Foundation
     @Test func retryNeedsNewConnectionMatchesTheTable() {
         let needsNewConnection: [LedgerIssue] = [
             .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
-            .pairingFailed, .disconnected, .appTooOld, .deviceMismatch, .unknown
+            .pairingFailed, .appNotInstalled, .openAppRejected, .disconnected, .appTooOld, .deviceMismatch, .unknown
         ]
         let reusesConnection: [LedgerIssue] = [
             .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,

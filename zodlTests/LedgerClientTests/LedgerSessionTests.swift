@@ -298,6 +298,71 @@ import ComposableArchitecture
         let pairing = try await session.pairAccount(Zip32AccountIndex(0))
         #expect(pairing == fixture)
     }
+
+    // MARK: - openZcashApp
+
+    @Test func connectRunsTheOpenStepAndKeepsTheTransportItReturns() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let fixture = try makePairingFixture()
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _ in
+                // Reaches the transport the open step returned, not the one `connect` opened.
+                #expect((receivedTransport as? FakeLedgerAPDUTransport) === opened)
+                return fixture
+            },
+            openZcashApp: { transport, _ in
+                #expect((transport as? FakeLedgerAPDUTransport) === connected)
+                return opened
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let pairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(pairing == fixture)
+    }
+
+    @Test func aFailingOpenStepClosesTheTransportAndLeavesTheSessionDisconnected() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, _ in throw OpenZcashAppFailure() }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        await #expect(throws: OpenZcashAppFailure()) {
+            try await session.connect(device)
+        }
+
+        #expect(connected.closeCount == 1)
+        await #expect(throws: LedgerClientError.notConnected) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+    }
+
+    @Test func connectUsesSixtySecondsAndTheOpenStepsReconnectUsesTenOnTheSameDevice() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, reconnect in
+                // Calls the very reconnect closure `connect(_:)` hands the live SDK step, so this
+                // exercises the real timeout and device it captures, not a fake's own bookkeeping.
+                try await reconnect()
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        try await session.connect(device)
+
+        #expect(scanner.connectCalls.map(\.timeout) == [60, 10])
+        #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
+    }
 }
 
 // MARK: - Fixture
@@ -318,6 +383,7 @@ private func makePairingFixture() throws -> LedgerPairing {
 private struct PairingFailure: Error, Equatable {}
 private struct PairShouldNotBeCalled: Error {}
 private struct SignShouldNotBeCalled: Error {}
+private struct OpenZcashAppFailure: Error, Equatable {}
 
 /// A fixed, valid `AccountUUID` for tests that never inspect its bytes.
 private func makeAccountUUID() -> AccountUUID {
@@ -335,7 +401,8 @@ private func makeBinding(zip32AccountIndex: Zip32AccountIndex = Zip32AccountInde
 
 /// Builds a session with fakes that fail the test if reached, unless a test overrides them --
 /// `pair` and `sign` default to throwing, so only the tests that care about pairing or signing
-/// need to pass their own.
+/// need to pass their own. `openZcashApp` defaults to a pass-through that returns the transport
+/// it's given, so every test that doesn't care about the open step keeps its original meaning.
 private func makeSession(
     makeScanner: @escaping @Sendable () -> any LedgerScanning,
     pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing = { _, _ in
@@ -345,9 +412,12 @@ private func makeSession(
         any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
     ) async throws -> Pczt = { _, _, _, _, _ in
         throw SignShouldNotBeCalled()
-    }
+    },
+    openZcashApp: @escaping @Sendable (
+        any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+    ) async throws -> any LedgerAPDUTransport = { transport, _ in transport }
 ) -> LedgerSession {
-    LedgerSession(makeScanner: makeScanner, pair: pair, sign: sign)
+    LedgerSession(makeScanner: makeScanner, pair: pair, sign: sign, openZcashApp: openZcashApp)
 }
 
 // MARK: - Fakes
@@ -425,15 +495,23 @@ private final class FakeLedgerAPDUTransport: LedgerAPDUTransport, @unchecked Sen
 }
 
 /// Vends one device through `devices()` and hands out `transportsToReturn` in call order from
-/// `connect(to:)`, regardless of which device was passed.
+/// `connect(to:timeout:)`, regardless of which device was passed.
 private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
     private let transportsToReturn: [FakeLedgerAPDUTransport]
     private let log: EventLog?
     private let connectCallCount = LockIsolated<Int>(0)
+    private let _connectCalls = LockIsolated<[(deviceID: UUID, timeout: TimeInterval)]>([])
 
     init(transportsToReturn: [FakeLedgerAPDUTransport], log: EventLog? = nil) {
         self.transportsToReturn = transportsToReturn
         self.log = log
+    }
+
+    /// Every `connect(to:timeout:)` call, in order, as the device it targeted and the timeout it
+    /// received -- for asserting `connect`'s own 60 s connection against the open step's 10 s
+    /// reconnect, both against the same device.
+    var connectCalls: [(deviceID: UUID, timeout: TimeInterval)] {
+        _connectCalls.value
     }
 
     func devices() -> AsyncThrowingStream<[LedgerBluetoothDevice], Error> {
@@ -444,12 +522,13 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
         }
     }
 
-    func connect(to device: LedgerBluetoothDevice) async throws -> any LedgerAPDUTransport {
+    func connect(to device: LedgerBluetoothDevice, timeout: TimeInterval) async throws -> any LedgerAPDUTransport {
         let index = connectCallCount.withValue { count -> Int in
             let current = count
             count += 1
             return current
         }
+        _connectCalls.withValue { $0.append((device.id, timeout)) }
 
         guard transportsToReturn.indices.contains(index) else {
             fatalError("FakeLedgerScanning: no fake transport queued for connect() call #\(index)")
