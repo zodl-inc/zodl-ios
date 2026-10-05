@@ -468,11 +468,11 @@ extension SwapAndPayCoordFlow {
 
             case .swapAndPay(.confirmOptInTapped):
                 state.path.append(.swapAndPayForm(state.swapAndPayState))
-                return .send(.swapAndPay(.refreshSwapAssets))
+                return .none
 
             case .path(.element(id: _, action: .swapAndPayOptInForced(.confirmForcedOptInTapped))):
                 state.path.append(.swapAndPayForm(state.swapAndPayState))
-                return .send(.swapAndPay(.refreshSwapAssets))
+                return .none
 
             case .path(.element(id: _, action: .swapAndPayOptInForced(.goBackForcedOptInTapped))):
                 let _ = state.path.popLast()

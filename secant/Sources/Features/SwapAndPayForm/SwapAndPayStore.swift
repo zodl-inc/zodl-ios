@@ -32,6 +32,11 @@ struct SwapAndPay {
         case swapFromZec
         case crossPay
     }
+
+    enum SwapAssetsSource: Equatable {
+        case cache
+        case live
+    }
     
     @ObservableState
     struct State: Equatable {
@@ -372,7 +377,7 @@ struct SwapAndPay {
         case slippageTapped
         case swapAssetsFailedWithRetry(Bool)
         case swapAssetsRefreshFinished
-        case swapAssetsLoaded(IdentifiedArrayOf<SwapAsset>)
+        case swapAssetsLoaded(IdentifiedArrayOf<SwapAsset>, source: SwapAssetsSource)
         case swapQuoteLoaded(SwapQuote)
         case switchInputTapped
         case trySwapsAssetsAgainTapped
@@ -689,12 +694,12 @@ struct SwapAndPay {
                     if shouldLoadCache {
                         let cachedAssets = swapAndPay.cachedSwapAssets()
                         if !cachedAssets.isEmpty {
-                            await send(.swapAssetsLoaded(cachedAssets))
+                            await send(.swapAssetsLoaded(cachedAssets, source: .cache))
                         }
                     }
                     do {
                         let swapAssets = try await swapAndPay.swapAssets()
-                        await send(.swapAssetsLoaded(swapAssets))
+                        await send(.swapAssetsLoaded(swapAssets, source: .live))
                         await send(.swapAssetsRefreshFinished)
                     } catch let error as NetworkError {
                         await send(.swapAssetsFailedWithRetry(error.allowsRetry))
@@ -1149,7 +1154,7 @@ struct SwapAndPay {
             case .dismissRequired:
                 return .none
                 
-            case .swapAssetsLoaded(let swapAssets):
+            case .swapAssetsLoaded(let swapAssets, let source):
                 state.swapAssetFailedWithRetry = nil
                 state.swapAssetFailedCounter = 0
                 state.zecAsset = swapAssets.first { $0.idWithoutProvider == Constants.zecAsset } ?? state.zecAsset
@@ -1167,8 +1172,12 @@ struct SwapAndPay {
                     }
                 }
 
-                // exclude all tokens with price == 0
-                var filteredSwapAssets = swapAssets.filter { $0.usdPrice != 0 }
+                // Cached entries intentionally have no price yet, but their metadata is still
+                // useful for immediate asset and network selection. Only a live response should
+                // remove assets for which the provider has no usable price.
+                var filteredSwapAssets = source == .cache
+                    ? swapAssets
+                    : swapAssets.filter { $0.usdPrice != 0 }
 
                 // curated list
                 var curatedAssets: IdentifiedArrayOf<SwapAsset> = []
