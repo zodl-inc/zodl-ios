@@ -214,6 +214,7 @@ struct AddLedgerHWWallet {
                 state.issue = nil
                 state.isIssueSheetPresented = false
                 state.devices = []
+                state.selectedDevice = nil
                 // The scan and the no-devices timer run as sibling child tasks of the SAME
                 // effect, rather than the timer racing a separate `.cancellable` -- so the timer
                 // can never outlive the scan it is timing. Whichever finishes first cancels the
@@ -250,11 +251,10 @@ struct AddLedgerHWWallet {
             case let .devicesUpdated(devices):
                 state.devices = devices
                 // The scan republishes a device each time its signal strength changes, so the
-                // selection follows the same device's latest value, not the one that was tapped.
-                if let selected = state.selectedDevice,
-                   let refreshed = devices.first(where: { $0.id == selected.id }) {
-                    state.selectedDevice = refreshed
-                }
+                // selection follows the same device's latest value; a batch that no longer lists
+                // it drops the selection instead of keeping a stale one around (Android
+                // LedgerDeviceScanVM.kt:446-450).
+                state.selectedDevice = state.selectedDevice.flatMap { selected in devices.first { $0.id == selected.id } }
                 return .none
 
             case .scanTimedOut:
