@@ -48,7 +48,7 @@ struct LedgerDeviceSkeletons<Overlay: View>: View {
                 .shimmer(isShimmering)
                 .clipShape(Circle())
                 .frame(width: 32, height: 32)
-                .padding(.trailing, 8)
+                .padding(.trailing, 12)
 
             VStack(alignment: .leading, spacing: 4) {
                 RoundedRectangle(cornerRadius: Design.Radius._xs)
