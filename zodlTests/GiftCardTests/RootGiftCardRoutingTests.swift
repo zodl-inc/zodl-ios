@@ -3,9 +3,10 @@
 //  zodlTests
 //
 //  How Root reaches the gift card flow: Home's entry point, a gift card scanned in the Scan or Send
-//  flow, and a gift card link the app is opened with, which waits while the wallet is not on
-//  screen or a payment flow is in progress, and opens once that clears. Leaving the flow always
-//  closes the card's temporary wallet.
+//  flow, and a gift card link the app is opened with. Such a link is never used: it opens the
+//  scanner asking for an in-app scan, waiting while the wallet is not on screen or a payment flow
+//  is in progress, and opening once that clears. Leaving the flow always closes the card's
+//  temporary wallet.
 //
 
 import Foundation
@@ -18,14 +19,28 @@ import ComposableArchitecture
 @Suite(.serialized) @MainActor struct RootGiftCardRoutingTests {
     private static let linkString = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000"
 
-    private func makeStore(state: Root.State, cleaned: LockIsolated<[GiftCardHandle]> = LockIsolated([])) -> TestStore<Root.State, Root.Action> {
+    private func makeStore(
+        state: Root.State,
+        cleaned: LockIsolated<[GiftCardHandle]> = LockIsolated([]),
+        linksRead: LockIsolated<[String]> = LockIsolated([])
+    ) -> TestStore<Root.State, Root.Action> {
         let store = TestStore(initialState: state) {
             Root()
         } withDependencies: {
             var client = GiftCardClient.mock()
+            let mock = client
             client.cleanup = { handle in cleaned.withValue { $0.append(handle) } }
+            client.parse = { link in
+                linksRead.withValue { $0.append(link) }
+                return try mock.parse(link)
+            }
+            client.open = { link in
+                linksRead.withValue { $0.append(link) }
+                return try await mock.open(link)
+            }
             $0.giftCard = client
             $0.exchangeRate = .noOp
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.sdkSynchronizer = .mocked()
             $0.mainQueue = .immediate
             $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
@@ -51,32 +66,56 @@ import ComposableArchitecture
         #expect(store.state.isSensitiveFlowActive)
     }
 
-    @Test func openedLinkGoesStraightToTheCard() async throws {
-        let store = makeStore(state: homeState())
+    @Test func openedLinkAsksForAnInAppScanAndIsNotUsed() async throws {
+        let linksRead = LockIsolated<[String]>([])
+        let store = makeStore(state: homeState(), linksRead: linksRead)
         let url = try #require(URL(string: Self.linkString))
 
         await store.send(.destination(.deeplink(url)))
         #expect(store.state.path == .giftCardCoordFlow)
-        #expect(store.state.giftCardCoordFlowState.redeemState?.link == Self.linkString.redacted)
-        #expect(store.state.pendingGiftCardLink == nil)
+        #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+        #expect(store.state.giftCardCoordFlowState.scanState.instructions == String(localizable: .giftCardRescanInstructions))
+        #expect(!store.state.isGiftCardRescanPending)
         #expect(store.state.destinationState.destination == .home)
+        await store.finish()
+        #expect(linksRead.value.isEmpty)
+    }
+
+    @Test func openedLinkReplacesAnOpenCard() async throws {
+        let handle = GiftCardHandle()
+        let cleaned = LockIsolated<[GiftCardHandle]>([])
+        var state = homeState()
+        state.giftCardCoordFlowState = GiftCardCoordFlow.State(link: Self.linkString.redacted)
+        state.giftCardCoordFlowState.redeemState?.handle = handle
+        let store = makeStore(state: state, cleaned: cleaned)
+        let url = try #require(URL(string: "https://gift.zodl.com/#v=1&key=zgifttest1other&height=3000000"))
+
+        await store.send(.destination(.deeplink(url)))
+        await store.finish()
+        #expect(store.state.path == .giftCardCoordFlow)
+        #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+        #expect(cleaned.value == [handle])
     }
 
     @Test func linkWaitsWhileAPaymentFlowIsOpenAndOpensAfterwards() async throws {
         var state = homeState()
         state.path = .sendCoordFlow
-        let store = makeStore(state: state)
+        let linksRead = LockIsolated<[String]>([])
+        let store = makeStore(state: state, linksRead: linksRead)
         let url = try #require(URL(string: Self.linkString))
 
         await store.send(.destination(.deeplink(url)))
         #expect(store.state.path == .sendCoordFlow)
-        #expect(store.state.pendingGiftCardLink == Self.linkString.redacted)
+        #expect(store.state.isGiftCardRescanPending)
 
-        // Leaving the send flow clears the gate and the stashed link opens.
+        // Leaving the send flow clears the gate and the scanner opens, not the card.
         await store.send(.sendCoordFlow(.sendForm(.dismissRequired)))
         #expect(store.state.path == .giftCardCoordFlow)
-        #expect(store.state.giftCardCoordFlowState.redeemState?.link == Self.linkString.redacted)
-        #expect(store.state.pendingGiftCardLink == nil)
+        #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+        #expect(store.state.giftCardCoordFlowState.scanState.instructions == String(localizable: .giftCardRescanInstructions))
+        #expect(!store.state.isGiftCardRescanPending)
+        await store.finish()
+        #expect(linksRead.value.isEmpty)
     }
 
     @Test func linkWaitsUntilTheWalletIsOnScreen() async throws {
@@ -87,8 +126,19 @@ import ComposableArchitecture
 
         await store.send(.destination(.deeplink(url)))
         #expect(store.state.path == nil)
-        #expect(store.state.pendingGiftCardLink == Self.linkString.redacted)
+        #expect(store.state.isGiftCardRescanPending)
         #expect(!store.state.canOpenGiftCardFlow)
+    }
+
+    @Test func cardScannedAfterAnOpenedLinkOpensTheRedeemFlow() async throws {
+        let store = makeStore(state: homeState())
+        let url = try #require(URL(string: Self.linkString))
+        let scanned = "https://gift.zodl.com/#v=1&key=zgifttest1scanned&height=3000000"
+
+        await store.send(.destination(.deeplink(url)))
+        await store.send(.giftCardCoordFlow(.scan(.foundGiftCard(scanned.redacted))))
+        #expect(store.state.path == .giftCardCoordFlow)
+        #expect(store.state.giftCardCoordFlowState.redeemState?.link == scanned.redacted)
     }
 
     @Test func cardScannedInTheSendFlowOpensTheRedeemFlow() async throws {
@@ -139,6 +189,6 @@ import ComposableArchitecture
 
         await store.send(.destination(.deeplink(url)))
         #expect(store.state.path == nil)
-        #expect(store.state.pendingGiftCardLink == nil)
+        #expect(!store.state.isGiftCardRescanPending)
     }
 }

@@ -8849,6 +8849,23 @@
         }
       }
     },
+    "giftCard.rescanInstructions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For better safety and security, rescan the QR code on your gift card with Zodl."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para mayor seguridad y protección, vuelve a escanear el código QR de tu tarjeta de regalo con Zodl."
+          }
+        }
+      }
+    },
     "giftCard.scanInstructions" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -29,9 +29,17 @@ struct GiftCardCoordFlow {
 
         init() { }
 
-        /// Starts directly on the card behind `link`, skipping the scanner.
+        /// Starts directly on the card behind `link`, skipping the scanner. Only for a link
+        /// scanned or pasted inside the app.
         init(link: RedactableString) {
             self.redeemState = GiftCardRedeem.State(link: link)
+        }
+
+        /// The scanner, asking the user to scan with the app a card whose link came from outside.
+        static var rescanRequested: State {
+            var state = State()
+            state.scanState = .giftCardRescanner
+            return state
         }
     }
 
@@ -66,6 +74,14 @@ extension Scan.State {
         state.checkers = [.giftCardScanChecker]
         state.isPasteEnabled = true
         state.instructions = String(localizable: .giftCardScanInstructions)
+        return state
+    }
+
+    /// The gift card scanner opened for a gift card link that came from outside the app, which is
+    /// not used: it explains why the card has to be scanned again.
+    static var giftCardRescanner: Scan.State {
+        var state = Scan.State.giftCardScanner
+        state.instructions = String(localizable: .giftCardRescanInstructions)
         return state
     }
 }

@@ -276,10 +276,11 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
-        /// A gift card link the app was opened with while the flow could not be shown yet (no
+        /// The app was opened with a gift card link while the flow could not be shown yet (no
         /// wallet on screen, the splash/authentication still up, or a payment flow in progress).
-        /// Opened as soon as `canOpenGiftCardFlow` turns true. A bearer secret: never logged.
-        var pendingGiftCardLink: RedactableString?
+        /// The scanner asking for an in-app scan opens as soon as `canOpenGiftCardFlow` turns
+        /// true. The link itself is discarded: only a card scanned in the app is redeemed.
+        var isGiftCardRescanPending = false
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -775,8 +776,8 @@ struct Root {
                 return .send(.autoServerCandidateReady(pending.endpoint, pending.benchmarkedAt))
             }
             .onChange(of: \.canOpenGiftCardFlow) { _, state in
-                guard state.canOpenGiftCardFlow, let link = state.pendingGiftCardLink else { return .none }
-                return openGiftCardFlow(link: link, state: &state)
+                guard state.canOpenGiftCardFlow, state.isGiftCardRescanPending else { return .none }
+                return openGiftCardFlow(.rescanRequested, state: &state)
             }
     }
 

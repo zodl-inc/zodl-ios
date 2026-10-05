@@ -96,6 +96,18 @@ import ComposableArchitecture
         #expect(Scan.State.giftCardScanner.isPasteEnabled)
     }
 
+    @Test func rescannerForAnOpenedLinkKeepsScanAndPaste() {
+        // A gift card link from outside the app only opens this scanner; it explains why the card
+        // has to be scanned again and otherwise works like the regular one.
+        let rescanner = Scan.State.giftCardRescanner
+        #expect(rescanner.checkers == [.giftCardScanChecker])
+        #expect(rescanner.isPasteEnabled)
+        #expect(rescanner.instructions == String(localizable: .giftCardRescanInstructions))
+        #expect(rescanner.instructions != Scan.State.giftCardScanner.instructions)
+        #expect(GiftCardCoordFlow.State.rescanRequested.redeemState == nil)
+        #expect(GiftCardCoordFlow.State.rescanRequested.scanState.instructions == rescanner.instructions)
+    }
+
     @Test func sendFlowListsTheGiftCardCheckerFirst() async {
         // `SendCoordFlow.State` is not Equatable, so this drives a plain `Store`.
         let store = Store(initialState: SendCoordFlow.State()) {

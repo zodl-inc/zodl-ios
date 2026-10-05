@@ -68,10 +68,11 @@ extension Root {
                 return .none
 
             case .destination(.deeplink(let url)):
-                // Gift card links (universal links to gift.zodl.com, or a Vizor payment link) are
-                // bearer secrets: route them without ever logging the URL.
+                // A gift card link handed in from outside could have been altered on its way, so,
+                // like a ZIP 321 link below, it is never used: the user is asked to scan the card
+                // with the app. It is a bearer secret, so it is not logged either.
                 if GiftCardLink.isGiftCardURL(url) {
-                    return receiveGiftCardLink(url.absoluteString.redacted, state: &state)
+                    return receiveExternalGiftCardLink(state: &state)
                 }
                 if let _ = uriParser.checkRP(url.absoluteString, zcashSDKEnvironment.network().networkType) {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
