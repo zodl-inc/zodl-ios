@@ -136,6 +136,21 @@ import Foundation
         }
     }
 
+    // MOB-2020 (Android e36fedb2/ebc98b38): `.notPaired`'s title/message stay the same across
+    // contexts (already covered by `connectAndSignCopyDifferOnlyWhereTheContextChangesTheMeaning`
+    // above, since it is not listed there as context-varying) -- only the primary action differs:
+    // `.sign` offers Pair Ledger, `.connect` never shows `.notPaired` in the first place.
+    @Test func notPairedOffersPairLedgerOnlyWhileSigning() {
+        #expect(LedgerIssue.notPaired.primaryAction(in: .connect) == .none)
+        #expect(LedgerIssue.notPaired.primaryAction(in: .sign) == .pairLedger)
+        #expect(LedgerIssue.notPaired.primaryActionTitle(in: .connect) == nil)
+        #expect(
+            LedgerIssue.notPaired.primaryActionTitle(in: .sign)
+            == String(localizable: .ledgerIssueNotPairedCta)
+        )
+        #expect(LedgerIssue.notPaired.title(in: .connect) == LedgerIssue.notPaired.title(in: .sign))
+    }
+
     // MARK: - Figma states
 
     @Test func figmaStatesUseTheirKeys() {
@@ -197,7 +212,8 @@ import Foundation
             (.appTooOld, .tryAgain, .tryAgain),
             (.derivationBudgetExhausted, .tryAgain, .tryAgain),
             (.deviceMismatch, .tryAgain, .tryAgain),
-            (.notPaired, .none, .none),
+            // MOB-2020 (Android e36fedb2/ebc98b38): `.sign` now offers Pair Ledger.
+            (.notPaired, .none, .pairLedger),
             (.transactionNotSignable, .close, .none),
             (.unknown, .tryAgain, .tryAgain)
         ]

@@ -264,8 +264,6 @@ import ComposableArchitecture
             $0.isPairing = false
             $0.issue = .disconnected
             $0.isIssueSheetPresented = true
-            $0.selectedDevice = nil
-            $0.devices = []
         }
         await store.finish()
 
@@ -331,8 +329,6 @@ import ComposableArchitecture
             $0.isConnecting = false
             $0.issue = .requestRejected
             $0.isIssueSheetPresented = true
-            $0.selectedDevice = nil
-            $0.devices = []
         }
         await store.finish()
     }
@@ -362,8 +358,6 @@ import ComposableArchitecture
             $0.isConnecting = false
             $0.issue = .pairingFailed
             $0.isIssueSheetPresented = true
-            $0.selectedDevice = nil
-            $0.devices = []
         }
         await bondingStore.finish()
 
@@ -384,8 +378,6 @@ import ComposableArchitecture
             $0.isConnecting = false
             $0.issue = .disconnected
             $0.isIssueSheetPresented = true
-            $0.selectedDevice = nil
-            $0.devices = []
         }
         await postLinkStore.finish()
     }
@@ -425,13 +417,17 @@ import ComposableArchitecture
         #expect(store.state.devices == [device])
     }
 
-    @MainActor @Test func pairingFailureThatLosesTheConnectionDropsTheSelectionAndStopsScanning() async {
+    // MOB-2020: `pairingFailed` now fires only on the Approve on Your Device screen, which has
+    // no scan to fall back on, so a failure -- even one that lost the connection -- always keeps
+    // `selectedDevice` and `devices`, letting Retry reconnect the same device. Before this
+    // commit a lost connection dropped both, so the picker's now-removed rescan could run.
+    @MainActor @Test func pairingFailureKeepsTheSelectedDeviceAndDeviceList() async {
         let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
         var state = AddLedgerHWWallet.State()
         state.selectedDevice = device
         state.devices = [device]
         state.isConnecting = true
-        state.isScanning = true
+        state.isApproveScreen = true
 
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
@@ -441,11 +437,114 @@ import ComposableArchitecture
             $0.isConnecting = false
             $0.issue = .disconnected
             $0.isIssueSheetPresented = true
-            $0.selectedDevice = nil
-            $0.devices = []
-            $0.isScanning = false
         }
         await store.finish()
+
+        #expect(store.state.selectedDevice == device)
+        #expect(store.state.devices == [device])
+    }
+
+    // MOB-2020: the brief's "Retry reconnects to that same device" -- unlike
+    // `deviceRefusalKeepsTheSelectionAndShowsTheMessage` (a `connectionLost == false` device
+    // refusal, which already kept the selection before this commit), this drives a
+    // `connectionLost == true` failure through to a captured device identity on the reconnect.
+    @MainActor @Test func retryAfterAConnectionLossReconnectsTheSameDevice() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let fixture = try Self.makePairingFixture()
+        // Every device `connect` was called with, in call order: fails the first time (producing
+        // the connection-lost failure below), succeeds the second (the retry).
+        let connectedDevices = LockIsolated<[LedgerBluetoothDevice]>([])
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.isApproveScreen = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.connect = { connectedDevice in
+                let callCount = connectedDevices.withValue {
+                    $0.append(connectedDevice)
+                    return $0.count
+                }
+                if callCount == 1 {
+                    throw ZcashError.ledgerTimeout
+                }
+            }
+            $0.ledgerClient.pairAccount = { _ in fixture }
+        }
+
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(.pairingFailed(issue: .disconnected, connectionLost: true)) {
+            $0.isConnecting = false
+            $0.issue = .disconnected
+            $0.isIssueSheetPresented = true
+        }
+
+        await store.send(.issuePrimaryTapped) {
+            $0.isIssueSheetPresented = false
+        }
+        await store.receive(\.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
+            $0.isPairing = true
+        }
+        await store.receive(.pairingSucceeded(fixture)) {
+            $0.isPairing = false
+            $0.pairing = fixture
+        }
+        await store.finish()
+
+        #expect(connectedDevices.value == [device, device])
+    }
+
+    // MOB-2020: the Approve on Your Device screen's Cancel and back arrow both send this. It
+    // must stop the connect-and-pair in flight, not merely disconnect while it keeps running
+    // unseen -- TCA's `Send` silently drops an action sent from an already-cancelled effect (the
+    // `Task.isCancelled` guard in `Send.callAsFunction`), so once `CancelId.connectAndPair` is
+    // cancelled, neither `deviceConnected` nor `pairingFailed`/`pairingSucceeded` can reach this
+    // reducer again -- `store.finish()` below proves it, since an unclaimed receive fails it.
+    @MainActor @Test func cancelTappedCancelsAnInFlightPairingAndDisconnects() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let disconnectCallCount = LockIsolated(0)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.isApproveScreen = true
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.connect = { _ in }
+            // Never answers on its own -- cancelTapped must interrupt this, not wait it out.
+            $0.ledgerClient.pairAccount = { _ in
+                try await Task.sleep(for: .seconds(999))
+                fatalError("cancelled by cancelTapped before reaching this point")
+            }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connectDeviceTapped) {
+            $0.isConnecting = true
+            $0.issue = nil
+        }
+        await store.receive(\.deviceConnected) {
+            $0.isConnecting = false
+            $0.isPairing = true
+        }
+        await store.send(.cancelTapped)
+        await store.finish()
+
+        // At least one: cancelTapped's own effect always disconnects. The interrupted pairing
+        // effect races its own approval-timeout cap internally once cancelled, and can disconnect
+        // a second time if that race's timeout side wins it -- either outcome is correct here.
+        #expect(disconnectCallCount.value >= 1)
     }
 
     // MARK: - issuePrimaryTapped
@@ -496,6 +595,11 @@ import ComposableArchitecture
         state.selectedDevice = device
         state.issue = .requestRejected
         state.isIssueSheetPresented = true
+        // MOB-2020: this scenario -- a device refusal keeping the connection open -- can now
+        // only occur on the Approve on Your Device screen (the picker never reaches
+        // `pairingFailed` any more); `issuePrimaryTapped` reads `isApproveScreen`, not
+        // `selectedDevice`, to route the retry here.
+        state.isApproveScreen = true
 
         let store = TestStore(initialState: state) {
             AddLedgerHWWallet()

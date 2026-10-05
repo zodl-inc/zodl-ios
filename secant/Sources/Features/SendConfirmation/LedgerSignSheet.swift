@@ -34,6 +34,8 @@ struct LedgerSignSheetView: View {
                             store.send(.ledgerSigning(.tryAgainTapped))
                         case .openSettings:
                             store.send(.ledgerSigning(.openSettingsTapped))
+                        case .pairLedger:
+                            store.send(.pairLedgerTapped)
                         case .goToAccount, .close, .none:
                             break
                         }
@@ -173,7 +175,19 @@ private struct LedgerSignSheetModifier: ViewModifier {
     func body(content: Content) -> some View {
         WithPerceptionTracking {
             content
-                .zashiSheet(isPresented: $store.isLedgerSignSheetPresented, onDismiss: onDismiss) {
+                .zashiSheet(
+                    isPresented: $store.isLedgerSignSheetPresented,
+                    onDismiss: {
+                        // MOB-2020 (Android e36fedb2/ebc98b38): every caller gets this signal, not
+                        // just Ledger shielding's (the only one that used to pass its own
+                        // `onDismiss`) -- Root's Pair Ledger repair-flow switch needs the real
+                        // animation-complete moment for every host of this sheet, the same reason
+                        // `.ledgerShieldingSheetDismissed` exists. `onDismiss` below is unchanged,
+                        // whatever additional reaction a caller already wired up.
+                        store.send(.ledgerSignSheetDismissed)
+                        onDismiss?()
+                    }
+                ) {
                     LedgerSignSheetView(store: store)
                 }
         }

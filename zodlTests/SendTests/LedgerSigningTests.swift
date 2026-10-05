@@ -620,7 +620,9 @@ import ComposableArchitecture
             $0.issue = .notPaired
             $0.isConnectionLost = false
         }
-        #expect(store.state.failedPrimaryAction == .none)
+        // MOB-2020 (Android e36fedb2/ebc98b38): `.notPaired`'s `.sign`-context primary action is
+        // now Pair Ledger, not the "no retry" `.none` this asserted before.
+        #expect(store.state.failedPrimaryAction == .pairLedger)
 
         // A late result from `connect`'s effect must not overwrite the ceremony that already
         // failed above -- both are no-ops now that `phase` is `.failed` (the effect is

@@ -509,6 +509,51 @@ import ComposableArchitecture
         }
     }
 
+    // MOB-2020 (Android e36fedb2/ebc98b38): "Pair Ledger" on the `.notPaired` issue sheet ends
+    // the session exactly like Cancel Transaction -- same state resets -- so Root (which observes
+    // this exact action from every host of the sheet) can tell it apart from an ordinary Cancel.
+    @Test func pairLedgerTappedClosesTheSheetAndDropsThePcztStateLikeCancel() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.ledgerAccount()
+            let proposal = Proposal.testOnlyFakeProposal(totalFee: 10_000)
+
+            var initialState = makeState(account: account)
+            initialState.proposal = proposal
+            initialState.isLedgerSignSheetPresented = true
+            initialState.pczt = Pczt([0x01])
+            initialState.pcztWithProofs = Pczt([0x02])
+            initialState.pcztWithSigs = Pczt([0x03])
+            initialState.pcztToShare = Pczt([0x04])
+            initialState.redactedPcztForSigner = Pczt([0x05])
+            initialState.ledgerSigning.phase = .failed
+            initialState.ledgerSigning.issue = .notPaired
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+            }
+
+            await store.send(.pairLedgerTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.pczt = nil
+                $0.pcztWithProofs = nil
+                $0.pcztWithSigs = nil
+                $0.pcztToShare = nil
+                $0.redactedPcztForSigner = nil
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+            await store.finish()
+
+            // Unchanged, same as Cancel -- a following `.confirmWithLedgerTapped` could start over
+            // from the same confirmation screen (not exercised here; Root instead reads this
+            // action itself to leave the screen and open the connect flow in repair mode).
+            #expect(store.state.proposal == proposal)
+        }
+    }
+
     // MOB-2020: "Cancel Transaction" must cancel a connect that is still suspended on the
     // on-device "Open Zcash?" prompt, not just reset the sheet's state -- this stays fully
     // exhaustive (no `store.exhaustivity = .off`) so `store.finish()`'s own "still running" check
@@ -555,6 +600,62 @@ import ComposableArchitecture
             await clock.sleepDeadlines.countReached(1)
 
             await store.send(.ledgerSignCancelTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+
+            // No `.connectionFailed` ever arrives -- exhaustive mode would catch an unreceived
+            // action -- and this fails if the connect effect is still running.
+            await store.finish()
+        }
+    }
+
+    // MOB-2020: "Pair Ledger" must cancel a connect that is still suspended on the on-device
+    // "Open Zcash?" prompt, the same as Cancel Transaction -- this stays fully exhaustive (no
+    // `store.exhaustivity = .off`) so `store.finish()`'s own "still running" check is live; that
+    // check is silently skipped under `.off`, which would make this pass whether or not the
+    // connect is actually cancelled.
+    @Test func pairLedgerTappedCancelsAConnectStillSuspendedInLedgerClientConnect() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+            let connectStarted = LockIsolated(false)
+            let clock = SignalledClock()
+
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+            initialState.ledgerSigning.devices = [device]
+            initialState.ledgerSigning.selectedDevice = device
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.continuousClock = clock
+                $0.ledgerClient = .noOp
+                $0.ledgerClient.connect = { _ in
+                    connectStarted.setValue(true)
+                    // Parked on the on-device prompt -- never resolves on its own, so only
+                    // cancelling the effect itself can end this.
+                    try await Task.sleep(for: .seconds(999))
+                }
+            }
+
+            await store.send(.ledgerSigning(.connect)) {
+                $0.ledgerSigning.phase = .connecting
+            }
+
+            for _ in 0..<50 {
+                if connectStarted.value { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(connectStarted.value)
+            // The approval-timeout race's timer sleep is parked (and only then recorded) before
+            // cancelling, so the cancel below is guaranteed to land on a settled race.
+            await clock.sleepDeadlines.countReached(1)
+
+            await store.send(.pairLedgerTapped) {
                 $0.isLedgerSignSheetPresented = false
                 $0.ledgerSigning = LedgerSigning.State()
             }

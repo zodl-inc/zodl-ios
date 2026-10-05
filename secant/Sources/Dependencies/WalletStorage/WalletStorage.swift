@@ -566,11 +566,17 @@ struct WalletStorage {
             throw WalletStorageError.uninitializedLedgerBinding
         }
 
-        guard let binding = try decode(json: reqData, as: LedgerAccountBinding.self) else {
+        // A stored value that no longer decodes (garbage bytes, or a field like the ZIP 32
+        // account index outside its valid range) reads as no binding at all, the same as a
+        // missing item, rather than surfacing `KeychainError.decoding` to the caller.
+        do {
+            guard let binding = try decode(json: reqData, as: LedgerAccountBinding.self) else {
+                throw WalletStorageError.uninitializedLedgerBinding
+            }
+            return binding
+        } catch KeychainError.decoding {
             throw WalletStorageError.uninitializedLedgerBinding
         }
-
-        return binding
     }
 
     func deleteLedgerBinding(accountId: AccountUUID) throws {

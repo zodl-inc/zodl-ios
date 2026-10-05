@@ -197,7 +197,14 @@ struct SendConfirmation {
         case keystoneFirmwareUpdateRequired
         case ledgerSignCancelTapped
         case ledgerSignRequest
+        // MOB-2020 (Android e36fedb2/ebc98b38): sent by `LedgerSignSheetModifier`'s own
+        // `onDismiss`, once the sheet has actually finished closing -- for every host, not just
+        // Ledger shielding's popover. A no-op here; Root observes it (mirroring
+        // `.ledgerShieldingSheetDismissed`) to open the connect flow in repair mode only after a
+        // `.pairLedgerTapped` staged one, never on an ordinary Cancel/success dismissal.
+        case ledgerSignSheetDismissed
         case ledgerSigning(LedgerSigning.Action)
+        case pairLedgerTapped
         case pcztResolved(Pczt)
         case pcztSendFailed(ZcashError?)
         case pcztWithProofsResolved(Pczt)
@@ -745,6 +752,34 @@ struct SendConfirmation {
                     .cancel(id: LedgerSigning.CancelId.scan),
                     .cancel(id: LedgerSigning.CancelId.connect)
                 )
+
+            case .pairLedgerTapped:
+                // MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): "Pair Ledger" on the `.notPaired`
+                // issue sheet. Ends the session exactly like `.ledgerSignCancelTapped` above -- same
+                // state resets, same cancels -- so the host reactions tied specifically to Cancel
+                // (there are none today; see that arm) never fire for this one too. Kept as its own
+                // action, rather than reusing `.ledgerSignCancelTapped` itself, so Root can tell
+                // which one arrived: its `coordinatorReduce()` observes this exact case, from every
+                // host of this sheet, to close that host and open the connect flow in repair mode
+                // once the sheet finishes closing (`.ledgerSignSheetDismissed`).
+                state.isLedgerSignSheetPresented = false
+                state.pczt = nil
+                state.pcztWithProofs = nil
+                state.pcztWithSigs = nil
+                state.pcztToShare = nil
+                state.redactedPcztForSigner = nil
+                state.ledgerSigning = .init()
+                return .merge(
+                    .cancel(id: CancelId.resolvePCZT),
+                    .cancel(id: CancelId.addProofs),
+                    .cancel(id: CancelId.ledgerSignRequest),
+                    .cancel(id: LedgerSigning.CancelId.sign),
+                    .cancel(id: LedgerSigning.CancelId.scan),
+                    .cancel(id: LedgerSigning.CancelId.connect)
+                )
+
+            case .ledgerSignSheetDismissed:
+                return .none
 
             case .sharePCZT:
                 state.pcztToShare = state.pczt

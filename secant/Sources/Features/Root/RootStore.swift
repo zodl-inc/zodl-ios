@@ -305,6 +305,15 @@ struct Root {
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
         var connectHWWalletCoordFlowState = ConnectHWWalletCoordFlow.State.initial
+        /// MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): set while a `.pairLedgerTapped` from
+        /// any host of `LedgerSignSheetView` has staged `connectHWWalletCoordFlowState` for a
+        /// repair and is waiting for that sheet to actually finish closing -- iOS drops a
+        /// presentation requested while another is still animating out (see
+        /// `.ledgerShieldingSheetDismissed`), so `path` only switches to
+        /// `.connectHWWalletCoordFlow` once `.ledgerSignSheetDismissed` confirms it. Mirrors
+        /// `SwapAndPayCoordFlow.State.isLedgerConfirmationAwaitingQuoteDismissal`'s stage-then-flag
+        /// shape.
+        var isLedgerRepairAwaitingSheetDismissal = false
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
