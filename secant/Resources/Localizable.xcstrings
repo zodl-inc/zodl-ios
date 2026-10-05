@@ -11121,6 +11121,40 @@
         }
       }
     },
+    "ledger.issue.openAppRejected.sign.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You declined opening the Zcash app on your Ledger. Try again and confirm “Open Zcash” on your device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechazaste abrir la app de Zcash en tu Ledger. Inténtalo de nuevo y confirma “Open Zcash” en tu dispositivo."
+          }
+        }
+      }
+    },
+    "ledger.issue.openAppRejected.sign.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zcash App Not Opened"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se abrió la app de Zcash"
+          }
+        }
+      }
+    },
     "ledger.issue.openAppRejected.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11478,6 +11512,23 @@
         }
       }
     },
+    "ledger.signSheet.descBeforeReview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your Ledger unlocked and nearby."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén tu Ledger desbloqueado y cerca."
+          }
+        }
+      }
+    },
     "ledger.signSheet.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11501,13 +11552,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Connecting…"
+            "value" : "Connecting to your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Conectando…"
+            "value" : "Conectando con tu Ledger"
+          }
+        }
+      }
+    },
+    "ledger.signWith.openingApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the Zcash app on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la app de Zcash en tu Ledger"
           }
         }
       }
@@ -11518,13 +11586,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Preparing the transaction…"
+            "value" : "Preparing your transaction"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Preparando la transacción…"
+            "value" : "Preparando tu transacción"
+          }
+        }
+      }
+    },
+    "ledger.signWith.review" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check and approve on your Ledger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revisa y aprueba en tu Ledger"
           }
         }
       }
@@ -11535,13 +11620,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Looking for your Ledger…"
+            "value" : "Looking for your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Buscando tu Ledger…"
+            "value" : "Buscando tu Ledger"
           }
         }
       }
@@ -11552,13 +11637,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select your Ledger"
+            "value" : "Choose your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Selecciona tu Ledger"
+            "value" : "Elige tu Ledger"
           }
         }
       }
@@ -11569,13 +11654,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending the transaction to your Ledger…"
+            "value" : "Sending the details to your Ledger"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Enviando la transacción a tu Ledger…"
+            "value" : "Enviando los detalles a tu Ledger"
           }
         }
       }
@@ -11586,13 +11671,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Signing…"
+            "value" : "Signing your transaction"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Firmando…"
+            "value" : "Firmando tu transacción"
           }
         }
       }

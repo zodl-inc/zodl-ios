@@ -10,7 +10,7 @@ import XCTestDynamicOverlay
 extension LedgerClient {
     static let noOp = Self(
         scanDevices: { AsyncThrowingStream { $0.finish() } },
-        connect: { _ in },
+        connect: { _, _ in },
         bond: { _ in false },
         openZcashApp: { _ in },
         pairDevice: { _, _ in throw LedgerClientError.notConnected },

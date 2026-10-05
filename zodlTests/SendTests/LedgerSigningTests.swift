@@ -50,7 +50,7 @@ import ComposableArchitecture
             // the cap never wins, and the auto-connect below is unaffected by it.
             $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
-            $0.ledgerClient.connect = { _ in }
+            $0.ledgerClient.connect = { _, _ in }
         }
 
         await store.send(.devicesUpdated([device])) {
@@ -85,12 +85,57 @@ import ComposableArchitecture
             $0.continuousClock = clock
             $0.ledgerClient = .noOp
             // Never answers -- the on-device "Open Zcash?" prompt is what the cap is timing.
-            $0.ledgerClient.connect = { _ in try await Task.sleep(for: .seconds(999)) }
+            $0.ledgerClient.connect = { _, _ in try await Task.sleep(for: .seconds(999)) }
             $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
         }
 
         await store.send(.connect) {
             $0.phase = .connecting
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.connectionFailed(.disconnected)) {
+            $0.phase = .failed
+            $0.issue = .disconnected
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+
+        #expect(disconnectCallCount.value == 1)
+    }
+
+    // MOB-2020: the five-minute cap also covers a connect still waiting once the on-device "Open
+    // Zcash?" prompt has already reported -- `.openingZcashApp` is the same in-flight connect as
+    // `.connecting`, just past its report, so the cap must keep timing it there too.
+    @MainActor @Test func theFiveMinuteCapFiresWhileTheZcashAppIsOpening() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        let disconnectCallCount = LockIsolated(0)
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            // Reports, then never answers -- same as connectTimesOutAfterFiveMinutesAndDisconnects
+            // above, but past the on-device "Open Zcash?" report.
+            $0.ledgerClient.connect = { _, report in
+                await report()
+                try await Task.sleep(for: .seconds(999))
+            }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.openingZcashApp) {
+            $0.phase = .openingZcashApp
         }
         // The timer's sleep is parked (and only then recorded) before advancing to it, so this
         // advance is guaranteed to resume the timer and not race its start.
@@ -367,7 +412,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
-            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.connect = { _, _ in connectCallCount.withValue { $0 += 1 } }
             $0.ledgerClient.scanDevices = {
                 AsyncThrowingStream { continuation in
                     continuation.yield([device])
@@ -485,7 +530,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
-            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.connect = { _, _ in connectCallCount.withValue { $0 += 1 } }
             $0.ledgerClient.scanDevices = {
                 AsyncThrowingStream { continuation in
                     continuation.yield([device])
@@ -630,6 +675,108 @@ import ComposableArchitecture
         // result already in flight when `.pairingMissing` cancels it).
         await store.send(.deviceConnected)
         await store.send(.connectionFailed(.disconnected))
+        // MOB-2020: same reasoning -- a late `.openingZcashApp` report must not resurrect the
+        // ceremony either. This is exactly why that action's own guard checks `phase == .connecting`.
+        await store.send(.openingZcashApp)
+        await store.finish()
+    }
+
+    // MOB-2020: `LedgerSession.connect`'s own report that it is about to ask the device to open
+    // the Zcash app moves `.connecting` to `.openingZcashApp`; connect's success then signs
+    // exactly as it did before this state existed.
+    @MainActor @Test func theOpeningZcashAppReportMovesThePhaseAndSigningStartsOnSuccess() async throws {
+        let device = Self.device(name: "Nano X")
+        let request = try Self.signRequest()
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+        state.request = request
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _, report in await report() }
+            $0.ledgerClient.signPCZT = { _, _, _ in
+                AsyncThrowingStream { $0.finish() }
+            }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.openingZcashApp) {
+            $0.phase = .openingZcashApp
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
+        }
+        await store.receive(\.startSigningIfReady) {
+            $0.phase = .signing(.identifyingDevice)
+        }
+        await store.finish()
+    }
+
+    // MOB-2020: a failure while the device is showing the "Open Zcash?" prompt (e.g. the user
+    // declines it) shows the same failure sheet any other connect-step failure does.
+    @MainActor @Test func aFailureWhileOpeningTheZcashAppShowsTheFailureSheet() async throws {
+        let device = Self.device(name: "Nano X")
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _, report in
+                await report()
+                throw ZcashError.ledgerAppOpenRejected
+            }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.openingZcashApp) {
+            $0.phase = .openingZcashApp
+        }
+        await store.receive(.connectionFailed(.openAppRejected)) {
+            $0.phase = .failed
+            $0.issue = .openAppRejected
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+    }
+
+    // MOB-2020: when the device already runs the Zcash app, `LedgerSession.connect` never
+    // reports -- the phase goes straight from `.connecting` to `.connected`, same as before this
+    // state existed.
+    @MainActor @Test func noReportMeansThePhaseGoesStraightFromConnectingToConnected() async throws {
+        let device = Self.device(name: "Nano X")
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient = .noOp
+            // Never calls its second argument -- as if the device were already running the Zcash
+            // app, so `LedgerSession.connect` never reports.
+            $0.ledgerClient.connect = { _, _ in }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
+        }
+        await store.receive(\.startSigningIfReady)
         await store.finish()
     }
 
@@ -652,7 +799,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = clock
             $0.ledgerClient = .noOp
-            $0.ledgerClient.connect = { _ in
+            $0.ledgerClient.connect = { _, _ in
                 connectStarted.recordCall()
                 // Parked on the on-device prompt -- never resolves on its own, so only cancelling
                 // the effect itself can end this.
@@ -674,6 +821,49 @@ import ComposableArchitecture
         // No `.connectionFailed` ever arrives -- exhaustive `finish()` would catch an unreceived
         // action -- and `finish()` itself fails if the connect effect is still running.
         await store.finish()
+    }
+
+    // MOB-2020: the sign sheet's description switches from the "before review" copy to the final
+    // confirm copy once the ceremony has reached (or passed) on-device review (Figma annotation
+    // 1638:268) -- covers every `Phase`/`LedgerSigningProgress` case.
+    @Test func hasReachedReviewIsTrueOnlyFromReviewOnward() {
+        var state = LedgerSigning.State()
+
+        state.phase = .scanning
+        #expect(!state.hasReachedReview)
+
+        state.phase = .selectingDevice
+        #expect(!state.hasReachedReview)
+
+        state.phase = .connecting
+        #expect(!state.hasReachedReview)
+
+        state.phase = .openingZcashApp
+        #expect(!state.hasReachedReview)
+
+        state.phase = .connected
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.identifyingDevice)
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.streaming(sent: 1, total: 2))
+        #expect(!state.hasReachedReview)
+
+        state.phase = .signing(.awaitingReviewOnDevice)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signing(.signing)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signing(.complete)
+        #expect(state.hasReachedReview)
+
+        state.phase = .signed
+        #expect(state.hasReachedReview)
+
+        state.phase = .failed
+        #expect(!state.hasReachedReview)
     }
 
     // MARK: - Fixtures

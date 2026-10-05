@@ -578,7 +578,7 @@ import ComposableArchitecture
                 $0.mainQueue = .immediate
                 $0.continuousClock = clock
                 $0.ledgerClient = .noOp
-                $0.ledgerClient.connect = { _ in
+                $0.ledgerClient.connect = { _, _ in
                     connectStarted.setValue(true)
                     // Parked on the on-device prompt -- never resolves on its own, so only
                     // cancelling the effect itself can end this.
@@ -634,7 +634,7 @@ import ComposableArchitecture
                 $0.mainQueue = .immediate
                 $0.continuousClock = clock
                 $0.ledgerClient = .noOp
-                $0.ledgerClient.connect = { _ in
+                $0.ledgerClient.connect = { _, _ in
                     connectStarted.setValue(true)
                     // Parked on the on-device prompt -- never resolves on its own, so only
                     // cancelling the effect itself can end this.

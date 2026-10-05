@@ -10,8 +10,18 @@
 //  LedgerTurnOnView, LedgerDevicePickerView, LedgerOpenAppView and LedgerApproveOnDeviceView can
 //  all build on it.
 //
+//  Also home to `LedgerWaitingIndicator` (Figma's "Waiting Indicator", node 1439:28709): step 4's
+//  approve screen and the send confirmation flow's Ledger sign sheet (LedgerSignSheet.swift) both
+//  draw their spinner-plus-title status from it, so it lives here rather than in either feature's
+//  own file.
+//
+//  And `LedgerDeviceCard` (Figma 1635:250): step 2's device picker and the sign sheet's own
+//  `.selectingDevice` state draw the same card from it -- the label only, each screen keeps its
+//  own `Button` and tap action around it.
+//
 
 import SwiftUI
+@preconcurrency import ZcashLightClientKit
 
 // MARK: - Nav title
 
@@ -206,5 +216,126 @@ struct LedgerStepCallout: View {
             RoundedRectangle(cornerRadius: Design.Radius._2xl)
                 .fill(Design.Utility.HyperBlue._50.color(colorScheme))
         }
+    }
+}
+
+// MARK: - Device card (step 2 picker, sign sheet)
+
+/// The Ledger row Figma draws as a single card (node 1635:250): step 2's device picker and the
+/// sign sheet's own device list both draw this same label -- each screen keeps its own `Button`
+/// and tap action around it. Corner radius 12 (`Design.Radius._xl`), `bgPrimary` fill,
+/// `strokeSecondary` 1 pt (2 pt `bgAlt` when selected, with Figma's small card shadow), padding
+/// 12 vertical and 16 horizontal; a 40 pt icon circle, 12 pt gap, then the device's own name in
+/// semibold 14 on one line, then a 20 pt radio.
+struct LedgerDeviceCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let device: LedgerBluetoothDevice
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Asset.Assets.Partners.ledgerMark.image
+                .resizable()
+                .frame(width: 24, height: 24)
+                .padding(8)
+                .background {
+                    Circle()
+                        .fill(Design.Surfaces.bgAlt.color(colorScheme))
+                }
+                .padding(.trailing, 12)
+
+            Text(device.name ?? device.model.productName)
+                .zFont(.semiBold, size: 14, style: Design.Text.primary)
+                .lineLimit(1)
+
+            Spacer()
+
+            radio(isSelected: isSelected)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background {
+            RoundedRectangle(cornerRadius: Design.Radius._xl)
+                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Design.Radius._xl)
+                        .stroke(
+                            isSelected
+                            ? Design.Surfaces.bgAlt.color(colorScheme)
+                            : Design.Surfaces.strokeSecondary.color(colorScheme),
+                            lineWidth: isSelected ? 2 : 1
+                        )
+                }
+        }
+        // Figma's small card shadow, the same two-layer pair used across the app -- shown only
+        // for the selected row, via opacity rather than branching the view so the row's identity
+        // (and any implicit animation) stays stable across selection changes.
+        .shadow(color: .black.opacity(isSelected ? 0.02 : 0), radius: 0.66667, x: 0, y: 1.33333)
+        .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 1.33333, x: 0, y: 1.33333)
+    }
+
+    @ViewBuilder private func radio(isSelected: Bool) -> some View {
+        if isSelected {
+            Circle()
+                .fill(Design.Btns.Primary.bg.color(colorScheme))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Asset.Assets.check.image
+                        .zImage(size: 12, style: Design.Btns.Primary.fg)
+                }
+        } else {
+            Circle()
+                .fill(Design.Surfaces.bgPrimary.color(colorScheme))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Circle()
+                        .stroke(Design.Checkboxes.offStroke.color(colorScheme), lineWidth: 1)
+                }
+        }
+    }
+}
+
+// MARK: - Waiting indicator
+
+/// Figma "Waiting Indicator" (node 1439:28709): a 24 pt `loading-02` spinner that completes one
+/// turn per second, 12 pt below it a semibold 16 text-primary title, and, only when `subtitle` is
+/// given, a regular 14 text-primary line 4 pt under that -- all centred and at most 280 pt wide.
+/// `.fixedSize(horizontal: false, vertical: true)` on both lines keeps long text wrapping instead
+/// of truncating inside a host that re-measures height, such as the sign sheet's `zashiSheet`.
+struct LedgerWaitingIndicator: View {
+    @State private var isRotating = false
+
+    let title: String
+    let subtitle: String?
+
+    init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Asset.Assets.Icons.loading.image
+                .zImage(size: 24, style: Design.Text.primary)
+                .rotationEffect(.degrees(isRotating ? 360 : 0))
+                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isRotating)
+                .onAppear { isRotating = true }
+
+            VStack(spacing: 4) {
+                Text(title)
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .zFont(size: 14, style: Design.Text.primary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: 280)
     }
 }

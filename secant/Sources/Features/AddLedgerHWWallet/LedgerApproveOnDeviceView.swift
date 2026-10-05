@@ -56,8 +56,11 @@ struct LedgerApproveOnDeviceView: View {
                                     )
                                     .allowsHitTesting(false)
 
-                                    WaitingIndicator()
-                                        .padding(.bottom, 16)
+                                    LedgerWaitingIndicator(
+                                        title: String(localizable: .ledgerApproveWaitingTitle),
+                                        subtitle: String(localizable: .ledgerApproveWaitingSubtitle)
+                                    )
+                                    .padding(.bottom, 16)
                                 }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
@@ -116,32 +119,5 @@ struct LedgerApproveOnDeviceView: View {
                 store.send(.issuePrimaryTapped)
             }
         }
-    }
-}
-
-/// Figma "Waiting Indicator": a spinner that completes one turn per second, the waiting title and
-/// subtitle below it, all centred and at most 280 pt wide.
-private struct WaitingIndicator: View {
-    @State private var isRotating = false
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Asset.Assets.Icons.loading.image
-                .zImage(size: 24, style: Design.Text.primary)
-                .rotationEffect(.degrees(isRotating ? 360 : 0))
-                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isRotating)
-                .onAppear { isRotating = true }
-
-            VStack(spacing: 4) {
-                Text(localizable: .ledgerApproveWaitingTitle)
-                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                    .multilineTextAlignment(.center)
-
-                Text(localizable: .ledgerApproveWaitingSubtitle)
-                    .zFont(size: 14, style: Design.Text.primary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: 280)
     }
 }

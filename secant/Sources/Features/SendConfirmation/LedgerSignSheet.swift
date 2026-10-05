@@ -7,9 +7,14 @@
 //  too -- see `RootCoordinator`'s `.signWithKeystoneRequested`). Presented as a `zashiSheet` over
 //  the screen the user confirmed from while the Ledger signs -- only "Cancel Transaction" closes
 //  it, via `.interactiveDismissDisabled()`. The status block below copies (not moves) that former
-//  screen's `statusContent`/`spinnerStatus`/`deviceRow`, without its bone-coloured card. A failed
+//  screen's `statusContent`, without its bone-coloured card; its device list instead shares
+//  `LedgerDeviceCard` with enrollment's own picker (LedgerStepComponents.swift). A failed
 //  ceremony instead shows `LedgerIssueSheetContent`, the same Ledger error-state sheet
 //  `AddLedgerHWWallet`'s device picker uses.
+//
+//  MOB-2020: Figma 1439:28498 ("Confirmation Screen v2", the iOS 26 bottom sheet) redraws every
+//  spinner state as `LedgerWaitingIndicator` (node 1439:28709, shared with step 4's approve
+//  screen -- see LedgerStepComponents.swift), 24 pt below the description instead of 16.
 //
 
 import SwiftUI
@@ -17,8 +22,6 @@ import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
 struct LedgerSignSheetView: View {
-    @Environment(\.colorScheme) private var colorScheme
-
     @Perception.Bindable var store: StoreOf<SendConfirmation>
 
     var body: some View {
@@ -56,14 +59,14 @@ struct LedgerSignSheetView: View {
                         .zFont(.semiBold, size: 20, style: Design.Text.primary)
                         .padding(.top, 12)
 
-                    Text(localizable: .ledgerSignSheetDesc)
+                    Text(localizable: store.ledgerSigning.hasReachedReview ? .ledgerSignSheetDesc : .ledgerSignSheetDescBeforeReview)
                         .zFont(size: 14, style: Design.Text.tertiary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 4)
 
                     statusContent()
-                        .padding(.top, 16)
+                        .padding(.top, 24)
 
                     ZashiButton(
                         String(localizable: .ledgerSignSheetCancel),
@@ -91,79 +94,49 @@ extension LedgerSignSheetView {
     @ViewBuilder private func statusContent() -> some View {
         switch store.ledgerSigning.phase {
         case .scanning:
-            spinnerStatus(String(localizable: .ledgerSignWithScanning))
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithScanning))
 
         case .selectingDevice:
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 Text(localizable: .ledgerSignWithSelectDevice)
-                    .zFont(size: 14, style: Design.Text.tertiary)
+                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
                     .multilineTextAlignment(.center)
 
-                ForEach(store.ledgerSigning.devices) { device in
-                    deviceRow(device, colorScheme)
+                VStack(spacing: 8) {
+                    ForEach(store.ledgerSigning.devices) { device in
+                        Button {
+                            store.send(.ledgerSigning(.deviceTapped(device)))
+                        } label: {
+                            LedgerDeviceCard(device: device, isSelected: false)
+                        }
+                    }
                 }
             }
 
         case .connecting:
-            spinnerStatus(String(localizable: .ledgerSignWithConnecting))
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithConnecting))
+
+        case .openingZcashApp:
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithOpeningApp))
 
         case .connected:
-            spinnerStatus(String(localizable: .ledgerSignWithPreparing))
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithPreparing))
 
         case .signing(.identifyingDevice), .signing(.streaming):
-            spinnerStatus(String(localizable: .ledgerSignWithSending))
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithSending))
 
         case .signing(.awaitingReviewOnDevice):
-            // The sheet's own description is already the instruction -- nothing more to show.
-            EmptyView()
+            // The designer's final copy (Figma 1635:60-1635:1417) adds a status line here too,
+            // with the same spinner every other phase shows -- no longer "nothing more to show".
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithReview))
 
         case .signing(.signing), .signing(.complete), .signed:
-            spinnerStatus(String(localizable: .ledgerSignWithSigning))
+            LedgerWaitingIndicator(title: String(localizable: .ledgerSignWithSigning))
 
         case .failed:
             // `body` renders `LedgerIssueSheetContent` instead of this content while
             // `phase == .failed` -- this case only keeps the switch exhaustive over `Phase`.
             EmptyView()
-        }
-    }
-
-    @ViewBuilder private func spinnerStatus(_ text: String) -> some View {
-        VStack(spacing: 12) {
-            ProgressView()
-
-            Text(text)
-                .zFont(size: 14, style: Design.Text.tertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder private func deviceRow(_ device: LedgerBluetoothDevice, _ colorScheme: ColorScheme) -> some View {
-        Button {
-            store.send(.ledgerSigning(.deviceTapped(device)))
-        } label: {
-            HStack(spacing: 0) {
-                Asset.Assets.Partners.ledgerMark.image
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .padding(8)
-                    .background {
-                        Circle()
-                            .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                    }
-                    .padding(.trailing, 8)
-
-                Text(device.model.productName)
-                    .zFont(.semiBold, size: 14, style: Design.Text.primary)
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background {
-                RoundedRectangle(cornerRadius: Design.Radius._3xl)
-                    .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
-            }
         }
     }
 }

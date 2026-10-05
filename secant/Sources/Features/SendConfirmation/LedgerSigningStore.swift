@@ -22,6 +22,11 @@ struct LedgerSigning {
             case scanning
             case selectingDevice
             case connecting
+            // MOB-2020: the Bluetooth link is open and `LedgerSession.connect` has asked the
+            // device which app it runs and found it isn't the Zcash app -- the on-device "Open
+            // Zcash?" prompt is showing. Figma's "Ledger Send State" frame 4 shows exactly that
+            // copy, "Open the Zcash app on your Ledger" (`ledger.signWith.openingApp`).
+            case openingZcashApp
             case connected
             case signing(LedgerSigningProgress)
             case signed
@@ -61,6 +66,19 @@ struct LedgerSigning {
         var failedPrimaryAction: LedgerIssue.PrimaryAction {
             issue == .bluetoothUnauthorized && hasOpenedSettings ? .tryAgain : (issue?.primaryAction(in: .sign) ?? .none)
         }
+
+        /// Whether the ceremony has reached (or passed) the device showing the transaction for
+        /// review -- the sign sheet's description switches to the final confirm copy once this is
+        /// true, and shows `ledgerSignSheetDescBeforeReview` while it's false.
+        var hasReachedReview: Bool {
+            switch phase {
+            case .signing(.awaitingReviewOnDevice), .signing(.signing), .signing(.complete), .signed:
+                return true
+            case .scanning, .selectingDevice, .connecting, .openingZcashApp, .connected,
+                 .signing(.identifyingDevice), .signing(.streaming), .failed:
+                return false
+            }
+        }
     }
 
     enum Action: Equatable {
@@ -71,6 +89,10 @@ struct LedgerSigning {
         case scanTimedOut
         case deviceTapped(LedgerBluetoothDevice)
         case connect
+        // MOB-2020: `LedgerSession.connect`'s own report that it is about to ask the device to
+        // open the Zcash app (the device isn't already running it) -- moves `.connecting` to
+        // `.openingZcashApp` so the sheet can tell the user to look at the device.
+        case openingZcashApp
         case deviceConnected
         case connectionFailed(LedgerIssue)
         case signRequested(State.SignRequest)
@@ -228,7 +250,11 @@ struct LedgerSigning {
                 return .send(.connect)
 
             case .connect:
-                guard let device = state.selectedDevice, state.phase != .connecting else {
+                // MOB-2020: `.openingZcashApp` is still mid-connect (the report already fired,
+                // the connect effect hasn't settled) -- the same guard against starting a second
+                // connect on top of one already in flight that `.connecting` has always needed,
+                // extended to cover it too.
+                guard let device = state.selectedDevice, state.phase != .connecting, state.phase != .openingZcashApp else {
                     return .none
                 }
                 state.phase = .connecting
@@ -240,7 +266,9 @@ struct LedgerSigning {
                         // which this effect has already finished by the time that starts.
                         let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectOutcome in
                             do {
-                                try await ledgerClient.connect(device)
+                                try await ledgerClient.connect(device) {
+                                    await send(.openingZcashApp)
+                                }
                                 return .connected
                             } catch {
                                 return .failed(LedgerIssue(error, in: .sign))
@@ -267,19 +295,30 @@ struct LedgerSigning {
                     .cancellable(id: CancelId.connect, cancelInFlight: true)
                 )
 
+            case .openingZcashApp:
+                // MOB-2020: a late report must not resurrect a ceremony that already failed or
+                // moved on -- same reasoning as `.deviceConnected` and `.connectionFailed` below:
+                // the connect effect is cancellable now (`CancelId.connect`), but a report already
+                // in flight when a teardown's cancel takes effect can still land, so this guard is
+                // the second line of defence, which is also why those two now accept this phase too.
+                guard state.phase == .connecting else { return .none }
+                state.phase = .openingZcashApp
+                return .none
+
             case .deviceConnected:
                 // `.connect`'s effect is cancellable now (`CancelId.connect`), but a result
                 // already in flight when a teardown's cancel takes effect can still land -- this
                 // guard is the second line of defence so a late result never overwrites a
-                // ceremony that already failed (e.g. via `.pairingMissing`).
-                guard state.phase == .connecting else { return .none }
+                // ceremony that already failed (e.g. via `.pairingMissing`). `.openingZcashApp` is
+                // still that same in-flight connect, just past its report.
+                guard state.phase == .connecting || state.phase == .openingZcashApp else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
 
             case let .connectionFailed(issue):
                 // Same reasoning as `.deviceConnected` above: a late result must not overwrite a
                 // ceremony that already failed, even though `.connect`'s effect is cancellable now.
-                guard state.phase == .connecting else { return .none }
+                guard state.phase == .connecting || state.phase == .openingZcashApp else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
                 // connection-lost regardless of what
                 // `LedgerIssue(error, in: .sign).retryNeedsNewConnection(in: .sign)` would classify
