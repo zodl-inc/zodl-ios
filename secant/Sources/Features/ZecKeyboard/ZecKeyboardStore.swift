@@ -329,7 +329,13 @@ struct ZecKeyboard {
                             state.humanReadableMainInput += state.decimalSeparator
                         }
                     }
-                    state.humanReadableConvertedInput = Decimal(state.currencyValue).formatted(.number.precision(.fractionLength(2)))
+                    if let currencyConversion = state.currencyConversion {
+                        state.humanReadableConvertedInput = currencyConversion.iso4217.formatNumericAmount(state.currencyValue)
+                    } else {
+                        state.humanReadableConvertedInput = Decimal(state.currencyValue).formatted(
+                            .number.precision(.fractionLength(2))
+                        )
+                    }
                 } else {
                     state.humanReadableMainInput = Decimal(state.currencyValue).formatted(.number)
                     let inputSides = state.input.split(separator: Character(state.decimalSeparator))

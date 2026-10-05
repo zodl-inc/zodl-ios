@@ -15,6 +15,8 @@ struct Settings {
         case chooseServerSetup(ServerSetup)
         case disconnectHWWallet(DisconnectHWWallet)
         case currencyConversionSetup(CurrencyConversionSetup)
+        case exportViewingKeys(ExportViewingKeys)
+        case viewingKeyDetail(ViewingKeyDetail)
         case exportPrivateData(PrivateDataConsent)
         case exportTransactionHistory(ExportTransactionHistory)
         case migrationRestart(MigrationRestart)
@@ -43,6 +45,8 @@ struct Settings {
         var isResyncHelpSheetPresented = false
         var isTorOn = false
         var path = StackState<Path.State>()
+        var pendingViewingKeyAuthentication: PendingViewingKeyAuthentication?
+        var isViewingKeyInactive = false
         #if VOTING_ENABLED
         /// fullScreenCover for the new voting CoordFlow. Isolating its
         /// NavigationStack via fullScreenCover avoids SwiftUI's
@@ -95,6 +99,13 @@ struct Settings {
         case resyncFinished
         case sendUsFeedbackTapped
         case whatsNewTapped
+        case viewingKeyAuthenticationFinished(UUID, Bool)
+        case viewingKeyBecameInactive
+        case viewingKeyBecameActive
+        case viewingKeyEnteredBackground
+        case validateViewingKeySession
+        case viewingKeySettingsDisappeared
+        case invalidateViewingKeyExport
     }
 
     @Dependency(\.appVersion) var appVersion
@@ -102,100 +113,115 @@ struct Settings {
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
+    @Dependency(\.uuid) var uuid
+    @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
 
     init() { }
 
     var body: some Reducer<State, Action> {
-        BindingReducer()
+        viewingKeyPrePopReduce()
+
+        CombineReducers {
+            BindingReducer()
+
+            coordinatorReduce()
         
-        coordinatorReduce()
-        
-        Reduce { state, action in
-            switch action {
-            case .onAppear:
-                // __LD TESTED
-                state.appVersion = appVersion.appVersion()
-                state.appBuild = appVersion.appBuild()
-                state.path.removeAll()
-                if let torOnFlag = walletStorage.exportTorSetupFlag() {
-                    state.isTorOn = torOnFlag
+            Reduce { state, action in
+                if let effect = reduceViewingKeyExport(state: &state, action: action) {
+                    return effect
                 }
-                return .none
-            
-            case .backToHomeTapped:
-                return .none
-                
-            case .binding:
-                return .none
-
-            case .closeResyncHelpSheetTapped:
-                state.isResyncHelpSheetPresented = false
-                return .none
-
-            case .aboutTapped:
-                return .none
-                
-            case .addressBookAccessCheck:
-                return .run { send in
-                    if await localAuthentication.authenticate() {
-                        await send(.addressBookTapped)
+                switch action {
+                case .onAppear:
+                    let exportCleanup = invalidateViewingKeyExport(state: &state)
+                    // __LD TESTED
+                    state.appVersion = appVersion.appVersion()
+                    state.appBuild = appVersion.appBuild()
+                    state.path.removeAll()
+                    if let torOnFlag = walletStorage.exportTorSetupFlag() {
+                        state.isTorOn = torOnFlag
                     }
-                }
+                    return exportCleanup
+            
+                case .viewingKeyAuthenticationFinished, .viewingKeyBecameInactive, .viewingKeyBecameActive,
+                     .viewingKeyEnteredBackground, .validateViewingKeySession, .viewingKeySettingsDisappeared,
+                     .invalidateViewingKeyExport:
+                    return .none
 
-            #if VOTING_ENABLED
-            case .coinholderPollingTapped:
-                // Handled in coordinatorReduce; no-op here so the body's
-                // exhaustive switch over the Action enum still compiles.
-                return .none
-            case .votingCoordFlow:
-                // Presentation actions for the voting flow are routed
-                // through .ifLet at the body level + the coordinator's
-                // dismiss handler.
-                return .none
-            #endif
-
-            case .currencyConversionTapped:
-                return .none
-
-            case .addressBookTapped:
-                return .none
-
-            case .advancedSettingsTapped:
-                return .none
-
-            case .sendUsFeedbackTapped:
-                return .none
-
-            case .whatsNewTapped:
-                return .none
+                case .backToHomeTapped:
+                    return .none
                 
-            case .path:
-                return .none
+                case .binding:
+                    return .none
+
+                case .closeResyncHelpSheetTapped:
+                    state.isResyncHelpSheetPresented = false
+                    return .none
+
+                case .aboutTapped:
+                    return .none
                 
-            case .checkFundsForAddress:
-                state.isInRecoverFundsMode = false
-                return .none
+                case .addressBookAccessCheck:
+                    return .run { send in
+                        if await localAuthentication.authenticate() {
+                            await send(.addressBookTapped)
+                        }
+                    }
+
+                #if VOTING_ENABLED
+                case .coinholderPollingTapped:
+                    // Handled in coordinatorReduce; no-op here so the body's
+                    // exhaustive switch over the Action enum still compiles.
+                    return .none
+                case .votingCoordFlow:
+                    // Presentation actions for the voting flow are routed
+                    // through .ifLet at the body level + the coordinator's
+                    // dismiss handler.
+                    return .none
+                #endif
+
+                case .currencyConversionTapped:
+                    return .none
+
+                case .addressBookTapped:
+                    return .none
+
+                case .advancedSettingsTapped:
+                    return .none
+
+                case .sendUsFeedbackTapped:
+                    return .none
+
+                case .whatsNewTapped:
+                    return .none
                 
-            case .enableRecoverFundsMode:
-                state.addressToRecoverFunds = ""
-                state.isInRecoverFundsMode = true
-                return .none
+                case .path:
+                    return .none
+                
+                case .checkFundsForAddress:
+                    state.isInRecoverFundsMode = false
+                    return .none
+                
+                case .enableRecoverFundsMode:
+                    state.addressToRecoverFunds = ""
+                    state.isInRecoverFundsMode = true
+                    return .none
 
-            case .payWithFlexaTapped:
-                return .none
+                case .payWithFlexaTapped:
+                    return .none
 
-            case .resyncFinished:
-                return .none
+                case .resyncFinished:
+                    return .none
 
-            case .enableEnhanceTransactionMode:
-                state.txidToEnhance = ""
-                state.isInEnhanceTransactionMode = true
-                return .none
+                case .enableEnhanceTransactionMode:
+                    state.txidToEnhance = ""
+                    state.isInEnhanceTransactionMode = true
+                    return .none
 
-            case .fetchDataForTxid(let txId):
-                state.isInEnhanceTransactionMode = false
-                return .run { send in
-                    try? await sdkSynchronizer.enhanceTransactionBy(txId)
+                case .fetchDataForTxid(let txId):
+                    state.isInEnhanceTransactionMode = false
+                    return .run { send in
+                        try? await sdkSynchronizer.enhanceTransactionBy(txId)
+                    }
                 }
             }
         }

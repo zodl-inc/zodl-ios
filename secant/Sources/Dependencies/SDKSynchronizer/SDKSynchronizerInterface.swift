@@ -370,6 +370,22 @@ struct SDKSynchronizerClient: Sendable {
     var enhanceTransactionBy: @Sendable (String) async throws -> Void
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
+
+    /// Open a voting round session on the explicitly selected route.
+    ///
+    /// The route is fixed for the session's whole life. `.tor` fails closed: a
+    /// synchronizer that cannot provide a Tor client throws rather than opening
+    /// the round over a plain connection, so a voter who asked for Tor never
+    /// ends up announcing themselves over HTTP. The Tor runtime stays owned by
+    /// the synchronizer — it is lent to the crate for the duration of this call,
+    /// which reaches no network.
+    var makeVotingRoundSession: @Sendable (
+        _ backend: VotingRustBackend,
+        _ inputs: VotingSessionInputs,
+        _ binding: VotingSessionBinding,
+        _ route: VotingTransportRoute,
+        _ epoch: UInt64
+    ) async throws -> VotingRoundSession
 }
 
 extension SDKSynchronizerClient {

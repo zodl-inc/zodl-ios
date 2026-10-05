@@ -553,6 +553,18 @@ extension SDKSynchronizerClient: DependencyKey {
                 return try await transactionGuard.withSubmission {
                     try await synchronizer.getTreeState(height: height)
                 }
+            },
+            // Unguarded on purpose: opening a session reaches no network — the
+            // route is only recorded, and the Tor runtime is lent for the call —
+            // so there is nothing here for the submission guard to serialise.
+            makeVotingRoundSession: { backend, inputs, binding, route, epoch in
+                try await synchronizer.makeVotingRoundSession(
+                    backend: backend,
+                    inputs: inputs,
+                    binding: binding,
+                    route: route,
+                    epoch: epoch
+                )
             }
         )
     }
@@ -563,12 +575,6 @@ extension SDKSynchronizerClient: DependencyKey {
 extension SDKSynchronizerClient {
     enum MultiServerSubmission {
         static let noTransactionsDescription = "No transactions created"
-        static let notAttemptedStatus = "notAttempted"
-        static let timeoutDescription = "Timed out waiting for endpoint response; transaction may still have been broadcast"
-        // The SDK reports `.unreachable` when every endpoint failed at the transport level and
-        // no server-level rejection was observed — never label that "rejected" in support data.
-        static let unreachableStatus = "all servers unreachable"
-        static let cancelledStatus = "submission cancelled"
         /// Distinct from every other submission failure code (-1 nothing created, -996/-999 on the
         /// PCZT path) so a support report tells "gave up waiting for the guard" apart from a server
         /// rejection. Nothing was broadcast when it is reported.
@@ -723,8 +729,7 @@ extension SDKSynchronizerClient {
 
         let result = mapSubmissionOutcomes(
             txIds: txIds,
-            outcomes: outcomes,
-            endpoints: endpoints
+            outcomes: outcomes
         )
 
         switch result {
@@ -765,21 +770,19 @@ extension SDKSynchronizerClient {
     }
 
     /// Pure mapping of per-transaction SDK submission outcomes onto the app-side result contract.
-    /// `outcomes[i]` belongs to `txIds[i]`; `endpoints` is the ordered list the transactions were
-    /// submitted to and is only used to derive redacted "endpoint N" labels (never hostnames).
+    /// `outcomes[i]` belongs to `txIds[i]`.
     ///
-    /// `.partial` requires at least one acceptance and a definitive server rejection. Any batch
-    /// containing only acceptances plus transport-level uncertainty maps to `.grpcFailure`, which
-    /// routes to "pending" because every created transaction has a retry plan and keeps being
-    /// rebroadcast by the SDK's background resubmission.
+    /// A rejection is terminal only when no transaction was accepted. Once any transaction in the
+    /// batch was accepted, every remaining non-accepted transaction maps to `.grpcFailure`, which
+    /// routes to "pending": each transaction was submitted individually, so its retry plan remains
+    /// active and the SDK keeps rebroadcasting it in the background.
     ///
     /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
     /// resumed a nil winner on cancellation and routed it through the same branch as a transport
     /// failure, and the caller was being torn down anyway.
     static func mapSubmissionOutcomes(
         txIds: [String],
-        outcomes: [TransactionSubmissionOutcome],
-        endpoints: [LightWalletEndpoint]
+        outcomes: [TransactionSubmissionOutcome]
     ) -> CreateProposedTransactionsResult {
         guard !txIds.isEmpty else {
             return .failure(txIds: [], code: -1, description: MultiServerSubmission.noTransactionsDescription)
@@ -802,7 +805,6 @@ extension SDKSynchronizerClient {
             return .success(txIds: txIds)
         }
 
-        let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
         let firstRejection = outcomes.compactMap { outcome -> (code: Int, message: String)? in
             guard case let .rejected(code, message) = outcome else { return nil }
             return (code, message)
@@ -812,7 +814,7 @@ extension SDKSynchronizerClient {
         if let firstRejection {
             return acceptedCount == 0
                 ? .failure(txIds: txIds, code: firstRejection.code, description: firstRejection.message)
-                : .partial(txIds: txIds, statuses: statuses)
+                : .grpcFailure(txIds: txIds)
         }
 
         let timedOut = outcomes.contains { outcome in
@@ -820,31 +822,6 @@ extension SDKSynchronizerClient {
             return false
         }
         return .grpcFailure(txIds: txIds, reason: timedOut ? .timeout : nil)
-    }
-
-    private static func status(for outcome: TransactionSubmissionOutcome, endpoints: [LightWalletEndpoint]) -> String {
-        switch outcome {
-        case .accepted(let endpoint):
-            return "accepted by \(endpointLabel(for: endpoint, in: endpoints))"
-        case let .rejected(code, _):
-            return "rejected code: \(code)"
-        case .unreachable:
-            return MultiServerSubmission.unreachableStatus
-        case .cancelled:
-            return MultiServerSubmission.cancelledStatus
-        case .timedOut:
-            return MultiServerSubmission.timeoutDescription
-        case .notAttempted:
-            return MultiServerSubmission.notAttemptedStatus
-        }
-    }
-
-    /// Redacted label for an endpoint: its 1-based position in the submission list. The label never
-    /// exposes the hostname, so a privately configured server cannot leak into support emails.
-    private static func endpointLabel(for endpoint: LightWalletEndpoint, in endpoints: [LightWalletEndpoint]) -> String {
-        guard let index = endpoints.firstIndex(of: endpoint) else { return "endpoint" }
-
-        return "endpoint \(index + 1)"
     }
 }
 

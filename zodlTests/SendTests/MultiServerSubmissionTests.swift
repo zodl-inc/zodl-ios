@@ -79,13 +79,12 @@ import ComposableArchitecture
 
     private let txIdA = Data([0xAA]).toHexStringTxId()
     private let txIdB = Data([0xBB]).toHexStringTxId()
-    private let txIdC = Data([0xCC]).toHexStringTxId()
 
     private func map(
         txIds: [String],
         outcomes: [TransactionSubmissionOutcome]
     ) -> SDKSynchronizerClient.CreateProposedTransactionsResult {
-        SDKSynchronizerClient.mapSubmissionOutcomes(txIds: txIds, outcomes: outcomes, endpoints: endpoints)
+        SDKSynchronizerClient.mapSubmissionOutcomes(txIds: txIds, outcomes: outcomes)
     }
 
     @Test func allAcceptedMapsToSuccess() {
@@ -170,23 +169,16 @@ import ComposableArchitecture
         #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
-    @Test func acceptedThenRejectedMapsToPartialWithRedactedStatuses() {
+    @Test func acceptedThenRejectedMapsToPendingWhileRetryPlanRemainsActive() {
         let result = map(
-            txIds: [txIdA, txIdB, txIdC],
+            txIds: [txIdA, txIdB],
             outcomes: [
                 .accepted(by: endpoints[0]),
-                .rejected(code: -25, message: "bad-txns-inputs-missingorspent"),
-                .notAttempted
+                .rejected(code: -25, message: "bad-txns-inputs-missingorspent")
             ]
         )
 
-        let expectedStatuses = [
-            "accepted by endpoint 1",
-            "rejected code: -25",
-            "notAttempted"
-        ]
-        #expect(result == .partial(txIds: [txIdA, txIdB, txIdC], statuses: expectedStatuses))
-        #expect(!expectedStatuses.joined(separator: " ").contains("private.wallet.node"))
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
     @Test func acceptedThenTimedOutMapsToPending() {

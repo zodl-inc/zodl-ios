@@ -11,6 +11,27 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-1032] TEX payments remain pending while a retryable second transaction is still being broadcast instead of showing a failure after the first transaction succeeds.
 
+## [3.15.0] - 2026-09-23
+
+### Added
+
+- [MOB-1877] Export incoming or full viewing keys from Advanced Settings, including for Keystone wallets. Choose a key type, confirm full-key privacy warnings, then reveal its QR code or text and share it with a trusted service. Available in English and Spanish.
+- [MOB-1706] Choose from more supported currencies in Currency Conversion, with a retry option if the currency list cannot be loaded.
+
+### Changed
+
+- [MOB-1916] Coinholder polling now runs on the updated voting protocol and needs a vote chain upgraded to it. With Tor turned on, everything a poll does now travels over Tor, including the private lookups and vote-tree reads that used to connect directly, and a step that cannot reach Tor fails instead of falling back to a direct connection. A poll for which an earlier version of the app had started submitting your vote, and that was still being confirmed when you updated, is shown but can no longer be voted in here, so nothing is sent twice; anything already confirmed still counts.
+
+### Fixed
+
+- [MOB-1364] Turning on Tor from Currency Conversion now protects requests immediately, without requiring an app restart. If Tor cannot connect, requests stay protected.
+- [MOB-1697] Cancelling the payment warning after scanning a payment request now closes the confirmation cleanly and returns to the send form.
+- [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+- [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
+- [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.
+- [MOB-1916] When a coinholder poll submission hits a brief network problem, the app now tries again on its own and shows "Reconnecting..." while it waits.
+- [MOB-1916] When a coinholder poll submission fails, the screen now says it failed instead of still reading as in progress.
+
 ## [3.14.1] - 2026-09-17
 
 ### Changed

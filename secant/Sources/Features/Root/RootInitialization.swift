@@ -7,7 +7,6 @@
 
 import Combine
 import ComposableArchitecture
-import VotingRecovery
 import Foundation
 @preconcurrency import ZcashLightClientKit
 
@@ -123,31 +122,7 @@ extension Root {
                     }
                     .cancellable(id: state.DidFinishLaunchingId, cancelInFlight: true)
 
-                // Delegation recovery, on every cold launch, invisible to the
-                // user. An older build could delete a round's blinding factor
-                // and rebuild the round in its place, which makes that poll
-                // permanently unvotable; this copies the original back out of
-                // the preserved files before anything else opens them.
-                //
-                // Deliberately fire-and-forget and merged rather than chained:
-                // it must never delay launch, and it sends no action, so a slow
-                // or failing carve cannot affect what the user sees. What it
-                // did is in the log under "[poll-recovery]".
-                //
-                // A wallet reset cancels it (`.resetZashi`), and the escrow
-                // refuses writes from a run that began before the reset, so
-                // the old wallet's secrets cannot be written back for the new
-                // one whichever of the two lands first.
-                //
-                // It costs almost nothing for the overwhelming majority of
-                // wallets, which have no voting round at all and are turned
-                // away by `holdsRoundData` after one file read.
-                return .merge(
-                    setup,
-                    // VotingRecovery
-                    .run { _ in _ = await delegationRecovery.run() }
-                        .cancellable(id: VotingRecovery.CancelID.launch, cancelInFlight: true)
-                )
+                return setup
 
             case .initialization(.appDelegate(.willEnterForeground)):
                 // See the cold-launch marker above. The tip rides along because it is the one piece
@@ -1305,7 +1280,10 @@ extension Root {
                                         return accounts.contains { $0.zip32AccountIndex != nil }
                                     },
                                     clearDeviceScopedState: {
-                                        Root.clearDeviceScopedWalletState(
+                                        // Awaited before `wipe()` below: the voting sidecar is
+                                        // closed inside this call, and the file it deletes must
+                                        // not be pulled out from under a live round session.
+                                        await Root.clearDeviceScopedWalletState(
                                             userDefaults: userDefaults,
                                             flexaHandler: flexaHandler,
                                             userStoredPreferences: userStoredPreferences,
@@ -1642,7 +1620,10 @@ extension Root {
                 
             case .initialization(.resetZashiRequest(let areMetadataPreserved)):
                 state.areMetadataPreserved = areMetadataPreserved
-                return .send(.initialization(.resetZashi))
+                return .concatenate(
+                    .send(.settings(.invalidateViewingKeyExport)),
+                    .send(.initialization(.resetZashi))
+                )
                 
             case .initialization(.resetZashiRequestCanceled):
                 state.alert = nil
@@ -1654,35 +1635,32 @@ extension Root {
                 return .none
 
             case .initialization(.resetZashi):
-                // VotingRecovery: launch-time recovery may still be reading this
-                // wallet's files. Stop it before anything is wiped; the escrow
-                // also refuses its writes once the reset has run, whether or
-                // not cancellation reached it first.
-                let stopRecovery: Effect<Root.Action> = .cancel(id: VotingRecovery.CancelID.launch)
-                guard let wipePublisher = sdkSynchronizer.wipe() else {
-                    return .merge(stopRecovery, .send(.resetZashiSDKFailed))
-                }
-                return .merge(
-                    stopRecovery,
-                    .publisher {
-                        wipePublisher
-                            .replaceEmpty(with: Void())
-                            .map { _ in return Root.Action.resetZashiSDKSucceeded }
-                            .replaceError(with: Root.Action.resetZashiSDKFailed)
-                            .receive(on: mainQueue)
+                // The voting round sessions open the wallet database themselves and hold it for
+                // their whole life, so they are given back BEFORE the wipe — the ordering the
+                // heal path already has. Without it the round driver spends the wipe reading and
+                // writing a database file that has been unlinked underneath it. The sidecar's own
+                // deletion stays where it is, in `clearDeviceScopedWalletState` on
+                // `.resetZashiSDKSucceeded`, behind a teardown window of its own.
+                return .run { [sdkSynchronizer] send in
+                    await Root.drainVotingBeforeWipe()
+                    guard let wipePublisher = sdkSynchronizer.wipe() else {
+                        await send(.resetZashiSDKFailed)
+                        return
                     }
-                    .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
-                )
+                    do {
+                        // An empty completion is a finished wipe, which is what
+                        // `replaceEmpty` said when this was a publisher effect.
+                        for try await _ in wipePublisher.values { }
+                        await send(.resetZashiSDKSucceeded)
+                    } catch {
+                        await send(.resetZashiSDKFailed)
+                    }
+                }
+                .cancellable(id: state.SynchronizerCancelId, cancelInFlight: true)
 
             case .resetZashiSDKSucceeded:
                 state.splashAppeared = true
                 state.isRestoringWallet = false
-                Root.clearDeviceScopedWalletState(
-                    userDefaults: userDefaults,
-                    flexaHandler: flexaHandler,
-                    userStoredPreferences: userStoredPreferences,
-                    readTransactionsStorage: readTransactionsStorage
-                )
                 if !state.areMetadataPreserved {
                     state.walletAccounts.forEach { account in
                         try? userMetadataProvider.resetAccount(account.account)
@@ -1713,16 +1691,26 @@ extension Root {
                 }
 
                 // MOB-1466 (N3, field-caught 2026-08-01): the migration wipe rides this same reset
-                // boundary as `clearDeviceScopedWalletState` above, for the identical reason that
+                // boundary as `clearDeviceScopedWalletState` below, for the identical reason that
                 // helper gives for its voting sweep — nothing from the previous owner of this device
                 // survives it. Without it, a notification armed by the DELETED wallet fires against
                 // a freshly restored one and invites the user into a migration run that is not
                 // theirs, backed by persisted state keyed to a wallet that no longer exists.
                 //
-                // Async, so it cannot ride `clearDeviceScopedWalletState` (a synchronous static);
-                // sequenced ahead of `.resetZashiKeychainRequest` so the reset chain continues only
+                // Sequenced ahead of `.resetZashiKeychainRequest` so the reset chain continues only
                 // once the pokes have actually been withdrawn.
+                //
+                // `clearDeviceScopedWalletState` leads because it now closes the voting sidecar
+                // before deleting it, which has to be awaited — and the reset chain must not reach
+                // the keychain wipe before the clears it is the tail of have finished. Its relative
+                // order with the keychain request and the migration wipe is the one it always had.
                 return .run { [migrationManager] send in
+                    await Root.clearDeviceScopedWalletState(
+                        userDefaults: userDefaults,
+                        flexaHandler: flexaHandler,
+                        userStoredPreferences: userStoredPreferences,
+                        readTransactionsStorage: readTransactionsStorage
+                    )
                     await migrationManager.wipeAllMigrationState()
                     await send(.resetZashiKeychainRequest)
                 }
