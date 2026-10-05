@@ -1059,6 +1059,10 @@ private final class FakeLedgerSigner: @unchecked Sendable {
     enum Outcome {
         case success(Pczt)
         case failure(Error)
+        /// Hangs until cancelled, but only on the first call -- a retry probe that lands before
+        /// the session has dropped the transport from that cancellation would otherwise hang the
+        /// same way, with nothing left to cancel it. Every later call throws
+        /// `SignShouldNotBeCalled()` at once.
         case hangUntilCancelled
         /// Polls every 5ms until `release()` is called, then throws `error` — for a test that needs
         /// to perform other actions (like opening a different transport) while a ceremony is still
@@ -1100,7 +1104,7 @@ private final class FakeLedgerSigner: @unchecked Sendable {
         _ binding: LedgerAccountBinding,
         _ progress: @escaping @Sendable (LedgerSigningProgress) -> Void
     ) async throws -> Pczt {
-        _callCount.withValue { $0 += 1 }
+        let callNumber = _callCount.withValue { $0 += 1; return $0 }
         _receivedTransport.withValue { $0 = transport }
         _receivedPczt.withValue { $0 = pczt }
         _receivedAccountUUID.withValue { $0 = accountUUID }
@@ -1116,6 +1120,9 @@ private final class FakeLedgerSigner: @unchecked Sendable {
         case .failure(let error):
             throw error
         case .hangUntilCancelled:
+            guard callNumber == 1 else {
+                throw SignShouldNotBeCalled()
+            }
             do {
                 while true {
                     try await Task.sleep(nanoseconds: 10_000_000)
