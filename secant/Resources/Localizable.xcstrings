@@ -8764,23 +8764,6 @@
         }
       }
     },
-    "giftCard.pending.descConfirmations" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ needs %2$lld more confirmations (about %3$lld min) before it can be redeemed. We'll keep checking while this screen is open."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ necesita %2$lld confirmaciones más (unos %3$lld min) antes de poder canjearse. Seguiremos verificando mientras esta pantalla esté abierta."
-          }
-        }
-      }
-    },
     "giftCard.pending.title" : {
       "extractionState" : "manual",
       "localizations" : {

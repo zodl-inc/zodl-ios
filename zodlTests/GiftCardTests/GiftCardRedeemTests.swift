@@ -118,11 +118,10 @@ import ComposableArchitecture
         }
         #expect(!store.state.isRedeemable)
 
-        // The timed re-check is quiet: the pending screen stays, and the button does not spin.
         await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
-        await store.receive(\.autoRetryFired)
-        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3))
-        #expect(!store.state.isRechecking)
+        await store.receive(\.autoRetryFired) {
+            $0.step = .checking
+        }
         await store.receive(\.statusLoaded) {
             $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
         }
@@ -130,119 +129,6 @@ import ComposableArchitecture
         await store.send(.closeTapped)
         await store.receive(\.delegate.dismiss)
         await store.finish()
-    }
-
-    /// "Check again" on a pending card re-checks in place: the button shows progress instead of
-    /// the screen flickering through the checking step, and the new count replaces the old one.
-    @Test func checkAgainOnAPendingCardRechecksInPlace() async {
-        let mainQueue = DispatchQueue.test
-        let checks = LockIsolated(0)
-        var client = GiftCardClient.mock(scenario(.pending))
-        client.check = { _ in
-            let attempt = checks.withValue { $0 += 1; return $0 }
-            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: attempt == 1 ? 7 : 6)
-        }
-        let store = TestStore(initialState: GiftCardRedeem.State(link: Self.link)) {
-            GiftCardRedeem()
-        } withDependencies: {
-            $0.giftCard = client
-            $0.mainQueue = mainQueue.eraseToAnyScheduler()
-            $0.zcashSDKEnvironment = .testnet
-            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(getCustomUnifiedAddress: { _, _ in Self.orchardUA })
-        }
-        store.exhaustivity = .off(showSkippedAssertions: false)
-
-        await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
-            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 7)
-        }
-
-        await store.send(.retryTapped) {
-            $0.isRechecking = true
-        }
-        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 7))
-        await store.receive(\.statusLoaded) {
-            $0.isRechecking = false
-            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 6)
-        }
-        #expect(checks.value == 2)
-
-        await store.send(.closeTapped)
-        await store.receive(\.delegate.dismiss)
-        await store.finish()
-    }
-
-    /// A tap while a re-check is already in flight starts nothing.
-    @Test func checkAgainWhileRecheckingDoesNothing() async {
-        let checks = LockIsolated(0)
-        var client = GiftCardClient.mock(scenario(.pending))
-        client.check = { _ in
-            checks.withValue { $0 += 1 }
-            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 6)
-        }
-        var state = GiftCardRedeem.State(link: Self.link)
-        state.handle = GiftCardHandle()
-        state.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 7)
-        state.isRechecking = true
-        let store = TestStore(initialState: state) {
-            GiftCardRedeem()
-        } withDependencies: {
-            $0.giftCard = client
-        }
-
-        await store.send(.retryTapped)
-        await store.finish()
-        #expect(checks.value == 0)
-    }
-
-    /// A re-check of a pending card that fails keeps the pending screen and tries again later.
-    @Test func failedRecheckOfAPendingCardKeepsThePendingScreen() async {
-        let mainQueue = DispatchQueue.test
-        let checks = LockIsolated(0)
-        var client = GiftCardClient.mock(scenario(.pending))
-        client.check = { _ in
-            let attempt = checks.withValue { $0 += 1; return $0 }
-            if attempt == 2 {
-                throw GiftCardClientError.checkFailed
-            }
-            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 5)
-        }
-        let store = TestStore(initialState: GiftCardRedeem.State(link: Self.link)) {
-            GiftCardRedeem()
-        } withDependencies: {
-            $0.giftCard = client
-            $0.mainQueue = mainQueue.eraseToAnyScheduler()
-            $0.zcashSDKEnvironment = .testnet
-            $0.sdkSynchronizer = SDKSynchronizerClient.mocked(getCustomUnifiedAddress: { _, _ in Self.orchardUA })
-        }
-        store.exhaustivity = .off(showSkippedAssertions: false)
-
-        await store.send(.onAppear)
-        await store.receive(\.statusLoaded)
-        await store.send(.retryTapped) {
-            $0.isRechecking = true
-        }
-        await store.receive(\.checkFailed) {
-            $0.isRechecking = false
-        }
-        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 5))
-
-        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
-        await store.receive(\.autoRetryFired)
-        await store.receive(\.statusLoaded)
-        #expect(checks.value == 3)
-
-        await store.send(.closeTapped)
-        await store.receive(\.delegate.dismiss)
-        await store.finish()
-    }
-
-    /// Android's estimate: confirmations × 75 s, rounded up to whole minutes.
-    @Test func pendingMinutesRoundUpAtTheTargetBlockTime() {
-        #expect(GiftCardRedeem.State.minutes(forConfirmations: 1) == 2)
-        #expect(GiftCardRedeem.State.minutes(forConfirmations: 4) == 5)
-        #expect(GiftCardRedeem.State.minutes(forConfirmations: 7) == 9)
-        #expect(GiftCardRedeem.State.minutes(forConfirmations: 9) == 12)
     }
 
     @Test func emptyCardSaysSo() async {
@@ -911,18 +797,6 @@ private struct FakeGiftCardSession: GiftCardSession {
             GiftCardRedeemerSession.appStatus(ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: true))
                 == .ready(spendable: Zatoshi(5_000))
         )
-    }
-
-    /// The SDK's count of confirmations still missing reaches the pending screen.
-    @Test func pendingCardCarriesTheConfirmationsRemaining() {
-        let pool = PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: Zatoshi(500_000))
-        let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
-
-        let known = ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: true, confirmationsRemaining: 7)
-        #expect(GiftCardRedeemerSession.appStatus(known) == .pending(amount: Zatoshi(500_000), confirmationsNeeded: 7))
-
-        let unknown = ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: true)
-        #expect(GiftCardRedeemerSession.appStatus(unknown) == .pending(amount: Zatoshi(500_000), confirmationsNeeded: nil))
     }
 
     @Test func rejectedSubmissionIsLoggedWithoutTheServersText() throws {

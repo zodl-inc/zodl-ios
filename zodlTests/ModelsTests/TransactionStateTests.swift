@@ -30,8 +30,6 @@ import Foundation
         totalReceived: Zatoshi? = nil,
         poolCrossingValue: Zatoshi? = nil,
         minedHeight: BlockHeight? = BlockHeight(1),
-        isTrusted: Bool = true,
-        isExpiredUnmined: Bool? = nil,
         zip318Kind: ZcashTransaction.Overview.ZIP318Kind = .notClassified
     ) -> ZcashTransaction.Overview {
         ZcashTransaction.Overview(
@@ -49,46 +47,14 @@ import Foundation
             receivedNoteCount: receivedNoteCount,
             sentNoteCount: sentNoteCount,
             value: value,
-            isExpiredUmined: isExpiredUnmined,
+            isExpiredUmined: nil,
             totalSpent: totalSpent,
             totalReceived: totalReceived,
             spentNoteCount: sentNoteCount,
             poolCrossingValue: poolCrossingValue,
-            isTrusted: isTrusted,
+            isTrusted: true,
             zip318Kind: zip318Kind
         )
-    }
-
-    // MARK: - Trusted receives (ZIP 315)
-
-    /// The status of a receive mined `depth` blocks below the tip, with the SDK's state filled in
-    /// the way the synchronizer does.
-    private func receiveStatus(depth: Int, isTrusted: Bool) -> TransactionState.Status {
-        let tip = BlockHeight(1_000)
-        var transaction = overview(
-            sentNoteCount: 0,
-            receivedNoteCount: 1,
-            value: Zatoshi(50_000),
-            minedHeight: tip - depth,
-            isTrusted: isTrusted,
-            isExpiredUnmined: false
-        )
-        transaction.state = transaction.getState(for: tip)
-        return TransactionState(transaction: transaction, currentChainTip: tip).status
-    }
-
-    /// A trusted receive (a redeemed gift card) reads "Received" at the trusted confirmation
-    /// count, when its funds become spendable; an untrusted one keeps "Receiving" until 10.
-    @Test func trustedReceiveIsReceivedAtTheTrustedThreshold() {
-        let trusted = Int(ConfirmationsPolicy.defaultTransferPolicy().trusted)
-        let untrusted = ZcashSDK.defaultStaleTolerance
-
-        #expect(receiveStatus(depth: trusted - 1, isTrusted: true) == .receiving)
-        #expect(receiveStatus(depth: trusted, isTrusted: true) == .received)
-
-        #expect(receiveStatus(depth: trusted, isTrusted: false) == .receiving)
-        #expect(receiveStatus(depth: untrusted - 1, isTrusted: false) == .receiving)
-        #expect(receiveStatus(depth: untrusted, isTrusted: false) == .received)
     }
 
     // MARK: - ZIP 318 kind

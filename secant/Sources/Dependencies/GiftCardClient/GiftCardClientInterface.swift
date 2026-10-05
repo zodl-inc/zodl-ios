@@ -85,7 +85,6 @@ enum GiftCardStatus: Equatable, Sendable {
     /// paid from it, so the user receives slightly less.
     case ready(spendable: Zatoshi)
     /// The card has been funded but the funds need more confirmations before they can be spent.
-    /// `confirmationsNeeded` is how many more blocks that takes, when known.
     case pending(amount: Zatoshi, confirmationsNeeded: Int?)
     /// Nothing to redeem: the card was already redeemed, it has not been funded yet, or what it
     /// holds would not even cover the network fee.

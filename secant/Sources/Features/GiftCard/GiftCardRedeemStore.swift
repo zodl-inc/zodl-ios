@@ -57,10 +57,6 @@ struct GiftCardRedeem {
         /// The selected account's Orchard-only unified address, resolved in the background.
         var destinationAddress: RedactableString?
         var txId: String?
-        /// A "Check again" on the pending screen is in flight. The card's wallet is already synced,
-        /// so the check is near-instant: the button shows it is working instead of the screen
-        /// flickering through the checking step.
-        var isRechecking = false
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
@@ -89,12 +85,6 @@ struct GiftCardRedeem {
             return converted
         }
 
-        /// Roughly how many minutes `confirmations` more blocks take at the target block time,
-        /// rounded up.
-        static func minutes(forConfirmations confirmations: Int) -> Int {
-            Int((Double(confirmations) * MigrationChainClock.targetSecondsPerBlock / 60).rounded(.up))
-        }
-
         var isRedeemable: Bool {
             if case .ready(let spendable) = step {
                 return spendable.amount > 0 && selectedWalletAccount != nil
@@ -113,15 +103,6 @@ struct GiftCardRedeem {
 
         init(link: RedactableString) {
             self.link = link
-        }
-
-        /// Whether a check that failed with `error` was an in-place re-check of a pending card
-        /// that can simply be retried. A card whose wallet is gone cannot be: it must be reopened.
-        func isPendingRecheck(after error: GiftCardClientError) -> Bool {
-            guard case .pending = step else {
-                return false
-            }
-            return error != .unknownHandle
         }
     }
 
@@ -171,18 +152,6 @@ struct GiftCardRedeem {
                 guard state.canRetry else {
                     return .none
                 }
-                if case .pending = state.step, let handle = state.handle {
-                    // A synced card answers at once: re-check in place, keeping the pending screen.
-                    // Only the user's tap shows progress on the button; the timer re-checks quietly.
-                    guard !state.isRechecking else {
-                        return .none
-                    }
-                    state.isRechecking = action == .retryTapped
-                    return .merge(
-                        .cancel(id: state.autoRetryCancelId),
-                        check(handle, state: state)
-                    )
-                }
                 state.step = .checking
                 state.syncProgress = nil
                 if let handle = state.handle {
@@ -200,13 +169,7 @@ struct GiftCardRedeem {
                 state.handle = handle
                 return check(handle, state: state)
 
-            case .checkFailed(let error) where state.isPendingRecheck(after: error):
-                // A re-check of a pending card that fails keeps the pending screen and tries again.
-                state.isRechecking = false
-                return scheduleAutoRetry(state)
-
             case .openFailed(let error), .checkFailed(let error):
-                state.isRechecking = false
                 state.syncProgress = nil
                 state.step = step(for: error)
                 if error == .unknownHandle {
@@ -225,14 +188,17 @@ struct GiftCardRedeem {
 
             case .statusLoaded(let status):
                 state.syncProgress = nil
-                state.isRechecking = false
                 switch status {
                 case .ready(let spendable):
                     state.step = spendable.amount > 0 ? .ready(spendable: spendable) : .empty
                     return .none
                 case let .pending(amount, confirmationsNeeded):
                     state.step = .pending(amount: amount, confirmationsNeeded: confirmationsNeeded)
-                    return scheduleAutoRetry(state)
+                    return .run { send in
+                        try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
+                        await send(.autoRetryFired)
+                    }
+                    .cancellable(id: state.autoRetryCancelId, cancelInFlight: true)
                 case .empty:
                     state.step = .empty
                     return .none
@@ -294,7 +260,6 @@ struct GiftCardRedeem {
                 return .none
 
             case .closeTapped:
-                state.isRechecking = false
                 return .merge(
                     .cancel(id: state.cancelId),
                     .cancel(id: state.autoRetryCancelId),
@@ -375,15 +340,6 @@ extension GiftCardRedeem {
             }
         )
         .cancellable(id: state.cancelId, cancelInFlight: true)
-    }
-
-    /// Checks the card again after `autoRetryInterval`.
-    private func scheduleAutoRetry(_ state: State) -> Effect<Action> {
-        .run { send in
-            try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
-            await send(.autoRetryFired)
-        }
-        .cancellable(id: state.autoRetryCancelId, cancelInFlight: true)
     }
 
     private func step(for error: GiftCardClientError) -> State.Step {

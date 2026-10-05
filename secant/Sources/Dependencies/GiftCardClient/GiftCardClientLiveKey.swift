@@ -397,8 +397,9 @@ struct GiftCardRedeemerSession: GiftCardSession {
         case .ready:
             return .ready(spendable: status.spendable)
         case .pending:
-            // `nil` when the SDK cannot tell; the pending screen then shows the generic text.
-            return .pending(amount: status.total, confirmationsNeeded: status.confirmationsRemaining)
+            // The SDK does not say how many confirmations are still missing; funds from another
+            // wallet need 10, and the pending screen re-checks on its own.
+            return .pending(amount: status.total, confirmationsNeeded: nil)
         case .dust, .empty:
             // A dust card's fee would take everything it holds: there is nothing to redeem.
             return .empty
