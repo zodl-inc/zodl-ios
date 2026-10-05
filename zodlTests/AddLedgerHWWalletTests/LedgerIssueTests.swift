@@ -19,10 +19,9 @@ import Foundation
     // MARK: - init(_:in:)
 
     // `ZcashError` is not `Sendable`, so this drives a local table with a plain loop instead of
-    // `@Test(arguments:)`. MOB-2020 (Android b013b7c2): each row is checked in three shapes --
-    // wrapped in `LedgerBluetoothConnectFailure` while still bonding in `.connect` ("pairing"),
-    // unwrapped once the link is up in `.connect` ("connect"), and unwrapped in `.sign` ("sign") --
-    // mirroring Android's `LedgerIssueMapperTest` `pairing`/`enrollment`/`signing` columns.
+    // `@Test(arguments:)`. MOB-2020 (Android aac01e65): each row is checked in three shapes --
+    // `.pairing` (step 2's `LedgerClient.bond`), `.connect` (steps 3/4), and `.sign` -- mirroring
+    // Android's `LedgerIssueMapperTest` `pairing`/`enrollment`/`signing` columns.
     @Test func classifiesEveryLedgerErrorCase() {
         typealias Row = (name: String, error: Error, pairing: LedgerIssue, connect: LedgerIssue, sign: LedgerIssue)
 
@@ -70,11 +69,11 @@ import Foundation
         ]
 
         for row in rows {
-            let pairing = LedgerIssue(LedgerBluetoothConnectFailure(underlying: row.error), in: .connect)
+            let pairing = LedgerIssue(row.error, in: .pairing)
             let connect = LedgerIssue(row.error, in: .connect)
             let sign = LedgerIssue(row.error, in: .sign)
-            #expect(pairing == row.pairing, "\(row.name) while still bonding (.connect, wrapped)")
-            #expect(connect == row.connect, "\(row.name) once the link is up (.connect, unwrapped)")
+            #expect(pairing == row.pairing, "\(row.name) while pairing (.pairing)")
+            #expect(connect == row.connect, "\(row.name) once bonded (.connect)")
             #expect(sign == row.sign, "\(row.name) while signing (.sign)")
         }
     }
@@ -89,13 +88,17 @@ import Foundation
         for issue in LedgerIssue.allCases {
             let connectTitle = issue.title(in: .connect)
             let signTitle = issue.title(in: .sign)
+            let pairingTitle = issue.title(in: .pairing)
             let connectMessage = issue.message(in: .connect)
             let signMessage = issue.message(in: .sign)
+            let pairingMessage = issue.message(in: .pairing)
 
             #expect(!connectTitle.isEmpty, "\(issue) .connect title")
             #expect(!signTitle.isEmpty, "\(issue) .sign title")
+            #expect(!pairingTitle.isEmpty, "\(issue) .pairing title")
             #expect(!connectMessage.isEmpty, "\(issue) .connect message")
             #expect(!signMessage.isEmpty, "\(issue) .sign message")
+            #expect(!pairingMessage.isEmpty, "\(issue) .pairing message")
 
             if contextVaryingTitle.contains(issue) {
                 #expect(connectTitle != signTitle, "\(issue) title should differ by context")
@@ -103,12 +106,32 @@ import Foundation
                 #expect(connectTitle == signTitle, "\(issue) title should not differ by context")
             }
 
+            // MOB-2020: `.pairing` behaves exactly like `.connect` for every title.
+            #expect(pairingTitle == connectTitle, "\(issue) .pairing title should match .connect")
+
             if contextVaryingMessage.contains(issue) {
                 #expect(connectMessage != signMessage, "\(issue) message should differ by context")
             } else {
                 #expect(connectMessage == signMessage, "\(issue) message should not differ by context")
             }
+
+            // MOB-2020: `.pairing`'s message matches `.connect`'s everywhere except
+            // `.deviceLocked`, the one case given its own pairing-specific copy.
+            if issue == .deviceLocked {
+                #expect(pairingMessage != connectMessage, "\(issue) .pairing message should differ from .connect")
+            } else {
+                #expect(pairingMessage == connectMessage, "\(issue) .pairing message should match .connect")
+            }
         }
+    }
+
+    // MOB-2020: the generated symbol for the new pairing-specific key, in the style of
+    // figmaStatesUseTheirKeys below.
+    @Test func deviceLockedPairingMessageUsesItsKey() {
+        #expect(
+            LedgerIssue.deviceLocked.message(in: .pairing)
+            == String(localizable: .ledgerIssueDeviceLockedPairingMessage)
+        )
     }
 
     // MARK: - The two new states' copy
@@ -221,6 +244,7 @@ import Foundation
         #expect(table.count == LedgerIssue.allCases.count)
         for row in table {
             #expect(row.issue.primaryAction(in: .connect) == row.connect, "\(row.issue) .connect")
+            #expect(row.issue.primaryAction(in: .pairing) == row.connect, "\(row.issue) .pairing")
             #expect(row.issue.primaryAction(in: .sign) == row.sign, "\(row.issue) .sign")
         }
     }
@@ -254,6 +278,7 @@ import Foundation
         #expect(table.count == LedgerIssue.allCases.count)
         for row in table {
             #expect(row.issue.retryNeedsNewConnection(in: .connect) == row.connect, "\(row.issue) .connect")
+            #expect(row.issue.retryNeedsNewConnection(in: .pairing) == row.connect, "\(row.issue) .pairing")
             #expect(row.issue.retryNeedsNewConnection(in: .sign) == row.sign, "\(row.issue) .sign")
         }
     }

@@ -101,32 +101,111 @@ extension ConnectHWWalletCoordFlow {
                 // MARK: - Add Ledger HW Wallet (instructions, now a path element)
 
             case .path(.element(id: _, action: .addLedgerHWWallet(.connectTapped))):
+                state.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+                return .none
+
+                // MARK: - Ledger Turn On (step 1, Figma 1599:11369/1599:11430)
+
+                // MOB-2020: Continue pushes the device picker, same as the intro's Get Started
+                // used to -- but first, when Bluetooth authorization has never been asked, requests
+                // it (which shows the iOS prompt) and waits for it to settle. `requestAuthorization`
+                // never reports the answer: a denial still pushes the picker, whose own scan
+                // reports "Bluetooth Access Required" (LedgerIssue.bluetoothUnauthorized).
+            case .path(.element(id: _, action: .ledgerTurnOn(.connectTapped))):
+                guard bluetoothPermission.authorizationStatus() == .notDetermined else {
+                    state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+                    return .none
+                }
+                return .run { send in
+                    await bluetoothPermission.requestAuthorization()
+                    await send(.ledgerBluetoothPermissionSettled)
+                }
+
+            case .ledgerBluetoothPermissionSettled:
+                // A no-op if the user already backed out of the Turn On step while the request
+                // was in flight -- only push the picker while it's still the element on top.
+                guard case .ledgerTurnOn = state.path.last else { return .none }
                 state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
                 return .none
 
                 // MARK: - Ledger Device Picker
 
-            case .path(.element(id: _, action: .ledgerDevicePicker(.approveOnDeviceTapped))):
+                // MOB-2020 (Android aac01e65): the picker's own Connect (`.approveOnDeviceTapped`)
+                // bonds right there now (AddLedgerHWWalletStore), never pushing anything until
+                // the bond settles -- this arm only reacts to its outcome. Both branches copy the
+                // picker's state, then overwrite `selectedDevice` with the device the action
+                // itself carries -- never the picker's own `selectedDevice`, which a tap on
+                // another row could have changed while the bond was still running -- the same way
+                // `.ledgerAccount(…)` below carries a picker/approve state forward on success.
+            case let .path(.element(id: _, action: .ledgerDevicePicker(.deviceBonded(device, isZcashAppRunning)))):
                 for element in state.path {
-                    if case .ledgerDevicePicker(var devicePickerState) = element {
-                        // The approve screen's state starts as a straight copy of the picker's --
-                        // it keeps `selectedDevice`, the same way `.ledgerAccount(…)` below
-                        // carries a picker/approve state forward on success. `isApproveScreen`
-                        // is what tells this shared reducer's `issuePrimaryTapped` a pairing
-                        // issue's retry (reconnect) from a scan issue's (rescan) -- see its own
-                        // doc comment on `AddLedgerHWWallet.State`.
-                        devicePickerState.isApproveScreen = true
-                        state.path.append(.ledgerApproveOnDevice(devicePickerState))
+                    guard case .ledgerDevicePicker(let devicePickerState) = element else { continue }
+                    if isZcashAppRunning {
+                        // Android efe21904: the device already runs the Zcash app -- step 3 goes
+                        // on the stack idle (never opening anything on its own), under step 4,
+                        // which starts pairing at once, same as a fresh push always has. Back
+                        // from step 4 then lands on that idle step 3.
+                        var openAppState = devicePickerState
+                        openAppState.selectedDevice = device
+                        openAppState.isConnecting = false
+                        openAppState.isOpenAppScreen = true
+                        openAppState.autoOpenZcashApp = false
+                        state.path.append(.ledgerOpenApp(openAppState))
+
+                        var approveState = devicePickerState
+                        approveState.selectedDevice = device
+                        approveState.isConnecting = false
+                        approveState.isApproveScreen = true
+                        state.path.append(.ledgerApproveOnDevice(approveState))
+
+                        // Starts the pairing at once, on the JUST-pushed element -- never
+                        // `.ledgerDevicePicker(.connectDeviceTapped)`, which would connect right
+                        // on the picker (LedgerDevicePickerView's own Connect button sends
+                        // `.approveOnDeviceTapped`, not `connectDeviceTapped`, for exactly this
+                        // reason).
+                        if let last = state.path.ids.last {
+                            return .send(.path(.element(id: last, action: .ledgerApproveOnDevice(.connectDeviceTapped))))
+                        }
+                    } else {
+                        // The app is elsewhere -- step 3 opens it automatically as soon as it
+                        // appears.
+                        var openAppState = devicePickerState
+                        openAppState.selectedDevice = device
+                        openAppState.isConnecting = false
+                        openAppState.isOpenAppScreen = true
+                        openAppState.autoOpenZcashApp = true
+                        state.path.append(.ledgerOpenApp(openAppState))
                     }
                 }
-                // Starts the pairing at once, on the JUST-pushed element -- never
-                // `.ledgerDevicePicker(.connectDeviceTapped)`, which would connect right on the
-                // picker (LedgerDevicePickerView's own Connect button sends this action, not
-                // `connectDeviceTapped`, for exactly this reason).
+                return .none
+
+                // MARK: - Ledger Open the Zcash App (step 3, MOB-2020)
+
+                // Android 8cf16518/efe21904: the request succeeded -- pushes step 4, a copy of
+                // this state, which starts pairing at once (see the `.deviceBonded` arm above for
+                // why never `.ledgerOpenApp(.connectDeviceTapped)` directly).
+            case .path(.element(id: _, action: .ledgerOpenApp(.zcashAppOpened))):
+                for element in state.path {
+                    if case .ledgerOpenApp(let openAppState) = element {
+                        var approveState = openAppState
+                        approveState.isOpeningApp = false
+                        approveState.isOpenAppScreen = false
+                        approveState.isApproveScreen = true
+                        state.path.append(.ledgerApproveOnDevice(approveState))
+                    }
+                }
                 if let last = state.path.ids.last {
                     return .send(.path(.element(id: last, action: .ledgerApproveOnDevice(.connectDeviceTapped))))
                 }
                 return .none
+
+                // `.ledgerOpenApp(.cancelTapped)`'s own pop lives in ConnectHWWalletCoordFlowStore's
+                // trailing `Reduce`, not here -- see that arm's comment (and this file's own
+                // comment on `.ledgerApproveOnDevice(.cancelTapped)`) for why: `coordinatorReduce()`
+                // runs BEFORE `.forEach`, so popping the element here would leave `.forEach` unable
+                // to route this same action into the element's own reducer (AddLedgerHWWalletStore's
+                // `cancelTapped`, which cancels the request and disconnects) -- "received an action
+                // for a missing element".
 
                 // MARK: - Ledger Approve on Device
                 //
@@ -282,15 +361,16 @@ extension ConnectHWWalletCoordFlow {
         }
     }
 
-    /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerDevicePicker`,
-    /// `.ledgerApproveOnDevice`, `.ledgerAccount`, `.ledgerDeviceReady` or `.ledgerConnected`) is
-    /// anywhere on `path`, else `.keystone` -- the same "is a Ledger element on the path" rule as
-    /// `ConnectHWWalletCoordFlowView.isLedgerFailure`. Used to stamp `hardwareWalletVendor` on
-    /// every `WalletBirthday.State`/`RestoreInfo.State` this coordinator pushes.
+    /// `.ledger` when a Ledger element (`.addLedgerHWWallet`, `.ledgerTurnOn`,
+    /// `.ledgerDevicePicker`, `.ledgerOpenApp`, `.ledgerApproveOnDevice`, `.ledgerAccount`,
+    /// `.ledgerDeviceReady` or `.ledgerConnected`) is anywhere on `path`, else `.keystone` -- the
+    /// same "is a Ledger element on the path" rule as `ConnectHWWalletCoordFlowView.isLedgerFailure`.
+    /// Used to stamp `hardwareWalletVendor` on every `WalletBirthday.State`/`RestoreInfo.State` this
+    /// coordinator pushes.
     private func hardwareWalletVendor(on path: StackState<ConnectHWWalletCoordFlow.Path.State>) -> WalletAccount.Vendor {
         for element in path {
             switch element {
-            case .addLedgerHWWallet, .ledgerDevicePicker, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
+            case .addLedgerHWWallet, .ledgerTurnOn, .ledgerDevicePicker, .ledgerOpenApp, .ledgerApproveOnDevice, .ledgerAccount, .ledgerDeviceReady, .ledgerConnected:
                 return .ledger
             default:
                 continue

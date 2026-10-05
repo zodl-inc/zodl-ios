@@ -37,27 +37,27 @@ extension LedgerBluetoothScanner: LedgerScanning {
 ///
 /// `connect` always closes a previously open transport before opening the new one, then makes
 /// sure the Zcash app is open on the device -- which may wait for the user to confirm it there --
-/// before returning, and remembers the device for `pairAccount`'s own reconnect below.
-/// `pairAccount` throws ``LedgerClientError/notConnected`` when nothing is open; otherwise it
-/// adopts the transport the SDK reports as live once pairing returns, whether it succeeded or
-/// failed -- the SDK's own read-before-export retry (MOB-2020) may have reconnected on a fresh
-/// transport, and a session still holding the old one would hand a dead transport to a later retry
-/// or signing -- but only when this session's own transport is still the one pairing started
-/// with (MOB-2020): a `disconnect()` (Close or Back) can run during that `await`,
-/// and adopting a transport reported live after that would put back one the session already tore
-/// down, so this closes it instead.
+/// before returning. Kept for `signPCZT` alone since MOB-2020 (Android aac01e65): enrollment
+/// pairs with `pairDevice` now, never `connect`.
 ///
-/// `signPCZT` throws the same error when nothing is open. A signing failure leaves the transport
+/// `signPCZT` throws ``LedgerClientError/notConnected`` when nothing is open. A signing failure leaves the transport
 /// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
 /// `ledgerTransportClosed`, `ledgerTransportFailed` and cancellation all mean the transport is
 /// already gone (see docs/LEDGER.md's "transport closed" rule), so the session drops its reference
 /// rather than keep a dead one around for a retry that would only fail again.
+///
+/// `bond`, `openZcashApp(_:)` and `pairDevice(_:_:)` (MOB-2020) are enrollment's own operations:
+/// each opens a connection of its own on the same scanner and closes it before returning, never
+/// reading or writing `transport` above, so enrollment and signing never overlap.
 actor LedgerSession {
     /// `connect`'s own Bluetooth connection timeout.
     private static let connectTimeout: TimeInterval = 60
     /// The reconnect timeout `openZcashApp` uses while the device switches apps -- the SDK's own
     /// app-switch window (`LedgerZcashApp`'s doc comment).
     private static let appSwitchTimeout: TimeInterval = 10
+    /// The status word a locked Ledger answers any command with (MOB-2020, Android
+    /// `LOCKED_STATUS_WORD`) -- ``bond(_:)``'s one query failure that is not swallowed.
+    private static let lockedStatusWord: UInt16 = 0x5515
 
     private nonisolated let makeScanner: @Sendable () -> any LedgerScanning
     private nonisolated let scannerBox = LockIsolated<(any LedgerScanning)?>(nil)
@@ -70,10 +70,10 @@ actor LedgerSession {
     private let openZcashApp: @Sendable (
         any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
     ) async throws -> any LedgerAPDUTransport
+    /// Reads which app a transport's device is running -- `LedgerZcashApp.currentApp` live,
+    /// injected so ``bond(_:)`` can be driven by a fake in tests.
+    private let currentApp: @Sendable (any LedgerAPDUTransport) async throws -> LedgerRunningApp
     private var transport: (any LedgerAPDUTransport)?
-    /// The device `connect` last connected -- `pairAccount`'s own reconnect closure targets it
-    /// again, the same device, never a different one a later scan might turn up.
-    private var connectedDevice: LedgerBluetoothDevice?
 
     init(
         makeScanner: @escaping @Sendable () -> any LedgerScanning,
@@ -85,12 +85,14 @@ actor LedgerSession {
         ) async throws -> Pczt,
         openZcashApp: @escaping @Sendable (
             any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
-        ) async throws -> any LedgerAPDUTransport
+        ) async throws -> any LedgerAPDUTransport,
+        currentApp: @escaping @Sendable (any LedgerAPDUTransport) async throws -> LedgerRunningApp
     ) {
         self.makeScanner = makeScanner
         self.pair = pair
         self.sign = sign
         self.openZcashApp = openZcashApp
+        self.currentApp = currentApp
     }
 
     /// The scanner, created on first use and reused after that.
@@ -114,7 +116,6 @@ actor LedgerSession {
             transport = nil
             await previous.close()
         }
-        connectedDevice = device
         LoggerProxy.event("Ledger: connecting to a \(device.model.productName)")
         let opened: any LedgerAPDUTransport
         do {
@@ -122,14 +123,7 @@ actor LedgerSession {
             LoggerProxy.event("Ledger: connected")
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
-            // MOB-2020: tag a failure of THIS step -- the raw Bluetooth bond, before any command
-            // reached the device -- so LedgerIssue.init(_:in:) can tell it apart from a failure
-            // once the link is up. A cancellation is not a connection failure to report; it
-            // propagates as itself.
-            if error is CancellationError {
-                throw error
-            }
-            throw LedgerBluetoothConnectFailure(underlying: error)
+            throw error
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
@@ -146,31 +140,111 @@ actor LedgerSession {
         }
     }
 
-    func pairAccount(_ zip32AccountIndex: Zip32AccountIndex) async throws -> LedgerPairing {
-        guard let transport, let device = connectedDevice else {
-            throw LedgerClientError.notConnected
+    // MARK: - Enrollment's own bond, open-app and pair connections (MOB-2020)
+    //
+    // `bond`, `openZcashApp(_:)` and `pairDevice(_:_:)` each open their own connection on
+    // `scanner()` and close it before returning, success or failure alike -- none of them reads
+    // or writes `transport` above, so enrollment and signing never overlap. On a first Bluetooth
+    // pairing with the Zcash app already open, the Ledger freezes on its pairing screen;
+    // enrollment therefore bonds on the dashboard first (`bond`), then opens the app and pairs
+    // afterward, each over its own connection.
+
+    /// Bonds with `device` -- pairing over Bluetooth if the phone has not yet -- and asks it
+    /// once which app it runs, so the caller can skip ``openZcashApp(_:)`` when it already runs
+    /// the Zcash app (Android 48b8d5bc, 6c9491c7, e3480698).
+    ///
+    /// - Returns: whether the device reported the Zcash app running already.
+    /// - Throws: the connect step's own failure, unwrapped -- the caller classifies it with
+    ///   `LedgerIssue.init(_:in:)`'s `.pairing` context. `ZcashError.ledgerDeviceRefused` when
+    ///   the app query finds the device locked (status word `lockedStatusWord`): every step that
+    ///   follows would refuse the same way, so this is the one query failure not swallowed. Any
+    ///   other failure of the query only leaves the answer unknown, reported as `false`, since
+    ///   the bond itself already succeeded.
+    func bond(_ device: LedgerBluetoothDevice) async throws -> Bool {
+        LoggerProxy.event("Ledger: bonding with a \(device.model.productName)")
+        let opened: any LedgerAPDUTransport
+        do {
+            opened = try await scanner().connect(to: device, timeout: Self.connectTimeout)
+            LoggerProxy.event("Ledger: bonded")
+        } catch {
+            LoggerProxy.warn("Ledger: bond failed (\(Self.errorTag(error)))")
+            throw error
         }
-        LoggerProxy.event("Ledger: pairing account \(zip32AccountIndex.index)")
-        let (result, liveTransport) = await pair(transport, zip32AccountIndex) {
+        // Closed here in every case, including cancellation: `close()` cannot itself throw, so
+        // this always runs to completion before `bond` returns or rethrows.
+        defer { await opened.close() }
+
+        do {
+            return try await currentApp(opened).isZcash
+        } catch {
+            if error is CancellationError {
+                throw error
+            }
+            if case ZcashError.ledgerDeviceRefused(Self.lockedStatusWord, _) = error {
+                throw error
+            }
+            LoggerProxy.info("Ledger: bond's app query failed, the running app is unknown (\(Self.errorTag(error)))")
+            return false
+        }
+    }
+
+    /// Asks `device` to open the Zcash app, over a connection of its own -- the phone has
+    /// already bonded with it (``bond(_:)``), so this sends the open command itself and waits
+    /// for the user's confirmation on the device (Android 49811921).
+    ///
+    /// - Throws: the connect step's own failure, unwrapped. Otherwise whatever the open step
+    ///   throws: a declined or missing app, or a reconnect that ran out of time while the device
+    ///   switched apps.
+    func openZcashApp(_ device: LedgerBluetoothDevice) async throws {
+        LoggerProxy.event("Ledger: opening the Zcash app on a \(device.model.productName)")
+        let opened: any LedgerAPDUTransport
+        do {
+            opened = try await scanner().connect(to: device, timeout: Self.connectTimeout)
+        } catch {
+            LoggerProxy.warn("Ledger: opening the Zcash app failed to connect (\(Self.errorTag(error)))")
+            throw error
+        }
+        var held: [any LedgerAPDUTransport] = [opened]
+        defer { await Self.closeAll(held) }
+
+        do {
+            let appTransport = try await self.openZcashApp(opened) {
+                try await self.scanner().connect(to: device, timeout: Self.appSwitchTimeout)
+            }
+            held.append(appTransport)
+            LoggerProxy.event("Ledger: the Zcash app is open")
+        } catch {
+            LoggerProxy.warn("Ledger: opening the Zcash app failed (\(Self.errorTag(error)))")
+            throw error
+        }
+    }
+
+    /// Bonds, opens the Zcash app and pairs `zip32AccountIndex` on `device` -- the same steps as
+    /// ``bond(_:)`` and ``openZcashApp(_:)`` followed by the existing `pair` step, each over a
+    /// connection of its own (Android aac01e65, 4f7b031e, e838559b).
+    ///
+    /// - Throws: the connect step's own failure, unwrapped; the open step's; or the pairing's.
+    func pairDevice(_ device: LedgerBluetoothDevice, _ zip32AccountIndex: Zip32AccountIndex) async throws -> LedgerPairing {
+        LoggerProxy.event("Ledger: pairing a \(device.model.productName), account \(zip32AccountIndex.index)")
+        // Every transport this holds -- the first connection, the one the open step returns, and
+        // the live one the pair closure reports -- is closed here, on success and failure alike;
+        // closing the same one twice (they may coincide) is harmless.
+        var held: [any LedgerAPDUTransport] = []
+        defer { await Self.closeAll(held) }
+
+        let opened = try await scanner().connect(to: device, timeout: Self.connectTimeout)
+        held.append(opened)
+
+        let appTransport = try await self.openZcashApp(opened) {
+            try await self.scanner().connect(to: device, timeout: Self.appSwitchTimeout)
+        }
+        held.append(appTransport)
+
+        let (result, liveTransport) = await pair(appTransport, zip32AccountIndex) {
             try await self.scanner().connect(to: device, timeout: Self.connectTimeout)
         }
-        // The SDK's own read-before-export retry may have reconnected on a fresh transport --
-        // adopt whatever it reports as live first, whether pairing succeeded or failed, so a
-        // session still holding the old (possibly SDK-closed) one never hands it to a later retry
-        // or signing. But only when this session's own transport is still the one `pair` was
-        // called with -- a `disconnect()` (Close or Back) can run during the `await` above, and
-        // adopting the transport it reports live then would put back one the session already
-        // tore down. Compared by reference, the same way `dropTransport(ifStillOpen:)` below
-        // does: `LedgerAPDUTransport` is not class-bound, but both the live and fake conformances
-        // are reference types.
-        if let current = self.transport, current as AnyObject === transport as AnyObject {
-            self.transport = liveTransport
-        } else if liveTransport as AnyObject !== transport as AnyObject {
-            // Not the transport this call started with and not already closed by that
-            // disconnect() (which would make this a redundant double close) -- close it so it
-            // isn't leaked open and orphaned.
-            await liveTransport.close()
-        }
+        held.append(liveTransport)
+
         switch result {
         case let .success(pairing):
             LoggerProxy.event("Ledger: paired (Zcash app \(pairing.appVersion))")
@@ -242,6 +316,20 @@ actor LedgerSession {
             return
         }
         transport = nil
+    }
+
+    /// Closes every transport in `transports`, each at most once even if the same reference
+    /// appears more than once (MOB-2020's `bond`/`openZcashApp`/`pairDevice` do not dedup what
+    /// they collect) — a second close is documented as harmless, but a fake in tests would still
+    /// count it. Compared by reference, the same way `dropTransport(ifStillOpen:)` above does.
+    private static func closeAll(_ transports: [any LedgerAPDUTransport]) async {
+        var closed: [ObjectIdentifier] = []
+        for transport in transports {
+            let id = ObjectIdentifier(transport as AnyObject)
+            guard !closed.contains(id) else { continue }
+            closed.append(id)
+            await transport.close()
+        }
     }
 
     /// The error's stable code (`ZLEDG…`) or type name — never its message, which for a custom
@@ -325,13 +413,18 @@ extension LedgerClient: DependencyKey {
             },
             openZcashApp: { transport, reconnect in
                 try await LedgerZcashApp.ensureZcashAppOpen(transport: transport, reconnect: reconnect)
+            },
+            currentApp: { transport in
+                try await LedgerZcashApp.currentApp(transport: transport)
             }
         )
 
         return Self(
             scanDevices: { session.scanDevices() },
             connect: { device in try await session.connect(device) },
-            pairAccount: { zip32AccountIndex in try await session.pairAccount(zip32AccountIndex) },
+            bond: { device in try await session.bond(device) },
+            openZcashApp: { device in try await session.openZcashApp(device) },
+            pairDevice: { device, zip32AccountIndex in try await session.pairDevice(device, zip32AccountIndex) },
             disconnect: { await session.disconnect() },
             signPCZT: { pczt, accountUUID, binding in session.signPCZT(pczt, accountUUID: accountUUID, binding: binding) }
         )

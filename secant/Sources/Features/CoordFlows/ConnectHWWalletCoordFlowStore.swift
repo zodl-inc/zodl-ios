@@ -27,7 +27,12 @@ struct ConnectHWWalletCoordFlow {
         case keystoneConnected(AddKeystoneHWWallet)
         // Ledger
         case addLedgerHWWallet(AddLedgerHWWallet)
+        case ledgerTurnOn(AddLedgerHWWallet)
         case ledgerDevicePicker(AddLedgerHWWallet)
+        /// Step 3, "Open the Zcash App" (MOB-2020, Android aac01e65). Pushed by
+        /// `.ledgerDevicePicker(.deviceBonded)`; `AddLedgerHWWallet.State.autoOpenZcashApp` says
+        /// whether it opens the app on its own as soon as it appears.
+        case ledgerOpenApp(AddLedgerHWWallet)
         case ledgerApproveOnDevice(AddLedgerHWWallet)
         case ledgerAccount(AddLedgerHWWallet)
         case ledgerDeviceReady(AddLedgerHWWallet)
@@ -83,6 +88,10 @@ struct ConnectHWWalletCoordFlow {
         case closeHelpSheetTapped
         case contactSupportTapped
         case goToExistingAccountTapped
+        /// MOB-2020: the Turn On and Unlock step's Continue requested Bluetooth access (it wasn't
+        /// determined yet) and the request has settled, whatever the answer -- see
+        /// `coordinatorReduce()`'s `.ledgerTurnOn(.connectTapped)` arm.
+        case ledgerBluetoothPermissionSettled
         /// MOB-2020 (Android b013b7c2, Rebound): the coordinator's `.ledgerApproveOnDevice(.pairingSucceeded)`
         /// arm found a matched account with a stored binding already, or this pairing's own binding
         /// failed to store onto an unbound match -- either way, present "Account Already Added" the
@@ -98,6 +107,7 @@ struct ConnectHWWalletCoordFlow {
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.bluetoothPermission) var bluetoothPermission
     @Dependency(\.walletStorage) var walletStorage
 
     init() { }
@@ -329,6 +339,16 @@ struct ConnectHWWalletCoordFlow {
                 // MOB-2020: pops the approve screen back to the picker, whose `onAppear` rescans.
                 // The element's own reducer (AddLedgerHWWalletStore) does the cancel-and-disconnect.
             case .path(.element(id: _, action: .ledgerApproveOnDevice(.cancelTapped))):
+                let _ = state.path.popLast()
+                return .none
+
+                // MOB-2020 (Android 76e345e5): pops step 3 back to the picker, the same way and
+                // for the same reason as the approve screen's own arm just above -- this element's
+                // reducer (AddLedgerHWWalletStore's `cancelTapped`) cancels the open-app request
+                // and disconnects; this must stay in this trailing `Reduce`, not coordinatorReduce()
+                // (which runs BEFORE `.forEach`), or `.forEach` cannot route into an element this
+                // same dispatch already popped.
+            case .path(.element(id: _, action: .ledgerOpenApp(.cancelTapped))):
                 let _ = state.path.popLast()
                 return .none
 

@@ -65,6 +65,12 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     enum Context: Equatable, Sendable {
         /// The connect flow is `AddLedgerHWWallet`'s scan/connect/pair flow.
         case connect
+        /// Step 2's bond (`LedgerClient.bond`), while the phone is still bonding to the selected
+        /// device -- before steps 3/4 ever run. The device picker's issue sheet uses this context
+        /// for a bond failure and for a scan failure alike. Behaves exactly like `.connect`
+        /// everywhere except `.deviceLocked`'s message, so the two contexts' copy is identical in
+        /// every other case.
+        case pairing
         /// The Ledger sign sheet.
         case sign
     }
@@ -134,23 +140,16 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     /// message text, for the screen showing it in `context`. Never produces `.accountAlreadyAdded`;
     /// `LedgerAccountCollision` classifies import collisions itself.
     ///
-    /// MOB-2020 (Android b013b7c2): a `LedgerBluetoothConnectFailure` is unwrapped first, marking
-    /// that the failure came from `LedgerSession.connect`'s own Bluetooth step -- the phone was
-    /// still bonding to the device, before any command reached it -- rather than from the
-    /// open-Zcash-app step after the link was up, or from signing. `ledgerDeviceNotFound`,
-    /// `ledgerBluetoothConnectionFailed` and `ledgerTimeout` then read as `.pairingFailed` only
-    /// for that bonding-phase failure in `.connect`; every other case (the same three kinds once
-    /// the link is up, or any context while signing) reads as `.disconnected`, the device having
-    /// been reachable at some point. `ledgerBluetoothPairingRefused` is always `.pairingFailed`
-    /// regardless of context or wrapping -- the one refusal the OS-level Bluetooth pairing dialog
-    /// itself can raise.
+    /// MOB-2020 (Android aac01e65): `.pairing` applies only to step 2's `LedgerClient.bond` --
+    /// the phone was still bonding to the device, before any command reached it -- never to step
+    /// 3, step 4 or signing, which all pass `.connect`/`.sign` since enrollment's bonding happens
+    /// once, on step 2, before any of them run. `ledgerDeviceNotFound`, `ledgerBluetoothConnectionFailed`
+    /// and `ledgerTimeout` read as `.pairingFailed` only in `.pairing`; every other case (the same
+    /// three kinds once bonded, or any context while signing) reads as `.disconnected`, the device
+    /// having been reachable at some point. `ledgerBluetoothPairingRefused` is always
+    /// `.pairingFailed` regardless of context -- the one refusal the OS-level Bluetooth pairing
+    /// dialog itself can raise.
     init(_ error: Error, in context: Context) {
-        var error = error
-        var isBluetoothConnectFailure = false
-        if let wrapped = error as? LedgerBluetoothConnectFailure {
-            error = wrapped.underlying
-            isBluetoothConnectFailure = true
-        }
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
             self = .bluetoothUnauthorized
@@ -179,7 +178,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
         case ZcashError.ledgerDeviceNotFound, ZcashError.ledgerBluetoothConnectionFailed, ZcashError.ledgerTimeout:
-            self = (isBluetoothConnectFailure && context == .connect) ? .pairingFailed : .disconnected
+            self = context == .pairing ? .pairingFailed : .disconnected
         case ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,
@@ -222,7 +221,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueOpenAppRejectedTitle)
         case .requestRejected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueRequestRejectedTitle)
+            case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedTitle)
             case .sign: return String(localizable: .ledgerIssueRequestRejectedSignTitle)
             }
         case .disconnected:
@@ -256,7 +255,10 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .noDevicesFound:
             return String(localizable: .ledgerIssueNoDevicesFoundMessage)
         case .deviceLocked:
-            return String(localizable: .ledgerIssueDeviceLockedMessage)
+            switch context {
+            case .connect, .sign: return String(localizable: .ledgerIssueDeviceLockedMessage)
+            case .pairing: return String(localizable: .ledgerIssueDeviceLockedPairingMessage)
+            }
         case .pairingFailed:
             return String(localizable: .ledgerIssuePairingFailedMessage)
         case .appNotInstalled:
@@ -265,12 +267,12 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueOpenAppRejectedMessage)
         case .requestRejected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueRequestRejectedMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueRequestRejectedMessage)
             case .sign: return String(localizable: .ledgerIssueRequestRejectedSignMessage)
             }
         case .disconnected:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueDisconnectedMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueDisconnectedMessage)
             case .sign: return String(localizable: .ledgerIssueDisconnectedSignMessage)
             }
         case .accountAlreadyAdded:
@@ -287,7 +289,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             return String(localizable: .ledgerIssueNotSignableMessage)
         case .unknown:
             switch context {
-            case .connect: return String(localizable: .ledgerIssueUnknownMessage)
+            case .connect, .pairing: return String(localizable: .ledgerIssueUnknownMessage)
             case .sign: return String(localizable: .ledgerIssueUnknownSignMessage)
             }
         }
@@ -301,7 +303,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .bluetoothOff:
             return .tryAgain
         case .bluetoothUnsupported:
-            return context == .connect ? .close : .none
+            return context != .sign ? .close : .none
         case .noDevicesFound:
             return .tryAgain
         case .deviceLocked:
@@ -317,7 +319,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case .disconnected:
             return .tryAgain
         case .accountAlreadyAdded:
-            return context == .connect ? .goToAccount : .none
+            return context != .sign ? .goToAccount : .none
         case .appTooOld:
             return .tryAgain
         case .derivationBudgetExhausted:
@@ -331,7 +333,7 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             // this one about), so `.connect` keeps `.none`.
             return context == .sign ? .pairLedger : .none
         case .transactionNotSignable:
-            return context == .connect ? .close : .none
+            return context != .sign ? .close : .none
         case .unknown:
             return .tryAgain
         }

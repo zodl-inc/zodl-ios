@@ -27,7 +27,7 @@ struct LedgerPairing: Equatable, Sendable {
 }
 
 enum LedgerClientError: Error, Equatable, LocalizedError {
-    /// `pairAccount` was called before `connect` opened a transport.
+    /// `signPCZT` was called before `connect` opened a transport.
     case notConnected
 
     var errorDescription: String? {
@@ -36,16 +36,6 @@ enum LedgerClientError: Error, Equatable, LocalizedError {
             return "No Ledger device is connected."
         }
     }
-}
-
-/// MOB-2020 (Android b013b7c2): `underlying` failed `LedgerSession.connect`'s own Bluetooth
-/// connect step -- the phone was still bonding to the device, before any command reached it --
-/// rather than the open-Zcash-app step after the link was up. `LedgerIssue.init(_:in:)` unwraps
-/// this to tell "Pairing Failed" apart from "Ledger Disconnected" for the same underlying error.
-/// Not `Equatable`: `LedgerClientError` carries the two-way context split today and cannot carry
-/// an underlying error, so this tag lives here instead, on the raw thrown error, not on a case.
-struct LedgerBluetoothConnectFailure: Error {
-    let underlying: Error
 }
 
 /// One step of a Ledger signing ceremony, as `LedgerClient.signPCZT` reports it.
@@ -62,9 +52,22 @@ struct LedgerClient {
     }
     /// Connects to a device, closing any previously open connection first.
     var connect: @Sendable (LedgerBluetoothDevice) async throws -> Void
-    /// Pairs an account on the connected device. Throws ``LedgerClientError/notConnected`` when
-    /// nothing is connected.
-    var pairAccount: @Sendable (Zip32AccountIndex) async throws -> LedgerPairing
+    /// MOB-2020: bonds with a device on its own connection, before the Zcash app is opened on
+    /// it -- a first Bluetooth pairing with the app already open freezes the device on its
+    /// pairing screen. Closes its connection before returning; never touches the one
+    /// ``connect``/``signPCZT`` hold, so enrollment and signing never overlap.
+    ///
+    /// - Returns: whether the device already runs the Zcash app, so enrollment can skip
+    ///   ``openZcashApp``.
+    var bond: @Sendable (LedgerBluetoothDevice) async throws -> Bool
+    /// MOB-2020: asks a bonded device (``bond``) to open the Zcash app, over a connection of its
+    /// own that this closes before returning.
+    var openZcashApp: @Sendable (LedgerBluetoothDevice) async throws -> Void
+    /// MOB-2020 (Android aac01e65): pairs `Zip32AccountIndex` on a bonded device
+    /// (``bond``/``openZcashApp``), over a connection of its own that this closes before
+    /// returning. Enrollment's only pairing operation -- replaces the old connect-then-pair
+    /// pair, ``connect`` (kept for ``signPCZT``) and the removed `pairAccount`.
+    var pairDevice: @Sendable (LedgerBluetoothDevice, Zip32AccountIndex) async throws -> LedgerPairing
     /// Closes the open connection, if any.
     var disconnect: @Sendable () async -> Void
     /// Signs a PCZT on the connected device. Yields `.progress` for each stage the SDK reports, in
