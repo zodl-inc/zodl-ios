@@ -74,6 +74,13 @@ actor LedgerSession {
     /// injected so ``bond(_:)`` can be driven by a fake in tests.
     private let currentApp: @Sendable (any LedgerAPDUTransport) async throws -> LedgerRunningApp
     private var transport: (any LedgerAPDUTransport)?
+    /// Bumped at the start of every `connect` and every `disconnect()`, including a `disconnect()`
+    /// that finds nothing to close -- an identity check on `transport` alone cannot see that one,
+    /// since `transport` is `nil` on both sides of it. `connect` captures its own value and, once
+    /// the open step returns, adopts `transport` only if this is still that value: otherwise a
+    /// `disconnect()` or a newer `connect` ran while it was suspended, and what it opened is
+    /// either an already-torn-down session or would clobber a newer one.
+    private var connectionGeneration: UInt64 = 0
 
     init(
         makeScanner: @escaping @Sendable () -> any LedgerScanning,
@@ -112,6 +119,9 @@ actor LedgerSession {
     }
 
     func connect(_ device: LedgerBluetoothDevice, willOpenZcashApp: @escaping @Sendable () async -> Void) async throws {
+        connectionGeneration += 1
+        let generation = connectionGeneration
+
         if let previous = transport {
             transport = nil
             await previous.close()
@@ -138,17 +148,34 @@ actor LedgerSession {
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
+        let appTransport: any LedgerAPDUTransport
         do {
-            transport = try await openZcashApp(opened) {
+            appTransport = try await openZcashApp(opened) {
                 try await self.scanner().connect(to: device, timeout: Self.appSwitchTimeout)
             }
             LoggerProxy.event("Ledger: the Zcash app is open")
         } catch {
-            transport = nil
+            if connectionGeneration == generation {
+                transport = nil
+            }
             await opened.close()
             LoggerProxy.warn("Ledger: opening the Zcash app failed (\(Self.errorTag(error)))")
             throw error
         }
+
+        // MOB-2020: a disconnect() or a newer connect() may have run while the two awaits above
+        // were suspended. Adopting this transport now would either resurrect a session the caller
+        // already tore down, or clobber the newer one that ran underneath it -- so it's discarded
+        // instead, the same way a teardown that arrived earlier would have closed it.
+        guard connectionGeneration == generation else {
+            LoggerProxy.event("Ledger: discarding a connection a disconnect() or a newer connect() has superseded")
+            await appTransport.close()
+            if appTransport as AnyObject !== opened as AnyObject {
+                await opened.close()
+            }
+            throw CancellationError()
+        }
+        transport = appTransport
     }
 
     // MARK: - Enrollment's own bond, open-app and pair connections (MOB-2020)
@@ -267,6 +294,7 @@ actor LedgerSession {
     }
 
     func disconnect() async {
+        connectionGeneration += 1
         guard let previous = transport else { return }
         transport = nil
         await previous.close()
