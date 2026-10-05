@@ -3,7 +3,7 @@
 //  zodlTests
 //
 //  More reducers — covers CurrencyConversionSetup opt-in/opt-out preference loading,
-//  option changes, and the §6.2 Tor-routing gap (MOB-1364)
+//  option changes, and immediate protected routing when enabling Tor (MOB-1364)
 //  (Features/CurrencyConversionSetup/CurrencyConversionSetupStore.swift).
 //
 
@@ -86,31 +86,47 @@ import ComposableArchitecture
         #expect(saved.value == UserPreferencesStorage.ExchangeRate(manual: false, automatic: false))
     }
 
-    // MARK: - Bug §6.2 (MOB-1364 gap)
+    // MARK: - Enabling protected access
 
-    /// Enabling Tor from the currency-conversion sheet must route swap/exchange/voting
-    /// through the protected path immediately, exactly like `TorSetup` does on every
-    /// enable path. Today `enableTorTapped` never touches `swapAPIAccess`, so it stays
-    /// `.direct` until the next launch — a privacy gap. Pinned as a known issue until fixed.
-    @MainActor @Test func enableTorTappedShouldRouteSwapAccessProtected() async {
-        @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
-        $swapAPIAccess.withLock { $0 = .direct }
+    @MainActor @Test(arguments: [false, true])
+    func enableTorTappedShouldRouteSwapAccessProtected(fails: Bool) async {
+        enum TorFailure: Error { case failed }
 
-        let store = TestStore(initialState: CurrencyConversionSetup.State()) {
-            CurrencyConversionSetup()
-        } withDependencies: {
-            $0.mainQueue = .immediate
-            $0.walletStorage.importTorSetupFlag = { _ in }
-            $0.userStoredPreferences.setExchangeRate = { _ in }
-            $0.sdkSynchronizer.exchangeRateEnabled = { _ in }
-        }
-        store.exhaustivity = .off
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            @Shared(.inMemory(.swapAPIAccess)) var swapAPIAccess: WalletStorage.SwapAPIAccess = .direct
+            let torCalls = LockIsolated<[Bool]>([])
+            let saved = LockIsolated<UserPreferencesStorage.ExchangeRate?>(nil)
+            let store = TestStore(initialState: CurrencyConversionSetup.State()) {
+                CurrencyConversionSetup()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.walletStorage.importTorSetupFlag = { enabled in #expect(enabled) }
+                $0.userStoredPreferences.setExchangeRate = { saved.setValue($0) }
+                $0.sdkSynchronizer.exchangeRateEnabled = { _ in }
+                $0.sdkSynchronizer.torEnabled = { [sharedAccess = $swapAPIAccess] enabled in
+                    #expect(sharedAccess.wrappedValue == .protected)
+                    torCalls.withValue { $0.append(enabled) }
+                    if fails { throw TorFailure.failed }
+                }
+            }
+            store.exhaustivity = .off
 
-        await store.send(.enableTorTapped)
-        await store.finish()
-
-        withKnownIssue("Bug §6.2: enableTorTapped never routes swapAPIAccess to .protected (MOB-1364 gap)") {
+            await store.send(.enableTorTapped)
             #expect(swapAPIAccess == .protected)
+            if fails {
+                await store.receive(.torInitFailed)
+            }
+            await store.finish()
+
+            #expect(torCalls.value == [true])
+            #expect(swapAPIAccess == .protected)
+            if fails {
+                #expect(saved.value == nil)
+            } else {
+                #expect(saved.value == UserPreferencesStorage.ExchangeRate(manual: true, automatic: false))
+            }
         }
     }
 }
