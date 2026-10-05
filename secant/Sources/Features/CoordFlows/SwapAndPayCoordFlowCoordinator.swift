@@ -197,23 +197,23 @@ extension SwapAndPayCoordFlow {
                 // MARK: - Scan
                 
             case .path(.element(id: _, action: .scan(.foundString(let address)))):
-                let request = CrossPayRequestParser.parse(address)
+                let scanResult = CrossPayRequestParser.classify(address)
                 let _ = state.path.popLast()
                 audioServices.systemSoundVibrate()
 
                 if state.path.isEmpty {
-                    state.swapAndPayState.applyScannedRequest(request, rawValue: address)
+                    state.swapAndPayState.applyScannedRequest(scanResult, rawValue: address)
                     return .none
                 }
 
                 if let formID = state.path.ids.last,
                    state.path[id: formID, case: \.swapAndPayForm] != nil {
-                    state.path[id: formID, case: \.swapAndPayForm]?.applyScannedRequest(request, rawValue: address)
+                    state.path[id: formID, case: \.swapAndPayForm]?.applyScannedRequest(scanResult, rawValue: address)
                     return .none
                 }
 
                 var addressBookState = AddressBook.State.initial
-                addressBookState.address = request?.address ?? address
+                addressBookState.address = scanResult.request?.address ?? address
                 addressBookState.isNameFocused = true
                 addressBookState.context = .swap
                 state.path.append(.addressBookContact(addressBookState))

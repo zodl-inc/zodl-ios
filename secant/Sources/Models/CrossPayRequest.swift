@@ -144,32 +144,59 @@ struct CrossPayRequest: Equatable {
     }
 }
 
+enum CrossPayScanResult: Equatable {
+    case notPaymentRequest
+    case paymentRequest(CrossPayRequest)
+    case refusedPaymentRequest
+
+    var request: CrossPayRequest? {
+        guard case let .paymentRequest(request) = self else { return nil }
+        return request
+    }
+}
+
 enum CrossPayRequestParser {
-    static func parse(_ value: String) -> CrossPayRequest? {
+    /// Separates ordinary addresses from payment requests the SDK or app refuses. Pay needs all
+    /// three outcomes so a rejected URI cannot fall through to the legacy raw-address behavior.
+    static func classify(_ value: String) -> CrossPayScanResult {
         #if ZODL_INTERNAL || SECANT_TESTNET
-        guard let request = try? PaymentURIParser.parse(value) else { return nil }
+        guard let request = try? PaymentURIParser.parse(value) else {
+            return URLComponents(string: value)?.scheme == nil
+                ? .notPaymentRequest
+                : .refusedPaymentRequest
+        }
+
+        let parsedRequest: CrossPayRequest?
         switch request {
         case let .bitcoin(request):
-            return utxoRequest(request, chain: "btc")
+            parsedRequest = utxoRequest(request, chain: "btc")
         case let .ethereum(request):
-            return parseEthereum(request)
+            parsedRequest = parseEthereum(request)
         case let .litecoin(request):
-            return utxoRequest(request, chain: "ltc")
+            parsedRequest = utxoRequest(request, chain: "ltc")
         case let .solanaTransfer(request):
             let asset = request.splToken.map {
                 CrossPayRequest.AssetReference.contract(chain: "sol", chainID: nil, address: $0.value)
             } ?? .native(chain: "sol")
-            return CrossPayRequest(
+            parsedRequest = CrossPayRequest(
                 address: request.recipient.value,
                 amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
                 assetReference: asset
             )
         case .solanaTransaction:
-            return nil
+            parsedRequest = nil
         }
+
+        return parsedRequest.map(CrossPayScanResult.paymentRequest) ?? .refusedPaymentRequest
         #else
-        return nil
+        // Cross-pay is intentionally disabled in production builds for now. Preserve the legacy
+        // behavior there by treating every scan as raw address input.
+        return .notPaymentRequest
         #endif
+    }
+
+    static func parse(_ value: String) -> CrossPayRequest? {
+        classify(value).request
     }
 
     /// The SDK decodes `network` precisely so callers can reject non-mainnet requests. The app only

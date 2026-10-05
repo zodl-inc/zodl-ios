@@ -20292,6 +20292,24 @@
         }
       }
     },
+    "swapAndPay.crossPayRequestUnsupported" : {
+      "comment" : "Toast shown after scanning a payment request that the app deliberately refuses, such as a Solana interactive transaction link.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This payment request can't be used here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta solicitud de pago no se puede usar aquí."
+          }
+        }
+      }
+    },
     "swapAndPay.custom" : {
       "extractionState" : "manual",
       "localizations" : {

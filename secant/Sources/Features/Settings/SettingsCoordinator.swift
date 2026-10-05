@@ -225,7 +225,7 @@ extension Settings {
                         // not a Zcash address, which is the cross-chain-URI case. Contacts match by
                         // exact string equality, so storing the whole URI (query string included)
                         // yields an address that can never match a real one.
-                        addressBookState.address = CrossPayRequestParser.parse(address)?.address ?? address
+                        addressBookState.address = CrossPayRequestParser.classify(address).request?.address ?? address
                         addressBookState.isNameFocused = true
                         addressBookState.context = .settings
                         state.path.append(.addressBookContact(addressBookState))

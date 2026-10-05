@@ -35,7 +35,7 @@ import Testing
         state.address = "myOwnRefundAddress"
         state.selectedAsset = btcAsset
 
-        state.applyScannedRequest(CrossPayRequestParser.parse(Const.btcRequest), rawValue: Const.btcRequest)
+        state.applyScannedRequest(CrossPayRequestParser.classify(Const.btcRequest), rawValue: Const.btcRequest)
 
         #expect(state.address == Const.btcRequest)
         #expect(state.address != Const.btcAddress)
@@ -46,7 +46,7 @@ import Testing
         var state = payState()
         state.isSwapExperienceEnabled = true
 
-        state.applyScannedRequest(CrossPayRequestParser.parse(Const.btcRequest), rawValue: Const.btcRequest)
+        state.applyScannedRequest(CrossPayRequestParser.classify(Const.btcRequest), rawValue: Const.btcRequest)
 
         #expect(state.address == Const.btcRequest)
     }
@@ -56,7 +56,7 @@ import Testing
     @Test func aPlainAddressStillLandsInTheAddressField() {
         var state = payState()
 
-        state.applyScannedRequest(nil, rawValue: "bc1qplain")
+        state.applyScannedRequest(CrossPayRequestParser.classify("bc1qplain"), rawValue: "bc1qplain")
 
         #expect(state.address == "bc1qplain")
     }
@@ -65,7 +65,7 @@ import Testing
         var state = payState()
         state.selectedAsset = usdcAsset
 
-        state.applyScannedRequest(CrossPayRequestParser.parse(Const.btcRequest), rawValue: Const.btcRequest)
+        state.applyScannedRequest(CrossPayRequestParser.classify(Const.btcRequest), rawValue: Const.btcRequest)
 
         #expect(state.address == Const.btcAddress)
         #expect(state.selectedAsset == btcAsset)
@@ -85,7 +85,7 @@ import Testing
         state.amountText = "25"
 
         let request = "ethereum:\(Const.recipient)@137?value=1e18"
-        state.applyScannedRequest(CrossPayRequestParser.parse(request), rawValue: request)
+        state.applyScannedRequest(CrossPayRequestParser.classify(request), rawValue: request)
 
         #expect(state.address == "typedByHand")
         #expect(state.selectedAsset == usdcAsset)
@@ -93,16 +93,26 @@ import Testing
         #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayAssetUnsupported)))
     }
 
-    @Test func anUnparseableUriIsNotUnwrappedIntoTheAddressField() {
-        // A Solana interactive transaction link parses as a request the app rejects, so it reaches
-        // the form as a raw string -- `getQuote` would otherwise pass "solana:https://..." verbatim
-        // as the destination. It is still visibly wrong in the field rather than silently sent.
+    @Test func aRefusedPaymentRequestChangesNothingAndReportsWhy() {
         var state = payState()
+        let existingContact = Contact(address: "savedRecipient", name: "Saved recipient", chainId: "base")
+        state.address = "typedByHand"
+        state.selectedContact = existingContact
+        state.selectedAsset = usdcAsset
+        state.amountAssetText = "25"
+        state.amountUsdText = "25"
+        state.amountText = "25"
         let link = "solana:https://example.com/pay"
 
-        state.applyScannedRequest(CrossPayRequestParser.parse(link), rawValue: link)
+        state.applyScannedRequest(CrossPayRequestParser.classify(link), rawValue: link)
 
-        #expect(state.address == link)
+        #expect(state.address == "typedByHand")
+        #expect(state.selectedContact == existingContact)
+        #expect(state.selectedAsset == usdcAsset)
+        #expect(state.amountAssetText == "25")
+        #expect(state.amountUsdText == "25")
+        #expect(state.amountText == "25")
+        #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayRequestUnsupported)))
     }
 
     // MARK: - Amount handling
@@ -117,7 +127,7 @@ import Testing
         state.amountUsdText = "25"
 
         state.applyScannedRequest(
-            CrossPayRequestParser.parse(Const.btcRequestNoAmount),
+            CrossPayRequestParser.classify(Const.btcRequestNoAmount),
             rawValue: Const.btcRequestNoAmount
         )
 
@@ -136,7 +146,7 @@ import Testing
         state.amountUsdText = "25"
 
         state.applyScannedRequest(
-            CrossPayRequestParser.parse(Const.btcRequestNoAmount),
+            CrossPayRequestParser.classify(Const.btcRequestNoAmount),
             rawValue: Const.btcRequestNoAmount
         )
 
@@ -154,7 +164,7 @@ import Testing
         state.selectedAsset = ethAsset
 
         let request = "ethereum:\(Const.recipient)@1?value=1999999999999999999"
-        state.applyScannedRequest(CrossPayRequestParser.parse(request), rawValue: request)
+        state.applyScannedRequest(CrossPayRequestParser.classify(request), rawValue: request)
 
         #expect(state.amountAssetText == "1.99999999")
         #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayAmountRounded)))
@@ -173,7 +183,7 @@ import Testing
         state.amountText = "25"
 
         let request = "ethereum:\(Const.recipient)@1?value=1"
-        state.applyScannedRequest(CrossPayRequestParser.parse(request), rawValue: request)
+        state.applyScannedRequest(CrossPayRequestParser.classify(request), rawValue: request)
 
         #expect(state.address == "typedByHand")
         #expect(state.selectedContact == existingContact)
@@ -233,7 +243,7 @@ import Testing
             state.selectedAsset = btcAsset
 
             state.applyScannedRequest(
-                CrossPayRequestParser.parse(Const.btcRequest),
+                CrossPayRequestParser.classify(Const.btcRequest),
                 rawValue: Const.btcRequest
             )
 

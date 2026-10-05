@@ -1892,13 +1892,25 @@ extension SwapAndPay.State {
     /// amount agreeing with one another -- or not at all, so a request naming an asset the app
     /// can't pay never leaves a recipient address paired with a different asset than the one it
     /// was addressed to. Every rejection is reported; none of them are silent.
-    mutating func applyScannedRequest(_ request: CrossPayRequest?, rawValue: String) {
+    mutating func applyScannedRequest(_ scanResult: CrossPayScanResult, rawValue: String) {
         // Swap and Swap-to-ZEC bind `address` to a different field entirely: in Swap-to-ZEC it is
         // the user's own refund address, which `getQuote` sends as `refundTo`, so unwrapping a
         // payment request's recipient into it would point a refunded swap at a third party. Those
         // modes keep the raw-string behaviour they had before cross-pay parsing existed.
-        guard !isSwapExperienceEnabled, !isSwapToZecExperienceEnabled, let request else {
+        guard !isSwapExperienceEnabled, !isSwapToZecExperienceEnabled else {
             address = rawValue
+            return
+        }
+
+        let request: CrossPayRequest
+        switch scanResult {
+        case .notPaymentRequest:
+            address = rawValue
+            return
+        case let .paymentRequest(parsedRequest):
+            request = parsedRequest
+        case .refusedPaymentRequest:
+            $toast.withLock { $0 = .top(String(localizable: .swapAndPayCrossPayRequestUnsupported)) }
             return
         }
 

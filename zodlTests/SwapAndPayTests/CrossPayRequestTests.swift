@@ -248,14 +248,17 @@ import Testing
 
     @Test func plainAddressIsNotReinterpretedAsAPaymentRequest() {
         #expect(CrossPayRequestParser.parse("bc1qplain") == nil)
+        #expect(CrossPayRequestParser.classify("bc1qplain") == .notPaymentRequest)
     }
 
     @Test func unsupportedSchemeIsRejected() {
         #expect(CrossPayRequestParser.parse("near:alice.near") == nil)
+        #expect(CrossPayRequestParser.classify("near:alice.near") == .refusedPaymentRequest)
     }
 
     @Test func solanaInteractiveTransactionRequestIsRejected() {
         #expect(CrossPayRequestParser.parse("solana:https://example.com/pay") == nil)
+        #expect(CrossPayRequestParser.classify("solana:https://example.com/pay") == .refusedPaymentRequest)
     }
 
     @Test func unrecognisedEip681MethodIsRejected() {
