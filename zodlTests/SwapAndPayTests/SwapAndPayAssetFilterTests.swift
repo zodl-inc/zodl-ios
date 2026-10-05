@@ -25,7 +25,8 @@ import ComposableArchitecture
             }
         }
 
-        await store.send(.swapAndPay(.confirmOptInTapped)).finish()
+        store.send(.swapAndPay(.confirmOptInTapped))
+        await Task.yield()
 
         #expect(store.state.path.count == 1)
         #expect(catalogRequests.value == 0)
