@@ -265,6 +265,11 @@ extension Root {
 
             case .home(.transactionList(.transactionTapped(let txId))):
                 state.transactionsCoordFlowState = .initial
+                // MOB-2020: `.initial` starts See All loading, and only Root's `.loadingFinished`
+                // ends that now, once per answered fetch (`RootTransactions.swift`) -- so See All
+                // opens in the state Home's list is in rather than waiting for the next answer.
+                state.transactionsCoordFlowState.transactionsManagerState.isInvalidated =
+                    state.homeState.transactionListState.isInvalidated
                 state.transactionsCoordFlowState.transactionToOpen = txId
                 if let index = state.transactions.index(id: txId) {
                     state.transactionsCoordFlowState.transactionDetailsState.transaction = state.transactions[index]
@@ -274,6 +279,9 @@ extension Root {
 
             case .home(.seeAllTransactionsTapped):
                 state.transactionsCoordFlowState = .initial
+                // MOB-2020: same as `.transactionTapped` above.
+                state.transactionsCoordFlowState.transactionsManagerState.isInvalidated =
+                    state.homeState.transactionListState.isInvalidated
                 state.path = .transactionsCoordFlow
                 return .none
                 

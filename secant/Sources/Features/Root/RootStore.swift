@@ -541,8 +541,11 @@ struct Root {
         /// NEWLY selected account's `isInvalidated` flags and re-arm the poller using the PREVIOUS
         /// account's leftover `state.transactions`, marking the new account "loaded" while the old
         /// rows are still what is on screen. For the current account, the list keeps its previous
-        /// contents either way, but a failed fetch must still clear any list still showing its
-        /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
+        /// contents either way, and a failed fetch always re-arms the reconciliation poller from the
+        /// KEPT rows -- but MOB-2020: it clears any list still showing its loading placeholder only
+        /// once nothing further is pending for it (the retry budget spent, no coalesced follow-up);
+        /// while a delayed retry is still scheduled, the loading placeholder stays up rather than
+        /// flashing the empty state for however long the retry ladder takes -- see
         /// `RootTransactions.swift`.
         case transactionsFetchFailed(accountUUID: AccountUUID)
         /// MOB-1954 (review follow-up): sent by the delayed retry effect a failed history read

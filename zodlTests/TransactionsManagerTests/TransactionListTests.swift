@@ -24,7 +24,30 @@ import ComposableArchitecture
 
         #expect(store.state.transactionListHomePage.count == 5)
         #expect(store.state.latestTransactionId == "tx4") // 5th element
-        #expect(!store.state.isInvalidated)
+    }
+
+    // MARK: - loadingFinished / isInvalidated (MOB-2020)
+
+    /// `.transactionsUpdated` fires on every write to the shared `$transactions`, including the
+    /// one `accountSwitchedEffect` (`RootCoordinator.swift`) makes to CLEAR the array for the
+    /// account just left -- it must no longer end the loading state on its own, or Home renders
+    /// "Nothing here" before the newly-selected account's own fetch has answered. Only
+    /// `.loadingFinished`, which Root sends once that fetch actually answers, may clear it.
+    @MainActor @Test func transactionsUpdatedLeavesIsInvalidatedUntouchedAndLoadingFinishedClearsIt() async {
+        var state = TransactionList.State()
+        state.isInvalidated = true
+        let txs = (0..<3).map { tx(id: "tx\($0)") }
+        state.$transactions.withLock { $0 = IdentifiedArrayOf(uniqueElements: txs) }
+
+        let store = TestStore(initialState: state) { TransactionList() }
+        store.exhaustivity = .off
+
+        await store.send(.transactionsUpdated)
+        #expect(store.state.isInvalidated, "transactionsUpdated must not touch isInvalidated")
+
+        await store.send(.loadingFinished) {
+            $0.isInvalidated = false
+        }
     }
 
     @MainActor @Test func transactionTappedMarksUnreadReceivedAsRead() async {
