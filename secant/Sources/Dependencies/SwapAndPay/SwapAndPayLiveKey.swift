@@ -21,6 +21,9 @@ extension SwapAndPayClient: DependencyKey {
                     depositAddress
                 )
             },
+            cachedSwapAssets: {
+                Near1Click.liveValue.cachedSwapAssets()
+            },
             swapAssets: {
                 try await Near1Click.liveValue.swapAssets()
             },

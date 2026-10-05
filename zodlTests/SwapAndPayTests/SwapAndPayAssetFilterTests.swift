@@ -7,11 +7,31 @@
 //
 
 import Testing
+import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
 @testable @preconcurrency import ZcashLightClientKit
 
 @Suite(.serialized) struct SwapAndPayAssetFilterTests {
+    @MainActor @Test func optInNavigationLeavesRefreshToPresentedForm() async {
+        let catalogRequests = LockIsolated(0)
+        let store = Store(initialState: SwapAndPayCoordFlow.State()) {
+            SwapAndPayCoordFlow()
+        } withDependencies: {
+            $0.swapAndPay.cachedSwapAssets = { [] }
+            $0.swapAndPay.swapAssets = {
+                catalogRequests.withValue { $0 += 1 }
+                return []
+            }
+        }
+
+        store.send(.swapAndPay(.confirmOptInTapped))
+        await Task.yield()
+
+        #expect(store.state.path.count == 1)
+        #expect(catalogRequests.value == 0)
+    }
+
     @MainActor @Test func emptyAssetsIsNoOp() async {
         let store = makeStore(assets: [], searchTerm: "eth")
         store.exhaustivity = .off
@@ -51,7 +71,7 @@ import ComposableArchitecture
     @MainActor @Test func lastUsedDroppedAssetIsIgnoredAndFallsBackToBtc() async {
         let store = makeLoadStore(lastUsed: ["near.doge.doge"]) // dropped id, absent from `curatedAssets`
         store.exhaustivity = .off
-        await store.send(.swapAssetsLoaded(curatedAssets))
+        await store.send(.swapAssetsLoaded(curatedAssets, source: .live))
         await store.skipReceivedActions(strict: false)
 
         #expect(store.state.selectedAsset?.token.lowercased() == "btc")
@@ -70,7 +90,7 @@ import ComposableArchitecture
             swapAsset(chain: "near", token: "ZEC"),
             swapAsset(chain: "zec", token: "ZEC")
         ]
-        await store.send(.swapAssetsLoaded(assets))
+        await store.send(.swapAssetsLoaded(assets, source: .live))
         await store.skipReceivedActions(strict: false)
 
         #expect(store.state.zecAsset?.chain.lowercased() == "zec")
@@ -83,11 +103,42 @@ import ComposableArchitecture
     @MainActor @Test func lastUsedSupportedAssetStaysPreselected() async {
         let store = makeLoadStore(lastUsed: ["near.eth.eth"]) // supported id, present in `curatedAssets`
         store.exhaustivity = .off
-        await store.send(.swapAssetsLoaded(curatedAssets))
+        await store.send(.swapAssetsLoaded(curatedAssets, source: .live))
         await store.skipReceivedActions(strict: false)
 
         #expect(store.state.selectedAsset?.token.lowercased() == "eth")
         #expect(store.state.selectedAsset?.chain.lowercased() == "eth")
+    }
+
+    @MainActor @Test func freshCatalogReplacesSelectedCachedMetadataWithLivePrice() async {
+        let store = makeLoadStore(lastUsed: ["near.btc.btc"])
+        store.exhaustivity = .off
+        let cached: IdentifiedArrayOf<SwapAsset> = [swapAsset(chain: "btc", token: "BTC", price: 0)]
+        let refreshed: IdentifiedArrayOf<SwapAsset> = [swapAsset(chain: "btc", token: "BTC", price: 42_000)]
+
+        await store.send(.swapAssetsLoaded(cached, source: .cache))
+        await store.skipReceivedActions(strict: false)
+        #expect(store.state.selectedAsset?.usdPrice == 0)
+
+        await store.send(.swapAssetsLoaded(refreshed, source: .live))
+        await store.skipReceivedActions(strict: false)
+        #expect(store.state.selectedAsset?.usdPrice == 42_000)
+    }
+
+    @MainActor @Test func cachedMetadataKeepsNonCuratedSupportedAssetsVisible() async {
+        let store = makeLoadStore(lastUsed: [])
+        store.exhaustivity = .off
+        let cached: IdentifiedArrayOf<SwapAsset> = [
+            swapAsset(chain: "dash", token: "DASH", price: 0),
+            swapAsset(chain: "bch", token: "BCH", price: 0),
+            swapAsset(chain: "pol", token: "USDC", price: 0)
+        ]
+
+        await store.send(.swapAssetsLoaded(cached, source: .cache))
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.swapAssetsToPresent.map(\.id) == cached.map(\.id))
+        #expect(!store.state.hasLivePrices)
     }
 
     @MainActor
@@ -121,7 +172,7 @@ import ComposableArchitecture
         SwapAsset(provider: "near", chain: chainToken, token: chainToken, assetId: "\(chainToken)-id", usdPrice: 0, decimals: 18)
     }
 
-    private func swapAsset(chain: String, token: String) -> SwapAsset {
-        SwapAsset(provider: "near", chain: chain, token: token, assetId: "\(chain).\(token)-id", usdPrice: 1, decimals: 6)
+    private func swapAsset(chain: String, token: String, price: Decimal = 1) -> SwapAsset {
+        SwapAsset(provider: "near", chain: chain, token: token, assetId: "\(chain).\(token)-id", usdPrice: price, decimals: 6)
     }
 }

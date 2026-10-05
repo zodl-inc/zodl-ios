@@ -26,6 +26,8 @@ struct SwapAndPayClient {
     }
     
     var submitDepositTxId: @Sendable (String, String) async throws -> Void
+    /// Stable asset/network metadata restored from disk. Prices are deliberately zero until refreshed.
+    var cachedSwapAssets: @Sendable () -> IdentifiedArrayOf<SwapAsset> = { [] }
     /// Curated offering — only the assets a user can select/swap.
     var swapAssets: @Sendable () async throws -> IdentifiedArrayOf<SwapAsset>
     /// Full provider catalog — for resolving/rendering historical or exotic assets
