@@ -55,8 +55,8 @@ struct GiftCardRedeemView: View {
         case .ready(let spendable):
             readyScreen(spendable)
 
-        case let .pending(amount, _):
-            pendingScreen(amount)
+        case let .pending(amount, confirmationsNeeded):
+            pendingScreen(amount, confirmationsNeeded: confirmationsNeeded)
 
         case .empty:
             resultScreen(
@@ -217,7 +217,20 @@ extension GiftCardRedeemView {
         }
     }
 
-    @ViewBuilder func pendingScreen(_ amount: Zatoshi) -> some View {
+    func pendingDescription(_ amount: Zatoshi, confirmationsNeeded: Int?) -> String {
+        guard let confirmationsNeeded, confirmationsNeeded > 0 else {
+            return String(localizable: .giftCardPendingDesc(formatted(amount)))
+        }
+        return String(
+            localizable: .giftCardPendingDescConfirmations(
+                formatted(amount),
+                confirmationsNeeded,
+                GiftCardRedeem.State.minutes(forConfirmations: confirmationsNeeded)
+            )
+        )
+    }
+
+    @ViewBuilder func pendingScreen(_ amount: Zatoshi, confirmationsNeeded: Int?) -> some View {
         VStack(spacing: 0) {
             Spacer()
 
@@ -228,7 +241,7 @@ extension GiftCardRedeemView {
                 .multilineTextAlignment(.center)
                 .padding(.top, 16)
 
-            Text(localizable: .giftCardPendingDesc(formatted(amount)))
+            Text(pendingDescription(amount, confirmationsNeeded: confirmationsNeeded))
                 .zFont(size: 14, style: Design.Text.primary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(1.5)
@@ -241,10 +254,21 @@ extension GiftCardRedeemView {
             }
             .padding(.bottom, 12)
 
-            ZashiButton(String(localizable: .giftCardCheckAgain)) {
-                store.send(.retryTapped)
+            if store.isRechecking {
+                ZashiButton(
+                    String(localizable: .giftCardCheckAgain),
+                    accessoryView: ProgressView()
+                ) {
+                    store.send(.retryTapped)
+                }
+                .disabled(true)
+                .padding(.bottom, 24)
+            } else {
+                ZashiButton(String(localizable: .giftCardCheckAgain)) {
+                    store.send(.retryTapped)
+                }
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 24)
         }
         .padding(.vertical, 1)
         .screenHorizontalPadding()
