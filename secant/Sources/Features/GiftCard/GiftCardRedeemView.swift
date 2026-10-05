@@ -224,7 +224,7 @@ extension GiftCardRedeemView {
         return String(
             localizable: .giftCardPendingDescConfirmations(
                 formatted(amount),
-                confirmationsNeeded,
+                confirmations: confirmationsNeeded,
                 GiftCardRedeem.State.minutes(forConfirmations: confirmationsNeeded)
             )
         )

@@ -245,6 +245,45 @@ import ComposableArchitecture
         #expect(GiftCardRedeem.State.minutes(forConfirmations: 9) == 12)
     }
 
+    /// One confirmation reads in the singular and two in the plural, in English and Spanish.
+    @Test func pendingConfirmationsUseThePluralFormForTheCount() throws {
+        let english = "before it can be redeemed. We'll keep checking while this screen is open."
+        let spanish = "antes de poder canjearse. Seguiremos verificando mientras esta pantalla esté abierta."
+
+        let en1 = try pendingConfirmations(1, language: "en")
+        #expect(en1 == "0.1 ZEC needs 1 more confirmation (about 2 min) \(english)")
+        let en2 = try pendingConfirmations(2, language: "en")
+        #expect(en2 == "0.1 ZEC needs 2 more confirmations (about 3 min) \(english)")
+        let es1 = try pendingConfirmations(1, language: "es")
+        #expect(es1 == "0.1 ZEC necesita 1 confirmación más (unos 2 min) \(spanish)")
+        let es2 = try pendingConfirmations(2, language: "es")
+        #expect(es2 == "0.1 ZEC necesita 2 confirmaciones más (unos 3 min) \(spanish)")
+
+        // The screen's own lookup, in the app's current language, agrees with the catalog.
+        let language = try #require(Bundle.main.preferredLocalizations.first)
+        for confirmations in [1, 2] {
+            let expected = try pendingConfirmations(confirmations, language: language)
+            let shown = String(
+                localizable: .giftCardPendingDescConfirmations(
+                    "0.1 ZEC",
+                    confirmations: confirmations,
+                    GiftCardRedeem.State.minutes(forConfirmations: confirmations)
+                )
+            )
+            #expect(shown == expected)
+        }
+    }
+
+    /// `giftCard.pending.descConfirmations` from the app's `language` localization, formatted the way
+    /// `String(localizable:)` formats it.
+    private func pendingConfirmations(_ confirmations: Int, language: String) throws -> String {
+        let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
+        let bundle = try #require(Bundle(path: path))
+        let format = bundle.localizedString(forKey: "giftCard.pending.descConfirmations", value: nil, table: "Localizable")
+        let arguments: [CVarArg] = ["0.1 ZEC", confirmations, GiftCardRedeem.State.minutes(forConfirmations: confirmations)]
+        return String(format: format, locale: nil, arguments: arguments)
+    }
+
     @Test func emptyCardSaysSo() async {
         let store = makeStore(scenario: scenario(.empty))
 

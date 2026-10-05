@@ -8770,13 +8770,63 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ needs %2$lld more confirmations (about %3$lld min) before it can be redeemed. We'll keep checking while this screen is open."
+            "value" : "%@ needs %#@confirmations@ (about %3$lld min) before it can be redeemed. We'll keep checking while this screen is open."
+          },
+          "substitutions" : {
+            "confirmations" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg more confirmation"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg more confirmations"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ necesita %2$lld confirmaciones más (unos %3$lld min) antes de poder canjearse. Seguiremos verificando mientras esta pantalla esté abierta."
+            "value" : "%@ necesita %#@confirmations@ (unos %3$lld min) antes de poder canjearse. Seguiremos verificando mientras esta pantalla esté abierta."
+          },
+          "substitutions" : {
+            "confirmations" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg confirmaciones más"
+                    }
+                  },
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg confirmación más"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg confirmaciones más"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
