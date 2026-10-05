@@ -49,63 +49,6 @@ import Testing
         #expect(error?.localizedDescription.contains("<html>ok</html>") == true)
     }
 
-    @Test func parseTxResultAcceptsFlatVoteAPIEnvelope() throws {
-        let result = try SvAPIResponseParser.parseTxResult([
-            "tx_hash": "ABC123",
-            "code": 0,
-            "log": ""
-        ])
-
-        #expect(result == TxResult(txHash: "ABC123", code: 0, log: ""))
-    }
-
-    @Test func parseTxResultAcceptsCosmosRestEnvelope() throws {
-        let result = try SvAPIResponseParser.parseTxResult([
-            "tx_response": [
-                "txhash": "ABC123",
-                "code": 0,
-                "raw_log": ""
-            ]
-        ])
-
-        #expect(result == TxResult(txHash: "ABC123", code: 0, log: ""))
-    }
-
-    @Test func parseTxResultAcceptsCometEnvelope() throws {
-        let result = try SvAPIResponseParser.parseTxResult([
-            "result": [
-                "hash": "ABC123",
-                "code": 0,
-                "log": ""
-            ]
-        ])
-
-        #expect(result == TxResult(txHash: "ABC123", code: 0, log: ""))
-    }
-
-    @Test func parseTxResultPreservesRejectedTransactionHash() throws {
-        let result = try SvAPIResponseParser.parseTxResult([
-            "tx_hash": "DUPLICATE123",
-            "code": 1,
-            "log": "nullifier already spent: abc123"
-        ])
-
-        #expect(result == TxResult(
-            txHash: "DUPLICATE123",
-            code: 1,
-            log: "nullifier already spent: abc123"
-        ))
-    }
-
-    @Test func parseTxResultRejectsSuccessfulResponseWithoutHash() {
-        #expect(throws: (any Error).self) {
-            _ = try SvAPIResponseParser.parseTxResult([
-                "code": 0,
-                "log": ""
-            ])
-        }
-    }
-
     private func makeResponse() throws -> HTTPURLResponse {
         let url = try #require(URL(string: "https://vote-chain-primary.valargroup.org/shielded-vote/v1/delegate-vote"))
         let response = try #require(

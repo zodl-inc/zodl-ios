@@ -42,10 +42,14 @@ struct CurrencyConversionSetupView: View {
                 torSheetContent()
             }
             .sheet(isPresented: $store.isCurrencyPickerSheetPresented) {
-                currencyPickerSheetContent()
-                    .applySheetBackground()
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+                WithPerceptionTracking {
+                    currencyPickerSheetContent()
+                }
+                .task { await store.send(.currencyPickerTask).finish() }
+                .onDisappear { store.send(.currencyPickerDismissed) }
+                .applySheetBackground()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -212,46 +216,114 @@ struct CurrencyConversionSetupView: View {
             .padding(.top, 16)
             .padding(.bottom, 16)
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(CurrencyISO4217.allCases.enumerated()), id: \.element) { index, currency in
-                        Button {
-                            store.send(.currencyChanged(currency))
-                        } label: {
-                            HStack(spacing: 8) {
-                                if store.selectedCurrency.code == currency.code {
-                                    Text(currency.code)
-                                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
+            if !store.catalog.currencies.isEmpty {
+                currencyRows(store.catalog.currencies)
+            } else if store.catalog.hasError {
+                currencyCatalogError()
+            } else {
+                currencyCatalogSkeleton()
+            }
+        }
+    }
 
-                                    Text(currency.displayName)
-                                        .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                                } else {
-                                    Text(currency.code)
-                                        .zFont(.medium, size: 16, style: Design.Text.primary)
+    private func currencyRows(_ currencies: [CurrencyISO4217]) -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(currencies.enumerated()), id: \.element) { index, currency in
+                    Button {
+                        store.send(.currencyChanged(currency))
+                    } label: {
+                        HStack(spacing: 8) {
+                            if store.selectedCurrency.code == currency.code {
+                                Text(currency.code)
+                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
 
-                                    Text(currency.displayName)
-                                        .zFont(size: 16, style: Design.Text.primary)
-                                }
+                                Text(currency.displayName)
+                                    .zFont(.semiBold, size: 16, style: Design.Text.primary)
+                            } else {
+                                Text(currency.code)
+                                    .zFont(.medium, size: 16, style: Design.Text.primary)
 
-                                Spacer()
-
-                                Asset.Assets.chevronRight.image
-                                    .zImage(size: 20, style: Design.Text.quaternary)
+                                Text(currency.displayName)
+                                    .zFont(size: 16, style: Design.Text.primary)
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 20)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
 
-                        if index < CurrencyISO4217.allCases.count - 1 {
-                            Design.Surfaces.divider.color(colorScheme)
-                                .frame(height: 1)
-                                .padding(.horizontal, 20)
+                            Spacer()
+
+                            Asset.Assets.chevronRight.image
+                                .zImage(size: 20, style: Design.Text.quaternary)
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 20)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < currencies.count - 1 {
+                        Design.Surfaces.divider.color(colorScheme)
+                            .frame(height: 1)
+                            .padding(.horizontal, 20)
                     }
                 }
             }
+        }
+    }
+
+    private func currencyCatalogSkeleton() -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(0..<10, id: \.self) { index in
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                            .frame(width: 52, height: 18)
+
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+                            .frame(width: 160, height: 18)
+
+                        Spacer()
+                    }
+                    .shimmer(true)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 20)
+                    .accessibilityHidden(true)
+
+                    if index < 9 {
+                        Design.Surfaces.divider.color(colorScheme)
+                            .frame(height: 1)
+                            .padding(.horizontal, 20)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func currencyCatalogError() -> some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            Asset.Assets.Illustrations.cone.image
+                .zImage(size: 164, style: Design.Text.primary)
+                .padding(.bottom, 20)
+
+            Text(String(localizable: .currencyConversionCurrenciesError))
+                .zFont(size: 14, style: Design.Text.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+
+            ZashiButton(
+                String(localizable: .currencyConversionCurrenciesRetry),
+                type: .tertiary,
+                infinityWidth: false
+            ) {
+                store.send(.retryCurrenciesTapped)
+            }
+
+            Spacer()
         }
     }
 
