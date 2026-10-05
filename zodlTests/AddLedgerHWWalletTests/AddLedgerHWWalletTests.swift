@@ -140,6 +140,32 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MARK: - isShowingSearchingCopy (MOB-2020: Android `LedgerDeviceScanVM.pageCopy`)
+
+    @MainActor @Test func isShowingSearchingCopyIsTrueWhileScanningWithNoDevices() async {
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = true
+
+        #expect(state.isShowingSearchingCopy)
+    }
+
+    @MainActor @Test func isShowingSearchingCopyIsFalseOnceTheScanHasFailedOrTimedOutWithNoDevices() async {
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = false
+        state.issue = .noDevicesFound
+
+        #expect(!state.isShowingSearchingCopy)
+    }
+
+    @MainActor @Test func isShowingSearchingCopyIsFalseWhenDevicesAreListed() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = true
+        state.devices = [device]
+
+        #expect(!state.isShowingSearchingCopy)
+    }
+
     // MARK: - deviceTapped
 
     @MainActor @Test func deviceTappedOnlySelectsTheDevice() async {

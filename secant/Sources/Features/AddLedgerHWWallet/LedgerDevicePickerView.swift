@@ -31,8 +31,8 @@ struct LedgerDevicePickerView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 LedgerStepHeader(
-                    title: String(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle),
-                    subtitle: String(localizable: store.devices.isEmpty ? .ledgerDevicePickerSearchingDesc : .ledgerDevicePickerDesc)
+                    title: String(localizable: store.isShowingSearchingCopy ? .ledgerDevicePickerSearchingTitle : .ledgerDevicePickerTitle),
+                    subtitle: String(localizable: store.isShowingSearchingCopy ? .ledgerDevicePickerSearchingDesc : .ledgerDevicePickerDesc)
                 )
 
                 if store.devices.isEmpty {

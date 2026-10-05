@@ -70,6 +70,14 @@ struct AddLedgerHWWallet {
         /// list: there is a failure showing, and nothing else is already in flight or selected.
         var canRescan: Bool { issue != nil && !isScanning && !isConnecting && !isPairing && selectedDevice == nil }
 
+        /// Whether the picker should show "Searching for Devices" copy rather than the
+        /// no-selection copy: true only while the scan is still running and no device has turned
+        /// up yet, so a scan that has failed, timed out, or already found devices reads the same
+        /// as one that was never started (Android `LedgerDeviceScanVM.pageCopy`). The skeleton
+        /// rows themselves stay keyed off `devices.isEmpty` alone -- they already stop shimmering
+        /// once the scan stops.
+        var isShowingSearchingCopy: Bool { isScanning && devices.isEmpty }
+
         /// The paired account's address, derived from the pairing's UFVK the same way Keystone's
         /// `keystoneAddress` is — empty when there is no pairing yet or derivation fails.
         var pairedAddress: String {
