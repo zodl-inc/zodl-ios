@@ -102,6 +102,13 @@ struct AddLedgerHWWallet {
         case scan
     }
 
+    /// `connectDeviceTapped`'s outcome once its connect-then-pair effect and the approval-timeout
+    /// race (`LedgerIssue.racingApprovalTimeout`) have settled.
+    private enum ConnectAndPairOutcome: Sendable {
+        case paired(LedgerPairing)
+        case failed(issue: LedgerIssue, connectionLost: Bool)
+    }
+
     init() { }
 
     @Dependency(\.continuousClock) var clock
@@ -150,7 +157,7 @@ struct AddLedgerHWWallet {
                                     await send(.devicesUpdated(batch))
                                 }
                             } catch {
-                                await send(.scanFailed(LedgerIssue(error)))
+                                await send(.scanFailed(LedgerIssue(error, in: .connect)))
                             }
                             return true
                         }
@@ -214,25 +221,44 @@ struct AddLedgerHWWallet {
                 state.issue = nil
                 state.isIssueSheetPresented = false
                 return .run { send in
-                    do {
-                        try await ledgerClient.connect(device)
-                    } catch {
-                        // A connect failure always leaves the transport unusable, so it is
-                        // reported as needing a new connection even when
-                        // `LedgerIssue(error).retryNeedsNewConnection` would say otherwise for
-                        // this same underlying error.
-                        await send(.pairingFailed(issue: LedgerIssue(error), connectionLost: true))
-                        return
+                    let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectAndPairOutcome in
+                        do {
+                            try await ledgerClient.connect(device)
+                        } catch {
+                            // A connect failure always leaves the transport unusable, so it is
+                            // reported as needing a new connection even when
+                            // `LedgerIssue(error, in: .connect).retryNeedsNewConnection(in: .connect)`
+                            // would say otherwise for this same underlying error.
+                            return .failed(issue: LedgerIssue(error, in: .connect), connectionLost: true)
+                        }
+
+                        await send(.deviceConnected)
+
+                        do {
+                            let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
+                            return .paired(pairing)
+                        } catch {
+                            let issue = LedgerIssue(error, in: .connect)
+                            return .failed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .connect))
+                        }
                     }
-
-                    await send(.deviceConnected)
-
-                    do {
-                        let pairing = try await ledgerClient.pairAccount(Zip32AccountIndex(0))
+                    switch outcome {
+                    case let .completed(.paired(pairing)):
                         await send(.pairingSucceeded(pairing))
-                    } catch {
-                        let issue = LedgerIssue(error)
-                        await send(.pairingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection))
+                    case let .completed(.failed(issue, connectionLost)):
+                        await send(.pairingFailed(issue: issue, connectionLost: connectionLost))
+                    case .timedOut:
+                        // MOB-2020: the user's approval on the device must not keep enrollment
+                        // waiting forever -- the race above already cancelled the connect/pair
+                        // work, so only the cleanup is left: close the transport and report it
+                        // the same way any other lost connection is.
+                        await ledgerClient.disconnect()
+                        await send(.pairingFailed(issue: .disconnected, connectionLost: true))
+                    case .cancelled:
+                        // MOB-2020: the ceremony was torn down, not timed out --
+                        // nothing to clean up here; whichever teardown site cancelled this effect
+                        // already does its own.
+                        break
                     }
                 }
 
@@ -312,6 +338,25 @@ struct AddLedgerHWWallet {
                         do {
                             try walletStorage.importLedgerBinding(pairing.binding, uuid)
                         } catch {
+                            // MOB-2020: a binding that never got stored leaves the account
+                            // permanently unsignable, so the import is rolled back before the
+                            // failure is reported. Run in an unstructured `Task` and awaited by
+                            // its `.value` -- not `.cancellableValue` -- so the deletion still
+                            // finishes even if this effect is cancelled right now (e.g. the user
+                            // backs out while the write is in flight); Swift's structured
+                            // concurrency has no direct `NonCancellable` scope the way Kotlin's
+                            // `withContext(NonCancellable)` does.
+                            let rollback = Task {
+                                do {
+                                    try await sdkSynchronizer.deleteAccount(uuid)
+                                } catch {
+                                    // Best-effort: a failed rollback must not replace the binding
+                                    // failure reported below, and never logs the raw Rust error
+                                    // string (which could carry UFVK/binding/device-identity data).
+                                    LoggerProxy.warn("Ledger: rolling back an unbound account import failed (\(type(of: error)))")
+                                }
+                            }
+                            await rollback.value
                             await send(.accountImportFailed(error.localizedDescription))
                             return
                         }

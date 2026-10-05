@@ -48,6 +48,10 @@ struct LedgerSigning {
         /// failure. Read only by `failedPrimaryAction` below.
         var hasOpenedSettings = false
         var isConnectionLost = false
+        /// Set on a `.deviceMismatch` failure (the wrong Ledger connected) and cleared once the
+        /// user taps a device. While set, the next scan shows the picker even for a lone device
+        /// instead of auto-connecting to it -- that lone device may be the same wrong Ledger.
+        var isPickerRequired = false
         var request: SignRequest?
 
         /// `LedgerIssueSheetContent`'s primary button for the current `issue`, in the `.sign`
@@ -83,10 +87,28 @@ struct LedgerSigning {
         case stopScanning
     }
 
-    // Not `private`: the parent (`SendConfirmation`) cancels both directly from `.resetPCZTs`.
+    // Not `private`: the parent (`SendConfirmation`) cancels every case directly from
+    // `.resetPCZTs` and `.ledgerSignCancelTapped`.
     enum CancelId {
         case scan
         case sign
+        // MOB-2020: the empty-picker timeout below. Chained onto `.scan` (never on its own),
+        // so cancelling the scan -- every existing call site already does, and the parent's
+        // `.resetPCZTs`/`.ledgerSignCancelTapped` need no changes -- cancels this too, while a
+        // device reappearing can still cancel just this timer without touching the live scan.
+        case pickerTimer
+        // MOB-2020: `.connect`'s own race against the approval timeout. Tearing
+        // the ceremony down while it waits on the on-device "Open Zcash?" prompt must cancel this
+        // too, or a stale `.connectionFailed` from the old connect can land on a brand new
+        // attempt's `.connecting` phase (see every cancel site below and in SendConfirmationStore).
+        case connect
+    }
+
+    /// `.connect`'s outcome once its connect effect and the approval-timeout race
+    /// (`LedgerIssue.racingApprovalTimeout`) have settled.
+    private enum ConnectOutcome: Sendable {
+        case connected
+        case failed(LedgerIssue)
     }
 
     @Dependency(\.continuousClock) var clock
@@ -121,7 +143,7 @@ struct LedgerSigning {
                                     await send(.devicesUpdated(batch))
                                 }
                             } catch {
-                                await send(.scanFailed(LedgerIssue(error)))
+                                await send(.scanFailed(LedgerIssue(error, in: .sign)))
                             }
                             return true
                         }
@@ -144,16 +166,36 @@ struct LedgerSigning {
 
             case let .devicesUpdated(devices):
                 state.devices = devices
-                guard state.phase == .scanning else {
+                if state.phase == .scanning {
+                    // MOB-2020: a lone device auto-connects UNLESS the last session already met
+                    // the wrong Ledger -- that lone device may be the very same wrong one, so the
+                    // picker shows it instead of reconnecting silently.
+                    if devices.count == 1, let device = devices.first, !state.isPickerRequired {
+                        state.selectedDevice = device
+                        return .send(.connect)
+                    } else if !devices.isEmpty {
+                        state.phase = .selectingDevice
+                    }
                     return .none
                 }
-                if devices.count == 1, let device = devices.first {
-                    state.selectedDevice = device
-                    return .send(.connect)
-                } else if devices.count > 1 {
-                    state.phase = .selectingDevice
+                // MOB-2020: once the picker is showing, every device dropping out of range must
+                // not hang forever -- start the same no-devices timer the scan's own timeout
+                // uses, restarted (`cancelInFlight: true`) each time the list re-empties, and
+                // cancelled below the moment a device is back.
+                guard state.phase == .selectingDevice else {
+                    return .none
                 }
-                return .none
+                guard devices.isEmpty else {
+                    return .cancel(id: CancelId.pickerTimer)
+                }
+                return .run { send in
+                    do {
+                        try await clock.sleep(for: LedgerIssue.noDevicesFoundTimeout)
+                        await send(.scanTimedOut)
+                    } catch {}
+                }
+                .cancellable(id: CancelId.pickerTimer, cancelInFlight: true)
+                .cancellable(id: CancelId.scan)
 
             case let .scanFailed(issue):
                 // Same shape as `connectionFailed`: a scan-level failure (e.g. Bluetooth powered
@@ -162,12 +204,17 @@ struct LedgerSigning {
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = true
-                return .none
+                // The scan child task group cancels its OWN no-devices timer internally; the
+                // picker's empty-list timer, started later from `devicesUpdated`, is a separate
+                // effect and needs its own cancel.
+                return .cancel(id: CancelId.pickerTimer)
 
             case .scanTimedOut:
-                // Ignored once a device has already turned up, or once the scan is no longer the
-                // one running (it already failed, was cancelled, or already timed out once).
-                guard state.phase == .scanning, state.devices.isEmpty else { return .none }
+                // Ignored once a device has already turned up, or once neither timer's phase is
+                // still current (already failed, was cancelled, or already timed out once).
+                guard state.phase == .scanning || state.phase == .selectingDevice, state.devices.isEmpty else {
+                    return .none
+                }
                 state.phase = .failed
                 state.issue = .noDevicesFound
                 state.isConnectionLost = true
@@ -175,6 +222,9 @@ struct LedgerSigning {
 
             case let .deviceTapped(device):
                 state.selectedDevice = device
+                // A tap answers "is this the right Ledger" itself -- the flag's job (skip the
+                // silent one-device auto-connect) is done once the user has chosen explicitly.
+                state.isPickerRequired = false
                 return .send(.connect)
 
             case .connect:
@@ -185,34 +235,65 @@ struct LedgerSigning {
                 return .merge(
                     .cancel(id: CancelId.scan),
                     .run { send in
-                        do {
-                            try await ledgerClient.connect(device)
+                        // MOB-2020: caps the on-device "Open Zcash?" prompt this connect can wait
+                        // on -- never the on-device transaction review later in the ceremony,
+                        // which this effect has already finished by the time that starts.
+                        let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectOutcome in
+                            do {
+                                try await ledgerClient.connect(device)
+                                return .connected
+                            } catch {
+                                return .failed(LedgerIssue(error, in: .sign))
+                            }
+                        }
+                        switch outcome {
+                        case .completed(.connected):
                             await send(.deviceConnected)
-                        } catch {
-                            await send(.connectionFailed(LedgerIssue(error)))
+                        case let .completed(.failed(issue)):
+                            await send(.connectionFailed(issue))
+                        case .timedOut:
+                            // The race above already cancelled the connect; only the cleanup is
+                            // left, the same way `AddLedgerHWWalletStore.connectDeviceTapped`
+                            // handles its own cap winning.
+                            await ledgerClient.disconnect()
+                            await send(.connectionFailed(.disconnected))
+                        case .cancelled:
+                            // MOB-2020: the ceremony was torn down, not timed out --
+                            // nothing to clean up here; whichever teardown site cancelled this
+                            // effect already does its own.
+                            break
                         }
                     }
+                    .cancellable(id: CancelId.connect, cancelInFlight: true)
                 )
 
             case .deviceConnected:
-                // `.connect`'s effect is not cancellable, so a connect already in flight can still
-                // report back later -- a late result must not overwrite a ceremony that already
-                // failed (e.g. via `.pairingMissing`).
+                // `.connect`'s effect is cancellable now (`CancelId.connect`), but a result
+                // already in flight when a teardown's cancel takes effect can still land -- this
+                // guard is the second line of defence so a late result never overwrites a
+                // ceremony that already failed (e.g. via `.pairingMissing`).
                 guard state.phase == .connecting else { return .none }
                 state.phase = .connected
                 return .send(.startSigningIfReady)
 
             case let .connectionFailed(issue):
-                // Same non-cancellable-`connect` reasoning as `.deviceConnected` above: a late
-                // result must not overwrite a ceremony that already failed.
+                // Same reasoning as `.deviceConnected` above: a late result must not overwrite a
+                // ceremony that already failed, even though `.connect`'s effect is cancellable now.
                 guard state.phase == .connecting else { return .none }
                 // A connect failure always leaves the transport unusable, so it is reported as
-                // connection-lost regardless of what `LedgerIssue(error).retryNeedsNewConnection`
-                // would classify the underlying error as -- same rule AddLedgerHWWallet's own
-                // `connectDeviceTapped` follows.
+                // connection-lost regardless of what
+                // `LedgerIssue(error, in: .sign).retryNeedsNewConnection(in: .sign)` would classify
+                // the underlying error as -- same rule AddLedgerHWWallet's own `connectDeviceTapped`
+                // follows.
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = true
+                // MOB-2020: a wrong-Ledger connect (the SDK checked the device before the sign
+                // request even landed) gets the same picker-on-next-scan treatment signing's own
+                // `.deviceMismatch` does below.
+                if issue == .deviceMismatch {
+                    state.isPickerRequired = true
+                }
                 return .none
 
             case let .signRequested(request):
@@ -221,12 +302,12 @@ struct LedgerSigning {
 
             case .pairingMissing:
                 // No device is ever going to sign for this account -- fail the ceremony outright
-                // and cancel any scan/sign still in flight (the `connect` effect can't be
-                // cancelled; the guards above handle a late result from it).
+                // and cancel any scan/sign/connect still in flight (the guards above are still
+                // the backstop for a result already in flight when this cancel takes effect).
                 state.phase = .failed
                 state.issue = .notPaired
                 state.isConnectionLost = false
-                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign))
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.sign), .cancel(id: CancelId.connect))
 
             case .startSigningIfReady:
                 guard state.phase == .connected, let request = state.request else {
@@ -244,8 +325,8 @@ struct LedgerSigning {
                             }
                         }
                     } catch {
-                        let issue = LedgerIssue(error)
-                        await send(.signingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection))
+                        let issue = LedgerIssue(error, in: .sign)
+                        await send(.signingFailed(issue: issue, connectionLost: issue.retryNeedsNewConnection(in: .sign)))
                     }
                 }
                 .cancellable(id: CancelId.sign, cancelInFlight: true)
@@ -264,6 +345,11 @@ struct LedgerSigning {
                 state.phase = .failed
                 state.issue = issue
                 state.isConnectionLost = connectionLost
+                // MOB-2020: after the wrong Ledger, the NEXT scan must show the picker even for a
+                // lone device instead of silently reconnecting to what may be that same device.
+                if issue == .deviceMismatch {
+                    state.isPickerRequired = true
+                }
                 return .none
 
             case .openSettingsTapped:
@@ -285,7 +371,7 @@ struct LedgerSigning {
                 return .send(.startSigningIfReady)
 
             case .stopScanning:
-                return .cancel(id: CancelId.scan)
+                return .merge(.cancel(id: CancelId.scan), .cancel(id: CancelId.connect))
             }
         }
     }

@@ -37,9 +37,15 @@ extension LedgerBluetoothScanner: LedgerScanning {
 ///
 /// `connect` always closes a previously open transport before opening the new one, then makes
 /// sure the Zcash app is open on the device -- which may wait for the user to confirm it there --
-/// before returning. `pairAccount` throws ``LedgerClientError/notConnected`` when nothing is open;
-/// otherwise it leaves the transport open whether pairing succeeds or fails, so a failed pairing
-/// can be retried over the same connection.
+/// before returning, and remembers the device for `pairAccount`'s own reconnect below.
+/// `pairAccount` throws ``LedgerClientError/notConnected`` when nothing is open; otherwise it
+/// adopts the transport the SDK reports as live once pairing returns, whether it succeeded or
+/// failed -- the SDK's own read-before-export retry (MOB-2020) may have reconnected on a fresh
+/// transport, and a session still holding the old one would hand a dead transport to a later retry
+/// or signing -- but only when this session's own transport is still the one pairing started
+/// with (MOB-2020): a `disconnect()` (Close or Back) can run during that `await`,
+/// and adopting a transport reported live after that would put back one the session already tore
+/// down, so this closes it instead.
 ///
 /// `signPCZT` throws the same error when nothing is open. A signing failure leaves the transport
 /// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
@@ -55,7 +61,9 @@ actor LedgerSession {
 
     private nonisolated let makeScanner: @Sendable () -> any LedgerScanning
     private nonisolated let scannerBox = LockIsolated<(any LedgerScanning)?>(nil)
-    private let pair: @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing
+    private let pair: @Sendable (
+        any LedgerAPDUTransport, Zip32AccountIndex, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+    ) async -> (Result<LedgerPairing, Error>, any LedgerAPDUTransport)
     private nonisolated let sign: @Sendable (
         any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
     ) async throws -> Pczt
@@ -63,10 +71,15 @@ actor LedgerSession {
         any LedgerAPDUTransport, @escaping @Sendable () async throws -> any LedgerAPDUTransport
     ) async throws -> any LedgerAPDUTransport
     private var transport: (any LedgerAPDUTransport)?
+    /// The device `connect` last connected -- `pairAccount`'s own reconnect closure targets it
+    /// again, the same device, never a different one a later scan might turn up.
+    private var connectedDevice: LedgerBluetoothDevice?
 
     init(
         makeScanner: @escaping @Sendable () -> any LedgerScanning,
-        pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing,
+        pair: @escaping @Sendable (
+            any LedgerAPDUTransport, Zip32AccountIndex, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+        ) async -> (Result<LedgerPairing, Error>, any LedgerAPDUTransport),
         sign: @escaping @Sendable (
             any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
         ) async throws -> Pczt,
@@ -101,6 +114,7 @@ actor LedgerSession {
             transport = nil
             await previous.close()
         }
+        connectedDevice = device
         LoggerProxy.event("Ledger: connecting to a \(device.model.productName)")
         let opened: any LedgerAPDUTransport
         do {
@@ -108,7 +122,14 @@ actor LedgerSession {
             LoggerProxy.event("Ledger: connected")
         } catch {
             LoggerProxy.warn("Ledger: connect failed (\(Self.errorTag(error)))")
-            throw error
+            // MOB-2020: tag a failure of THIS step -- the raw Bluetooth bond, before any command
+            // reached the device -- so LedgerIssue.init(_:in:) can tell it apart from a failure
+            // once the link is up. A cancellation is not a connection failure to report; it
+            // propagates as itself.
+            if error is CancellationError {
+                throw error
+            }
+            throw LedgerBluetoothConnectFailure(underlying: error)
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
@@ -126,15 +147,35 @@ actor LedgerSession {
     }
 
     func pairAccount(_ zip32AccountIndex: Zip32AccountIndex) async throws -> LedgerPairing {
-        guard let transport else {
+        guard let transport, let device = connectedDevice else {
             throw LedgerClientError.notConnected
         }
         LoggerProxy.event("Ledger: pairing account \(zip32AccountIndex.index)")
-        do {
-            let pairing = try await pair(transport, zip32AccountIndex)
+        let (result, liveTransport) = await pair(transport, zip32AccountIndex) {
+            try await self.scanner().connect(to: device, timeout: Self.connectTimeout)
+        }
+        // The SDK's own read-before-export retry may have reconnected on a fresh transport --
+        // adopt whatever it reports as live first, whether pairing succeeded or failed, so a
+        // session still holding the old (possibly SDK-closed) one never hands it to a later retry
+        // or signing. But only when this session's own transport is still the one `pair` was
+        // called with -- a `disconnect()` (Close or Back) can run during the `await` above, and
+        // adopting the transport it reports live then would put back one the session already
+        // tore down. Compared by reference, the same way `dropTransport(ifStillOpen:)` below
+        // does: `LedgerAPDUTransport` is not class-bound, but both the live and fake conformances
+        // are reference types.
+        if let current = self.transport, current as AnyObject === transport as AnyObject {
+            self.transport = liveTransport
+        } else if liveTransport as AnyObject !== transport as AnyObject {
+            // Not the transport this call started with and not already closed by that
+            // disconnect() (which would make this a redundant double close) -- close it so it
+            // isn't leaked open and orphaned.
+            await liveTransport.close()
+        }
+        switch result {
+        case let .success(pairing):
             LoggerProxy.event("Ledger: paired (Zcash app \(pairing.appVersion))")
             return pairing
-        } catch {
+        case let .failure(error):
             LoggerProxy.warn("Ledger: pairing failed (\(Self.errorTag(error)))")
             throw error
         }
@@ -261,14 +302,23 @@ extension LedgerClient: DependencyKey {
             // The SDK logs connection stages, frame counts and error kinds only — never command,
             // reply, key or address bytes — so its debug log is safe to keep on.
             makeScanner: { LedgerBluetoothScanner(logger: OSLogger(logLevel: .debug, category: LoggerConstants.ledgerLogs)) },
-            pair: { transport, zip32AccountIndex in
+            pair: { transport, zip32AccountIndex, reconnect in
                 let device = LedgerDevice(transport: transport, networkType: networkType)
-                let pairing = try await device.pairAccount(zip32AccountIndex: zip32AccountIndex)
-                return LedgerPairing(
-                    ufvk: pairing.ufvk.stringEncoded,
-                    binding: pairing.binding,
-                    appVersion: pairing.appVersion.description
-                )
+                do {
+                    let pairing = try await device.pairAccount(
+                        zip32AccountIndex: zip32AccountIndex,
+                        readTimeout: LedgerDevice.defaultPairingReadTimeout,
+                        reconnect: reconnect
+                    )
+                    let live = LedgerPairing(
+                        ufvk: pairing.ufvk.stringEncoded,
+                        binding: pairing.binding,
+                        appVersion: pairing.appVersion.description
+                    )
+                    return (.success(live), await device.transport)
+                } catch {
+                    return (.failure(error), await device.transport)
+                }
             },
             sign: { transport, pczt, accountUUID, binding, progress in
                 try await sdkSynchronizer.signPCZTWithLedger(pczt, accountUUID, binding, transport, progress)

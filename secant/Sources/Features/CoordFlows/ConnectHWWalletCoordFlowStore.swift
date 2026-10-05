@@ -47,7 +47,9 @@ struct ConnectHWWalletCoordFlow {
         /// soon as pairing succeeds, or by its `.ledgerDeviceReady(.accountAlreadyImported(_))`
         /// arm, the import-time backstop for a collision the pre-import check missed. Deliberately
         /// left set once the sheet is dismissed via `goToExistingAccountTapped`, since Root reads
-        /// it from here.
+        /// it from here. MOB-2020 (Android b013b7c2, Rebound): that same arm also sets this,
+        /// without ever presenting the sheet, when the matched account had no stored binding and
+        /// this pairing's binding was just stored onto it instead -- see `ledgerPairingRebound`.
         var alreadyAddedAccount: WalletAccount? = nil
         var birthday: BlockHeight? = nil
         var isAccountAlreadyAddedSheetPresented = false
@@ -72,12 +74,22 @@ struct ConnectHWWalletCoordFlow {
         case closeHelpSheetTapped
         case contactSupportTapped
         case goToExistingAccountTapped
+        /// MOB-2020 (Android b013b7c2, Rebound): the coordinator's `.ledgerDevicePicker(.pairingSucceeded)`
+        /// arm found a matched account with a stored binding already, or this pairing's own binding
+        /// failed to store onto an unbound match -- either way, present "Account Already Added" the
+        /// way that arm always has.
+        case ledgerPairingAlreadyAdded(WalletAccount)
+        /// MOB-2020 (Android b013b7c2, Rebound): the matched account had no stored binding, and the
+        /// coordinator's own effect just stored this pairing's binding onto it -- leave exactly the
+        /// way `goToExistingAccountTapped` does, with no sheet ever shown.
+        case ledgerPairingRebound(WalletAccount)
         case path(StackActionOf<Path>)
         case sendSupportMailFinished
         case shareFinished
     }
 
     @Dependency(\.audioServices) var audioServices
+    @Dependency(\.walletStorage) var walletStorage
 
     init() { }
 
@@ -111,6 +123,16 @@ struct ConnectHWWalletCoordFlow {
                 // Root reads it off `connectHWWalletCoordFlowState` once the flow closes, to know
                 // which account to switch to (RootCoordinator.swift).
                 state.isAccountAlreadyAddedSheetPresented = false
+                return leaveFlowThroughVendorInstructions(state: state)
+
+            case let .ledgerPairingAlreadyAdded(account):
+                state.alreadyAddedAccount = account
+                state.isAccountAlreadyAddedSheetPresented = true
+                return .none
+
+            case let .ledgerPairingRebound(account):
+                // Same as `goToExistingAccountTapped` above, minus ever presenting the sheet.
+                state.alreadyAddedAccount = account
                 return leaveFlowThroughVendorInstructions(state: state)
 
             case .contactSupportTapped:

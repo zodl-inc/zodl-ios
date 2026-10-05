@@ -46,6 +46,9 @@ import ComposableArchitecture
         let store = TestStore(initialState: LedgerSigning.State()) {
             LedgerSigning()
         } withDependencies: {
+            // MOB-2020: `.connect` now races this against the approval-timeout cap; un-advanced,
+            // the cap never wins, and the auto-connect below is unaffected by it.
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
             $0.ledgerClient.connect = { _ in }
         }
@@ -65,6 +68,44 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MOB-2020: before this commit, a connect that never answered (the on-device "Open Zcash?"
+    // prompt going unanswered) left the sheet on `.connecting` indefinitely -- the
+    // approval-timeout cap now wins after five minutes and disconnects.
+    @MainActor @Test func connectTimesOutAfterFiveMinutesAndDisconnects() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        let disconnectCallCount = LockIsolated(0)
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            // Never answers -- the on-device "Open Zcash?" prompt is what the cap is timing.
+            $0.ledgerClient.connect = { _ in try await Task.sleep(for: .seconds(999)) }
+            $0.ledgerClient.disconnect = { disconnectCallCount.withValue { $0 += 1 } }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.approvalTimeout)
+        await store.receive(.connectionFailed(.disconnected)) {
+            $0.phase = .failed
+            $0.issue = .disconnected
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+
+        #expect(disconnectCallCount.value == 1)
+    }
+
     @MainActor @Test func severalDevicesWaitForATap() async {
         let deviceA = Self.device(name: "Nano X A")
         let deviceB = Self.device(name: "Nano X B")
@@ -79,6 +120,65 @@ import ComposableArchitecture
         await store.send(.devicesUpdated([deviceA, deviceB])) {
             $0.devices = [deviceA, deviceB]
             $0.phase = .selectingDevice
+        }
+        await store.finish()
+    }
+
+    // MOB-2020: before this commit, every device dropping out of range while the picker was up
+    // left `phase == .selectingDevice` forever -- there was no timer at all once past `.scanning`.
+    @MainActor @Test func anEmptiedPickerFailsWithNoDevicesAfterTheTimeout() async throws {
+        let device = Self.device(name: "Nano X")
+        let clock = SignalledClock()
+        var state = LedgerSigning.State()
+        state.phase = .selectingDevice
+        state.devices = [device]
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+        }
+
+        await store.send(.devicesUpdated([])) {
+            $0.devices = []
+        }
+        // The timer's sleep is parked (and only then recorded) before advancing to it, so this
+        // advance is guaranteed to resume the timer and not race its start.
+        await clock.sleepDeadlines.countReached(1)
+        clock.advance(by: LedgerIssue.noDevicesFoundTimeout)
+        await store.receive(\.scanTimedOut) {
+            $0.phase = .failed
+            $0.issue = .noDevicesFound
+            $0.isConnectionLost = true
+        }
+        await store.finish()
+    }
+
+    @MainActor @Test func aDeviceAppearingBeforeThePickerTimeoutCancelsIt() async throws {
+        let deviceA = Self.device(name: "Nano X A")
+        let deviceB = Self.device(name: "Nano X B")
+        let clock = SignalledClock()
+        var state = LedgerSigning.State()
+        state.phase = .selectingDevice
+        state.devices = [deviceA]
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+        }
+
+        await store.send(.devicesUpdated([])) {
+            $0.devices = []
+        }
+        await clock.sleepDeadlines.countReached(1)
+
+        // The device is back before the timer fires -- this cancels it instead of letting the
+        // picker fail out from under the user.
+        await store.send(.devicesUpdated([deviceA, deviceB])) {
+            $0.devices = [deviceA, deviceB]
         }
         await store.finish()
     }
@@ -119,8 +219,9 @@ import ComposableArchitecture
         let request = try Self.signRequest()
         let signPCZTCallCount = LockIsolated(0)
         // MOB-2020: `.deviceConnected` is now guarded on `phase == .connecting` (a late result
-        // from the non-cancellable `connect` effect must not resurrect a ceremony that already
-        // failed), so this starts mid-connect rather than at the default `.scanning`.
+        // from `connect`'s effect -- cancellable via `CancelId.connect` now, but a result already
+        // in flight when a teardown cancels it can still land -- must not resurrect a ceremony
+        // that already failed), so this starts mid-connect rather than at the default `.scanning`.
         var initialState = LedgerSigning.State()
         initialState.phase = .connecting
         let store = TestStore(initialState: initialState) {
@@ -247,8 +348,15 @@ import ComposableArchitecture
         #expect(signPCZTCallCount.value == 2)
     }
 
-    @MainActor @Test func aLockedLedgerRetriesOnTheOpenConnection() async throws {
+    // MOB-2020: before this commit, `.deviceLocked` while signing reused `isConnectionLost ==
+    // false` (same as `.connect`) and Try again went straight back to signing on the old link --
+    // never calling `ledgerClient.connect` again, so a device that needed the Zcash app reopened
+    // could never get there. `retryNeedsNewConnection(in: .sign)` now says otherwise for
+    // `.deviceLocked`, so Try again rescans and reconnects instead.
+    @MainActor @Test func aLockedLedgerWhileSigningReconnectsOnTryAgain() async throws {
+        let device = Self.device(name: "Nano X")
         let request = try Self.signRequest()
+        let connectCallCount = LockIsolated(0)
         let signPCZTCallCount = LockIsolated(0)
         var state = LedgerSigning.State()
         state.phase = .connected
@@ -257,7 +365,15 @@ import ComposableArchitecture
         let store = TestStore(initialState: state) {
             LedgerSigning()
         } withDependencies: {
+            $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.yield([device])
+                    continuation.finish()
+                }
+            }
             $0.ledgerClient.signPCZT = { _, _, _ in
                 signPCZTCallCount.withValue { $0 += 1 }
                 return AsyncThrowingStream { continuation in
@@ -271,26 +387,42 @@ import ComposableArchitecture
         await store.send(.startSigningIfReady) {
             $0.phase = .signing(.identifyingDevice)
         }
-        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: false)) {
+        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: true)) {
             $0.phase = .failed
             $0.issue = .deviceLocked
-            $0.isConnectionLost = false
+            $0.isConnectionLost = true
         }
 
-        // Try again resumes signing on the still-open connection -- no rescan.
+        // Try again now rescans -- a fresh connection reopens the Zcash app -- instead of
+        // retrying on the held transport.
         await store.send(.tryAgainTapped) {
-            $0.phase = .connected
+            $0.devices = []
+            $0.selectedDevice = nil
+            $0.phase = .scanning
+        }
+        await store.receive(\.startScanning) {
             $0.issue = nil
+        }
+        await store.receive(\.devicesUpdated) {
+            $0.devices = [device]
+            $0.selectedDevice = device
+        }
+        await store.receive(\.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
         }
         await store.receive(\.startSigningIfReady) {
             $0.phase = .signing(.identifyingDevice)
         }
-        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: false)) {
+        await store.receive(.signingFailed(issue: .deviceLocked, connectionLost: true)) {
             $0.phase = .failed
             $0.issue = .deviceLocked
         }
         await store.finish()
 
+        #expect(connectCallCount.value == 1)
         #expect(signPCZTCallCount.value == 2)
     }
 
@@ -335,9 +467,13 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @MainActor @Test func aWrongLedgerRetryScansAgain() async throws {
+    // MOB-2020: before this commit, a lone device on the retry scan auto-connected silently even
+    // right after that same device was rejected as the wrong Ledger. Now the picker shows it
+    // instead, and only an explicit tap connects (and clears the flag).
+    @MainActor @Test func aWrongLedgerRetryShowsThePickerForALoneDeviceAndTappingItConnects() async throws {
         let device = Self.device(name: "Nano X")
         let request = try Self.signRequest()
+        let connectCallCount = LockIsolated(0)
         var state = LedgerSigning.State()
         state.devices = [device]
         state.selectedDevice = device
@@ -349,6 +485,13 @@ import ComposableArchitecture
         } withDependencies: {
             $0.continuousClock = SignalledClock()
             $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in connectCallCount.withValue { $0 += 1 } }
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.yield([device])
+                    continuation.finish()
+                }
+            }
             $0.ledgerClient.signPCZT = { _, _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.finish(throwing: ZcashError.ledgerDeviceMismatch)
@@ -363,6 +506,7 @@ import ComposableArchitecture
             $0.phase = .failed
             $0.issue = .deviceMismatch
             $0.isConnectionLost = true
+            $0.isPickerRequired = true
         }
 
         await store.send(.tryAgainTapped) {
@@ -373,7 +517,37 @@ import ComposableArchitecture
         await store.receive(\.startScanning) {
             $0.issue = nil
         }
+        // The retry scan finds the very same lone device, but the wrong-Ledger flag keeps it
+        // from auto-connecting -- the picker shows it instead.
+        await store.receive(\.devicesUpdated) {
+            $0.devices = [device]
+            $0.phase = .selectingDevice
+        }
+        #expect(connectCallCount.value == 0)
+
+        // Tapping the device answers "is this the right Ledger" -- it clears the flag and
+        // connects.
+        await store.send(.deviceTapped(device)) {
+            $0.selectedDevice = device
+            $0.isPickerRequired = false
+        }
+        await store.receive(\.connect) {
+            $0.phase = .connecting
+        }
+        await store.receive(\.deviceConnected) {
+            $0.phase = .connected
+        }
+        await store.receive(\.startSigningIfReady) {
+            $0.phase = .signing(.identifyingDevice)
+        }
+        await store.receive(.signingFailed(issue: .deviceMismatch, connectionLost: true)) {
+            $0.phase = .failed
+            $0.issue = .deviceMismatch
+            $0.isPickerRequired = true
+        }
         await store.finish()
+
+        #expect(connectCallCount.value == 1)
     }
 
     @MainActor @Test func aNotSignableTransactionIsNotRestartable() async throws {
@@ -448,10 +622,55 @@ import ComposableArchitecture
         }
         #expect(store.state.failedPrimaryAction == .none)
 
-        // A late result from the non-cancellable `connect` effect must not overwrite the ceremony
-        // that already failed above -- both are no-ops now that `phase` is `.failed`.
+        // A late result from `connect`'s effect must not overwrite the ceremony that already
+        // failed above -- both are no-ops now that `phase` is `.failed` (the effect is
+        // cancellable via `CancelId.connect` now, but this guard is still the backstop for a
+        // result already in flight when `.pairingMissing` cancels it).
         await store.send(.deviceConnected)
         await store.send(.connectionFailed(.disconnected))
+        await store.finish()
+    }
+
+    // MOB-2020: without this fix, `.connect`'s effect had no cancel id, so
+    // tearing the ceremony down while it waited on the on-device "Open Zcash?" prompt left it
+    // running -- it could still report back later and flip a brand new attempt's `.connecting`
+    // phase to `.failed` out from under it. `.stopScanning` is one of the teardown sites
+    // `CancelId.connect` now covers (SendConfirmation's own Cancel Transaction button cancels the
+    // same id directly, from outside this reducer).
+    @MainActor @Test func stoppingTheCeremonyCancelsAnInFlightConnect() async throws {
+        let device = Self.device(name: "Nano X")
+        var state = LedgerSigning.State()
+        state.devices = [device]
+        state.selectedDevice = device
+        let connectStarted = SignalledRecords<Void>()
+        let clock = SignalledClock()
+
+        let store = TestStore(initialState: state) {
+            LedgerSigning()
+        } withDependencies: {
+            $0.continuousClock = clock
+            $0.ledgerClient = .noOp
+            $0.ledgerClient.connect = { _ in
+                connectStarted.recordCall()
+                // Parked on the on-device prompt -- never resolves on its own, so only cancelling
+                // the effect itself can end this.
+                try await Task.sleep(for: .seconds(999))
+            }
+        }
+
+        await store.send(.connect) {
+            $0.phase = .connecting
+        }
+        await connectStarted.countReached(1)
+        // The approval-timeout race's timer sleep is parked (and only then recorded) before
+        // stopping, so the stop below is guaranteed to land on a settled race, not one still
+        // starting.
+        await clock.sleepDeadlines.countReached(1)
+
+        await store.send(.stopScanning)
+
+        // No `.connectionFailed` ever arrives -- exhaustive `finish()` would catch an unreceived
+        // action -- and `finish()` itself fails if the connect effect is still running.
         await store.finish()
     }
 

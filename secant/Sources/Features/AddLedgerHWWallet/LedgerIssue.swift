@@ -22,7 +22,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     case bluetoothOff
     /// Not in Figma; draft copy.
     case bluetoothUnsupported
-    /// Figma "No Devices Found."
+    /// Figma "No Devices Found." Only ever produced by the scan itself timing out
+    /// (`AddLedgerHWWalletStore`/`LedgerSigningStore`'s `scanTimedOut`) -- never by `init(_:in:)`,
+    /// since a connect attempt's own "no such device" failure now reads as `.pairingFailed` or
+    /// `.disconnected` (MOB-2020, Android b013b7c2): `ledgerDeviceNotFound` is a connect-time
+    /// error, not something the scan (`LedgerBluetoothScanner.devices()`) itself ever throws.
     case noDevicesFound
     /// Figma "Unlock Your Ledger."
     case deviceLocked
@@ -69,12 +73,82 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
     }
 
     /// How long a scan may run without finding any Ledger before `.noDevicesFound` is shown.
-    static let noDevicesFoundTimeout: Duration = .seconds(20)
+    static let noDevicesFoundTimeout: Duration = .seconds(30)
+
+    /// How long the user's approval on the device may run before a flow gives up waiting for it:
+    /// `AddLedgerHWWalletStore.connectDeviceTapped`'s whole connect-then-pair effect, and
+    /// `LedgerSigningStore`'s connect effect (the on-device "Open Zcash?" prompt) -- never the
+    /// on-device transaction review itself, which has no cap.
+    static let approvalTimeout: Duration = .seconds(300)
+
+    /// One child task's outcome from `racingApprovalTimeout`: `work` finished on its own, the cap
+    /// won first, or the caller's own task was cancelled while the race was still running.
+    enum ApprovalRace<Success: Sendable>: Sendable {
+        case completed(Success)
+        case timedOut
+        /// MOB-2020: distinct from `.timedOut` -- a cancelled wait is not a timed-out
+        /// one, and a caller must not run its time-cap cleanup (disconnect, a "Disconnected" send)
+        /// for what was really a cancel, e.g. the user cancelling mid-approval-wait.
+        case cancelled
+    }
+
+    /// Races `work` against `approvalTimeout` on `clock`, sibling child tasks of one task group --
+    /// the same shape `AddLedgerHWWalletStore.startScanning` already uses for its no-devices timer.
+    /// Whichever finishes first cancels the other, so the caller's own effect cancellation cancels
+    /// both. `work` must report its own outcome through its return value rather than by sending a
+    /// terminal action itself: once the cap wins, `work`'s task is only cancelled, not stopped
+    /// synchronously, so a send from its losing side could still land after the timeout's own send
+    /// already has, overwriting it.
+    ///
+    /// MOB-2020: cancelling the CALLER's task (e.g. `LedgerSigning`'s `.connect`
+    /// effect, torn down by Cancel Transaction) cancels both children at once, and `work` is free
+    /// to catch that cancellation and still "complete" on its own terms (e.g. `.connect`'s own
+    /// `do`/`catch` around `ledgerClient.connect` turns a `CancellationError` into a completed
+    /// `.failed(...)`) -- so which child `group.next()` picks up first is a genuine race, not
+    /// something `work`'s own behaviour can be relied on to settle. The caller's own
+    /// `Task.isCancelled`, checked once the race has settled, is what actually tells a cancel apart
+    /// from a real timeout or a real completion.
+    static func racingApprovalTimeout<Success: Sendable>(
+        clock: any Clock<Duration>,
+        work: @escaping @Sendable () async -> Success
+    ) async -> ApprovalRace<Success> {
+        await withTaskGroup(of: ApprovalRace<Success>.self) { group in
+            group.addTask { .completed(await work()) }
+            group.addTask {
+                do {
+                    try await clock.sleep(for: approvalTimeout)
+                    return .timedOut
+                } catch {
+                    return .cancelled
+                }
+            }
+            let outcome = await group.next() ?? .timedOut
+            group.cancelAll()
+            return Task.isCancelled ? .cancelled : outcome
+        }
+    }
 
     /// Classifies a Ledger failure by its `ZcashError`/`LedgerClientError` case only, never by
-    /// message text. Never produces `.accountAlreadyAdded`; `LedgerAccountCollision` classifies
-    /// import collisions itself.
-    init(_ error: Error) {
+    /// message text, for the screen showing it in `context`. Never produces `.accountAlreadyAdded`;
+    /// `LedgerAccountCollision` classifies import collisions itself.
+    ///
+    /// MOB-2020 (Android b013b7c2): a `LedgerBluetoothConnectFailure` is unwrapped first, marking
+    /// that the failure came from `LedgerSession.connect`'s own Bluetooth step -- the phone was
+    /// still bonding to the device, before any command reached it -- rather than from the
+    /// open-Zcash-app step after the link was up, or from signing. `ledgerDeviceNotFound`,
+    /// `ledgerBluetoothConnectionFailed` and `ledgerTimeout` then read as `.pairingFailed` only
+    /// for that bonding-phase failure in `.connect`; every other case (the same three kinds once
+    /// the link is up, or any context while signing) reads as `.disconnected`, the device having
+    /// been reachable at some point. `ledgerBluetoothPairingRefused` is always `.pairingFailed`
+    /// regardless of context or wrapping -- the one refusal the OS-level Bluetooth pairing dialog
+    /// itself can raise.
+    init(_ error: Error, in context: Context) {
+        var error = error
+        var isBluetoothConnectFailure = false
+        if let wrapped = error as? LedgerBluetoothConnectFailure {
+            error = wrapped.underlying
+            isBluetoothConnectFailure = true
+        }
         switch error {
         case ZcashError.ledgerBluetoothUnauthorized:
             self = .bluetoothUnauthorized
@@ -82,12 +156,17 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .bluetoothOff
         case ZcashError.ledgerBluetoothUnsupported:
             self = .bluetoothUnsupported
-        case ZcashError.ledgerDeviceNotFound:
-            self = .noDevicesFound
+        case ZcashError.ledgerWrongApp(0):
+            // Status word 0 is the SDK's sentinel for a timed-out app switch -- neither
+            // `LedgerErrors.swift`'s FFI fallback nor `LedgerZcashApp`'s app-switch poll ever
+            // throws it for a real reply, since no device sends a genuine 0x0000 status word.
+            // The device is unlocked, just too slow to reconnect, so this reads as a disconnect
+            // rather than a lock.
+            self = .disconnected
         case ZcashError.ledgerWrongApp, ZcashError.ledgerDeviceRefused(_, true):
-            // `ledgerWrongApp` and a transient device refusal (such as a locked device) both
-            // clear on their own once the user unlocks the device or opens the app, so they
-            // share copy telling the user to do exactly that.
+            // `ledgerWrongApp` (carrying a real status word) and a transient device refusal
+            // (such as a locked device) both clear on their own once the user unlocks the
+            // device or opens the app, so they share copy telling the user to do exactly that.
             self = .deviceLocked
         case ZcashError.ledgerBluetoothPairingRefused:
             self = .pairingFailed
@@ -97,11 +176,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
             self = .openAppRejected
         case ZcashError.ledgerUserRejected:
             self = .requestRejected
+        case ZcashError.ledgerDeviceNotFound, ZcashError.ledgerBluetoothConnectionFailed, ZcashError.ledgerTimeout:
+            self = (isBluetoothConnectFailure && context == .connect) ? .pairingFailed : .disconnected
         case ZcashError.ledgerBluetoothDisconnected,
-            ZcashError.ledgerTimeout,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,
-            ZcashError.ledgerBluetoothConnectionFailed,
             LedgerClientError.notConnected:
             self = .disconnected
         case ZcashError.ledgerAppTooOld:
@@ -263,20 +342,25 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         }
     }
 
-    /// `true` when a retry must scan and connect again, rather than repeat the request on the
-    /// connection that is still open. A device refusal (`.deviceLocked`, `.requestRejected`,
-    /// `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the transport usable for
-    /// another attempt; `.accountAlreadyAdded` and `.notPaired` need no retry at all. Everything
-    /// else needs a fresh scan and connection: the transport is gone, or a different or restarted
-    /// device must be connected (`.deviceMismatch`, `.appTooOld` after the update, and
-    /// `.unknown`, where a clean reconnect is the safe retry).
-    var retryNeedsNewConnection: Bool {
+    /// `true` when a retry in `context` must scan and connect again, rather than repeat the
+    /// request on the connection that is still open. A device refusal (`.deviceLocked`,
+    /// `.requestRejected`, `.derivationBudgetExhausted` or `.transactionNotSignable`) leaves the
+    /// transport usable for another attempt in `.connect`, where every retry reconnects anyway
+    /// once a device is selected; `.accountAlreadyAdded` and `.notPaired` need no retry at all.
+    /// While signing, though, `.deviceLocked` and `.derivationBudgetExhausted` need a fresh
+    /// connection too: the device has to be unlocked, switched to the Zcash app, or have that app
+    /// restarted, and only a fresh `LedgerSession.connect` runs the open-Zcash-app step again.
+    /// Everything else needs a fresh scan and connection in both contexts: the transport is gone,
+    /// or a different or restarted device must be connected (`.deviceMismatch`, `.appTooOld`
+    /// after the update, and `.unknown`, where a clean reconnect is the safe retry).
+    func retryNeedsNewConnection(in context: Context) -> Bool {
         switch self {
         case .bluetoothUnauthorized, .bluetoothOff, .bluetoothUnsupported, .noDevicesFound,
             .pairingFailed, .appNotInstalled, .openAppRejected, .disconnected, .appTooOld, .deviceMismatch, .unknown:
             return true
-        case .deviceLocked, .requestRejected, .accountAlreadyAdded, .notPaired, .derivationBudgetExhausted,
-            .transactionNotSignable:
+        case .deviceLocked, .derivationBudgetExhausted:
+            return context == .sign
+        case .requestRejected, .accountAlreadyAdded, .notPaired, .transactionNotSignable:
             return false
         }
     }

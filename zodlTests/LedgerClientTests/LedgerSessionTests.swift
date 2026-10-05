@@ -39,6 +39,45 @@ import ComposableArchitecture
         #expect(transportB.closeCount == 0)
     }
 
+    // MARK: - connect's Bluetooth-step tagging (MOB-2020, Android b013b7c2)
+
+    @Test func connectWrapsABluetoothStepFailureInLedgerBluetoothConnectFailure() async throws {
+        struct BluetoothStepFailure: Error, Equatable {}
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: BluetoothStepFailure()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        do {
+            try await session.connect(device)
+            Issue.record("expected connect to throw")
+        } catch let wrapped as LedgerBluetoothConnectFailure {
+            #expect(wrapped.underlying as? BluetoothStepFailure == BluetoothStepFailure())
+        } catch {
+            Issue.record("expected a LedgerBluetoothConnectFailure, got \(error)")
+        }
+    }
+
+    // `aFailingOpenStepClosesTheTransportAndLeavesTheSessionDisconnected` below already proves the
+    // open-Zcash-app step's own failure stays unwrapped: it asserts `throws: OpenZcashAppFailure()`
+    // exactly, which a wrap would break.
+
+    @Test func connectRethrowsACancellationAtTheBluetoothStepAsIs() async throws {
+        let scanner = FakeLedgerScanning(transportsToReturn: [], failAt: (index: 0, error: CancellationError()))
+        let session = makeSession(makeScanner: { scanner })
+        let device = try await firstDevice(from: scanner)
+
+        do {
+            try await session.connect(device)
+            Issue.record("expected connect to throw")
+        } catch is LedgerBluetoothConnectFailure {
+            Issue.record("a CancellationError must never be wrapped")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+    }
+
     @Test func pairAccountUsesTheConnectedTransportAndKeepsItOpenOnSuccess() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
@@ -46,10 +85,10 @@ import ComposableArchitecture
 
         let session = makeSession(
             makeScanner: { scanner },
-            pair: { receivedTransport, zip32AccountIndex in
+            pair: { receivedTransport, zip32AccountIndex, _ in
                 #expect(zip32AccountIndex == Zip32AccountIndex(0))
                 #expect((receivedTransport as? FakeLedgerAPDUTransport) === transport)
-                return fixture
+                return (.success(fixture), receivedTransport)
             }
         )
         let device = try await firstDevice(from: scanner)
@@ -64,7 +103,7 @@ import ComposableArchitecture
     @Test func pairAccountKeepsTheTransportOpenWhenPairingFails() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
-        let session = makeSession(makeScanner: { scanner }, pair: { _, _ in throw PairingFailure() })
+        let session = makeSession(makeScanner: { scanner }, pair: { receivedTransport, _, _ in (.failure(PairingFailure()), receivedTransport) })
         let device = try await firstDevice(from: scanner)
         try await session.connect(device)
 
@@ -188,7 +227,7 @@ import ComposableArchitecture
         let fixture = try makePairingFixture()
         let session = makeSession(
             makeScanner: { scanner },
-            pair: { _, _ in fixture },
+            pair: { receivedTransport, _, _ in (.success(fixture), receivedTransport) },
             sign: { transport, pczt, accountUUID, binding, progress in
                 try await signer.sign(transport, pczt, accountUUID, binding, progress)
             }
@@ -270,9 +309,9 @@ import ComposableArchitecture
         let signer = FakeLedgerSigner(outcome: .failWhenReleased(ZcashError.ledgerTransportClosed))
         let session = makeSession(
             makeScanner: { scanner },
-            pair: { receivedTransport, _ in
+            pair: { receivedTransport, _, _ in
                 #expect((receivedTransport as? FakeLedgerAPDUTransport) === transportB)
-                return fixture
+                return (.success(fixture), receivedTransport)
             },
             sign: { transport, pczt, accountUUID, binding, progress in
                 try await signer.sign(transport, pczt, accountUUID, binding, progress)
@@ -308,10 +347,10 @@ import ComposableArchitecture
         let fixture = try makePairingFixture()
         let session = makeSession(
             makeScanner: { scanner },
-            pair: { receivedTransport, _ in
+            pair: { receivedTransport, _, _ in
                 // Reaches the transport the open step returned, not the one `connect` opened.
                 #expect((receivedTransport as? FakeLedgerAPDUTransport) === opened)
-                return fixture
+                return (.success(fixture), receivedTransport)
             },
             openZcashApp: { transport, _ in
                 #expect((transport as? FakeLedgerAPDUTransport) === connected)
@@ -363,6 +402,234 @@ import ComposableArchitecture
         #expect(scanner.connectCalls.map(\.timeout) == [60, 10])
         #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
     }
+
+    // MARK: - pairAccount's reconnect (MOB-2020)
+
+    @Test func pairAccountsReconnectUsesSixtySecondsOnTheSameDevice() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                // Calls the very reconnect closure `pairAccount` hands the live SDK step, so this
+                // exercises the real timeout and device it captures, not a fake's own bookkeeping.
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                return (.success(fixture), fresh)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let pairing = try await session.pairAccount(Zip32AccountIndex(0))
+
+        #expect(pairing == fixture)
+        #expect(scanner.connectCalls.map(\.timeout) == [60, 60])
+        #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
+    }
+
+    @Test func aSuccessfulPairingAdoptsTheReconnectedTransportAndAFollowingSignPCZTReachesIt() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                return (.success(fixture), fresh)
+            },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let pairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(pairing == fixture)
+
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+
+        #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === reconnected)
+        #expect(reconnected.closeCount == 0)
+    }
+
+    @Test func aFailedPairingAfterTheReconnectStillAdoptsItAndAFollowingSignPCZTReachesIt() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                // The reconnect succeeded, but pairing itself still fails afterward -- the SESSION
+                // must adopt `fresh` regardless.
+                return (.failure(PairingFailure()), fresh)
+            },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        await #expect(throws: PairingFailure()) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+
+        #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === reconnected)
+    }
+
+    @Test func aSuccessfulPairingAdoptsTheReconnectedTransportAndAFollowingPairAccountReachesIt() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let callCount = LockIsolated<Int>(0)
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                let isFirstCall = callCount.withValue { count -> Bool in
+                    let wasFirst = count == 0
+                    count += 1
+                    return wasFirst
+                }
+                guard isFirstCall else {
+                    // The second call: proves the session now holds the reconnected transport.
+                    #expect((receivedTransport as? FakeLedgerAPDUTransport) === reconnected)
+                    return (.success(fixture), receivedTransport)
+                }
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                return (.success(fixture), fresh)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        let firstPairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(firstPairing == fixture)
+
+        let secondPairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(secondPairing == fixture)
+    }
+
+    @Test func aFailedPairingAfterTheReconnectStillAdoptsItAndAFollowingPairAccountReachesIt() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let callCount = LockIsolated<Int>(0)
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { receivedTransport, _, reconnect in
+                let isFirstCall = callCount.withValue { count -> Bool in
+                    let wasFirst = count == 0
+                    count += 1
+                    return wasFirst
+                }
+                guard isFirstCall else {
+                    #expect((receivedTransport as? FakeLedgerAPDUTransport) === reconnected)
+                    return (.success(fixture), receivedTransport)
+                }
+                guard let fresh = try? await reconnect() else {
+                    return (.failure(PairingFailure()), receivedTransport)
+                }
+                return (.failure(PairingFailure()), fresh)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        await #expect(throws: PairingFailure()) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+
+        let secondPairing = try await session.pairAccount(Zip32AccountIndex(0))
+        #expect(secondPairing == fixture)
+    }
+
+    // MOB-2020: `self.transport = liveTransport` used to run unconditionally after
+    // the `await pair(...)` above -- a `disconnect()` from Close or Back can run during that
+    // await (the actor isn't isolated across it), and adopting whatever `pair` reports as live
+    // afterward would put back a transport the session already tore down.
+    @Test func aDisconnectDuringPairingIsNotOverwrittenByTheReconnectedTransport() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let reconnected = FakeLedgerAPDUTransport(name: "reconnected")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected, reconnected])
+        let fixture = try makePairingFixture()
+        let pairStarted = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            pair: { _, _, _ in
+                pairStarted.setValue(true)
+                // Suspended exactly where the SDK's own read-before-export retry would be --
+                // until the test's `disconnect()` call closes the transport `pairAccount` was
+                // handed -- then reports a different transport as the live one, the same shape a
+                // real reconnect result takes.
+                while connected.closeCount == 0 {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return (.success(fixture), reconnected)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device)
+
+        async let pairingResult = session.pairAccount(Zip32AccountIndex(0))
+        try await eventually { pairStarted.value }
+
+        await session.disconnect()
+
+        let pairing = try await pairingResult
+        #expect(pairing == fixture)
+        // The reconnected transport must not be adopted -- it was reported live only after
+        // disconnect() had already torn the session down -- so a following operation that needs
+        // a transport finds nothing connected...
+        await #expect(throws: LedgerClientError.notConnected) {
+            try await session.pairAccount(Zip32AccountIndex(0))
+        }
+        // ...and the transport pairAccount was handed is closed rather than left open and orphaned.
+        #expect(reconnected.closeCount == 1)
+    }
+
+    // MARK: - The live `pair` closure's shape
+
+    // `LedgerSession`'s own `pair` closure type carries no `readTimeout` -- it is a
+    // `LedgerClientLiveKey.swift`-only default argument to the SDK's `LedgerDevice.pairAccount`,
+    // invisible to every fake above. This test reconstructs that live closure's shape (a real
+    // `LedgerDevice` over a scripted transport) to make the 10 s deadline observable at all.
+    @Test func theLivePairClosureShapePassesTheTenSecondPairingReadTimeout() async throws {
+        struct StalledRead: Error {}
+        let transport = FakeLedgerAPDUTransport(onExchange: { throw StalledRead() })
+        let device = LedgerDevice(transport: transport, networkType: .testnet)
+
+        do {
+            _ = try await device.pairAccount(
+                zip32AccountIndex: Zip32AccountIndex(0),
+                readTimeout: LedgerDevice.defaultPairingReadTimeout,
+                reconnect: nil
+            )
+            Issue.record("expected the scripted transport's failure to propagate")
+        } catch {
+            // Expected: the fake fails the very first exchange (the app-version read).
+        }
+
+        #expect(transport.exchangeTimeouts.first == LedgerDevice.defaultPairingReadTimeout)
+    }
 }
 
 // MARK: - Fixture
@@ -400,13 +667,15 @@ private func makeBinding(zip32AccountIndex: Zip32AccountIndex = Zip32AccountInde
 }
 
 /// Builds a session with fakes that fail the test if reached, unless a test overrides them --
-/// `pair` and `sign` default to throwing, so only the tests that care about pairing or signing
+/// `pair` and `sign` default to failing, so only the tests that care about pairing or signing
 /// need to pass their own. `openZcashApp` defaults to a pass-through that returns the transport
 /// it's given, so every test that doesn't care about the open step keeps its original meaning.
 private func makeSession(
     makeScanner: @escaping @Sendable () -> any LedgerScanning,
-    pair: @escaping @Sendable (any LedgerAPDUTransport, Zip32AccountIndex) async throws -> LedgerPairing = { _, _ in
-        throw PairShouldNotBeCalled()
+    pair: @escaping @Sendable (
+        any LedgerAPDUTransport, Zip32AccountIndex, @escaping @Sendable () async throws -> any LedgerAPDUTransport
+    ) async -> (Result<LedgerPairing, Error>, any LedgerAPDUTransport) = { transport, _, _ in
+        (.failure(PairShouldNotBeCalled()), transport)
     },
     sign: @escaping @Sendable (
         any LedgerAPDUTransport, Pczt, AccountUUID, LedgerAccountBinding, @escaping @Sendable (LedgerSigningProgress) -> Void
@@ -467,25 +736,40 @@ private final class EventLog: @unchecked Sendable {
 
 private struct ExchangeMustNotBeCalled: Error {}
 
-/// A transport that records how many times it was closed and fails if ever asked to exchange —
-/// none of these tests should reach a real APDU exchange.
+/// A transport that records how many times it was closed and, by default, fails if ever asked to
+/// exchange — none of the `LedgerSession`-level tests above should reach a real APDU exchange.
+/// `onExchange` is an opt-in escape hatch for the one test that scripts a real `LedgerDevice`
+/// directly (below): every call's `timeout` is still recorded first, so that test can observe it
+/// even though the exchange itself then throws.
 private final class FakeLedgerAPDUTransport: LedgerAPDUTransport, @unchecked Sendable {
     private let name: String
     private let log: EventLog?
+    private let onExchange: (@Sendable () throws -> Data)?
     private let _closeCount = LockIsolated<Int>(0)
+    private let _exchangeTimeouts = LockIsolated<[TimeInterval?]>([])
 
-    init(name: String = "transport", log: EventLog? = nil) {
+    init(name: String = "transport", log: EventLog? = nil, onExchange: (@Sendable () throws -> Data)? = nil) {
         self.name = name
         self.log = log
+        self.onExchange = onExchange
     }
 
     var closeCount: Int {
         _closeCount.value
     }
 
+    /// Every `exchange` call's `timeout`, in call order.
+    var exchangeTimeouts: [TimeInterval?] {
+        _exchangeTimeouts.value
+    }
+
     func exchange(_ apdu: Data, timeout: TimeInterval?) async throws -> Data {
-        Issue.record("FakeLedgerAPDUTransport.exchange must never be called")
-        throw ExchangeMustNotBeCalled()
+        _exchangeTimeouts.withValue { $0.append(timeout) }
+        guard let onExchange else {
+            Issue.record("FakeLedgerAPDUTransport.exchange must never be called")
+            throw ExchangeMustNotBeCalled()
+        }
+        return try onExchange()
     }
 
     func close() async {
@@ -495,16 +779,21 @@ private final class FakeLedgerAPDUTransport: LedgerAPDUTransport, @unchecked Sen
 }
 
 /// Vends one device through `devices()` and hands out `transportsToReturn` in call order from
-/// `connect(to:timeout:)`, regardless of which device was passed.
+/// `connect(to:timeout:)`, regardless of which device was passed. `failAt` makes one specific
+/// `connect(to:timeout:)` call (by its zero-based index) throw instead of dispensing a transport --
+/// mirroring Android's `ScriptedTransport(failAt = ...)` -- for the tests below that need
+/// `LedgerSession.connect`'s own Bluetooth step to fail.
 private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
     private let transportsToReturn: [FakeLedgerAPDUTransport]
     private let log: EventLog?
+    private let failAt: (index: Int, error: Error)?
     private let connectCallCount = LockIsolated<Int>(0)
     private let _connectCalls = LockIsolated<[(deviceID: UUID, timeout: TimeInterval)]>([])
 
-    init(transportsToReturn: [FakeLedgerAPDUTransport], log: EventLog? = nil) {
+    init(transportsToReturn: [FakeLedgerAPDUTransport], log: EventLog? = nil, failAt: (index: Int, error: Error)? = nil) {
         self.transportsToReturn = transportsToReturn
         self.log = log
+        self.failAt = failAt
     }
 
     /// Every `connect(to:timeout:)` call, in order, as the device it targeted and the timeout it
@@ -529,6 +818,11 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
             return current
         }
         _connectCalls.withValue { $0.append((device.id, timeout)) }
+
+        if let failAt, failAt.index == index {
+            log?.append("connect-\(index)-failed")
+            throw failAt.error
+        }
 
         guard transportsToReturn.indices.contains(index) else {
             fatalError("FakeLedgerScanning: no fake transport queued for connect() call #\(index)")
