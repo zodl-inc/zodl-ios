@@ -42,7 +42,9 @@ struct SwapAndPayCoordFlow {
         var failedDescription = ""
         var failedPcztMsg: String?
         var isHelpSheetPresented = false
+        var isInAppBrowserOn = false
         var isSwapExperience = true
+        var learnMoreRequested = false
         var isSwapToZecExperience = false
         var partialFailureTxIds: [String] = []
         var partialFailureStatuses: [String] = []
@@ -64,6 +66,15 @@ struct SwapAndPayCoordFlow {
             isSwapExperience || swapAndPayState.isSwapToZecExperienceEnabled
         }
 
+        /// Support article behind the explainer's `Learn more`, picked by which explainer is on
+        /// screen. The Refund Address explainer has no `Learn more` (MOB-1889), so only these
+        /// two destinations exist.
+        var helpArticleURL: URL? {
+            isSwapHelpContent
+            ? URL(string: "https://support.zodl.com/article/26-swapping-into-zec")
+            : URL(string: "https://support.zodl.com/article/24-using-crosspay-to-spend-zec")
+        }
+
         var isSensitiveButtonVisible: Bool {
             !swapAndPayState.isSwapToZecExperienceEnabled
         }
@@ -75,7 +86,9 @@ struct SwapAndPayCoordFlow {
         case backButtonTapped
         case binding(BindingAction<SwapAndPayCoordFlow.State>)
         case customBackRequired
+        case helpSheetDismissed
         case helpSheetRequested
+        case learnMoreTapped
         case onAppear
         case path(StackActionOf<Path>)
         case sendDone
@@ -124,6 +137,22 @@ struct SwapAndPayCoordFlow {
             case .helpSheetRequested,
                     .path(.element(id: _, action: .swapToZecSummary(.helpSheetRequested))):
                 state.isHelpSheetPresented.toggle()
+                return .none
+
+            case .learnMoreTapped:
+                // Close the explainer first and open the browser from its `onDismiss`: asking
+                // UIKit to present a second sheet while the first is still dismissing drops the
+                // presentation, leaving the tap dead.
+                state.learnMoreRequested = true
+                state.isHelpSheetPresented = false
+                return .none
+
+            case .helpSheetDismissed:
+                // Fires for every dismissal -- swipe and `Dismiss` included -- so the browser
+                // opens only when `Learn more` actually asked for it.
+                guard state.learnMoreRequested else { return .none }
+                state.learnMoreRequested = false
+                state.isInAppBrowserOn = true
                 return .none
 
             case .path(.element(id: _, action: .swapAndPayForm(.helpSheetRequested(let index)))):

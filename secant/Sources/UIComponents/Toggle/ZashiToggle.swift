@@ -12,17 +12,35 @@ struct ZashiToggle: View {
     let label: String
     let textColor: Color
     let textSize: CGFloat
+    let checkboxSpacing: CGFloat
+    let checkboxTopPadding: CGFloat
+    let textTracking: CGFloat
+    let textLineSpacing: CGFloat
+    let textVerticalPadding: CGFloat
+    let expandsTextVertically: Bool
     
     init(
         isOn: Binding<Bool>,
         label: String = "",
         textColor: Color = Asset.Colors.primary.color,
-        textSize: CGFloat = 14
+        textSize: CGFloat = 14,
+        checkboxSpacing: CGFloat = 8,
+        checkboxTopPadding: CGFloat = 0,
+        textTracking: CGFloat = 0,
+        textLineSpacing: CGFloat = 0,
+        textVerticalPadding: CGFloat = 0,
+        expandsTextVertically: Bool = false
     ) {
         self._isOn = isOn
         self.label = label
         self.textColor = textColor
         self.textSize = textSize
+        self.checkboxSpacing = checkboxSpacing
+        self.checkboxTopPadding = checkboxTopPadding
+        self.textTracking = textTracking
+        self.textLineSpacing = textLineSpacing
+        self.textVerticalPadding = textVerticalPadding
+        self.expandsTextVertically = expandsTextVertically
     }
     
     var body: some View {
@@ -32,14 +50,27 @@ struct ZashiToggle: View {
             HStack(alignment: .top, spacing: 0) {
                 Toggle(isOn: $isOn, label: {})
                     .toggleStyle(CheckboxToggleStyle())
-                    .padding(.trailing, 8)
+                    .padding(.top, checkboxTopPadding)
+                    .padding(.trailing, checkboxSpacing)
                 
-                Text(label)
-                    .zFont(.medium, size: textSize, style: Design.Text.primary)
-                    .multilineTextAlignment(.leading)
+                labelText
             }
         }
         .foregroundColor(textColor)
+    }
+
+    @ViewBuilder private var labelText: some View {
+        let text = Text(label)
+            .zFont(.medium, size: textSize, style: Design.Text.primary)
+            .tracking(textTracking)
+            .lineSpacing(textLineSpacing)
+            .padding(.vertical, textVerticalPadding)
+            .multilineTextAlignment(.leading)
+        if expandsTextVertically {
+            text.fixedSize(horizontal: false, vertical: true)
+        } else {
+            text
+        }
     }
 }
 

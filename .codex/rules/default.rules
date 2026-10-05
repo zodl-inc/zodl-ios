@@ -1,0 +1,17 @@
+# Match the explicit release-script allowance in .claude/settings.json.
+# Codex allow rules run matching commands outside the sandbox, so the release
+# script is an explicit exception to the secret-file restrictions.
+prefix_rule(
+    pattern = ["./Scripts/release.sh"],
+    decision = "allow",
+    justification = "Preserve the repository's explicit release-script allowance.",
+    match = [
+        "./Scripts/release.sh --help",
+        "./Scripts/release.sh internal",
+    ],
+    not_match = [
+        "./Scripts/release.sh-other internal",
+        "./Scripts/prepare-release.sh start",
+        "cat fastlane/.env",
+    ],
+)

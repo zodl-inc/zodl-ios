@@ -29,7 +29,7 @@ struct BalancesView: View {
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 40)
 
-                if store.spendability == .everything || store.isDisplayedPendingInProcess {
+                if store.spendability == .everything || store.isDisplayedPendingInProcess || store.isSpendableValueUpdating {
                     Text(
                         store.spendability == .everything
                         ? String(localizable: .balancesEverythingDone)
@@ -80,6 +80,11 @@ extension BalancesView {
                 
                 Spacer()
 
+                if store.isSpendableValueUpdating {
+                    progressViewLooping()
+                        .padding(.trailing, 10)
+                }
+
                 Asset.Assets.shield.image
                     .zImage(width: 11, height: 14, color: Asset.Colors.primary.color)
                     .padding(.trailing, 10)
@@ -87,7 +92,7 @@ extension BalancesView {
                 ZatoshiText(store.shieldedBalance, .expanded, tokenName)
                     .zFont(.medium, size: 14, style: Design.Text.primary)
             }
-            
+
             if store.isDisplayedPendingInProcess {
                 HStack(spacing: 0) {
                     Text(localizable: .balancesPending)

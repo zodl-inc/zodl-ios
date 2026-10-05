@@ -67,6 +67,9 @@ extension Settings {
 
             case .path(.element(id: _, action: .advancedSettings(.operationAccessGranted(let operation)))):
                 switch operation {
+                case .exportViewingKey:
+                    // Only a matching authenticated request can enter this destination.
+                    return .none
                 case .recoveryPhrase:
                     state.path.append(.recoveryPhrase(RecoveryPhraseDisplay.State.initial))
                 case .exportPrivateData:
@@ -182,10 +185,6 @@ extension Settings {
                 // MARK: - Currency Conversion
             
             case .path(.element(id: _, action: .currencyConversionSetup(.backToHomeTapped))):
-                let _ = state.path.popLast()
-                return .none
-
-            case .path(.element(id: _, action: .currencyConversionSetup(.delayedDismisalRequested))):
                 let _ = state.path.popLast()
                 return .none
 

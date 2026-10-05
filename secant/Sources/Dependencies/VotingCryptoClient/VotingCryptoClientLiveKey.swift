@@ -2,6 +2,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
+import os
 @preconcurrency import ZcashLightClientKit
 
 // MARK: - Live key
@@ -10,26 +11,22 @@ extension VotingCryptoClient: DependencyKey {
     static var liveValue: Self {
         let dbActor = DatabaseActor()
         let stateSubject = CurrentValueSubject<VotingDbState, Never>(.initial)
+        // Process-wide, because there is one wallet to tear down and one sidecar to
+        // delete: `liveValue` is resolved once, so this is the gate every voting open
+        // in the app asks. See `VotingTeardown`.
+        let teardown = VotingTeardown()
 
-        /// Query rounds + votes tables and publish combined state.
-        // @Sendable: captured by Task.detached closures; only touches Sendable stateSubject and parameters.
-        @Sendable func publishState(backend: VotingRustBackend, roundId: String) {
-            guard let roundState = try? backend.getRoundState(roundId: roundId) else { return }
-            let votes = (try? backend.getVotes(roundId: roundId)) ?? []
-            let bundleCount = (try? backend.getBundleCount(roundId: roundId)) ?? 0
-            let dbState = VotingDbState(
-                roundState: RoundStateInfo(
-                    roundId: roundState.roundId,
-                    phase: roundState.phase.toModel(),
-                    snapshotHeight: roundState.snapshotHeight,
-                    hotkeyAddress: roundState.hotkeyAddress,
-                    delegatedWeight: roundState.delegatedWeight,
-                    proofGenerated: roundState.proofGenerated
-                ),
-                votes: votes.map { $0.toModel() },
-                bundleCount: bundleCount
-            )
-            stateSubject.send(dbState)
+        // Sessions are made by the synchronizer rather than by the backend: a
+        // `.tor` session borrows the Tor runtime the synchronizer owns, and the
+        // backend call that would build one directly is internal to the SDK.
+        // Resolved inside the closure so the registry follows the dependency
+        // context it is used from rather than the one `liveValue` was built in.
+        let registry = VotingSessionRegistry { inputs, binding, route, epoch in
+            @Dependency(\.sdkSynchronizer)
+            var sdkSynchronizer
+            let backend = try await dbActor.backend()
+
+            return try await sdkSynchronizer.makeVotingRoundSession(backend, inputs, binding, route, epoch)
         }
 
         return Self(
@@ -38,9 +35,40 @@ extension VotingCryptoClient: DependencyKey {
                     .dropFirst() // Skip initial empty state
                     .eraseToAnyPublisher()
             },
-            refreshState: { roundId in
-                guard let backend = try? await dbActor.backend() else { return }
-                publishState(backend: backend, roundId: roundId)
+            refreshState: { _ in
+                stateSubject.send(stateSubject.value)
+            },
+            configureProving: { policy in
+                // `false` means a different policy is already in force for this
+                // process, which the crate will not replace. Worth a line,
+                // never worth failing the flow the voter is in.
+                let applied = try VotingRustBackend.configureProving(policy)
+                if !applied {
+                    LoggerProxy.debug("voting: proving pool already configured with a different policy")
+                }
+            },
+            warmProvingCaches: {
+                // The crate's keygen threads inherit this task's QoS; background
+                // priority pinned them to efficiency cores and the first proof
+                // convoyed behind that keygen while the user watched "Authorizing...".
+                try await Task.detached(priority: .userInitiated) {
+                    try VotingRustBackend.warmProvingCaches()
+                }.value
+            },
+            beginWalletTeardown: {
+                teardown.begin()
+            },
+            endWalletTeardown: {
+                teardown.end()
+            },
+            teardownGenerationIfIdle: {
+                teardown.generationIfIdle
+            },
+            teardownAllowsOpen: { capturedGeneration in
+                teardown.allowsOpen(capturedGeneration: capturedGeneration)
+            },
+            teardownBegan: {
+                teardown.began
             },
             openDatabase: { path, networkId in
                 try await dbActor.open(path: path, networkId: networkId)
@@ -49,132 +77,125 @@ extension VotingCryptoClient: DependencyKey {
                 let backend = try await dbActor.backend()
                 try backend.setWalletId(walletId)
             },
-            initRound: { params, sessionJson in
-                let backend = try await dbActor.backend()
-                let roundIdHex = params.voteRoundId.hexString
-                try backend.initRound(
-                    roundId: roundIdHex,
-                    snapshotHeight: params.snapshotHeight,
-                    eaPublicKey: [UInt8](params.eaPK),
-                    ncRoot: [UInt8](params.ncRoot),
-                    nullifierImtRoot: [UInt8](params.nullifierIMTRoot),
-                    sessionJson: sessionJson
-                )
-                publishState(backend: backend, roundId: roundIdHex)
-            },
-            getRoundState: { roundId in
-                let backend = try await dbActor.backend()
-                let state = try backend.getRoundState(roundId: roundId)
-                return RoundStateInfo(
-                    roundId: state.roundId,
-                    phase: state.phase.toModel(),
-                    snapshotHeight: state.snapshotHeight,
-                    hotkeyAddress: state.hotkeyAddress,
-                    delegatedWeight: state.delegatedWeight,
-                    proofGenerated: state.proofGenerated
-                )
-            },
-            getVotes: { roundId in
-                let backend = try await dbActor.backend()
-                let votes = try backend.getVotes(roundId: roundId)
-                return votes.map { $0.toModel() }
+            closeDatabase: {
+                // Sessions hold their own reference to the sidecar, so they go
+                // first: closing the store under a live session would leave the
+                // round driving a database nothing owns.
+                await registry.closeAll()
+                await dbActor.close()
             },
             listRounds: {
                 let backend = try await dbActor.backend()
-                return try backend.listRounds().map {
-                    RoundSummaryInfo(
-                        roundId: $0.roundId,
-                        phase: $0.phase.toModel(),
-                        snapshotHeight: $0.snapshotHeight,
-                        createdAt: $0.createdAt
-                    )
-                }
+                return try backend.listRounds()
+            },
+            roundPlan: { roundId, proposalIds in
+                let backend = try await dbActor.backend()
+                return try backend.roundPlan(roundId: roundId, proposalIds: proposalIds)
+            },
+            pendingShareRounds: {
+                let backend = try await dbActor.backend()
+                return try backend.pendingShareRounds()
+            },
+            resetVoteTree: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetVoteTree(roundId: roundId)
+            },
+            resetSessionState: { roundId in
+                let backend = try await dbActor.backend()
+                try backend.resetSessionState(roundId: roundId)
+            },
+            deleteRound: { roundId, discardingRecovery in
+                let backend = try await dbActor.backend()
+                try backend.deleteRound(roundId: roundId, discardingRecovery: discardingRecovery)
             },
             deleteSkippedBundles: { roundId, keepCount in
                 let backend = try await dbActor.backend()
                 _ = try backend.deleteSkippedBundles(roundId: roundId, keepCount: keepCount)
             },
-            warmProvingCaches: {
-                // The crate's keygen threads inherit this task's QoS; background
-                // priority pinned them to efficiency cores and the first proof
-                // convoyed behind that keygen while the user watched "Authorizing…".
-                try await Task.detached(priority: .userInitiated) {
-                    try VotingRustBackend.warmProvingCaches()
-                }.value
-            },
-            getWalletNotes: { walletDbPath, snapshotHeight, networkId, accountUUID in
+            retryBlockedCombinedCast: { roundId, bundleIndex in
                 let backend = try await dbActor.backend()
-                let notes = try backend.getWalletNotes(
-                    accountUuidBytes: accountUUID,
-                    dataDbPath: walletDbPath,
-                    snapshotHeight: snapshotHeight,
-                    networkId: networkId
-                )
-                return notes.map { (note: VotingNoteInfo) -> NoteInfo in
-                    let commitment: Data = Data(note.commitment)
-                    let nullifier: Data = Data(note.nullifier)
-                    let diversifier: Data = Data(note.diversifier)
-                    let rho: Data = Data(note.rho)
-                    let rseed: Data = Data(note.rseed)
-                    return NoteInfo(
-                        commitment: commitment,
-                        nullifier: nullifier,
-                        value: note.value,
-                        position: note.position,
-                        diversifier: diversifier,
-                        rho: rho,
-                        rseed: rseed,
-                        scope: note.scope,
-                        ufvkStr: note.ufvkStr
-                    )
-                }
+                return try backend.retryBlockedCombinedCast(roundId: roundId, bundleIndex: bundleIndex)
             },
-            setupBundles: { roundId, notes in
+            clearBallotIntents: { roundId, proposalIds in
                 let backend = try await dbActor.backend()
-                let sdkNotes = notes.map { $0.toSDK() }
-                let result = try backend.setupBundles(roundId: roundId, notes: sdkNotes)
-                return BundleSetupResult(
-                    bundleCount: result.bundleCount,
-                    eligibleWeight: result.eligibleWeight
-                )
+                try backend.clearBallotIntents(roundId: roundId, proposalIds: proposalIds)
             },
-            getBundleCount: { roundId in
+            keystoneSignatures: { roundId in
                 let backend = try await dbActor.backend()
-                return try backend.getBundleCount(roundId: roundId)
+                return try backend.keystoneSignatures(roundId: roundId)
             },
-            generateNoteWitnesses: { roundId, bundleIndex, walletDbPath, notes, networkId in
-                let backend = try await dbActor.backend()
-                let sdkNotes = notes.map { $0.toSDK() }
-                let witnesses = try backend.generateNoteWitnesses(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    walletDbPath: walletDbPath,
-                    notes: sdkNotes,
-                    networkId: networkId
-                )
-                return witnesses.map { witness -> WitnessData in
-                    let noteCommitment: Data = Data(witness.noteCommitment)
-                    let root: Data = Data(witness.root)
-                    let authPath: [Data] = witness.authPath.map { Data($0) }
-                    return WitnessData(
-                        noteCommitment: noteCommitment,
-                        position: witness.position,
-                        root: root,
-                        authPath: authPath
-                    )
-                }
+            openRoundSession: { inputs, binding, route, epoch in
+                _ = try await registry.open(inputs: inputs, binding: binding, route: route, epoch: epoch)
             },
-            verifyWitness: { witness in
-                let noteCommitment: [UInt8] = [UInt8](witness.noteCommitment)
-                let root: [UInt8] = [UInt8](witness.root)
-                let authPath: [[UInt8]] = witness.authPath.map { [UInt8]($0) }
-                let sdkWitness = VotingWitnessData(
-                    noteCommitment: noteCommitment,
-                    position: witness.position,
-                    root: root,
-                    authPath: authPath
+            closeRoundSession: { roundId in
+                await registry.close(roundId)
+            },
+            closeAllRoundSessions: {
+                await registry.closeAll()
+            },
+            cancelRoundSession: { roundId in
+                await registry.cancel(roundId)
+            },
+            setOperationEpoch: { roundId, epoch in
+                await registry.setEpoch(roundId, epoch)
+            },
+            updateHostConfiguration: { overrides in
+                await registry.updateHostConfiguration(overrides)
+            },
+            sessionPlan: { roundId in
+                try await registry.session(for: roundId).plan()
+            },
+            setBallotIntents: { roundId, intents in
+                try await registry.session(for: roundId).setBallotIntents(intents)
+            },
+            setupBundles: { roundId in
+                try await registry.session(for: roundId).setupBundles()
+            },
+            eligibility: { roundId in
+                try await registry.session(for: roundId).eligibility()
+            },
+            precomputeDelegationProof: { roundId, bundleIndex in
+                // No cancellation hook: `cancel()` finishes a session for good
+                // and would not interrupt a proof already running anyway, so an
+                // abandoned precompute stops being listened to and the proof it
+                // started is persisted for the run that follows.
+                VotingCryptoClient.sessionStream(
+                    cancelling: {},
+                    call: { progress in
+                        try await registry.session(for: roundId)
+                            .precomputeDelegationProof(bundleIndex: bundleIndex, progress: progress)
+                    },
+                    event: VotingDelegationProofEvent.progress,
+                    report: VotingDelegationProofEvent.finished
                 )
-                return try VotingRustBackend.verifyWitness(sdkWitness)
+            },
+            keystoneSigningRequests: { roundId, bundleIndices in
+                try await registry.session(for: roundId).keystoneSigningRequests(bundleIndices: bundleIndices)
+            },
+            storeKeystoneSignatures: { roundId, signed in
+                try await registry.session(for: roundId).storeKeystoneSignatures(signed)
+            },
+            runRound: { roundId, signer, policy in
+                VotingCryptoClient.sessionStream(
+                    cancelling: { await registry.cancel(roundId) },
+                    call: { events in
+                        try await registry.session(for: roundId)
+                            .run(signer: signer, policy: policy, events: events)
+                    },
+                    event: VotingRoundRunEvent.event,
+                    report: VotingRoundRunEvent.finished
+                )
+            },
+            trackShares: { roundId, policy in
+                VotingCryptoClient.sessionStream(
+                    cancelling: { await registry.cancel(roundId) },
+                    call: { events in
+                        try await registry.session(for: roundId)
+                            .trackShares(policy: policy, events: events)
+                    },
+                    event: VotingShareTrackingRunEvent.event,
+                    report: VotingShareTrackingRunEvent.finished
+                )
             },
             generateHotkey: { networkId in
                 let hotkey = try VotingRustBackend.generateHotkey(networkId: networkId)
@@ -184,458 +205,115 @@ extension VotingCryptoClient: DependencyKey {
                     addressIndex: hotkey.addressIndex
                 )
             },
-            // swiftlint:disable:next line_length
-            buildVotingPczt: { roundId, bundleIndex, notes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, orchardFvkOverride, keystoneSeedFingerprintOverride in
-                let backend = try await dbActor.backend()
-                let inputs: VotingDelegationInputs
-                let actualFvkBytes: [UInt8]
-                if let orchardFvkOverride {
-                    guard let keystoneSeedFingerprintOverride else {
-                        throw VotingCryptoError.invalidKeystoneMetadata
-                    }
-                    inputs = try VotingRustBackend.generateDelegationInputs(
-                        senderFvk: [UInt8](orchardFvkOverride),
-                        hotkeyStoredSecret: hotkeyStoredSecret,
-                        networkId: networkId,
-                        seedFingerprint: [UInt8](keystoneSeedFingerprintOverride)
-                    )
-                    actualFvkBytes = [UInt8](orchardFvkOverride)
-                } else {
-                    inputs = try VotingRustBackend.generateDelegationInputs(
-                        senderSeed: senderSeed,
-                        hotkeyStoredSecret: hotkeyStoredSecret,
-                        networkId: networkId,
-                        accountIndex: accountIndex
-                    )
-                    actualFvkBytes = inputs.fvkBytes
-                }
-                let sdkNotes = notes.map { $0.toSDK() }
-                // Ironwood (NU6.3) consensus branch ID, published by the SDK so a future
-                // network upgrade cannot go stale here the way the old hardcoded NU6 literal
-                // did (CHP.md §11.5 N1).
-                let consensusBranchId = UInt32(bitPattern: ZcashSDK.nu63ConsensusBranchID)
-                let keys = VotingDelegationKeyInputs(
-                    fvk: actualFvkBytes,
-                    hotkeyStoredSecret: hotkeyStoredSecret,
-                    seedFingerprint: inputs.seedFingerprint,
-                    accountIndex: accountIndex,
-                    roundName: roundName
-                )
-                let result = try backend.buildPczt(VotingBuildPcztParams(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    notes: sdkNotes,
-                    keys: keys,
-                    consensusBranchId: consensusBranchId
-                ))
-                publishState(backend: backend, roundId: roundId)
-                let pcztBytes: Data = Data(result.pcztBytes)
-                let pcztSighash: Data = Data(result.pcztSighash)
-                let rk: Data = Data(result.randomizedKey)
-                let alpha: Data = Data(result.alpha)
-                let nfSigned: Data = Data(result.nfSigned)
-                let cmxNew: Data = Data(result.cmxNew)
-                let govNullifiers: [Data] = result.govNullifiers.map { Data($0) }
-                let van: Data = Data(result.van)
-                let vanCommRand: Data = Data(result.vanCommRand)
-                let dummyNullifiers: [Data] = result.dummyNullifiers.map { Data($0) }
-                let rhoSigned: Data = Data(result.rhoSigned)
-                let paddedCmx: [Data] = result.paddedCmx.map { Data($0) }
-                let rseedSigned: Data = Data(result.rseedSigned)
-                let rseedOutput: Data = Data(result.rseedOutput)
-                let actionBytes: Data = Data(result.actionBytes)
-                return VotingPcztResult(
-                    pcztBytes: pcztBytes,
-                    pcztSighash: pcztSighash,
-                    rk: rk,
-                    alpha: alpha,
-                    nfSigned: nfSigned,
-                    cmxNew: cmxNew,
-                    govNullifiers: govNullifiers,
-                    van: van,
-                    vanCommRand: vanCommRand,
-                    dummyNullifiers: dummyNullifiers,
-                    rhoSigned: rhoSigned,
-                    paddedCmx: paddedCmx,
-                    rseedSigned: rseedSigned,
-                    rseedOutput: rseedOutput,
-                    actionBytes: actionBytes,
-                    actionIndex: result.actionIndex
-                )
-            },
-            storeTreeState: { roundId, treeState in
-                let backend = try await dbActor.backend()
-                try backend.storeTreeState(roundId: roundId, treeState: [UInt8](treeState))
-            },
-            extractSpendAuthSignatureFromSignedPczt: { signedPczt, actionIndex in
-                Data(try VotingRustBackend.extractSpendAuthSig(
-                    signedPczt: [UInt8](signedPczt),
-                    actionIndex: actionIndex
-                ))
-            },
-            extractPcztSighash: { pcztBytes in
-                Data(try VotingRustBackend.extractPcztSighash(pczt: [UInt8](pcztBytes)))
-            },
-            // swiftlint:disable:next line_length
-            precomputeDelegationPir: { roundId, bundleIndex, bundleNotes, pirEndpoints, expectedSnapshotHeight, networkId, pirDepth, tier0Layers, tier1Layers, polyLen in
-                let backend = try await dbActor.backend()
-                let sdkNotes = bundleNotes.map { $0.toSDK() }
-                let result = try await backend.precomputeDelegationPir(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    notes: sdkNotes,
-                    pirEndpoints: pirEndpoints,
-                    expectedSnapshotHeight: expectedSnapshotHeight,
-                    pirLayout: VotingPirLayout(
-                        pirDepth: pirDepth,
-                        tier0Layers: tier0Layers,
-                        tier1Layers: tier1Layers,
-                        polyLen: polyLen
-                    )
-                )
-                return DelegationPirPrecomputeResult(
-                    cachedCount: result.cachedCount,
-                    fetchedCount: result.fetchedCount
-                )
-            },
-            // swiftlint:disable:next line_length
-            buildAndProveDelegation: { roundId, bundleIndex, bundleNotes, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName, pirEndpoints, expectedSnapshotHeight, pirDepth, tier0Layers, tier1Layers, polyLen in
-                AsyncThrowingStream<ProofEvent, Error> { continuation in
-                    Task.detached {
-                        do {
-                            let backend = try await dbActor.backend()
-                            let inputs = try VotingRustBackend.generateDelegationInputs(
-                                senderSeed: senderSeed,
-                                hotkeyStoredSecret: hotkeyStoredSecret,
-                                networkId: networkId,
-                                accountIndex: accountIndex
-                            )
-                            let sdkNotes = bundleNotes.map { $0.toSDK() }
-                            let keys = VotingDelegationKeyInputs(
-                                fvk: inputs.fvkBytes,
-                                hotkeyStoredSecret: hotkeyStoredSecret,
-                                seedFingerprint: inputs.seedFingerprint,
-                                accountIndex: accountIndex,
-                                roundName: roundName
-                            )
-                            let params = VotingDelegationProofParams(
-                                roundId: roundId,
-                                bundleIndex: bundleIndex,
-                                notes: sdkNotes,
-                                keys: keys
-                            )
-                            let result = try await backend.buildAndProveDelegation(
-                                params,
-                                pirEndpoints: pirEndpoints,
-                                expectedSnapshotHeight: expectedSnapshotHeight,
-                                pirLayout: VotingPirLayout(
-                                    pirDepth: pirDepth,
-                                    tier0Layers: tier0Layers,
-                                    tier1Layers: tier1Layers,
-                                    polyLen: polyLen
-                                ),
-                                progress: { progress in
-                                    continuation.yield(.progress(progress))
-                                }
-                            )
-                            // Don't call publishState here — the Rust FFI may still hold
-                            // a brief RefCell borrow on the DB connection, and publishState
-                            // borrows it again. Let the store call refreshState after
-                            // receiving .completed to avoid the concurrent borrow panic.
-                            continuation.yield(.completed(Data(result.proof)))
-                            continuation.finish()
-                        } catch {
-                            continuation.finish(throwing: error)
-                        }
-                    }
-                }
-            },
-            extractOrchardFvkFromUfvk: { ufvkStr, networkId in
-                Data(try VotingRustBackend.extractOrchardFvk(ufvk: ufvkStr, networkId: networkId))
-            },
-            // swiftlint:disable:next function_parameter_count
-            commitVote: { roundId, bundleIndex, hotkeyStoredSecret, proposalId, choice, numOptions, voteCommitmentTreePosition, vanAuthPath, vanPosition, vanAnchorHeight, singleShare in
-                let backend = try await dbActor.backend()
-                let vanWitness = try VotingVanWitness.make(
-                    authPath: vanAuthPath.map { [UInt8]($0) },
-                    position: vanPosition,
-                    anchorHeight: vanAnchorHeight
-                )
-                let result = try await backend.commitVote(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    hotkeyStoredSecret: hotkeyStoredSecret,
-                    proposalId: proposalId,
-                    choice: choice.ffiValue,
-                    numOptions: numOptions,
-                    voteCommitmentTreePosition: voteCommitmentTreePosition,
-                    vanWitness: vanWitness,
-                    singleShare: singleShare
-                )
-                publishState(backend: backend, roundId: roundId)
-                let encShares: [EncryptedShare] = try result.encShares.map { share in
-                    guard
-                        let c1 = Data(base64Encoded: share.ciphertext1),
-                        let c2 = Data(base64Encoded: share.ciphertext2)
-                    else {
-                        throw VotingCryptoError.malformedWireShare(share.shareIndex)
-                    }
-                    return EncryptedShare(c1: c1, c2: c2, shareIndex: share.shareIndex)
-                }
-                let bundle = VoteCommitmentBundle(
-                    vanNullifier: Data(result.vanNullifier),
-                    voteAuthorityNoteNew: Data(result.voteAuthorityNoteNew),
-                    voteCommitment: Data(result.voteCommitment),
-                    proposalId: result.proposalId,
-                    proof: Data(result.proof),
-                    encShares: encShares,
-                    anchorHeight: result.anchorHeight,
-                    voteRoundId: roundId,
-                    sharesHash: Data(),
-                    rVpkBytes: Data(result.voteKeyRandomizer)
-                )
-                let signature = CastVoteSignature(voteAuthSig: Data(result.voteAuthSig))
-                return (bundle, signature)
-            },
-            signDelegationRequest: { roundId, bundleIndex, senderSeed, hotkeyStoredSecret, networkId, accountIndex, roundName in
-                let backend = try await dbActor.backend()
-                // Same derivation the software branch of `buildVotingPczt` uses: the sender's
-                // Orchard FVK and ZIP-32 seed fingerprint come from the seed itself, so the
-                // delegation keys here are byte-identical to the ones that built the PCZT.
-                let inputs = try VotingRustBackend.generateDelegationInputs(
-                    senderSeed: senderSeed,
-                    hotkeyStoredSecret: hotkeyStoredSecret,
-                    networkId: networkId,
-                    accountIndex: accountIndex
-                )
-                let signed = try backend.signDelegationRequest(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    keys: VotingDelegationKeyInputs(
-                        fvk: inputs.fvkBytes,
-                        hotkeyStoredSecret: hotkeyStoredSecret,
-                        seedFingerprint: inputs.seedFingerprint,
-                        accountIndex: accountIndex,
-                        roundName: roundName
-                    ),
-                    seed: senderSeed
-                )
-                return (signature: Data(signed.signature), sighash: Data(signed.sighash))
-            },
-            getDelegationSubmission: { roundId, bundleIndex, signature, sighash in
-                let backend = try await dbActor.backend()
-                let sub = try backend.getDelegationSubmission(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    signature: [UInt8](signature),
-                    sighash: [UInt8](sighash)
-                )
-                guard
-                    let rk = Data(base64Encoded: sub.randomizedKey),
-                    let spendAuthSig = Data(base64Encoded: sub.spendAuthSig)
-                else {
-                    throw VotingCryptoError.malformedDelegationSubmission(
-                        "rk/spend_auth_sig did not base64-decode"
-                    )
-                }
-                return DelegationRegistration(
-                    rk: rk,
-                    spendAuthSig: spendAuthSig,
-                    tx1Effects: sub.tx1Effects,
-                    signedNoteNullifier: sub.nfSigned,
-                    cmxNew: sub.cmxNew,
-                    vanCmx: sub.govComm,
-                    govNullifiers: sub.govNullifiers,
-                    proof: sub.proof,
-                    voteRoundId: sub.voteRoundId,
-                    sighash: sighash
-                )
-            },
-            storeVanPosition: { roundId, bundleIndex, position in
-                let backend = try await dbActor.backend()
-                try backend.storeVanPosition(roundId: roundId, bundleIndex: bundleIndex, position: position)
-            },
-            syncVoteTree: { roundId, nodeUrl in
-                let backend = try await dbActor.backend()
-                return try backend.syncVoteTree(roundId: roundId, nodeUrl: nodeUrl)
-            },
-            generateVanWitness: { roundId, bundleIndex, anchorHeight in
-                let backend = try await dbActor.backend()
-                let witness = try backend.generateVanWitness(roundId: roundId, bundleIndex: bundleIndex, anchorHeight: anchorHeight)
-                return VanWitness(
-                    authPath: witness.authPath.map { Data($0) },
-                    position: witness.position,
-                    anchorHeight: witness.anchorHeight
-                )
-            },
-            markVoteSubmitted: { roundId, bundleIndex, proposalId, txHash in
-                let backend = try await dbActor.backend()
-                try backend.markVoteSubmitted(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
-                publishState(backend: backend, roundId: roundId)
-            },
-            resetTreeClient: {
-                let backend = try await dbActor.backend()
-                try backend.resetTreeClient()
-            },
             extractNcRoot: { treeStateBytes in
                 Data(try VotingRustBackend.extractNcRoot(treeState: [UInt8](treeStateBytes)))
-            },
-            storeDelegationTxHash: { roundId, bundleIndex, txHash in
-                let backend = try await dbActor.backend()
-                try backend.storeDelegationTxHash(roundId: roundId, bundleIndex: bundleIndex, txHash: txHash)
-            },
-            getDelegationTxHash: { roundId, bundleIndex in
-                let backend = try await dbActor.backend()
-                if let txHash = try backend.getDelegationTxHash(roundId: roundId, bundleIndex: bundleIndex) {
-                    return .present(txHash)
-                }
-                return .notFound
-            },
-            storeVoteTxHash: { roundId, bundleIndex, proposalId, txHash in
-                let backend = try await dbActor.backend()
-                try backend.storeVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId, txHash: txHash)
-            },
-            getVoteTxHash: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                if let txHash = try backend.getVoteTxHash(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) {
-                    return .present(txHash)
-                }
-                return .notFound
-            },
-            confirmVoteSubmission: { roundId, bundleIndex, proposalId, txHash, eventsJson in
-                let backend = try await dbActor.backend()
-                let confirmation = try backend.confirmVoteSubmission(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    txHash: txHash,
-                    eventsJson: eventsJson
-                )
-                publishState(backend: backend, roundId: roundId)
-                return VoteConfirmationInfo(
-                    txHash: confirmation.txHash,
-                    vanLeafPosition: confirmation.vanLeafPosition,
-                    voteCommitmentTreePosition: confirmation.voteCommitmentTreePosition
-                )
-            },
-            getCommitmentBundleJson: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else {
-                    return nil
-                }
-                return (bundleJson: result.bundleJson, vcTreePosition: result.voteCommitmentTreePosition)
-            },
-            recoverWireJson: { commitmentBundleJson, proposalId, shareIndex, voteCommitmentTreePosition, submitAt in
-                try VotingRustBackend.recoverWireJson(
-                    commitmentBundleJson: commitmentBundleJson,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    voteCommitmentTreePosition: voteCommitmentTreePosition,
-                    submitAt: submitAt
-                )
-            },
-            recoverableShareIndices: { commitmentBundleJson in
-                try VotingRustBackend.recoverableShareIndices(
-                    commitmentBundleJson: commitmentBundleJson
-                )
-            },
-            storeKeystoneBundleSignature: { roundId, info in
-                let backend = try await dbActor.backend()
-                try backend.storeKeystoneSignature(
-                    roundId: roundId,
-                    bundleIndex: info.bundleIndex,
-                    sig: [UInt8](info.sig),
-                    sighash: [UInt8](info.sighash),
-                    randomizedKey: [UInt8](info.rk)
-                )
-            },
-            loadKeystoneBundleSignatures: { roundId in
-                let backend = try await dbActor.backend()
-                return try backend.getKeystoneSignatures(roundId: roundId).map { sigInfo -> KeystoneBundleSignatureInfo in
-                    let sig: Data = Data(sigInfo.sig)
-                    let sighash: Data = Data(sigInfo.sighash)
-                    let rk: Data = Data(sigInfo.randomizedKey)
-                    return KeystoneBundleSignatureInfo(
-                        bundleIndex: sigInfo.bundleIndex,
-                        sig: sig,
-                        sighash: sighash,
-                        rk: rk
-                    )
-                }
-            },
-            getVoteCommitmentBundle: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else { return nil }
-                return try JSONDecoder().decode(VoteCommitmentBundle.self, from: Data(result.bundleJson.utf8))
-            },
-            getVoteCommitmentBundleWithPosition: { roundId, bundleIndex, proposalId in
-                let backend = try await dbActor.backend()
-                guard let result = try backend.getCommitmentBundle(roundId: roundId, bundleIndex: bundleIndex, proposalId: proposalId) else { return nil }
-                let bundle = try JSONDecoder().decode(VoteCommitmentBundle.self, from: Data(result.bundleJson.utf8))
-                return (bundle: bundle, vcTreePosition: result.voteCommitmentTreePosition)
-            },
-            clearRecoveryState: { roundId in
-                let backend = try await dbActor.backend()
-                try backend.clearRecoveryState(roundId: roundId)
-            },
-            resetSessionState: { roundId in
-                let backend = try await dbActor.backend()
-                try backend.resetSessionState(roundId: roundId)
-            },
-            getStoredDelegationSighash: { roundId, bundleIndex in
-                let backend = try await dbActor.backend()
-                return Data(try backend.getStoredPcztSighash(roundId: roundId, bundleIndex: bundleIndex))
-            },
-            clearKeystoneSignature: { roundId, bundleIndex in
-                let backend = try await dbActor.backend()
-                try backend.clearKeystoneSignature(roundId: roundId, bundleIndex: bundleIndex)
-            },
-            computeShareNullifier: { voteCommitment, shareIndex, primaryBlind in
-                try VotingRustBackend.computeShareNullifier(
-                    voteCommitment: voteCommitment,
-                    shareIndex: shareIndex,
-                    primaryBlind: primaryBlind
-                )
-            },
-            recordShareDelegation: { roundId, bundleIndex, proposalId, shareIndex, sentToURLs, submitAt in
-                let backend = try await dbActor.backend()
-                try backend.recordShareDelegation(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    sentToURLs: sentToURLs,
-                    submitAt: submitAt
-                )
-            },
-            getShareDelegations: { roundId in
-                let backend = try await dbActor.backend()
-                return try backend.getShareDelegations(roundId: roundId)
-            },
-            getUnconfirmedDelegations: { roundId in
-                let backend = try await dbActor.backend()
-                return try backend.getUnconfirmedDelegations(roundId: roundId)
-            },
-            markShareConfirmed: { roundId, bundleIndex, proposalId, shareIndex in
-                let backend = try await dbActor.backend()
-                try backend.markShareConfirmed(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex
-                )
-            },
-            addSentServers: { roundId, bundleIndex, proposalId, shareIndex, newURLs in
-                let backend = try await dbActor.backend()
-                try backend.addSentServers(
-                    roundId: roundId,
-                    bundleIndex: bundleIndex,
-                    proposalId: proposalId,
-                    shareIndex: shareIndex,
-                    newURLs: newURLs
-                )
             }
         )
+    }
+}
+
+// MARK: - Session streams
+
+extension VotingCryptoClient {
+    /// Runs one narrating session call as a stream.
+    ///
+    /// The session calls that drive a round report through a closure and answer
+    /// with a report; a reducer wants one ordered channel instead. So every
+    /// reported value becomes an element, the answer becomes the last element,
+    /// and a throw finishes the stream with that error. The report is the
+    /// authoritative account — events are a best-effort narration the SDK drops
+    /// under load — so a consumer that reads only the last element still sees
+    /// everything that happened.
+    ///
+    /// `cancelling` runs only when the CONSUMER went away (its task was
+    /// cancelled, or it dropped the stream), never on normal completion: the
+    /// SDK's cancellation finishes a session for good, and finishing a session
+    /// because its own run ended would take the round down with it.
+    ///
+    /// Factored out of `liveValue` so a test can drive the cancellation
+    /// behaviour with a stub call.
+    static func sessionStream<Element: Sendable, Event: Sendable, Report: Sendable>(
+        cancelling cancel: @escaping @Sendable () async -> Void,
+        call: @escaping @Sendable (@escaping @Sendable (Event) -> Void) async throws -> Report,
+        event: @escaping @Sendable (Event) -> Element,
+        report: @escaping @Sendable (Report) -> Element
+    ) -> AsyncThrowingStream<Element, Error> {
+        // The handler is installed BEFORE the work starts, which is why the
+        // stream is built by hand rather than with the closure initializer.
+        // `onTermination` assigned to a continuation that has already finished
+        // is invoked at once, and with `.cancelled` — so installing it after
+        // the task would report a run that completed normally as a
+        // cancellation, and the cancellation this hands out is permanent.
+        let (stream, continuation) = AsyncThrowingStream<Element, Error>.makeStream()
+        let termination = VotingStreamTermination(cancelling: cancel)
+
+        continuation.onTermination = { reason in
+            guard case .cancelled = reason else { return }
+            termination.consumerWentAway()
+        }
+
+        termination.attach(
+            Task {
+                do {
+                    let answer = try await call { value in
+                        continuation.yield(event(value))
+                    }
+                    continuation.yield(report(answer))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        )
+
+        return stream
+    }
+}
+
+/// Holds a session stream's work so its termination handler can reach it.
+///
+/// The handler has to be installed before the task exists — see
+/// ``VotingCryptoClient/sessionStream(cancelling:call:event:report:)`` — so the
+/// two find each other here instead. A consumer that goes away before the task
+/// has been attached is remembered, and the attach cancels straight away; the
+/// cancellation runs once however the two are ordered.
+private final class VotingStreamTermination: Sendable {
+    private struct State {
+        var task: Task<Void, Never>?
+        var consumerWentAway = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let cancel: @Sendable () async -> Void
+
+    init(cancelling cancel: @escaping @Sendable () async -> Void) {
+        self.cancel = cancel
+    }
+
+    func attach(_ task: Task<Void, Never>) {
+        let tooLate = state.withLock { state in
+            state.task = task
+            return state.consumerWentAway
+        }
+
+        if tooLate {
+            task.cancel()
+        }
+    }
+
+    func consumerWentAway() {
+        let (task, isFirst) = state.withLock { state -> (Task<Void, Never>?, Bool) in
+            let isFirst = !state.consumerWentAway
+            state.consumerWentAway = true
+            return (state.task, isFirst)
+        }
+
+        guard isFirst else { return }
+
+        task?.cancel()
+        Task { [cancel] in
+            await cancel()
+        }
     }
 }
 
@@ -643,147 +321,47 @@ extension VotingCryptoClient: DependencyKey {
 
 /// Thread-safe holder for the VotingRustBackend instance.
 private actor DatabaseActor {
-    private var _backend: VotingRustBackend?
+    private var openBackend: VotingRustBackend?
 
     func open(path: String, networkId: UInt32) throws {
-        // Before anything touches the database. Closing the previous backend
-        // below drops the last connection, which makes SQLite checkpoint and
-        // unlink the WAL — and the WAL is the only place a cleared round's
-        // original secrets still exist. Once this line has run, the evidence
-        // is safe whatever the rest of the flow does.
-        VotingDatabaseSnapshot.capture(databasePath: path)
-
         // If already open, close the old backend before opening a fresh one.
         // This makes re-initialization safe (e.g. onAppear firing twice).
-        if let old = _backend {
-            old.close()
-            _backend = nil
-        }
-        let b = VotingRustBackend()
-        try b.open(path: path, networkId: networkId)
-        _backend = b
+        close()
+
+        let backend = VotingRustBackend()
+        try backend.open(path: path, networkId: networkId)
+        openBackend = backend
     }
 
     func backend() throws -> VotingRustBackend {
-        guard let _backend else {
+        guard let openBackend else {
             throw VotingCryptoError.databaseNotOpen
         }
-        return _backend
+        return openBackend
+    }
+
+    func close() {
+        openBackend?.close()
+        openBackend = nil
     }
 }
 
 // MARK: - Helpers
 
 enum VotingCryptoError: LocalizedError {
-    case proofFailed(String)
     case databaseNotOpen
-    case hotkeySeedBindingMismatch
-    case invalidSpendAuthSignatureLength(Int)
-    case invalidKeystoneMetadata
-    case malformedWireShare(UInt32)
-    case malformedDelegationSubmission(String)
 
     var errorDescription: String? {
         switch self {
-        case .proofFailed(let reason):
-            return "Delegation proof generation failed: \(reason)"
         case .databaseNotOpen:
             return "Voting database is not open."
-        case .hotkeySeedBindingMismatch:
-            return "Hotkey derivation mismatch while building delegation sign action."
-        case .invalidSpendAuthSignatureLength(let actual):
-            return "SpendAuthSig must be 64 bytes, got \(actual)."
-        case .invalidKeystoneMetadata:
-            return "Missing or invalid Keystone signing metadata."
-        case .malformedWireShare(let shareIndex):
-            return "commitVote returned a non-base64 encrypted share at index \(shareIndex)."
-        case .malformedDelegationSubmission(let detail):
-            return "getDelegationSubmission returned malformed wire data: \(detail)"
         }
     }
-}
-
-private extension VoteChoice {
-    var ffiValue: UInt32 { index }
-
-    static func fromFFI(_ value: UInt32) -> VoteChoice { .option(value) }
 }
 
 extension Data {
     var hexString: String {
         map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-private struct VotingVanWitnessWire: Codable {
-    let authPath: [[UInt8]]
-    let position: UInt32
-    let anchorHeight: UInt32
-
-    enum CodingKeys: String, CodingKey {
-        case authPath = "auth_path"
-        case position
-        case anchorHeight = "anchor_height"
-    }
-}
-
-private func hexEncodedString(_ bytes: [UInt8]) -> String {
-    bytes.map { String(format: "%02x", $0) }.joined()
-}
-
-private extension VotingVanWitness {
-    static func make(authPath: [[UInt8]], position: UInt32, anchorHeight: UInt32) throws -> VotingVanWitness {
-        let wire = VotingVanWitnessWire(
-            authPath: authPath,
-            position: position,
-            anchorHeight: anchorHeight
-        )
-        let data = try JSONEncoder().encode(wire)
-        return try JSONDecoder().decode(VotingVanWitness.self, from: data)
-    }
-}
-
-private extension NoteInfo {
-    func toSDK() -> VotingNoteInfo {
-        let commitmentBytes: [UInt8] = [UInt8](commitment)
-        let nullifierBytes: [UInt8] = [UInt8](nullifier)
-        let diversifierBytes: [UInt8] = [UInt8](diversifier)
-        let rhoBytes: [UInt8] = [UInt8](rho)
-        let rseedBytes: [UInt8] = [UInt8](rseed)
-        return VotingNoteInfo(
-            commitment: commitmentBytes,
-            nullifier: nullifierBytes,
-            value: value,
-            position: position,
-            diversifier: diversifierBytes,
-            rho: rhoBytes,
-            rseed: rseedBytes,
-            scope: scope,
-            ufvkStr: ufvkStr
-        )
-    }
-}
-
-private extension VotingRoundPhase {
-    func toModel() -> RoundPhaseInfo {
-        switch self {
-        case .initialized: return .initialized
-        case .hotkeyGenerated: return .hotkeyGenerated
-        case .delegationConstructed: return .delegationConstructed
-        case .delegationProved: return .delegationProved
-        case .voteReady: return .voteReady
-        }
-    }
-}
-
-private extension VotingVoteRecord {
-    func toModel() -> VoteRecord {
-        VoteRecord(
-            proposalId: proposalId,
-            bundleIndex: bundleIndex,
-            choice: VoteChoice.fromFFI(choice),
-            submitted: submitted
-        )
     }
 }
 #endif

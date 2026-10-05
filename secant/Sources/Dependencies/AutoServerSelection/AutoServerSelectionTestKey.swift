@@ -8,6 +8,7 @@ import ComposableArchitecture
 extension AutoServerSelectionClient: TestDependencyKey {
     static let testValue = AutoServerSelectionClient(
         findBestServer: { nil },
-        applySwitch: { _ in false }
+        applySwitch: { _ in false },
+        rebuildAfterStall: { false }
     )
 }

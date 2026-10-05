@@ -108,7 +108,7 @@ extension SmartBannerView {
             .padding(.bottom, Design.Spacing.sheetBottomSpace)
         }
     }
-    
+
     @ViewBuilder func restoringHelpContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(localizable: .smartBannerHelpRestoreTitle)

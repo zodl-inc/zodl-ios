@@ -317,6 +317,32 @@ import Testing
         }
     }
 
+    @Test func resolvesAConfigThatAdvertisesVoteProtocolV1() {
+        let config = makeConfig(
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v1", tally: "v0", voteServer: "v1")
+        )
+
+        #expect(throws: Never.self) {
+            try config.validate()
+        }
+    }
+
+    @Test func rejectsAnUnknownVoteProtocol() {
+        let config = makeConfig(
+            supportedVersions: VotingServiceConfig.SupportedVersions(pir: ["v0"], voteProtocol: "v2", tally: "v0", voteServer: "v1")
+        )
+
+        let error = #expect(throws: VotingConfigError.self) {
+            try config.validate()
+        }
+        guard case .unsupportedVersion(let component, let advertised)? = error else {
+            Issue.record("expected unsupportedVersion, got \(String(describing: error))")
+            return
+        }
+        #expect(component == "vote_protocol")
+        #expect(advertised == "v2")
+    }
+
     @Test func validateRejectsUnknownVoteProtocol() {
         let config = makeConfig(
             supportedVersions: .init(pir: ["v0"], voteProtocol: "v99", tally: "v0", voteServer: "v1")
@@ -854,6 +880,18 @@ import Testing
         }
     }
 
+    @Test func parseVotingSessionAcceptsThirtySevenProposals() throws {
+        let session = try parseVotingSession(from: makeRound(proposals: (1...37).map { makeProposal(id: $0) }))
+
+        #expect(session.proposals.count == 37)
+    }
+
+    @Test func parseVotingSessionAcceptsProposalIdFifty() {
+        #expect(throws: Never.self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 50)]))
+        }
+    }
+
     @Test func parseVotingSessionRejectsEmptyProposals() {
         #expect(throws: (any Error).self) {
             try parseVotingSession(from: makeRound(proposals: []))
@@ -862,13 +900,19 @@ import Testing
 
     @Test func parseVotingSessionRejectsTooManyProposals() {
         #expect(throws: (any Error).self) {
-            try parseVotingSession(from: makeRound(proposals: (1...16).map { makeProposal(id: $0) }))
+            try parseVotingSession(from: makeRound(proposals: (1...51).map { makeProposal(id: $0) }))
         }
     }
 
     @Test func parseVotingSessionRejectsProposalIdOutsideRange() {
         #expect(throws: (any Error).self) {
-            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 16)]))
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 51)]))
+        }
+    }
+
+    @Test func parseVotingSessionRejectsProposalIdZero() {
+        #expect(throws: (any Error).self) {
+            try parseVotingSession(from: makeRound(proposals: [makeProposal(id: 0)]))
         }
     }
 
@@ -910,9 +954,31 @@ import Testing
         }
     }
 
-    private func makeRound(proposals: [[String: Any]]? = nil) -> [String: Any] {
+    @Test func parseVotingSessionsSkipsARoundThatFailsValidation() {
+        let validRound = makeRound(roundIdByte: 0xAA)
+        let invalidRound = makeRound(proposals: [makeProposal(id: 51)])
+        let validRound2 = makeRound(roundIdByte: 0xBB)
+
+        let sessions = parseVotingSessions(skippingInvalidRounds: [validRound, invalidRound, validRound2])
+
+        #expect(sessions.map(\.voteRoundId) == [
+            Data(repeating: 0xAA, count: 32),
+            Data(repeating: 0xBB, count: 32)
+        ])
+    }
+
+    @Test func parseVotingSessionsReturnsEmptyWhenEveryRoundIsInvalid() {
+        let sessions = parseVotingSessions(skippingInvalidRounds: [
+            makeRound(proposals: []),
+            makeRound(proposals: [makeProposal(id: 51)])
+        ])
+
+        #expect(sessions.isEmpty)
+    }
+
+    private func makeRound(roundIdByte: UInt8 = 0xAA, proposals: [[String: Any]]? = nil) -> [String: Any] {
         [
-            "vote_round_id": Data(repeating: 0xAA, count: 32).base64EncodedString(),
+            "vote_round_id": Data(repeating: roundIdByte, count: 32).base64EncodedString(),
             "snapshot_height": 1,
             "snapshot_blockhash": Data(repeating: 0x01, count: 32).base64EncodedString(),
             "proposals_hash": Data(repeating: 0x02, count: 32).base64EncodedString(),
@@ -945,669 +1011,5 @@ import Testing
     private func makeOption(index: Int) -> [String: Any] {
         ["index": index, "label": "Option \(index)"]
     }
-}
-
-@Suite struct ShareRecoveryPollingTests {
-    @Test func pollingConfirmsFromRecordedHelperInsteadOfFirstConfiguredHelper() async throws {
-        let recorder = SharePostRecorder()
-        let share = try makeShareDelegation(
-            sentToURLs: [
-                "https://helper-3.example.com",
-                "https://helper-4.example.com",
-                "https://helper-5.example.com"
-            ],
-            submitAt: 0,
-            createdAt: 100
-        )
-
-        let result = await VotingCoordFlow.pollShareStatusesForRecovery(
-            readyShares: [share],
-            roundId: "aabb",
-            now: 200,
-            voteEndTime: 1_000,
-            fetchShareStatus: { helperURL, _, _ in
-                await recorder.record(helperURL)
-                return helperURL == "https://helper-3.example.com" ? .confirmed : .pending
-            }
-        )
-
-        let queriedServers = await recorder.servers()
-        #expect(queriedServers == ["https://helper-3.example.com"])
-        #expect(result.confirmedShares == [
-            ShareDelegationKey(bundleIndex: 0, proposalId: 1, shareIndex: 0)
-        ])
-        #expect(result.resubmissionShares.isEmpty)
-        #expect(result.queriedCount == 1)
-    }
-
-    @Test func pollingContinuesAfterOneRecordedHelperErrors() async throws {
-        let recorder = SharePostRecorder()
-        let share = try makeShareDelegation(
-            sentToURLs: [
-                "https://helper-3.example.com",
-                "https://helper-4.example.com"
-            ],
-            submitAt: 0,
-            createdAt: 100
-        )
-
-        let result = await VotingCoordFlow.pollShareStatusesForRecovery(
-            readyShares: [share],
-            roundId: "aabb",
-            now: 200,
-            voteEndTime: 1_000,
-            fetchShareStatus: { helperURL, _, _ in
-                await recorder.record(helperURL)
-                if helperURL == "https://helper-3.example.com" {
-                    throw SharePostFailure()
-                }
-                return .confirmed
-            }
-        )
-
-        let queriedServers = await recorder.servers()
-        #expect(queriedServers == [
-            "https://helper-3.example.com",
-            "https://helper-4.example.com"
-        ])
-        #expect(result.confirmedShares == [
-            ShareDelegationKey(bundleIndex: 0, proposalId: 1, shareIndex: 0)
-        ])
-        #expect(result.resubmissionShares.isEmpty)
-        #expect(result.queriedCount == 2)
-    }
-
-    @Test func immediateSharesUseCreatedAtForReadinessAndResubmission() throws {
-        let share = try makeShareDelegation(
-            sentToURLs: ["https://helper.example.com"],
-            submitAt: 0,
-            createdAt: 100
-        )
-
-        #expect(!VotingCoordFlow.isShareReadyForStatusCheck(share, now: 109))
-        #expect(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 110))
-        #expect(!VotingCoordFlow.shouldResubmitShare(share, now: 129, voteEndTime: 200))
-        #expect(VotingCoordFlow.shouldResubmitShare(share, now: 130, voteEndTime: 200))
-    }
-
-    @Test func delayedSharesUseSubmitAtForReadinessAndResubmission() throws {
-        let share = try makeShareDelegation(
-            sentToURLs: ["https://helper.example.com"],
-            submitAt: 200,
-            createdAt: 100
-        )
-
-        #expect(!VotingCoordFlow.isShareReadyForStatusCheck(share, now: 209))
-        #expect(VotingCoordFlow.isShareReadyForStatusCheck(share, now: 210))
-        #expect(!VotingCoordFlow.shouldResubmitShare(share, now: 229, voteEndTime: 320))
-        #expect(VotingCoordFlow.shouldResubmitShare(share, now: 230, voteEndTime: 320))
-    }
-}
-
-// MOB-1678: since zcash_voting 3.0.0-rc.3, `VoteShareWire` carries `vote_round_id`
-// itself (canonical lowercase hex), which retired the app-side injection that used
-// to add the field to the share POST body. These two tests pin the surviving wire
-// contract from its new source: the field still reaches the server, still as
-// lowercase hex, but verbatim from the crate JSON — the app adds nothing.
-@Suite struct SharePostBodyWireContractTests {
-    @Test func shareBodyCarriesCrateProvidedVoteRoundIdVerbatim() {
-        let roundIdHex = String(repeating: "01", count: 32)
-        let payload = SharePayload(
-            wireJson: "{\"vote_round_id\":\"\(roundIdHex)\",\"share_index\":3,\"submit_at\":99}",
-            shareIndex: 3
-        )
-
-        let body = sharePostBody(for: payload)
-
-        #expect(body["vote_round_id"] as? String == roundIdHex)
-        #expect(body["share_index"] as? Int == 3)
-        #expect(body["submit_at"] as? Int == 99)
-    }
-
-    @Test func shareBodyIsTheWireJsonVerbatimWithNothingInjected() {
-        let payload = makeRecoverySharePayload()
-
-        let body = sharePostBody(for: payload)
-
-        // The fixture wire JSON has no vote_round_id, and none may appear in the
-        // body: the crate is the only source of the field now.
-        #expect(body["vote_round_id"] == nil)
-        #expect(Set(body.keys) == Set(["share_index", "submit_at"]))
-    }
-}
-
-@Suite struct ShareResubmissionFallbackTests {
-    @Test func resubmissionTriesUntriedHelpersFirst() async {
-        let recorder = SharePostRecorder()
-
-        let acceptedServers = await resubmitSharePayload(
-            makeRecoverySharePayload(),
-            configuredServerURLs: [
-                "https://already-sent.example.com",
-                "https://untried.example.com"
-            ],
-            sentToURLs: ["https://already-sent.example.com"],
-            postShare: { server, _ in
-                await recorder.record(server)
-            },
-            orderServers: { $0 }
-        )
-
-        #expect(acceptedServers == ["https://untried.example.com"])
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers == ["https://untried.example.com"])
-    }
-
-    @Test func resubmissionFallsBackToAlreadySentHelperWhenUntriedFails() async {
-        let recorder = SharePostRecorder()
-
-        let acceptedServers = await resubmitSharePayload(
-            makeRecoverySharePayload(),
-            configuredServerURLs: [
-                "https://already-sent.example.com",
-                "https://untried.example.com"
-            ],
-            sentToURLs: ["https://already-sent.example.com"],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://untried.example.com" {
-                    throw SharePostFailure()
-                }
-            },
-            orderServers: { $0 }
-        )
-
-        #expect(acceptedServers == ["https://already-sent.example.com"])
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers == [
-            "https://untried.example.com",
-            "https://already-sent.example.com"
-        ])
-    }
-
-    @Test func resubmissionReturnsEmptyWhenAllHelpersFail() async {
-        let recorder = SharePostRecorder()
-
-        let acceptedServers = await resubmitSharePayload(
-            makeRecoverySharePayload(),
-            configuredServerURLs: [
-                "https://already-sent.example.com",
-                "https://untried.example.com"
-            ],
-            sentToURLs: ["https://already-sent.example.com"],
-            postShare: { server, _ in
-                await recorder.record(server)
-                throw SharePostFailure()
-            },
-            orderServers: { $0 }
-        )
-
-        #expect(acceptedServers.isEmpty)
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers == [
-            "https://untried.example.com",
-            "https://already-sent.example.com"
-        ])
-    }
-}
-
-@Suite struct ShareDelegationPostFallbackTests {
-    @Test func selectedHelperFailureBackfillsSameShareAndPrunesFailedHelper() async throws {
-        let recorder = SharePostRecorder()
-        let payload = makeRecoverySharePayload()
-
-        let result = try await delegateSharePayloads(
-            [payload],
-            proposalId: 1,
-            initialServerURLs: [
-                "https://online-one.example.com",
-                "https://offline.example.com",
-                "https://online-two.example.com"
-            ],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://offline.example.com" {
-                    throw SharePostFailure()
-                }
-            },
-            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-        )
-
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers.count == 3)
-        #expect(Set(recordedServers) == Set([
-            "https://online-one.example.com",
-            "https://offline.example.com",
-            "https://online-two.example.com"
-        ]))
-        #expect(result.delegatedShares.first?.acceptedByServers == [
-            "https://online-one.example.com",
-            "https://online-two.example.com"
-        ])
-        #expect(result.remainingServerURLs == [
-            "https://online-one.example.com",
-            "https://online-two.example.com"
-        ])
-    }
-
-    @Test func offlineHelperIsAttemptedAtMostOnceThenLaterSharesUseOnlineHelper() async throws {
-        let recorder = SharePostRecorder()
-        let payloads = (0..<2).map { makeRecoverySharePayload(index: UInt32($0)) }
-
-        let result = try await delegateSharePayloads(
-            payloads,
-            proposalId: 1,
-            initialServerURLs: [
-                "https://offline.example.com",
-                "https://online.example.com"
-            ],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://offline.example.com" {
-                    throw SharePostFailure()
-                }
-            },
-            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-        )
-
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers == [
-            "https://offline.example.com",
-            "https://online.example.com",
-            "https://online.example.com"
-        ])
-        #expect(result.delegatedShares.map(\.acceptedByServers) == [
-            ["https://online.example.com"],
-            ["https://online.example.com"]
-        ])
-        #expect(result.remainingServerURLs == ["https://online.example.com"])
-    }
-
-    @Test func allSelectedHelpersFailButBackfillHelperSucceeds() async throws {
-        let recorder = SharePostRecorder()
-        let payload = makeRecoverySharePayload()
-
-        let result = try await delegateSharePayloads(
-            [payload],
-            proposalId: 1,
-            initialServerURLs: [
-                "https://offline-one.example.com",
-                "https://offline-two.example.com",
-                "https://online.example.com"
-            ],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server != "https://online.example.com" {
-                    throw SharePostFailure()
-                }
-            },
-            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-        )
-
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers.count == 3)
-        #expect(Set(recordedServers) == Set([
-            "https://offline-one.example.com",
-            "https://offline-two.example.com",
-            "https://online.example.com"
-        ]))
-        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
-        #expect(result.remainingServerURLs == ["https://online.example.com"])
-    }
-
-    @Test func allConfiguredHelpersFailThrowsNoReachableVoteServers() async {
-        await #expect(throws: ShareDelegationError.noReachableVoteServers) {
-            _ = try await delegateSharePayloads(
-                [makeRecoverySharePayload()],
-                proposalId: 1,
-                initialServerURLs: [
-                    "https://offline-one.example.com",
-                    "https://offline-two.example.com"
-                ],
-                postShare: { _, _ in throw SharePostFailure() },
-                selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-            )
-        }
-    }
-
-    // MOB-1678: a live incident (2026-08-12) had both vote servers return
-    // deterministic HTTP 400s for a malformed request body. The old code
-    // pruned both and surfaced `noReachableVoteServers` — the generic
-    // "check your internet connection" copy for a bug that had nothing to do
-    // with reachability. These three tests pin the fix's classification.
-
-    @Test func httpRejectionAbortsDelegationInsteadOfPruningAndContinuing() async {
-        let recorder = SharePostRecorder()
-        let payload = makeRecoverySharePayload()
-
-        let error = await #expect(throws: SvAPIError.self) {
-            _ = try await delegateSharePayloads(
-                [payload],
-                proposalId: 1,
-                initialServerURLs: [
-                    "https://rejecting.example.com",
-                    "https://never-tried.example.com"
-                ],
-                postShare: { server, _ in
-                    await recorder.record(server)
-                    if server == "https://rejecting.example.com" {
-                        throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
-                    }
-                },
-                selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-            )
-        }
-
-        guard case .httpError(let statusCode, let message)? = error else {
-            Issue.record("expected httpError, got \(String(describing: error))")
-            return
-        }
-        #expect(statusCode == 400)
-        #expect(message == "vote_round_id: expected 32 bytes, got 0")
-
-        // The healthy second server is never tried, and the rejecting server is
-        // never retried either — this is an abort, not a prune-and-continue.
-        let recordedServers = await recorder.servers()
-        #expect(recordedServers == ["https://rejecting.example.com"])
-    }
-
-    @Test func serverErrorRejectionKeepsPruneAndFailoverBehavior() async throws {
-        let recorder = SharePostRecorder()
-        let payload = makeRecoverySharePayload()
-
-        let result = try await delegateSharePayloads(
-            [payload],
-            proposalId: 1,
-            initialServerURLs: [
-                "https://degraded.example.com",
-                "https://online.example.com"
-            ],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://degraded.example.com" {
-                    throw SvAPIError.httpError(statusCode: 503, message: "upstream unavailable")
-                }
-            },
-            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-        )
-
-        // 5xx is transient server trouble, not a deterministic client-side
-        // rejection — failover behavior is unchanged by this fix.
-        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
-        #expect(result.remainingServerURLs == ["https://online.example.com"])
-    }
-
-    @Test func transportFailureKeepsPruneAndFailoverBehavior() async throws {
-        let recorder = SharePostRecorder()
-        let payload = makeRecoverySharePayload()
-
-        let result = try await delegateSharePayloads(
-            [payload],
-            proposalId: 1,
-            initialServerURLs: [
-                "https://timing-out.example.com",
-                "https://online.example.com"
-            ],
-            postShare: { server, _ in
-                await recorder.record(server)
-                if server == "https://timing-out.example.com" {
-                    throw URLError(.timedOut)
-                }
-            },
-            selectTargets: { servers, targetCount in Array(servers.prefix(targetCount)) }
-        )
-
-        // Transport/connection failures keep today's behavior: the unreachable
-        // server is pruned and the share is backfilled from the remaining pool
-        // within the same delegation attempt.
-        #expect(result.delegatedShares.first?.acceptedByServers == ["https://online.example.com"])
-        #expect(result.remainingServerURLs == ["https://online.example.com"])
-    }
-}
-
-@Suite struct DelegateSharesWithFallbackTests {
-    @Test func delegateSharesWithFallbackRetriesReachabilityExhaustion() async throws {
-        let attempts = AttemptCounter()
-        var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, serverURLs in
-            let attempt = await attempts.increment()
-            if attempt < 3 {
-                throw ShareDelegationError.noReachableVoteServers
-            }
-            return ShareDelegationResult(delegatedShares: [], remainingServerURLs: serverURLs)
-        }
-
-        let result = try await Voting.delegateSharesWithFallback(
-            [],
-            proposalId: 1,
-            votingAPI: votingAPI,
-            serverURLs: ["https://vote.example.com"],
-            retryDelay: .zero
-        )
-
-        let attemptCount = await attempts.value()
-        #expect(attemptCount == 3)
-        #expect(result.remainingServerURLs == ["https://vote.example.com"])
-    }
-
-    @Test func delegateSharesWithFallbackRethrowsUnexpectedErrorWithoutRetry() async {
-        let attempts = AttemptCounter()
-        var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _ in
-            _ = await attempts.increment()
-            throw SharePostFailure()
-        }
-
-        await #expect(throws: SharePostFailure.self) {
-            _ = try await Voting.delegateSharesWithFallback(
-                [],
-                proposalId: 1,
-                votingAPI: votingAPI,
-                serverURLs: ["https://vote.example.com"],
-                retryDelay: .zero
-            )
-        }
-        let attemptCount = await attempts.value()
-        #expect(attemptCount == 1)
-    }
-
-    // MOB-1678: same non-exhaustion rethrow path as the generic test above,
-    // pinned to the concrete case a live wire bug actually threw — a
-    // deterministic HTTP rejection must surface as itself, not get relabeled
-    // `noReachableVoteServers` or absorbed into the 3x reachability retry.
-    @Test func delegateSharesWithFallbackRethrowsHttpRejectionWithoutRetry() async {
-        let attempts = AttemptCounter()
-        var votingAPI = VotingAPIClient()
-        votingAPI.delegateShares = { _, _, _ in
-            _ = await attempts.increment()
-            throw SvAPIError.httpError(statusCode: 400, message: "vote_round_id: expected 32 bytes, got 0")
-        }
-
-        let error = await #expect(throws: SvAPIError.self) {
-            _ = try await Voting.delegateSharesWithFallback(
-                [],
-                proposalId: 1,
-                votingAPI: votingAPI,
-                serverURLs: ["https://vote.example.com"],
-                retryDelay: .zero
-            )
-        }
-
-        guard case .httpError(let statusCode, _)? = error else {
-            Issue.record("expected httpError, got \(String(describing: error))")
-            return
-        }
-        #expect(statusCode == 400)
-        let attemptCount = await attempts.value()
-        #expect(attemptCount == 1)
-    }
-}
-
-/// A vote commitment's 16 shares each carry that share's `primary_blind` in the
-/// clear, alongside the full `share_comms` vector. A helper that receives every
-/// share therefore learns every blind against every commitment and can solve for
-/// the share values — recovering the voter's exact balance. `zcash_voting` 3.0.0
-/// closes this in its own planner by omitting the server at index
-/// `share_index % 16` from that share's initial targets; ZODL drives its own
-/// fan-out, so the same guarantee is enforced here.
-@Suite struct ShareDelegationSpreadTests {
-    @Test func noHelperReceivesEveryShareOnInitialSubmission() async throws {
-        let recorder = ShareTargetRecorder()
-        let payloads = (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) }
-        let servers = [
-            "https://helper-a.example.com",
-            "https://helper-b.example.com",
-            "https://helper-c.example.com"
-        ]
-
-        _ = try await delegateSharePayloads(
-            payloads,
-            proposalId: 1,
-            initialServerURLs: servers,
-            postShare: { server, body in
-                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
-            },
-            // Worst case on purpose: a selector with no spread of its own hands
-            // the same prefix to every share. The omission rule is what has to
-            // break the correlation, not the selector's randomness.
-            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
-        )
-
-        for server in servers {
-            let received = await recorder.shareIndices(for: server)
-            #expect(received.count < 16, "\(server) received all 16 shares — it can recover the voter's balance")
-        }
-    }
-
-    /// The omitted server for a share is fixed by its position in the *configured*
-    /// helper list. `delegateSharePayloads` prunes failed helpers from its working
-    /// set mid-commitment, and if the omission were computed against that shrinking
-    /// list the indices would shift: a helper whose omitted share moves backwards
-    /// past the share already being sent never comes due again, and can collect the
-    /// entire remainder of the commitment.
-    @Test func helperOmissionFollowsConfiguredOrderWhenAnotherHelperIsPruned() async throws {
-        let recorder = ShareTargetRecorder()
-        let helperA = "https://helper-a.example.com"
-        let helperB = "https://helper-b.example.com"
-        let helperC = "https://helper-c.example.com"
-        let helperD = "https://helper-d.example.com"
-
-        // B fails on its first attempt (share 0) and is pruned, so every later share
-        // is planned against a 3-helper working set while the configured list stays 4.
-        _ = try await delegateSharePayloads(
-            (0..<16).map { makeRecoverySharePayload(index: UInt32($0)) },
-            proposalId: 1,
-            initialServerURLs: [helperA, helperB, helperC, helperD],
-            postShare: { server, body in
-                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
-                if server == helperB { throw SharePostFailure() }
-            },
-            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
-        )
-
-        // C sits at configured index 2, so share 2 is the one it must miss — and
-        // share 1 (B's index) must still reach it. Indexing the pruned list instead
-        // swaps these two.
-        let received = await recorder.shareIndices(for: helperC)
-        #expect(received.contains(1), "share 1 belongs to the pruned helper's index — C must not inherit its omission")
-        #expect(!received.contains(2), "C sits at configured index 2, so share 2 must stay omitted after pruning")
-    }
-
-    @Test func fallbackStillReachesTheOmittedHelperWhenTheOthersFail() async throws {
-        let recorder = ShareTargetRecorder()
-        // A single-share send falls below the 16-payload threshold that
-        // enables the per-share spread gate, so it never engages here —
-        // every server, this one included, is eligible from the first
-        // round, and the fallback walk should still reach it once the
-        // other helper fails.
-        let omitted = "https://helper-a.example.com"
-        let failing = "https://helper-b.example.com"
-
-        _ = try? await delegateSharePayloads(
-            [makeRecoverySharePayload(index: 0)],
-            proposalId: 1,
-            initialServerURLs: [omitted, failing],
-            postShare: { server, body in
-                await recorder.record(server: server, shareIndex: body["share_index"] as? Int ?? -1)
-                if server == failing { throw SharePostFailure() }
-            },
-            selectTargets: { candidates, targetCount in Array(candidates.prefix(targetCount)) }
-        )
-
-        let reached = await recorder.shareIndices(for: omitted)
-        #expect(reached.contains(0), "single-share sends have the spread gate off, so the fallback walk must still reach the last one standing")
-    }
-}
-
-private actor ShareTargetRecorder {
-    private var byServer: [String: Set<Int>] = [:]
-
-    func record(server: String, shareIndex: Int) {
-        byServer[server, default: []].insert(shareIndex)
-    }
-
-    func shareIndices(for server: String) -> Set<Int> {
-        byServer[server] ?? []
-    }
-}
-
-private actor SharePostRecorder {
-    private var postedServers: [String] = []
-
-    func record(_ server: String) {
-        postedServers.append(server)
-    }
-
-    func servers() -> [String] {
-        postedServers
-    }
-}
-
-private actor AttemptCounter {
-    private var count = 0
-
-    func increment() -> Int {
-        count += 1
-        return count
-    }
-
-    func value() -> Int {
-        count
-    }
-}
-
-private struct SharePostFailure: Error {}
-
-private func makeShareDelegation(
-    roundId: String = "aabb",
-    bundleIndex: UInt32 = 0,
-    proposalId: UInt32 = 1,
-    shareIndex: UInt32 = 0,
-    sentToURLs: [String],
-    confirmed: Bool = false,
-    submitAt: UInt64,
-    createdAt: UInt64,
-    nullifier: [UInt8] = Array(repeating: 0x0A, count: 32)
-) throws -> VotingShareDelegation {
-    let object: [String: Any] = [
-        "round_id": roundId,
-        "bundle_index": bundleIndex,
-        "proposal_id": proposalId,
-        "share_index": shareIndex,
-        "sent_to_urls": sentToURLs,
-        "nullifier": nullifier.map { String(format: "%02x", $0) }.joined(),
-        "confirmed": confirmed,
-        "submit_at": submitAt,
-        "created_at": createdAt
-    ]
-    let data = try JSONSerialization.data(withJSONObject: object)
-    return try JSONDecoder().decode(VotingShareDelegation.self, from: data)
-}
-
-private func makeRecoverySharePayload(index: UInt32 = 0) -> SharePayload {
-    SharePayload(
-        wireJson: "{\"share_index\":\(index),\"submit_at\":99}",
-        shareIndex: index
-    )
 }
 #endif

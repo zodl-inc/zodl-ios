@@ -1,6 +1,124 @@
 {
     "releases": [
         {
+            "version": "3.15.0",
+            "date": "24-09-2026",
+            "timestamp": 1790243803,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos la exportación de claves de visualización en Configuración Avanzada, con opciones de código QR y texto de la clave."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos Coinholder Polling para admitir el protocolo de votación más reciente y encuestas de hasta 50 preguntas.",
+                        "Actualizamos Conversión de Moneda para cargar las monedas fiduciarias admitidas directamente desde el proveedor."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.1",
+            "date": "17-09-2026",
+            "timestamp": 1789643406,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Mejoramos el progreso del envío de votos en las coinholder polls."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos soporte para coinholder polls con hasta 50 preguntas."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Hicimos más rápido el envío de tus votos en las coinholder polls."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual las billeteras con un historial de transacciones extenso podían tardar en abrirse, cargar lentamente la Actividad y la Configuración Avanzada, o dejar de responder."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.13.0",
+            "date": "11-09-2026",
+            "timestamp": 1789127082,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos una advertencia antes de continuar con un swap o un pago con CrossPay de menos de $300, ya que NEAR no reembolsa errores como una dirección o una red incorrecta por debajo de ese monto. Puedes desactivarla una vez que la hayas leído."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos las explicaciones sobre reembolsos de NEAR en Swap y CrossPay para aclarar cuándo aplica un reembolso.",
+                        "Ahora el aviso para respaldar tu frase de recuperación aparece antes que cualquier otro mensaje de la pantalla principal cuando tu billetera ha recibido fondos."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos varios problemas del motor de sincronización Slipstream: lentitud y bloqueos durante la sincronización, transacciones atascadas en \"Enviando…\", restauraciones detenidas en 0 %, el saldo mostrado como 0 al volver a abrir la app y la lista de transacciones vacía."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.12.0",
+            "date": "08-09-2026",
+            "timestamp": 1788860758,
+            "sections": [
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema en Coinholder Polling por el cual volver a abrir una encuesta podía descartar una delegación que ya habías confirmado.",
+                        "Mejoramos los mensajes que se muestran cuando una encuesta no se puede abrir en tu dispositivo, y agregamos un código de referencia que puedes compartir con soporte."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.11.0",
+            "date": "03-09-2026",
+            "timestamp": 1788469946,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos DASH, BCH y activos ZEC sintéticos en Solana y NEAR a la lista de intercambio."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Mejoramos la selección automática de servidores para evitar cambios innecesarios.",
+                        "Mejoramos cómo se muestra el saldo disponible."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.3",
             "date": "27-08-2026",
             "timestamp": 1787859192,

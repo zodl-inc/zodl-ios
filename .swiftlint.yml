@@ -3,6 +3,7 @@
 
 included:
   - secant/
+  - Packages/
 
 excluded:
   - xctemplates

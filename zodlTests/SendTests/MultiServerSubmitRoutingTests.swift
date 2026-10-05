@@ -108,6 +108,26 @@ import ComposableArchitecture
         #expect(store.state.pendingInfo == String(localizable: .sendPendingTimeoutInfo))
     }
 
+    @Test func guardBusyRoutesToPendingWithGuardBusyCopy() async {
+        // A submission guard still busy after its timeout (or a send cancelled while waiting for
+        // it) means the transaction was created but never handed to a server itself — the SDK's
+        // background resubmission takes over instead, so this must land on "pending" with its own
+        // copy, not the generic timeout copy or a plain failure.
+        let txId = Data([0xAA]).toHexStringTxId()
+        let store = makeStore(
+            result: .grpcFailure(txIds: [txId], reason: .guardBusy),
+            txIdExists: true
+        )
+
+        await store.send(.sendTriggered)
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.result == .pending)
+        #expect(store.state.txIdToExpand == txId)
+        #expect(store.state.pendingDescription == String(localizable: .sendPendingGuardBusyInfo))
+    }
+
     @Test func onAppearResetsMultiServerSubmissionState() async {
         var initialState = SendConfirmation.State(
             address: "ztestaddr",
@@ -266,6 +286,41 @@ import ComposableArchitecture
         #expect(store.state.txIdToExpand == txId)
         #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
     }
+
+    @Test func pcztGuardBusyRoutesToPendingWithGuardBusyCopy() async {
+        let txId = Data([0xAA]).toHexStringTxId()
+
+        var initialState = SendConfirmation.State(
+            address: "ztestaddr",
+            amount: Zatoshi(100_000),
+            feeRequired: Zatoshi(10_000),
+            message: "",
+            proposal: .testOnlyFakeProposal(totalFee: 10_000)
+        )
+        initialState.pcztWithProofs = Pczt([0x10, 0x11])
+        initialState.pcztWithSigs = Pczt([0x20, 0x21])
+
+        let store = TestStore(initialState: initialState) {
+            SendConfirmation()
+        }
+        store.exhaustivity = .off
+
+        store.dependencies.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        store.dependencies.mainQueue = .immediate
+        store.dependencies.zcashSDKEnvironment = .testnet
+        store.dependencies.sdkSynchronizer.createAndSubmitTransactionFromPCZT = { _, _ in
+            .grpcFailure(txIds: [txId], reason: .guardBusy)
+        }
+        store.dependencies.sdkSynchronizer.txIdExists = { _ in true }
+
+        await store.send(.createTransactionFromPCZT)
+        await store.finish()
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.result == .pending)
+        #expect(store.state.txIdToExpand == txId)
+        #expect(store.state.pendingDescription == String(localizable: .sendPendingGuardBusyInfo))
+    }
 }
 // MARK: - Swap & Pay routing
 
@@ -401,6 +456,35 @@ import ComposableArchitecture
             #expect(store.state.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
             #expect(resultState.txIdToExpand == txId)
             #expect(resultState.pendingDescription == String(localizable: .sendPendingTimeoutInfo))
+        }
+    }
+
+    @Test func guardBusySubmissionRoutesToPendingWithGuardBusyCopy() async throws {
+        // Isolate shared account storage (see partialSubmissionRoutesToFailureSupportState).
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let txId = Data([0xAA]).toHexStringTxId()
+            let store = makeStore(
+                result: .grpcFailure(txIds: [txId], reason: .guardBusy),
+                txIdExists: true
+            )
+
+            store.send(.swapRequested)
+            await waitForStore {
+                if case .sendResultPending = store.state.path.last { return true }
+                return false
+            }
+
+            guard case let .sendResultPending(resultState) = store.state.path.last else {
+                Issue.record("Expected Swap/Pay guard-busy submission to route to pending")
+                return
+            }
+
+            #expect(store.state.txIdToExpand == txId)
+            #expect(store.state.pendingDescription == String(localizable: .sendPendingGuardBusyInfo))
+            #expect(resultState.txIdToExpand == txId)
+            #expect(resultState.pendingDescription == String(localizable: .sendPendingGuardBusyInfo))
         }
     }
 

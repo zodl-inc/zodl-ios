@@ -13,11 +13,23 @@ import Testing
 @testable @preconcurrency import ZcashLightClientKit
 
 @Suite(.serialized) struct WalletBalancesPoolDisplayTests {
+    private static let testAccount = WalletAccount(
+        Account(
+            id: AccountUUID(id: [UInt8](repeating: 30, count: 16)),
+            name: "Zodl",
+            keySource: nil,
+            seedFingerprint: nil,
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        )
+    )
+
     @MainActor @Test func poolFiguresUseRawSDKBalances() async {
         let store = makeStore()
         let balance = fullPoolAccountBalance()
 
-        await store.send(.balanceUpdated(balance))
+        await store.send(.balanceUpdated(balance, Self.testAccount.id, 0))
 
         #expect(store.state.ironwoodPoolBalance == balance.ironwoodBalance.total())
         #expect(store.state.orchardPoolBalance == balance.orchardBalance.total())
@@ -30,7 +42,7 @@ import Testing
 
     @MainActor @Test func poolBalancesSumToTotal() async {
         let store = makeStore()
-        await store.send(.balanceUpdated(fullPoolAccountBalance()))
+        await store.send(.balanceUpdated(fullPoolAccountBalance(), Self.testAccount.id, 0))
 
         let sum = store.state.saplingPoolBalance
             + store.state.orchardPoolBalance
@@ -59,7 +71,7 @@ import Testing
             awaitingResolution: .zero
         )
 
-        await store.send(.balanceUpdated(balance))
+        await store.send(.balanceUpdated(balance, Self.testAccount.id, 0))
 
         #expect(store.state.orchardPoolBalance == Zatoshi(722_845_000))
         #expect(store.state.ironwoodPoolBalance == Zatoshi(277_000_000))
@@ -134,13 +146,19 @@ import Testing
 
     @MainActor
     private func makeStore() -> TestStoreOf<WalletBalances> {
-        let store = TestStore(initialState: WalletBalances.State()) {
-            WalletBalances()
-        } withDependencies: {
-            $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
-            $0.migrationManager = .noOp
+        withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            var state = WalletBalances.State()
+            state.$selectedWalletAccount.withLock { $0 = Self.testAccount }
+            let store = TestStore(initialState: state) {
+                WalletBalances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+                $0.migrationManager = .noOp
+            }
+            store.exhaustivity = .off
+            return store
         }
-        store.exhaustivity = .off
-        return store
     }
 }

@@ -7,6 +7,84 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-09-23
+
+### Added
+
+- [MOB-1877] Export incoming or full viewing keys from Advanced Settings, including for Keystone wallets. Choose a key type, confirm full-key privacy warnings, then reveal its QR code or text and share it with a trusted service. Available in English and Spanish.
+- [MOB-1706] Choose from more supported currencies in Currency Conversion, with a retry option if the currency list cannot be loaded.
+
+### Changed
+
+- [MOB-1916] Coinholder polling now runs on the updated voting protocol and needs a vote chain upgraded to it. With Tor turned on, everything a poll does now travels over Tor, including the private lookups and vote-tree reads that used to connect directly, and a step that cannot reach Tor fails instead of falling back to a direct connection. A poll for which an earlier version of the app had started submitting your vote, and that was still being confirmed when you updated, is shown but can no longer be voted in here, so nothing is sent twice; anything already confirmed still counts.
+
+### Fixed
+
+- [MOB-1364] Turning on Tor from Currency Conversion now protects requests immediately, without requiring an app restart. If Tor cannot connect, requests stay protected.
+- [MOB-1697] Cancelling the payment warning after scanning a payment request now closes the confirmation cleanly and returns to the send form.
+- [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+- [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
+- [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.
+- [MOB-1916] When a coinholder poll submission hits a brief network problem, the app now tries again on its own and shows "Reconnecting..." while it waits.
+- [MOB-1916] When a coinholder poll submission fails, the screen now says it failed instead of still reading as in progress.
+
+## [3.14.1] - 2026-09-17
+
+### Changed
+- [MOB-1930] Wallets whose votes span several note bundles submit them in parallel and question by question, so one bundle's waiting for the chain no longer holds up the other, and the progress counter advances as each answer is fully cast instead of staying on the first answer until the end.
+
+## [3.14.0] - 2026-09-15
+
+### Fixed
+
+- [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
+- [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
+- [MOB-1965] The coinholder polling confirmation screen now shows the omitted-weight disclosure in Spanish when the app uses Spanish.
+
+### Changed
+
+- [MOB-1927] Coinholder polling supports rounds with up to 50 questions and works on vote chains upgraded to the new voting circuit. A round the app cannot read is hidden on its own instead of hiding every round.
+- [MOB-1928] Submitting a ballot no longer waits for each question's tally shares to reach the helper servers before starting the next question; a question is reported as submitted once its shares are accepted.
+- [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
+- [MOB-1962] Coinholder polling picks up a mined vote sooner and reliably keeps checking over Tor: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1964] Authorizing a wallet for coinholder polling reuses private-information-retrieval server connections across matching note bundles and preparation steps, so wallets with several bundles start faster.
+- [MOB-1965] Coinholder polling submits at most two note bundles when the rest carry under 1 % of the wallet's voting weight (and under 1,000 ZEC), so rounds with many small notes finish in minutes instead of hours. The confirmation screen shows the weight that was left out.
+
+### Fixed
+
+- [MOB-1955] The transaction list loads far faster on wallets with a long history: the app now reads the details of every transaction in one pass instead of one query per transaction.
+- [MOB-1861] Opening the app and visiting Advanced Settings are no longer slowed down by the migration checks re-reading the whole transaction history; on a wallet that never migrated, those checks no longer read it at all, so sync starts right away.
+- [MOB-1954] On a wallet with a long transaction history, the app no longer re-reads the whole history every two seconds once sync is up to date. The list refreshes when a sync pass completes, when a transaction arrives or is mined, and while a sent transaction is still pending. If reading the history fails, the app now retries on its own with increasing delays instead of waiting for the next change.
+
+## [3.13.0] - 2026-09-10
+
+### Changed
+
+- [MOB-1858] Sending no longer waits behind unrelated network work. Preparing a payment now runs alongside other activity instead of blocking it, and if the wallet is still busy with something else by the time it's ready to broadcast, the transaction is shown as pending and submitted automatically in the background instead of being reported as a failure.
+
+### Fixed
+
+- [MOB-1869] Send and outgoing Swap and Pay no longer report insufficient funds, or allow Review, while the wallet is still working out your spendable balance after a restore or a server change; they wait the same way the home screen does. Swapping another asset into ZEC is unaffected.
+- [MOB-1854] Sync now resumes after a migration broadcast even when the resume request arrives while the previous start is still finishing.
+- [MOB-1862] After switching accounts, a balance or pending amount that was still loading for the previous account can no longer be shown as the new account's. The balance breakdown now shows the same spendable and pending amounts as the home screen, instead of zeros, while the wallet is still checking the chain — shown as updating during that check, with Send and Swap waiting for it rather than claiming you have insufficient funds. Funds that are merely waiting for confirmations no longer leave the balance spinning as if nothing could be spent, and swapping another asset into ZEC no longer waits for the wallet's spendable balance to be confirmed, since that swap doesn't spend it.
+- [MOB-1854] Putting the app in the background while sync was about to restart can no longer leave that restart running in the background or re-arm background work when the app returns.
+- [MOB-1862] A balance that was still being read when a newer balance arrived from the wallet can no longer briefly replace the newer value on the home screen or the balance breakdown.
+- [MOB-1860] Leaving a voting screen while a proof is being prepared stops that work instead of letting it run in the background.
+- [MOB-1859] Opening the wallet no longer generates a fresh receive address for every account on each load, so loading is faster during sync.
+- [MOB-1857] Sending with insufficient funds shows the proper message again, and a failed payment request always shows an error instead of doing nothing.
+- [MOB-1856] The app stays responsive while it catches up on a long transaction history.
+- [MOB-1855] The transaction list no longer empties or stays stuck on placeholders while the wallet is still catching up on sync, and after switching accounts, a failed refresh can no longer show the previous account's transactions as the new account's history.
+- [MOB-1853] Automatic server switching no longer restarts a sync that is actively in progress; if syncing stalls, the app now looks for a healthier server by itself. When the wallet's own reconnection attempts give up, the app rebuilds the connection instead — to a better server when one is available, otherwise the current one — waiting for an in-progress send to finish first instead of giving up on the rebuild, and never switching servers a second time on top of it; after two rebuilds in one session it shows the error state.
+- [MOB-1853] If you switch servers while the wallet is recovering from a stalled sync, the recovery now respects your new choice instead of switching back to the server it had picked earlier.
+- [MOB-1853] Sending the app to the background while it was rebuilding sync after a stall no longer leaves that rebuild running in the background, and a rebuild that was cancelled that way cannot affect the next foreground's recovery.
+
+## [3.12.0] - 2026-09-08
+
+### Fixed
+- [MOB-1798] A poll made unvotable by an earlier version can be voted in again. When ZODL opens, it recovers the delegation an earlier build replaced from the copies of the polling database it keeps, whether or not the app was closed cleanly after the loss; when you enter that poll, the recovered delegation is restored and the poll continues where it left off. Every copy found is kept, and the one the poll's chain confirms is the one restored. A poll that already holds a vote, a delivered share, or any delegation record the recovery does not account for is never touched.
+
+## [3.11.0] - 2026-09-03
+
 ### Added
 - [MOB-1751] The Pay screen's scanner now reads Bitcoin, Litecoin, Ethereum (including ERC-20) and Solana payment request QR codes, not just plain addresses — the recipient, the coin or token being asked for, and the requested amount are filled in for you. A request is only filled in as a whole: if it names an asset you cannot pay with, or an amount too small for the form to express, nothing on the form changes and a toast explains why. Requests carrying more decimal places than the amount field accepts are rounded down, never up, and you are told when that happens. Test-network requests, Solana links that ask the wallet to sign a prepared transaction, and requests naming an Ethereum name (.eth) instead of an address are refused. Scanning a payment request into the address book now saves just the address instead of the whole URI.
 - [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.

@@ -33,6 +33,7 @@ final class AutoServerSelectionClientTests: XCTestCase {
             $0.sdkSynchronizer.switchToEndpoint = { recorder.switchedTo = $0 }
             $0.transactionGuard = TransactionGuardClient(
                 acquire: {},
+                acquireWithTimeout: { _ in },
                 tryAcquire: { !guardBusy },
                 release: {}
             )
@@ -89,6 +90,7 @@ final class AutoServerSelectionClientTests: XCTestCase {
             $0.sdkSynchronizer.switchToEndpoint = { _ in throw URLError(URLError.Code.timedOut) }
             $0.transactionGuard = TransactionGuardClient(
                 acquire: {},
+                acquireWithTimeout: { _ in },
                 tryAcquire: { true },
                 release: {}
             )
@@ -110,6 +112,9 @@ struct RootAutoServerCandidateTests {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             var state = Root.State.initial
+            // MOB-1853: `canApplyAutoServerSwitch` now also requires an idle sync status; seed one
+            // so this test still isolates the sensitive-flow term it is named for.
+            state.lastKnownSyncStatus = .upToDate
             #expect(state.canApplyAutoServerSwitch)
 
             let sensitivePaths: [Root.State.Path] = [
@@ -152,6 +157,11 @@ struct RootAutoServerCandidateTests {
             $0.defaultInMemoryStorage = InMemoryStorage()
         } operation: {
             var state = Root.State.initial
+            // MOB-1853: `canApplyAutoServerSwitch` now also requires an idle sync status; seed one
+            // so this test still isolates the server-setup term it is named for.
+            state.lastKnownSyncStatus = .upToDate
+            #expect(state.canApplyAutoServerSwitch)
+
             state.serverSetupViewBinding = true
             #expect(!state.canApplyAutoServerSwitch)
 
@@ -174,7 +184,11 @@ struct RootAutoServerCandidateTests {
                 streamingCallTimeoutInMillis: 0
             )
             let didApply = LockIsolated(false)
-            let store = TestStore(initialState: Root.State.initial) {
+            // MOB-1853: `canApplyAutoServerSwitch` now also requires an idle sync status; seed one
+            // so this test still isolates the snapshot-read gate it is named for.
+            var initialState = Root.State.initial
+            initialState.lastKnownSyncStatus = .upToDate
+            let store = TestStore(initialState: initialState) {
                 Root()
             } withDependencies: {
                 $0.autoServerSelection = AutoServerSelectionClient(
@@ -182,7 +196,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { nil })
             }
@@ -210,7 +225,11 @@ struct RootAutoServerCandidateTests {
             let snapshotReadStarted = AsyncStream<Void>.makeStream()
             let snapshotReadRelease = AsyncStream<Void>.makeStream()
             let didApply = LockIsolated(false)
-            let store = TestStore(initialState: Root.State.initial) {
+            // MOB-1853: `canApplyAutoServerSwitch` now also requires an idle sync status; seed one
+            // so this test still isolates the snapshot-read gate it is named for.
+            var initialState = Root.State.initial
+            initialState.lastKnownSyncStatus = .upToDate
+            let store = TestStore(initialState: initialState) {
                 Root()
             } withDependencies: {
                 $0.autoServerSelection = AutoServerSelectionClient(
@@ -221,7 +240,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(
                     getLocalAccountBalances: {
@@ -260,7 +280,11 @@ struct RootAutoServerCandidateTests {
             )
             let benchmarkedAt = Date(timeIntervalSince1970: 1_000_000)
             let didApply = LockIsolated(false)
-            let store = TestStore(initialState: Root.State.initial) {
+            // MOB-1853: `canApplyAutoServerSwitch` now also requires an idle sync status; seed one
+            // so this test still isolates the empty-snapshot behavior it is named for.
+            var initialState = Root.State.initial
+            initialState.lastKnownSyncStatus = .upToDate
+            let store = TestStore(initialState: initialState) {
                 Root()
             } withDependencies: {
                 $0.autoServerSelection = AutoServerSelectionClient(
@@ -268,7 +292,8 @@ struct RootAutoServerCandidateTests {
                     applySwitch: { _ in
                         didApply.setValue(true)
                         return true
-                    }
+                    },
+                    rebuildAfterStall: { false }
                 )
                 $0.sdkSynchronizer = .mocked(getLocalAccountBalances: { [:] })
                 $0.date.now = { benchmarkedAt }

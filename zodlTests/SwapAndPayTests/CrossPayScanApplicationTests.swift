@@ -164,14 +164,23 @@ import Testing
         // 1 wei. Formatting it wrote a literal "0" into the amount field, which reads as a request
         // for nothing at all.
         var state = payState()
-        state.selectedAsset = ethAsset
+        let existingContact = Contact(address: "savedRecipient", name: "Saved recipient", chainId: "base")
+        state.address = "typedByHand"
+        state.selectedContact = existingContact
+        state.selectedAsset = usdcAsset
         state.amountAssetText = "25"
+        state.amountUsdText = "25"
+        state.amountText = "25"
 
         let request = "ethereum:\(Const.recipient)@1?value=1"
         state.applyScannedRequest(CrossPayRequestParser.parse(request), rawValue: request)
 
-        #expect(state.amountAssetText.isEmpty)
-        #expect(state.amountText.isEmpty)
+        #expect(state.address == "typedByHand")
+        #expect(state.selectedContact == existingContact)
+        #expect(state.selectedAsset == usdcAsset)
+        #expect(state.amountAssetText == "25")
+        #expect(state.amountUsdText == "25")
+        #expect(state.amountText == "25")
         #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayAmountUnsupported)))
     }
 
@@ -217,6 +226,23 @@ import Testing
     }
 
     // MARK: - Locale
+
+    @Test func productionPrefillRoundTripsThroughTheConfiguredAmountReader() throws {
+        try FormatterTestGate.shared.withLockUnchecked {
+            var state = payState()
+            state.selectedAsset = btcAsset
+
+            state.applyScannedRequest(
+                CrossPayRequestParser.parse(Const.btcRequest),
+                rawValue: Const.btcRequest
+            )
+
+            let reader = try #require(NumberFormatter.zcashNumberFormatter.copy() as? NumberFormatter)
+            #expect(state.conversionCrossPayFormatter.locale == Locale.current)
+            #expect(reader.locale == Locale.current)
+            #expect(reader.number(from: state.amountText)?.decimalValue == Decimal(string: "0.015"))
+        }
+    }
 
     @Test func prefilledAmountRoundTripsInEveryLocale() throws {
         // A payment URI carries its amount in canonical en_US_POSIX form, but the amount field is

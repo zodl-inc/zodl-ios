@@ -27,6 +27,26 @@ struct AutoServerSelectionClient {
     /// the new server. Returns true when the switch ran and the new server was persisted.
     /// Never throws; failures are logged.
     var applySwitch: @Sendable (LightWalletEndpoint) async -> Bool = { _ in false }
+    /// The bounded way back to a running sync once the SDK's own stall recovery has given up.
+    /// Benchmarks a fresh candidate (`findBestServer()`'s underlying logic) BEFORE taking the
+    /// transaction guard, so waiting for it never holds other work back -- but the decision of what
+    /// to restart at is made fresh, INSIDE the guard the manual Save path in `ServerSetupStore` also
+    /// uses (`switchWaiting`): Automatic/Manual mode, the currently configured endpoint, and
+    /// migration pinning are all re-read at that point, not carried over from before the wait. A
+    /// manual switch or a pinning change that lands while the rebuild is parked on the guard is
+    /// picked up and wins over the (possibly by-then-stale) benchmark; the benchmarked candidate is
+    /// used only when Automatic mode is still on and migration pinning still allows it, otherwise the
+    /// freshly-read current endpoint is used -- restarting there is still useful when recovery gave
+    /// up with no engine handle left. Uses `switchWaiting` via `SDKSynchronizerClient.restartSync`,
+    /// not `applySwitch`'s `switchIfIdle`: a give-up already spent one of a small per-foreground
+    /// budget (`Root.State.maxTerminalStallRebuildsPerForeground`) on this attempt, and the SDK only
+    /// emits `gaveUp: true` once per handle, so skipping the rebuild outright when a broadcast merely
+    /// happens to be in flight would waste that budget credit for nothing -- waiting instead runs the
+    /// rebuild once the broadcast clears. Persists the server preference INSIDE the guard, same
+    /// discipline as `ServerSetupStore.applyServerSwitch`, only when Automatic mode is (still) on and
+    /// the target actually differs from the freshly-read current endpoint. Returns whether a pass was
+    /// actually started; never throws, failures are logged.
+    var rebuildAfterStall: @Sendable () async -> Bool = { false }
 }
 
 enum AutoServerSelectionConstants {

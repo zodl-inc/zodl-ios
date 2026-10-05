@@ -6,30 +6,12 @@
 //  Stage 5D destination for the static helpers that previously lived on
 //  the legacy `Voting` reducer. Keeping the `Voting` namespace lets
 //  callers in `VotingCoordFlow` use the same `Voting.persistDrafts(...)`
-//  / `Voting.delegateSharesWithFallback(...)` call sites without a
-//  rename pass.
+//  / `Voting.loadDrafts(...)` call sites without a rename pass.
 //
 
 import Foundation
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
-
-/// Empty placeholder used as the `senderSeed` parameter when the SDK call
-/// path doesn't need it (Keystone signing builds the PCZT externally).
-let emptySenderSeed: [UInt8] = []
-
-/// Pull the 32-byte seed fingerprint from a wallet account (Keystone path).
-func votingSeedFingerprint(for account: WalletAccount?) -> Data? {
-    if let seedFingerprint = account?.seedFingerprint, seedFingerprint.count == 32 {
-        return Data(seedFingerprint)
-    }
-    return nil
-}
-
-/// Resolve the ZIP-32 account index for a wallet account; defaults to 0.
-func votingAccountIndex(for account: WalletAccount?) -> UInt32 {
-    account.flatMap(\.zip32AccountIndex).map { UInt32($0.index) } ?? 0
-}
 
 // MARK: - Voting namespace (helpers only — no reducer)
 
@@ -303,61 +285,6 @@ enum Voting {
         let synthesizedAbstainIndex = (proposal.options.map(\.index).max() ?? 0) + 1
         return choice.index == synthesizedAbstainIndex
     }
-
-    /// Delegate shares to the helper servers with retry on whole-set
-    /// exhaustion. Errors other than `noReachableVoteServers` are rethrown
-    /// immediately so the per-proposal catch can decide whether to abort
-    /// the whole batch.
-    @discardableResult
-    static func delegateSharesWithFallback(
-        _ payloads: [SharePayload],
-        proposalId: UInt32,
-        votingAPI: VotingAPIClient,
-        serverURLs: [String],
-        retryDelay: Duration = .seconds(2)
-    ) async throws -> ShareDelegationResult {
-        guard !serverURLs.isEmpty else {
-            throw ShareDelegationError.noReachableVoteServers
-        }
-
-        var lastExhaustionError: ShareDelegationError?
-        for attempt in 1...3 {
-            do {
-                return try await votingAPI.delegateShares(payloads, proposalId, serverURLs)
-            } catch let error as ShareDelegationError where error == .noReachableVoteServers {
-                lastExhaustionError = error
-                LoggerProxy.warn("delegateShares attempt \(attempt)/3 exhausted vote servers")
-                if attempt < 3 {
-                    try await Task.sleep(for: retryDelay)
-                }
-            } catch {
-                LoggerProxy.warn("delegateShares failed with non-exhaustion error: \(error)")
-                throw error
-            }
-        }
-
-        let finalError = lastExhaustionError ?? ShareDelegationError.noReachableVoteServers
-        throw finalError
-    }
-}
-
-func submittedVotesByProposal(
-    _ records: [VoteRecord],
-    bundleCount: UInt32
-) -> [UInt32: VoteChoice] {
-    var recordsByProposal: [UInt32: [VoteRecord]] = [:]
-    for record in records {
-        recordsByProposal[record.proposalId, default: []].append(record)
-    }
-
-    return recordsByProposal.reduce(into: [UInt32: VoteChoice]()) { result, entry in
-        let records = entry.value
-        let allSubmitted = records.allSatisfy(\.submitted)
-        let hasAllBundles = bundleCount == 0 || UInt32(records.count) >= bundleCount
-        if allSubmitted && hasAllBundles, let choice = records.first?.choice {
-            result[entry.key] = choice
-        }
-    }
 }
 
 // MARK: - Pipeline errors (used by VotingCoordFlow)
@@ -367,8 +294,6 @@ enum VotingFlowError: LocalizedError {
     case missingSigningAccount
     case missingHotkeyAddress
     case missingPendingUnsignedPczt
-    case invalidDelegationSignature
-    case missingKeystoneBundleSignature
     case missingVoteCommitmentBundle
     case inconsistentBundleSetup(bundleCount: UInt32, noteChunkCount: Int)
     case delegationTxFailed(code: UInt32, log: String)
@@ -384,10 +309,6 @@ enum VotingFlowError: LocalizedError {
             return String(localizable: .coinVoteStoreErrorMissingHotkeyAddress)
         case .missingPendingUnsignedPczt:
             return String(localizable: .coinVoteStoreErrorMissingPendingUnsignedPczt)
-        case .invalidDelegationSignature:
-            return String(localizable: .coinVoteStoreErrorInvalidDelegationSignature)
-        case .missingKeystoneBundleSignature:
-            return String(localizable: .coinVoteStoreErrorMissingKeystoneBundleSignature)
         case .missingVoteCommitmentBundle:
             return String(localizable: .coinVoteStoreErrorMissingVoteCommitmentBundle)
         case let .inconsistentBundleSetup(bundleCount, noteChunkCount):
@@ -409,13 +330,18 @@ enum VotingFlowError: LocalizedError {
 /// messages.
 enum VotingErrorMapper {
     static func userFriendlyMessage(from error: Error) -> String {
-        if let shareError = error as? ShareDelegationError {
-            switch shareError {
-            case .noReachableVoteServers:
-                return String(localizable: .coinVoteStoreUserErrorNoReachableVoteServers)
-            }
-        }
         return userFriendlyMessage(from: error.localizedDescription)
+    }
+
+    /// Whether a raw error is the NULL-column read that means this device's
+    /// delegation setup for a round is incomplete.
+    ///
+    /// The message this predicate selects describes the symptom only: it
+    /// cannot tell a setup that was interrupted before anything was submitted
+    /// from one whose delegation is already on chain. Only the round's own
+    /// state separates those, and this function does not have it.
+    static func isIncompleteDelegationSetup(_ rawError: String) -> Bool {
+        rawError.contains("no alpha for round") || rawError.contains("Invalid column type Null")
     }
 
     // swiftlint:disable:next cyclomatic_complexity
@@ -426,7 +352,7 @@ enum VotingErrorMapper {
         if isNullifierAlreadySpent(rawError) {
             return String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent)
         }
-        if rawError.contains("no alpha for round") || rawError.contains("Invalid column type Null") {
+        if isIncompleteDelegationSetup(rawError) {
             // Defense in depth (MOB-1802): a NULL-column read out of the delegation
             // setup tables (`zcash_voting`'s per-(round, wallet, bundle) blobs) means
             // this device's local setup state for the round is incomplete. Fixes A–C
@@ -528,7 +454,7 @@ enum VotingErrorMapper {
     }
 }
 
-// MARK: - Note bundling (Swift mirror of zcash_voting::chunk_notes)
+// MARK: - Voting weight formatting
 
 func votingRawZecString(_ zatoshi: UInt64) -> String {
     let whole = zatoshi / 100_000_000
@@ -546,63 +472,6 @@ func votingAuthorizationMemo(pollTitle: String, rawWeight: UInt64) -> String {
     )
 }
 
-struct BundleResult {
-    let bundles: [[NoteInfo]]
-    let eligibleWeight: UInt64
-    let droppedCount: Int
-}
-
-extension Array where Element == NoteInfo {
-    /// See the legacy comment on the original definition for rationale; this
-    /// is a 1:1 move out of `VotingStore+Helpers.swift`.
-    func smartBundles() -> BundleResult {
-        guard !isEmpty else {
-            return BundleResult(bundles: [], eligibleWeight: 0, droppedCount: 0)
-        }
-
-        let sorted = self.sorted { lhs, rhs in
-            if lhs.value != rhs.value { return lhs.value > rhs.value }
-            return lhs.position < rhs.position
-        }
-
-        var bundleNotes: [[NoteInfo]] = []
-        var bundleTotals: [UInt64] = []
-
-        for note in sorted {
-            if bundleNotes.isEmpty || (bundleNotes.last?.count ?? 0) >= 5 {
-                bundleNotes.append([])
-                bundleTotals.append(0)
-            }
-            let last = bundleNotes.count - 1
-            bundleTotals[last] += note.value
-            bundleNotes[last].append(note)
-        }
-
-        let numBundles = bundleNotes.count
-        var surviving: [(total: UInt64, notes: [NoteInfo])] = []
-        var eligibleWeight: UInt64 = 0
-        var survivingNoteCount = 0
-
-        for i in 0..<numBundles where bundleTotals[i] >= ballotDivisor {
-            surviving.append((bundleTotals[i], bundleNotes[i]))
-            eligibleWeight += quantizeWeight(bundleTotals[i])
-            survivingNoteCount += bundleNotes[i].count
-        }
-        let droppedCount = count - survivingNoteCount
-
-        for i in 0..<surviving.count {
-            surviving[i].notes.sort { $0.position < $1.position }
-        }
-
-        surviving.sort { lhs, rhs in
-            if lhs.total != rhs.total { return lhs.total > rhs.total }
-            return (lhs.notes.first?.position ?? .max) < (rhs.notes.first?.position ?? .max)
-        }
-
-        return BundleResult(bundles: surviving.map(\.notes), eligibleWeight: eligibleWeight, droppedCount: droppedCount)
-    }
-}
-
 // MARK: - libzcashlc `network_id` (mirror of `parse_network` in the SDK Rust)
 
 extension NetworkType {
@@ -614,21 +483,5 @@ extension NetworkType {
         case .testnet, .regtest: 0
         }
     }
-}
-
-// MARK: - Hex helpers
-
-/// Convert hex string to Data (used for share confirmation polling and API parsing).
-func votingDataFromHex(_ hex: String) -> Data {
-    var data = Data()
-    var idx = hex.startIndex
-    while idx < hex.endIndex {
-        let next = hex.index(idx, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
-        if let byte = UInt8(hex[idx..<next], radix: 16) {
-            data.append(byte)
-        }
-        idx = next
-    }
-    return data
 }
 #endif

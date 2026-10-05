@@ -1,6 +1,124 @@
 {
     "releases": [
         {
+            "version": "3.15.0",
+            "date": "24-09-2026",
+            "timestamp": 1790243803,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added viewing key export in Advanced Settings, with QR code and key text options."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We updated Coinholder Polling to support the latest voting protocol.",
+                        "We updated Currency Conversion to load supported fiat currencies directly from the provider."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.1",
+            "date": "17-09-2026",
+            "timestamp": 1789643406,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved vote submission progress in coinholder polls."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added support for coinholder polls with up to 50 questions."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We made submitting your votes in coinholder polls faster."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where wallets with a long transaction history could be slow to open, slow to load Activity and Advanced Settings, or stop responding."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.13.0",
+            "date": "11-09-2026",
+            "timestamp": 1789127082,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added a warning before you continue with a swap or CrossPay payment under $300, since NEAR doesn't refund mistakes like a wrong address or wrong network below that amount. You can turn the warning off once you've read it."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We updated the NEAR refund explainers in Swap and CrossPay so they explain when a refund actually applies.",
+                        "We now show the recovery phrase backup prompt ahead of every other home screen message once your wallet has received funds."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed a range of Slipstream sync issues, including lag and freezes while syncing, transfers stuck on \"Sending…\", restores stuck at 0%, a balance briefly showing as 0 after reopening the app, and the transaction list going empty."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.12.0",
+            "date": "08-09-2026",
+            "timestamp": 1788860758,
+            "sections": [
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue in Coinholder Polling where reopening a poll could discard a delegation you had already confirmed.",
+                        "We made the messages clearer when a poll can't be opened on your device, and added a reference code you can share with support."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.11.0",
+            "date": "03-09-2026",
+            "timestamp": 1788469946,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added DASH, BCH, and synthetic ZEC assets on Solana and NEAR to the swap list."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved automatic server selection to avoid unnecessary server changes.",
+                        "We improved how the spendable balance is shown."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.10.3",
             "date": "27-08-2026",
             "timestamp": 1787859192,

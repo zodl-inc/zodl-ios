@@ -75,85 +75,12 @@ import Testing
         #expect(VotingErrorMapper.userFriendlyMessage(from: raw) == String(localizable: .coinVoteStoreUserErrorNullifierAlreadySpent))
     }
 
-    @Test func smartBundlesUsesRustOrderingAndPerBundleQuantization() {
-        let notes = [
-            note(value: 31_568_000, position: 0),
-            note(value: 26_000_000, position: 1),
-            note(value: 13_000_000, position: 2),
-            note(value: 12_500_000, position: 3),
-            note(value: 5_000_000, position: 4),
-            note(value: 4_000_000, position: 5),
-            note(value: 3_000_000, position: 6),
-            note(value: 3_000_000, position: 7),
-            note(value: 2_000_000, position: 8),
-            note(value: 1_000_000, position: 9)
-        ]
-
-        let result = notes.smartBundles()
-
-        let positions = result.bundles.map { $0.map(\.position) }
-        #expect(positions == [
-            [0, 1, 2, 3, 4],
-            [5, 6, 7, 8, 9]
-        ])
-        #expect(result.bundles.map(Self.total) == [
-            88_068_000,
-            13_000_000
-        ])
-        let quantized = result.bundles.map { quantizeWeight(Self.total($0)) }
-        #expect(quantized == [
-            87_500_000,
-            12_500_000
-        ])
-        #expect(result.eligibleWeight == 100_000_000)
-        #expect(result.droppedCount == 0)
-    }
-
-    @Test func smartBundlesDropsTrailingDustBundle() {
-        let notes = [
-            note(value: 30_000_000, position: 0),
-            note(value: 20_000_000, position: 1),
-            note(value: 10_000_000, position: 2),
-            note(value: 10_000_000, position: 3),
-            note(value: 5_000_000, position: 4),
-            note(value: 1_000_000, position: 5)
-        ]
-
-        let result = notes.smartBundles()
-
-        let positions = result.bundles.map { $0.map(\.position) }
-        #expect(positions == [[0, 1, 2, 3, 4]])
-        #expect(result.eligibleWeight == 75_000_000)
-        #expect(result.droppedCount == 1)
-    }
-
     @Test func votingAuthorizationMemoUsesRawEightDecimalBundleTotal() {
         #expect(votingRawZecString(31_568_000) == "0.31568000")
         #expect(
             votingAuthorizationMemo(pollTitle: "Shielded Poll", rawWeight: 31_568_000)
                 == "I am authorizing this hotkey managed by my wallet to vote on Shielded Poll with 0.31568000 ZEC."
         )
-    }
-
-    @Test func submittedVotesByProposalRequiresEveryExpectedBundle() {
-        let records = [
-            VoteRecord(proposalId: 1, bundleIndex: 0, choice: .option(0), submitted: true),
-            VoteRecord(proposalId: 1, bundleIndex: 1, choice: .option(0), submitted: true),
-            VoteRecord(proposalId: 2, bundleIndex: 0, choice: .option(1), submitted: true),
-            VoteRecord(proposalId: 3, bundleIndex: 0, choice: .option(1), submitted: false),
-            VoteRecord(proposalId: 3, bundleIndex: 1, choice: .option(1), submitted: true)
-        ]
-
-        #expect(submittedVotesByProposal(records, bundleCount: 2) == [1: .option(0)])
-    }
-
-    @Test func submittedVotesByProposalAllowsLegacyUnknownBundleCount() {
-        let records = [
-            VoteRecord(proposalId: 1, bundleIndex: 0, choice: .option(0), submitted: true),
-            VoteRecord(proposalId: 2, bundleIndex: 0, choice: .option(1), submitted: false)
-        ]
-
-        #expect(submittedVotesByProposal(records, bundleCount: 0) == [1: .option(0)])
     }
 
     @Test func syntheticAbstainOnlyMatchesUiGeneratedChoice() {
@@ -206,6 +133,55 @@ import Testing
         #expect(metadata.drafts[roundId] == ["1": 0])
     }
 
+    @Test func votingMetadataRoundTripsTrimCompletionFields() throws {
+        let metadata = VotingMetadata(
+            records: [
+                "round-1": PersistedVotingRecord(
+                    votedAt: 1_700_000_000,
+                    votingWeight: 995_000_000,
+                    proposalCount: 2,
+                    eligibleVotingWeight: 1_000_000_000,
+                    submittedBundleCount: 2,
+                    totalBundleCount: 3
+                )
+            ]
+        )
+
+        let encoded = try JSONEncoder().encode(metadata)
+        let decoded = try JSONDecoder().decode(VotingMetadata.self, from: encoded)
+        let record = tryUnwrap(decoded.records["round-1"])
+
+        #expect(record.votingWeight == 995_000_000)
+        #expect(record.eligibleVotingWeight == 1_000_000_000)
+        #expect(record.submittedBundleCount == 2)
+        #expect(record.totalBundleCount == 3)
+    }
+
+    @Test func votingMetadataDecodesLegacyRecordWithoutTrimCompletionFields() throws {
+        let legacy = Data("""
+        {
+          "drafts": {},
+          "submittedVotes": {},
+          "records": {
+            "round-1": {
+              "votedAt": 1700000000,
+              "votingWeight": 500000000,
+              "proposalCount": 1
+            }
+          },
+          "schemaVersion": 1
+        }
+        """.utf8)
+
+        let decoded = try JSONDecoder().decode(VotingMetadata.self, from: legacy)
+        let record = tryUnwrap(decoded.records["round-1"])
+
+        #expect(record.votingWeight == 500_000_000)
+        #expect(record.eligibleVotingWeight == nil)
+        #expect(record.submittedBundleCount == nil)
+        #expect(record.totalBundleCount == nil)
+    }
+
     @Test func voteRecordReportsSkippedKeystoneBundles() {
         let skippedRecord = Voting.VoteRecord(
             votedAt: Date(timeIntervalSince1970: 1_000),
@@ -230,25 +206,6 @@ import Testing
         #expect(!completeRecord.hasSkippedKeystoneBundles)
     }
 
-    private static func total(_ notes: [NoteInfo]) -> UInt64 {
-        notes.reduce(UInt64(0)) { $0 + $1.value }
-    }
-
-    private func note(value: UInt64, position: UInt64) -> NoteInfo {
-        let byte = UInt8(position % UInt64(UInt8.max))
-        return NoteInfo(
-            commitment: Data(repeating: byte, count: 32),
-            nullifier: Data(repeating: byte, count: 32),
-            value: value,
-            position: position,
-            diversifier: Data(repeating: byte, count: 11),
-            rho: Data(repeating: byte, count: 32),
-            rseed: Data(repeating: byte, count: 32),
-            scope: 0,
-            ufvkStr: "ufvk-\(position)"
-        )
-    }
-
     private func votingMetadataClient(
         _ box: VotingHelpersMetadataBox
     ) -> VotingMetadataProviderClient {
@@ -270,6 +227,13 @@ import Testing
         client.setRecord = { record, roundId in box.records[roundId] = record }
         client.clearRecord = { roundId in box.records.removeValue(forKey: roundId) }
         return client
+    }
+
+    private func tryUnwrap<T>(_ value: T?) -> T {
+        guard let value else {
+            fatalError("tryUnwrap: required value was unexpectedly nil")
+        }
+        return value
     }
 }
 

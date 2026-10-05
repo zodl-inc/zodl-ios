@@ -33,6 +33,7 @@ enum AccessibilityID {
 
     enum AdvancedSettings {
         static let exportPrivateData = "advancedSettings.exportPrivateData"
+        static let exportViewingKey = "advancedSettings.exportViewingKey"
     }
 
     enum SendForm {
@@ -56,6 +57,12 @@ enum AccessibilityID {
         static let assetSelectButton = "crossPayForm.assetSelectButton"
         static let reviewButton = "crossPayForm.reviewButton"
         static let maxButton = "crossPayForm.maxButton"
+    }
+
+    enum RefundWarning {
+        static let cancelButton = "refundWarning.cancelButton"
+        static let continueButton = "refundWarning.continueButton"
+        static let dontShowAgainToggle = "refundWarning.dontShowAgainToggle"
     }
 
     enum SwapForm {
