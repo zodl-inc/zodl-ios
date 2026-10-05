@@ -79,15 +79,12 @@ import ComposableArchitecture
 
     private let txIdA = Data([0xAA]).toHexStringTxId()
     private let txIdB = Data([0xBB]).toHexStringTxId()
-    private let txIdC = Data([0xCC]).toHexStringTxId()
-
-    private let timeoutDescription = SDKSynchronizerClient.MultiServerSubmission.timeoutDescription
 
     private func map(
         txIds: [String],
         outcomes: [TransactionSubmissionOutcome]
     ) -> SDKSynchronizerClient.CreateProposedTransactionsResult {
-        SDKSynchronizerClient.mapSubmissionOutcomes(txIds: txIds, outcomes: outcomes, endpoints: endpoints)
+        SDKSynchronizerClient.mapSubmissionOutcomes(txIds: txIds, outcomes: outcomes)
     }
 
     @Test func allAcceptedMapsToSuccess() {
@@ -157,76 +154,49 @@ import ComposableArchitecture
         #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
     }
 
-    @Test func acceptanceAfterTransportFailureMapsToPartial() {
+    @Test func acceptanceAfterTransportFailureMapsToPending() {
         // With per-transaction submission a later transaction can be accepted after an
         // earlier one failed, so acceptances are counted across the whole batch, not
         // just the prefix before the first failure.
         let result = map(txIds: [txIdA, txIdB], outcomes: [.timedOut, .accepted(by: endpoints[0])])
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: [timeoutDescription, "accepted by endpoint 1"]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
     }
 
-    @Test func cancelledStatusIsDistinctFromUnreachable() {
+    @Test func acceptedThenCancelledMapsToPending() {
         let result = map(txIds: [txIdA, txIdB], outcomes: [.accepted(by: endpoints[0]), .cancelled])
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: ["accepted by endpoint 1", "submission cancelled"]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
-    @Test func acceptedThenRejectedMapsToPartialWithRedactedStatuses() {
+    @Test func acceptedThenRejectedMapsToPendingWhileRetryPlanRemainsActive() {
         let result = map(
-            txIds: [txIdA, txIdB, txIdC],
+            txIds: [txIdA, txIdB],
             outcomes: [
                 .accepted(by: endpoints[0]),
-                .rejected(code: -25, message: "bad-txns-inputs-missingorspent"),
-                .notAttempted
+                .rejected(code: -25, message: "bad-txns-inputs-missingorspent")
             ]
         )
 
-        let expectedStatuses = [
-            "accepted by endpoint 1",
-            "rejected code: -25",
-            "notAttempted"
-        ]
-        #expect(result == .partial(txIds: [txIdA, txIdB, txIdC], statuses: expectedStatuses))
-        #expect(!expectedStatuses.joined(separator: " ").contains("private.wallet.node"))
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
-    @Test func acceptedThenTimedOutMapsToPartial() {
+    @Test func acceptedThenTimedOutMapsToPending() {
         let result = map(
             txIds: [txIdA, txIdB],
             outcomes: [.accepted(by: endpoints[1]), .timedOut]
         )
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: ["accepted by endpoint 2", timeoutDescription]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
     }
 
-    @Test func acceptedLabelReflectsEndpointPositionInSubmissionList() {
+    @Test func acceptedThenUnreachableMapsToPending() {
         let result = map(
             txIds: [txIdA, txIdB],
             outcomes: [.accepted(by: endpoints[2]), .unreachable]
         )
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: ["accepted by endpoint 3", "all servers unreachable"]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 
     @Test func emptyTransactionListMapsToFailure() {
@@ -238,12 +208,7 @@ import ComposableArchitecture
     @Test func missingOutcomesAreTreatedAsNotAttempted() {
         let result = map(txIds: [txIdA, txIdB], outcomes: [.accepted(by: endpoints[0])])
 
-        #expect(
-            result == .partial(
-                txIds: [txIdA, txIdB],
-                statuses: ["accepted by endpoint 1", "notAttempted"]
-            )
-        )
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
     }
 }
 

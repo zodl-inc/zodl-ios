@@ -575,12 +575,6 @@ extension SDKSynchronizerClient: DependencyKey {
 extension SDKSynchronizerClient {
     enum MultiServerSubmission {
         static let noTransactionsDescription = "No transactions created"
-        static let notAttemptedStatus = "notAttempted"
-        static let timeoutDescription = "Timed out waiting for endpoint response; transaction may still have been broadcast"
-        // The SDK reports `.unreachable` when every endpoint failed at the transport level and
-        // no server-level rejection was observed — never label that "rejected" in support data.
-        static let unreachableStatus = "all servers unreachable"
-        static let cancelledStatus = "submission cancelled"
         /// Distinct from every other submission failure code (-1 nothing created, -996/-999 on the
         /// PCZT path) so a support report tells "gave up waiting for the guard" apart from a server
         /// rejection. Nothing was broadcast when it is reported.
@@ -735,8 +729,7 @@ extension SDKSynchronizerClient {
 
         let result = mapSubmissionOutcomes(
             txIds: txIds,
-            outcomes: outcomes,
-            endpoints: endpoints
+            outcomes: outcomes
         )
 
         switch result {
@@ -777,21 +770,19 @@ extension SDKSynchronizerClient {
     }
 
     /// Pure mapping of per-transaction SDK submission outcomes onto the app-side result contract.
-    /// `outcomes[i]` belongs to `txIds[i]`; `endpoints` is the ordered list the transactions were
-    /// submitted to and is only used to derive redacted "endpoint N" labels (never hostnames).
+    /// `outcomes[i]` belongs to `txIds[i]`.
     ///
-    /// `.partial` requires at least one acceptance; with zero acceptances the result is decided
-    /// by the first not-accepted outcome (`.rejected` -> definitive failure, transport-level
-    /// failures -> `.grpcFailure`, which routes to "pending" because the transactions are in the
-    /// wallet and keep being rebroadcast by the SDK's background resubmission).
+    /// A rejection is terminal only when no transaction was accepted. Once any transaction in the
+    /// batch was accepted, every remaining non-accepted transaction maps to `.grpcFailure`, which
+    /// routes to "pending": each transaction was submitted individually, so its retry plan remains
+    /// active and the SDK keeps rebroadcasting it in the background.
     ///
     /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
     /// resumed a nil winner on cancellation and routed it through the same branch as a transport
     /// failure, and the caller was being torn down anyway.
     static func mapSubmissionOutcomes(
         txIds: [String],
-        outcomes: [TransactionSubmissionOutcome],
-        endpoints: [LightWalletEndpoint]
+        outcomes: [TransactionSubmissionOutcome]
     ) -> CreateProposedTransactionsResult {
         guard !txIds.isEmpty else {
             return .failure(txIds: [], code: -1, description: MultiServerSubmission.noTransactionsDescription)
@@ -804,67 +795,33 @@ extension SDKSynchronizerClient {
             outcomes.append(contentsOf: Array(repeating: .notAttempted, count: txIds.count - outcomes.count))
         }
 
-        let firstNotAcceptedIndex = outcomes.firstIndex { outcome in
-            if case .accepted = outcome { return false }
-            return true
-        }
-
-        guard let firstNotAcceptedIndex else {
-            return .success(txIds: txIds)
-        }
-
-        let statuses = outcomes.map { status(for: $0, endpoints: endpoints) }
         let acceptedCount = outcomes.filter { outcome in
             if case .accepted = outcome { return true }
             return false
         }
         .count
 
-        switch outcomes[firstNotAcceptedIndex] {
-        case .accepted:
-            // Unreachable: `firstNotAcceptedIndex` never points at an accepted outcome. Keep the
-            // compiler-required branch loud so a refactor of the index derivation cannot silently
-            // turn a failed submission into a reported success.
-            assertionFailure("mapSubmissionOutcomes: first not-accepted outcome resolved to .accepted")
-            return .partial(txIds: txIds, statuses: statuses)
-        case let .rejected(code, message):
-            return acceptedCount == 0
-                ? .failure(txIds: txIds, code: code, description: message)
-                : .partial(txIds: txIds, statuses: statuses)
-        case .timedOut:
-            return acceptedCount == 0
-                ? .grpcFailure(txIds: txIds, reason: .timeout)
-                : .partial(txIds: txIds, statuses: statuses)
-        case .unreachable, .cancelled, .notAttempted:
-            return acceptedCount == 0
-                ? .grpcFailure(txIds: txIds)
-                : .partial(txIds: txIds, statuses: statuses)
+        guard acceptedCount != txIds.count else {
+            return .success(txIds: txIds)
         }
-    }
 
-    private static func status(for outcome: TransactionSubmissionOutcome, endpoints: [LightWalletEndpoint]) -> String {
-        switch outcome {
-        case .accepted(let endpoint):
-            return "accepted by \(endpointLabel(for: endpoint, in: endpoints))"
-        case let .rejected(code, _):
-            return "rejected code: \(code)"
-        case .unreachable:
-            return MultiServerSubmission.unreachableStatus
-        case .cancelled:
-            return MultiServerSubmission.cancelledStatus
-        case .timedOut:
-            return MultiServerSubmission.timeoutDescription
-        case .notAttempted:
-            return MultiServerSubmission.notAttemptedStatus
+        let firstRejection = outcomes.compactMap { outcome -> (code: Int, message: String)? in
+            guard case let .rejected(code, message) = outcome else { return nil }
+            return (code, message)
         }
-    }
+        .first
 
-    /// Redacted label for an endpoint: its 1-based position in the submission list. The label never
-    /// exposes the hostname, so a privately configured server cannot leak into support emails.
-    private static func endpointLabel(for endpoint: LightWalletEndpoint, in endpoints: [LightWalletEndpoint]) -> String {
-        guard let index = endpoints.firstIndex(of: endpoint) else { return "endpoint" }
+        if let firstRejection {
+            return acceptedCount == 0
+                ? .failure(txIds: txIds, code: firstRejection.code, description: firstRejection.message)
+                : .grpcFailure(txIds: txIds)
+        }
 
-        return "endpoint \(index + 1)"
+        let timedOut = outcomes.contains { outcome in
+            if case .timedOut = outcome { return true }
+            return false
+        }
+        return .grpcFailure(txIds: txIds, reason: timedOut ? .timeout : nil)
     }
 }
 
