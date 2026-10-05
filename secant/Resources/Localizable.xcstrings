@@ -11467,7 +11467,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your Ledger can't send to this address type."
+            "value" : "Your Ledger can’t send to this address type."
           }
         },
         "es" : {
