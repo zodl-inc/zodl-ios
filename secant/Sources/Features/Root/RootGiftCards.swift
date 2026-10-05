@@ -19,6 +19,12 @@ extension Root {
     func giftCardsReduce() -> Reduce<Root.State, Root.Action> {
         Reduce { state, action in
             switch action {
+            case .initialization(.appDelegate(.didFinishLaunching)):
+                // A card wallet holds the card's keys and the claim's recipient. One left behind
+                // by a run that was killed or crashed mid-flow is deleted now, before any card can
+                // be opened; the SDK spares a card that is open.
+                return .run { _ in giftCard.removeLeftoverWallets() }
+
             case .home(.redeemGiftCardTapped):
                 return openGiftCardFlow(.initial, state: &state)
 

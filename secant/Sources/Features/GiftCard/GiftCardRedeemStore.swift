@@ -30,7 +30,7 @@ struct GiftCardRedeem {
             case checking
             case ready(spendable: Zatoshi)
             case pending(amount: Zatoshi, confirmationsNeeded: Int?)
-            /// Already redeemed, or not funded yet.
+            /// Already redeemed, not funded yet, or holding less than the network fee.
             case empty
             case invalidLink
             /// A card for a newer link format.
@@ -247,7 +247,16 @@ struct GiftCardRedeem {
                 guard case .redeeming(let amount) = state.step else {
                     return .none
                 }
-                state.step = error == .unavailable ? .unavailable : .failure(amount: amount)
+                switch error {
+                case .unavailable:
+                    state.step = .unavailable
+                case .nothingToRedeem:
+                    // Nothing was sent, and sending again cannot help: the card is spent, or what
+                    // it holds would all go to the fee.
+                    state.step = .empty
+                default:
+                    state.step = .failure(amount: amount)
+                }
                 return .none
 
             case .closeTapped:
@@ -343,6 +352,8 @@ extension GiftCardRedeem {
             return .wrongNetwork
         case .unavailable:
             return .unavailable
+        case .nothingToRedeem:
+            return .empty
         case .unknownHandle, .checkFailed, .redeemFailed:
             return .checkFailed
         }

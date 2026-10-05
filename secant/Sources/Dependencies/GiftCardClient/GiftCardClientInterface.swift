@@ -46,6 +46,9 @@ struct GiftCardClient {
     /// Stops the card's wallet and deletes everything stored for it. Safe to call more than once
     /// and with a handle that is already gone.
     var cleanup: @Sendable (_ handle: GiftCardHandle) async -> Void
+    /// Deletes card wallets an earlier run left behind (the app was killed or crashed while a card
+    /// was open). Called once at launch; never touches a card that is open now.
+    var removeLeftoverWallets: @Sendable () -> Void = { }
 }
 
 /// What a gift card link says about itself, without its secret.
@@ -83,7 +86,8 @@ enum GiftCardStatus: Equatable, Sendable {
     case ready(spendable: Zatoshi)
     /// The card has been funded but the funds need more confirmations before they can be spent.
     case pending(amount: Zatoshi, confirmationsNeeded: Int?)
-    /// Nothing to redeem: the card was already redeemed, or it has not been funded yet.
+    /// Nothing to redeem: the card was already redeemed, it has not been funded yet, or what it
+    /// holds would not even cover the network fee.
     case empty
 }
 
@@ -103,6 +107,9 @@ enum GiftCardClientError: Error, Equatable, Sendable {
     case checkFailed
     /// Redeeming failed; nothing is known to have been broadcast.
     case redeemFailed
+    /// The card holds nothing worth redeeming: it was redeemed meanwhile, or the network fee would
+    /// take everything it holds. Nothing was created or broadcast.
+    case nothingToRedeem
     /// This build cannot redeem gift cards (the wallet SDK does not provide it yet).
     case unavailable
 }

@@ -234,6 +234,37 @@ import ComposableArchitecture
         }
     }
 
+    /// The legacy reference vector above with its birthday moved to height 1, before the card's pool
+    /// existed: syncing from there would scan the whole chain for nothing.
+    private static let legacyLowBirthdayLink = [
+        "\(GiftCardLink.vizorPrefix)#v3=",
+        "WyJtYWluIiwiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsMSwiMTAwMDAwMCIsImtuaWdodE1hZ2ljIiwx",
+        "MS4xNzQ3LCJJdCdzIGEgZ3JlYXQgZGF5IHRvIHNoaWVsZCB5b3VyIFpFQyDwn5uh77iPIl0"
+    ].joined()
+
+    @Test func liveClientReportsAnImpossibleBirthdayAsAnInvalidCard() async {
+        #expect(throws: ZcashError.giftCardLinkInvalidBirthday) {
+            _ = try GiftCard(link: Self.legacyLowBirthdayLink)
+        }
+        #expect(throws: GiftCardClientError.invalidLink) {
+            _ = try GiftCardClient.parseCard(Self.legacyLowBirthdayLink)
+        }
+
+        let store = liveStore(link: Self.legacyLowBirthdayLink)
+        await store.send(.onAppear) {
+            $0.step = .invalidLink
+        }
+    }
+
+    @Test func liveClientMapsEachTypedLinkError() {
+        #expect(GiftCardClient.parseError(ZcashError.giftCardLinkNotAGiftCard) == .notAGiftCardLink)
+        #expect(GiftCardClient.parseError(ZcashError.giftCardLinkUnsupportedVersion) == .unsupportedVersion)
+        #expect(GiftCardClient.parseError(ZcashError.giftCardLinkUnsupportedNetwork) == .networkMismatch)
+        #expect(GiftCardClient.parseError(ZcashError.giftCardLinkInvalidBirthday) == .invalidLink)
+        #expect(GiftCardClient.parseError(ZcashError.giftCardLinkInvalid) == .invalidLink)
+        #expect(GiftCardClient.parseError(CancellationError()) == .invalidLink)
+    }
+
     @Test func liveClientReportsNotAGiftCardLink() async {
         let store = liveStore(link: "https://example.com/#v=1&key=zgifttest1fixture&height=3000000")
 
@@ -257,6 +288,25 @@ import ComposableArchitecture
         await store.receive(\.checkFailed) {
             $0.step = .checkFailed
         }
+    }
+
+    /// The card held too little to pay the fee (or was redeemed elsewhere) by the time it was
+    /// swept: nothing was sent, so the screen says there is nothing to redeem instead of offering
+    /// a Retry that would fail the same way.
+    @Test func nothingToRedeemOnRedeemShowsTheEmptyCard() async {
+        let store = makeStore(scenario: scenario(GiftCardClient.MockScenario(redeemError: .nothingToRedeem)))
+
+        await store.send(.onAppear)
+        await store.receive(\.statusLoaded) {
+            $0.step = .ready(spendable: Zatoshi(10_000_000))
+        }
+        await store.send(.redeemTapped) {
+            $0.step = .redeeming(amount: Zatoshi(10_000_000))
+        }
+        await store.receive(\.redeemFailed) {
+            $0.step = .empty
+        }
+        #expect(!store.state.isRedeemable)
     }
 
     @Test func failedRedeemKeepsTheAmountAndRechecksOnRetry() async {
@@ -431,6 +481,32 @@ import ComposableArchitecture
                 _ = try await client.redeem(handle, Self.orchardUA.stringEncoded)
             }
         }
+        #expect(closed.value == 0)
+        #expect(reopened.value == 0)
+    }
+
+    @Test func liveRedeemOfANothingToRedeemCardKeepsTheSession() async throws {
+        let registry = GiftCardSessionRegistry()
+        let closed = LockIsolated(0)
+        let reopened = LockIsolated(0)
+        let session = FakeGiftCardSession(
+            held: .ready(spendable: Zatoshi(5_000)),
+            sendAllError: .nothingToRedeem,
+            closed: closed,
+            reopened: reopened
+        )
+        let handle = await registry.insert(session)
+        let client = GiftCardClient.live(registry: registry)
+
+        await #expect(throws: GiftCardClientError.nothingToRedeem) {
+            try await withDependencies {
+                $0.transactionGuard = .testValue
+                $0.sdkSynchronizer = .mocked()
+            } operation: {
+                _ = try await client.redeem(handle, Self.orchardUA.stringEncoded)
+            }
+        }
+        // Nothing was created, so the card's wallet is not replaced.
         #expect(closed.value == 0)
         #expect(reopened.value == 0)
     }
@@ -650,6 +726,26 @@ private struct FakeGiftCardSession: GiftCardSession {
         #expect(memo == (try Memo(string: "Gift card · Welcome to Zcash Summit")))
     }
 
+    /// A card whose message hides a right-to-left override, a newline and a bell: the memo is
+    /// built from the SDK's sanitized `GiftCard.message`, so none of them reach the wallet history.
+    @Test func memoCarriesTheSanitizedMessage() throws {
+        let link = [
+            "\(GiftCardLink.vizorPrefix)#v3=",
+            "WyJtYWluIiwiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsMzQ4MzE0MSwiMTAwMDAwMCIsImtuaWdodE1hZ2ljIiwx",
+            "MS4xNzQ3LCJIYXBweeKAriBiaXJ0aGRheVxuZnJvbVx1MDAwNyB1cyJd"
+        ].joined()
+        let card = try GiftCard(link: link)
+        let memo = try #require(GiftCardRedeemerSession.redeemMemo(for: card))
+        guard case .text(let text) = memo else {
+            Issue.record("expected a text memo")
+            return
+        }
+        let string = text.string
+        #expect(string.hasPrefix("Gift card · Happy"))
+        #expect(string.contains("birthday"))
+        #expect(!string.unicodeScalars.contains { $0.properties.generalCategory == .control || $0.properties.generalCategory == .format })
+    }
+
     @Test func longMessageIsTrimmedToFitAMemo() throws {
         let message = String(repeating: "é", count: 400)   // 800 bytes
         let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: message))
@@ -661,5 +757,55 @@ private struct FakeGiftCardSession: GiftCardSession {
         #expect(string.hasPrefix("Gift card · é"))
         #expect(string.utf8.count <= MemoBytes.capacity)
         #expect(!string.hasSuffix("\u{FFFD}"))
+    }
+}
+
+/// How the card's wallet is set up and what the live wiring reports about it.
+@Suite struct GiftCardRedeemerSettingsTests {
+    private func settings(torFlag: Bool?) -> GiftCardRedeemerSettings {
+        withDependencies {
+            $0.zcashSDKEnvironment = .testnet
+            $0.userDefaults = .noOp
+            $0.walletStorage.exportTorSetupFlag = { torFlag }
+        } operation: {
+            GiftCardRedeemerSettings.current()
+        }
+    }
+
+    @Test func cardWalletFollowsTheWalletsTorSetting() {
+        #expect(settings(torFlag: true).isTorEnabled)
+        #expect(!settings(torFlag: false).isTorEnabled)
+        #expect(!settings(torFlag: nil).isTorEnabled)
+        #expect(settings(torFlag: true).network.networkType == .testnet)
+    }
+
+    @Test func cardWalletDoesNotLog() {
+        guard case .noLogging = GiftCardRedeemerSettings.loggingPolicy else {
+            Issue.record("the card wallet must not log")
+            return
+        }
+    }
+
+    @Test func dustCardHasNothingToRedeem() {
+        let pool = PoolBalance(spendableValue: Zatoshi(5_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero)
+        let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
+        let dust = ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: false)
+
+        #expect(dust.state == .dust)
+        #expect(GiftCardRedeemerSession.appStatus(dust) == .empty)
+        #expect(
+            GiftCardRedeemerSession.appStatus(ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: true))
+                == .ready(spendable: Zatoshi(5_000))
+        )
+    }
+
+    @Test func rejectedSubmissionIsLoggedWithoutTheServersText() throws {
+        let rejected = try #require(
+            GiftCardRedeemer.failureDescription(
+                of: .submitFailure(txId: Data(repeating: 1, count: 32), code: 18, description: "bad-txns tx 0101 to utest1secret")
+            )
+        )
+        #expect(rejected == "submission rejected (18)")
+        #expect(GiftCardRedeemer.failureDescription(of: .success(txId: Data(repeating: 1, count: 32))) == nil)
     }
 }

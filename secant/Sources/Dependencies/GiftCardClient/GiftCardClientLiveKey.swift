@@ -59,6 +59,9 @@ extension GiftCardClient: DependencyKey {
             },
             cleanup: { handle in
                 await registry.close(handle)
+            },
+            removeLeftoverWallets: {
+                Self.removeLeftoverWallets()
             }
         )
     }
@@ -77,47 +80,67 @@ extension GiftCardClient {
         }
     }
 
-    /// Maps the SDK's parse failure onto `GiftCardClientError`. The SDK reports every parse failure
-    /// as `rustParseGiftCardLink` with a fixed message per cause (`rust/src/liberated_payment.rs` in the SDK):
-    /// not a link at all, an unsupported link version, a card for another network, or a damaged
-    /// link (missing, repeated, invalid or oversized fields, or a key that cannot be derived).
+    /// Maps the SDK's parse failure onto `GiftCardClientError`. The SDK validates the link and
+    /// reports each cause as its own error; anything else it might throw counts as a damaged link.
     static func parseError(_ error: Error) -> GiftCardClientError {
-        guard case ZcashError.rustParseGiftCardLink(let message) = error else {
+        guard let error = error as? ZcashError else {
             return .invalidLink
         }
-        let reason = message.lowercased()
-        if reason.contains("not a liberated payment link") || reason.contains("not a gift card link") {
+        switch error {
+        case .giftCardLinkNotAGiftCard:
             return .notAGiftCardLink
-        }
-        if reason.contains("unsupported payment link version") || reason.contains("unsupported gift card link version") {
+        case .giftCardLinkUnsupportedVersion:
             return .unsupportedVersion
-        }
-        if reason.contains("unsupported network") || reason.contains("different network") {
+        case .giftCardLinkUnsupportedNetwork:
             return .networkMismatch
+        case .giftCardLinkInvalidBirthday, .giftCardLinkInvalid:
+            // A birthday the card cannot have (before the card's pool existed) is a damaged or
+            // crafted link: syncing from there would scan the chain for nothing.
+            return .invalidLink
+        default:
+            return .invalidLink
         }
-        return .invalidLink
+    }
+
+    /// Deletes the card wallets an earlier run left behind. The SDK spares any card open now. A
+    /// failure is only logged, without the SDK's message: it names the card's wallet directory.
+    static func removeLeftoverWallets() {
+        do {
+            let removed = try GiftCardRedeemer.removeLeftoverWallets()
+            if removed > 0 {
+                LoggerProxy.event("[GiftCard] removed \(removed) leftover card wallet(s)")
+            }
+        } catch {
+            LoggerProxy.error("[GiftCard] could not remove every leftover card wallet")
+        }
+    }
+
+    /// What a log line may say about an SDK error: its code, never its message, which can carry
+    /// server-provided text.
+    static func logDescription(of error: Error) -> String {
+        if let error = error as? ZcashError {
+            return error.code.rawValue
+        }
+        return String(describing: type(of: error))
     }
 
     /// Opens the card's wallet and registers it. The card wallet is a second synchronizer next to
-    /// the wallet's own: same network, and the lightwalletd server the wallet is currently
-    /// configured with (the user's manual choice, or the one the automatic selection last
-    /// applied). It never uses Tor, so a wallet on protected access syncs and redeems the card
-    /// directly.
+    /// the wallet's own, set up like it (see `GiftCardRedeemerSettings`): same network, the
+    /// lightwalletd server the wallet is currently configured with, and the wallet's Tor choice,
+    /// so a wallet on protected access syncs and redeems the card over Tor too.
     private static func open(_ link: String, registry: GiftCardSessionRegistry) async throws -> GiftCardHandle {
         guard GiftCardLink.isCandidate(link) else {
             throw GiftCardClientError.notAGiftCardLink
         }
         let card = try Self.parseCard(link)
 
-        @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
-        let network = zcashSDKEnvironment.network()
-        guard card.network == network.networkType else {
+        let settings = GiftCardRedeemerSettings.current()
+        guard card.network == settings.network.networkType else {
             throw GiftCardClientError.networkMismatch
         }
-        let endpoint = zcashSDKEnvironment.endpoint()
 
-        let redeemer = try await Self.makeRedeemer(card: card, network: network, endpoint: endpoint, registry: registry)
-        let session = GiftCardRedeemerSession(redeemer: redeemer, card: card, network: network, endpoint: endpoint)
+        let redeemer = try await Self.makeRedeemer(card: card, settings: settings, registry: registry)
+        let session = GiftCardRedeemerSession(redeemer: redeemer, card: card, settings: settings)
 
         // A screen that went away while the card was being opened must not leave the card's
         // wallet behind: close it instead of registering it.
@@ -125,7 +148,7 @@ extension GiftCardClient {
             await session.close()
             throw CancellationError()
         }
-        LoggerProxy.event("[GiftCard] opened card wallet \(redeemer.alias)")
+        LoggerProxy.event("[GiftCard] opened the card wallet")
         return await registry.insert(session)
     }
 
@@ -134,16 +157,15 @@ extension GiftCardClient {
     /// the registry still holds is closed and the creation is retried once.
     private static func makeRedeemer(
         card: GiftCard,
-        network: ZcashNetwork,
-        endpoint: LightWalletEndpoint,
+        settings: GiftCardRedeemerSettings,
         registry: GiftCardSessionRegistry
     ) async throws -> GiftCardRedeemer {
         do {
             do {
-                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
+                return try settings.makeRedeemer(for: card)
             } catch ZcashError.giftCardRedeemerAlreadyActive {
                 await registry.closeAll()
-                return try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
+                return try settings.makeRedeemer(for: card)
             }
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
@@ -151,7 +173,7 @@ extension GiftCardClient {
             LoggerProxy.error("[GiftCard] the card is still open elsewhere; try again once it is closed")
             throw GiftCardClientError.checkFailed
         } catch {
-            LoggerProxy.error("[GiftCard] could not create the card wallet: \(error.localizedDescription)")
+            LoggerProxy.error("[GiftCard] could not create the card wallet: \(Self.logDescription(of: error))")
             throw GiftCardClientError.checkFailed
         }
     }
@@ -195,7 +217,7 @@ extension GiftCardClient {
             await Self.replaceAfterFailedSubmission(handle, session: session, registry: registry)
             throw GiftCardClientError.redeemFailed
         } catch {
-            LoggerProxy.error("[GiftCard] redeem failed: \(error.localizedDescription)")
+            LoggerProxy.error("[GiftCard] redeem failed: \(Self.logDescription(of: error))")
             throw GiftCardClientError.redeemFailed
         }
     }
@@ -215,7 +237,7 @@ extension GiftCardClient {
                 LoggerProxy.event("[GiftCard] reopened the card wallet after a failed submission")
             }
         } catch {
-            LoggerProxy.error("[GiftCard] could not reopen the card wallet after a failed submission: \(error.localizedDescription)")
+            LoggerProxy.error("[GiftCard] could not reopen the card wallet after a failed submission: \(Self.logDescription(of: error))")
             await registry.close(handle)
         }
     }
@@ -277,6 +299,42 @@ struct GiftCardSweep: Equatable, Sendable {
     let recordedInMainWallet: Bool
 }
 
+/// How the card's wallet is set up: like the wallet's own synchronizer, so that opening a card
+/// changes nothing about how this device reaches the network.
+struct GiftCardRedeemerSettings: Sendable {
+    /// The card wallet logs nothing, as the SDK defaults to: its log would hold the transaction
+    /// that links the card to the user's address.
+    static let loggingPolicy = Initializer.LoggingPolicy.noLogging
+
+    let network: ZcashNetwork
+    /// The lightwalletd server the wallet is configured with right now.
+    let endpoint: LightWalletEndpoint
+    /// The wallet's Tor choice (protected access): the stored flag the main synchronizer is built
+    /// with, and which the Tor setting updates together with the running synchronizer.
+    let isTorEnabled: Bool
+
+    /// The settings of the wallet's own synchronizer, as they are now.
+    static func current() -> Self {
+        @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
+        @Dependency(\.walletStorage) var walletStorage
+        return Self(
+            network: zcashSDKEnvironment.network(),
+            endpoint: zcashSDKEnvironment.endpoint(),
+            isTorEnabled: walletStorage.exportTorSetupFlag() ?? false
+        )
+    }
+
+    func makeRedeemer(for card: GiftCard) throws -> GiftCardRedeemer {
+        try GiftCardRedeemer(
+            card: card,
+            network: network,
+            endpoint: endpoint,
+            isTorEnabled: isTorEnabled,
+            loggingPolicy: Self.loggingPolicy
+        )
+    }
+}
+
 /// A sweep whose transaction was created but not accepted by any server. The card wallet holds
 /// its notes as spent until the transaction expires, so the same redeemer cannot sweep again.
 struct GiftCardSubmissionFailed: Error { }
@@ -284,15 +342,20 @@ struct GiftCardSubmissionFailed: Error { }
 /// `GiftCardSession` over the wallet SDK's `GiftCardRedeemer`.
 struct GiftCardRedeemerSession: GiftCardSession {
     let redeemer: GiftCardRedeemer
-    /// Kept so that `reopen()` can create a redeemer for the same card, on the same server.
+    /// Kept so that `reopen()` can create a redeemer for the same card, set up the same way.
     let card: GiftCard
-    let network: ZcashNetwork
-    let endpoint: LightWalletEndpoint
+    let settings: GiftCardRedeemerSettings
 
-    var networkType: NetworkType { network.networkType }
+    var networkType: NetworkType { settings.network.networkType }
 
     /// The memo the sweep carries to the user's own wallet: a fixed label, then the sender's
-    /// message when the card has one. Trimmed on a character boundary to fit a memo.
+    /// message when the card has one. Trimmed on a character boundary to fit a memo. `message` is
+    /// the card's `GiftCard.message`, which the SDK has already sanitized (no control or
+    /// direction-changing characters).
+    static func redeemMemo(for card: GiftCard) -> Memo? {
+        redeemMemo(message: card.message)
+    }
+
     static func redeemMemo(message: String?) -> Memo? {
         let label = String(localizable: .giftCardRedeemMemo)
         var text = label
@@ -325,6 +388,11 @@ struct GiftCardRedeemerSession: GiftCardSession {
         } catch ZcashError.giftCardRedeemerCleanedUp {
             throw GiftCardClientError.unknownHandle
         }
+        return Self.appStatus(status)
+    }
+
+    /// The SDK's view of a card, as the redeem screen shows it.
+    static func appStatus(_ status: ZcashLightClientKit.GiftCardStatus) -> GiftCardStatus {
         switch status.state {
         case .ready:
             return .ready(spendable: status.spendable)
@@ -332,7 +400,8 @@ struct GiftCardRedeemerSession: GiftCardSession {
             // The SDK does not say how many confirmations are still missing; funds from another
             // wallet need 10, and the pending screen re-checks on its own.
             return .pending(amount: status.total, confirmationsNeeded: nil)
-        case .empty:
+        case .dust, .empty:
+            // A dust card's fee would take everything it holds: there is nothing to redeem.
             return .empty
         }
     }
@@ -346,7 +415,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
         // The sweep carries a memo so the incoming transaction explains itself in the user's
         // history: a fixed label plus the sender's message from the card, trimmed to the memo
         // size on a character boundary. The memo is encrypted to the user's own address.
-        let memo = Self.redeemMemo(message: card.message)
+        let memo = Self.redeemMemo(for: card)
 
         let outcome: GiftCardRedeemer.SubmissionOutcome
         do {
@@ -356,10 +425,11 @@ struct GiftCardRedeemerSession: GiftCardSession {
         } catch ZcashError.giftCardRedeemerCleanedUp {
             throw GiftCardClientError.unknownHandle
         } catch ZcashError.giftCardNothingToRedeem {
-            // Checked as ready, but nothing is spendable any more: the card was redeemed elsewhere
-            // meanwhile. Nothing was created or broadcast now, so the session stays usable.
-            LoggerProxy.error("[GiftCard] nothing to redeem")
-            throw GiftCardClientError.redeemFailed
+            // Checked as ready, but nothing worth sending is spendable any more: the card was
+            // redeemed elsewhere meanwhile, or the fee would take it all. Nothing was created or
+            // broadcast, so the session stays usable, but retrying cannot help.
+            LoggerProxy.event("[GiftCard] nothing to redeem")
+            throw GiftCardClientError.nothingToRedeem
         } catch ZcashError.giftCardRedeemerNotReady {
             LoggerProxy.error("[GiftCard] redeem attempted before the card was checked")
             throw GiftCardClientError.redeemFailed
@@ -370,7 +440,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
             // comes from proposing, creating or submitting the transaction. The transaction may
             // already exist in the card wallet by then, with its notes marked spent, so the
             // session is treated as spent either way: replacing it only costs a short re-sync.
-            LoggerProxy.error("[GiftCard] redeem failed: \(error.localizedDescription)")
+            LoggerProxy.error("[GiftCard] redeem failed: \(GiftCardClient.logDescription(of: error))")
             throw GiftCardSubmissionFailed()
         }
 
@@ -387,20 +457,20 @@ struct GiftCardRedeemerSession: GiftCardSession {
         await close()
         let replacement: GiftCardRedeemer
         do {
-            replacement = try GiftCardRedeemer(card: card, network: network, endpoint: endpoint, loggingPolicy: .default(.debug))
+            replacement = try settings.makeRedeemer(for: card)
         } catch ZcashError.giftCardNetworkMismatch {
             throw GiftCardClientError.networkMismatch
         } catch ZcashError.giftCardRedeemerAlreadyActive {
             throw GiftCardClientError.checkFailed
         }
-        return GiftCardRedeemerSession(redeemer: replacement, card: card, network: network, endpoint: endpoint)
+        return GiftCardRedeemerSession(redeemer: replacement, card: card, settings: settings)
     }
 
     func close() async {
         do {
             try await redeemer.cleanup()
         } catch {
-            LoggerProxy.error("[GiftCard] cleanup of \(redeemer.alias) failed: \(error.localizedDescription)")
+            LoggerProxy.error("[GiftCard] cleanup of the card wallet failed: \(GiftCardClient.logDescription(of: error))")
         }
     }
 }
@@ -410,7 +480,8 @@ extension GiftCardRedeemer {
     struct SubmissionOutcome: Sendable {
         /// The id of the first transaction a server accepted, if any.
         let txId: String?
-        /// One line per transaction that was not accepted; never contains the link.
+        /// One line per transaction that was not accepted; never contains the link, nor any text
+        /// the server sent back.
         let failures: [String]
         /// Whether the destination synchronizer stored the accepted claim as trusted.
         let recordedInDestination: Bool
@@ -428,18 +499,28 @@ extension GiftCardRedeemer {
         var txId: String?
         var failures: [String] = []
         for result in results {
-            switch result {
-            case .success(let id):
+            if case .success(let id) = result {
                 txId = txId ?? id.toHexStringTxId()
-            case .grpcFailure(_, let error):
-                failures.append("submission failed: \(error.localizedDescription)")
-            case let .submitFailure(_, code, description):
-                failures.append("submission rejected (\(code)): \(description)")
-            case .notAttempted:
-                failures.append("submission not attempted")
+            } else if let failure = Self.failureDescription(of: result) {
+                failures.append(failure)
             }
         }
         return SubmissionOutcome(txId: txId, failures: failures, recordedInDestination: redemption.recordedInDestination)
+    }
+
+    /// A log line for a submission no server accepted, `nil` for an accepted one. A server's
+    /// rejection text is left out: it is not ours to vouch for, and can quote the transaction.
+    static func failureDescription(of result: TransactionSubmitResult) -> String? {
+        switch result {
+        case .success:
+            return nil
+        case .grpcFailure:
+            return "submission failed: transport error"
+        case .submitFailure(_, let code, _):
+            return "submission rejected (\(code))"
+        case .notAttempted:
+            return "submission not attempted"
+        }
     }
 }
 

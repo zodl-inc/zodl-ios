@@ -95,7 +95,8 @@ extension GiftCardClient {
                 }
                 return scenario.txId
             },
-            cleanup: { _ in }
+            cleanup: { _ in },
+            removeLeftoverWallets: { }
         )
     }
 }

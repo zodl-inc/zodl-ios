@@ -22,7 +22,9 @@ import ComposableArchitecture
     private func makeStore(
         state: Root.State,
         cleaned: LockIsolated<[GiftCardHandle]> = LockIsolated([]),
-        linksRead: LockIsolated<[String]> = LockIsolated([])
+        linksRead: LockIsolated<[String]> = LockIsolated([]),
+        leftoverSweeps: LockIsolated<Int> = LockIsolated(0),
+        mainQueue: AnySchedulerOf<DispatchQueue> = .immediate
     ) -> TestStore<Root.State, Root.Action> {
         let store = TestStore(initialState: state) {
             Root()
@@ -38,11 +40,12 @@ import ComposableArchitecture
                 linksRead.withValue { $0.append(link) }
                 return try await mock.open(link)
             }
+            client.removeLeftoverWallets = { leftoverSweeps.withValue { $0 += 1 } }
             $0.giftCard = client
             $0.exchangeRate = .noOp
             $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.sdkSynchronizer = .mocked()
-            $0.mainQueue = .immediate
+            $0.mainQueue = mainQueue
             $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
             $0.uriParser.checkRP = { _, _ in nil }
         }
@@ -181,6 +184,21 @@ import ComposableArchitecture
         #expect(store.state.path == nil)
         #expect(store.state.giftCardCoordFlowState.redeemState == nil)
         #expect(cleaned.value == [handle])
+    }
+
+    /// Card wallets a killed or crashed run left behind are deleted when the app launches, before
+    /// the rest of the start-up (held back here by a scheduler that never advances) can open one.
+    @Test func launchRemovesLeftoverCardWallets() async {
+        let leftoverSweeps = LockIsolated(0)
+        let store = makeStore(state: .initial, leftoverSweeps: leftoverSweeps, mainQueue: DispatchQueue.test.eraseToAnyScheduler())
+
+        await store.send(.initialization(.appDelegate(.didFinishLaunching)))
+        for _ in 0..<100 where leftoverSweeps.value == 0 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(leftoverSweeps.value == 1)
+
+        await store.skipInFlightEffects(strict: false)
     }
 
     @Test func otherLinksKeepTheirBehaviour() async throws {
