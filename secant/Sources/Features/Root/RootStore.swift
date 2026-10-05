@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import VotingRecovery
 @preconcurrency import ZcashLightClientKit
 import Foundation
 import BackgroundTasks
@@ -67,6 +66,10 @@ struct Root {
         /// what actually keeps a stale or wrong-account payload from corrupting `state.transactions`.
         var CancelTransactionsFetchId = UUID()
         var CancelPendingTxPollId = UUID()
+        /// The delayed retry effect `.transactionsFetchFailed` (`RootTransactions.swift`) starts.
+        /// Cancelled wherever a pending retry would be wrong: when any fetch actually starts, by
+        /// `accountSwitchedEffect`, at `.didEnterBackground`, and when a background task completes.
+        var CancelTransactionsFetchRetryId = UUID()
         var CancelBatteryStateId = UUID()
         var SynchronizerCancelId = UUID()
         var WalletConfigCancelId = UUID()
@@ -224,6 +227,21 @@ struct Root {
         /// completion, which folds every dispatch coalesced during its run into exactly one
         /// follow-up fetch for whichever account is selected at that point.
         var isTransactionsFetchDirty = false
+        /// MOB-1954 (review follow-up): how many times a FAILED `getAllTransactions` read is
+        /// retried on its own, and the delay before each retry, in seconds. Before the edge trigger
+        /// in `RootTransactions.swift` the next 2 s up-to-date tick silently retried every failed
+        /// read; with the edge trigger nothing would, so a read that threw right after an account
+        /// switch -- or after a `foundTransactions` event on a fully mined history, when the
+        /// pending-row poller has nothing to poll for -- left the list empty or stale until an
+        /// unrelated trigger. Five attempts, about a minute in all; past that the ordinary
+        /// triggers (the next sync edge, a transaction event, the pending-row poller, a
+        /// foreground) are the way back, as they were for a read that kept failing tick after
+        /// tick before the edge trigger.
+        static let transactionsFetchRetryDelaysInSeconds: [Int] = [2, 4, 8, 16, 32]
+        /// Retries already scheduled for the selected account's current failure streak. Reset to
+        /// 0 by a successful fetch (`.fetchedTransactions`), by `accountSwitchedEffect`
+        /// (`RootCoordinator.swift`) and at `.didEnterBackground`.
+        var transactionsFetchRetryAttempt = 0
         /// Which account the shared `transactions` array currently holds rows for. Set by
         /// `.fetchedTransactions` (`RootTransactions.swift`) the moment it writes `$transactions`, so
         /// it always names the account whose fetch actually produced the array's current contents --
@@ -517,6 +535,9 @@ struct Root {
         /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
         /// `RootTransactions.swift`.
         case transactionsFetchFailed(accountUUID: AccountUUID)
+        /// MOB-1954 (review follow-up): sent by the delayed retry effect a failed history read
+        /// schedules; re-dispatches the fetch only if `accountUUID` is still the selected account.
+        case retryFailedTransactionsFetch(accountUUID: AccountUUID)
         case noChangeInTransactions
         
         // Address Book
@@ -563,7 +584,6 @@ struct Root {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.databaseFiles) var databaseFiles
     @Dependency(\.deeplink) var deeplink
-    @Dependency(\.delegationRecovery) var delegationRecovery // VotingRecovery
     @Dependency(\.date) var date
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
@@ -892,14 +912,39 @@ extension Root {
     /// so a healed stale database (e.g. from a restored device backup) starts out just as
     /// clean as an explicit reset.
     ///
-    /// Synchronous on purpose: every call site is a plain (non-`.run`) `Reduce` case, and
-    /// none of the underlying operations are actually asynchronous.
+    /// Asynchronous for one thing only, and it is the first thing done: `voting.sqlite3` is a
+    /// live SQLite handle for as long as a round session is open, and the round driver writes
+    /// to it from tasks of its own. Deleting the file under an open session would leave those
+    /// writes going to an unlinked inode while the next open recreates a database the driver
+    /// cannot see. `closeVotingDatabase` closes every session and then the store, and it is
+    /// awaited before anything here removes the file.
     static func clearDeviceScopedWalletState(
         userDefaults: UserDefaultsClient,
         flexaHandler: FlexaHandlerClient,
         userStoredPreferences: UserPreferencesStorageClient,
-        readTransactionsStorage: ReadTransactionsStorageClient
-    ) {
+        readTransactionsStorage: ReadTransactionsStorageClient,
+        closeVotingDatabase: @Sendable () async -> Void = Root.closeVotingDatabase
+    ) async {
+        #if VOTING_ENABLED
+        // Opened before the close and held until the last delete: the voting flow's
+        // own effects are not reliably cancelled on this path -- Root composes
+        // Settings, and the voting flow under it, through a case-filtered scope, so
+        // no presentation reducer runs here to cancel them -- and an effect
+        // suspended in a config fetch would otherwise wake up between the close
+        // below and the delete further down and recreate the file.
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        // Resolved through the same dependency the voting flow opens the
+        // sidecar from, so a test can point one suite at a copy of its own
+        // instead of racing the rest of them for the real `Documents` file.
+        @Dependency(\.databaseFiles)
+        var databaseFiles
+
+        votingCrypto.beginWalletTeardown()
+        defer { votingCrypto.endWalletTeardown() }
+        #endif
+        await closeVotingDatabase()
         userDefaults.remove(Constants.udIsRestoringWallet)
         userDefaults.remove(Constants.udIsResyncingWallet)
         userDefaults.remove(Constants.udLeavesScreenOpen)
@@ -922,17 +967,14 @@ extension Root {
         // history, vote records, and stored TX hashes from the
         // previous wallet don't leak across the reset boundary. The
         // file is recreated empty on the next voting flow entry.
-        if let documents = FileManager.default
-            .urls(for: .documentDirectory, in: .userDomainMask)
-            .first {
-            let votingDbURL = documents.appendingPathComponent("voting.sqlite3")
-            try? FileManager.default.removeItem(at: votingDbURL)
-            // VotingRecovery: the preserved copies of the previous wallet's
-            // voting database and the escrow of its blinding factors are the
-            // same wallet-scoped material, and must not cross the reset
-            // boundary either.
-            VotingRecovery.wipe(inDocuments: documents)
-        }
+        let documents = databaseFiles.documentsDirectory()
+        let votingDbURL = documents.appendingPathComponent(VotingCoordFlow.votingSidecarFileName)
+        try? FileManager.default.removeItem(at: votingDbURL)
+        // And the copies of that database that builds 3.10.2 to 3.14.1 kept
+        // beside it, and the delegation secrets 3.12.0 to 3.14.1 kept with
+        // them. Nothing writes either now and nothing else removes them, so
+        // they would otherwise outlive the wallet they belong to.
+        VotingCoordFlow.removePreservedVotingRecoveryFiles(inDocuments: documents)
         // Belt-and-suspenders: voting drafts and vote records live in
         // the encrypted per-account `votingMetadata` file now, which
         // resetAccount() below removes. This sweep catches any stale
@@ -947,6 +989,47 @@ extension Root {
         flexaHandler.signOut()
         userStoredPreferences.removeAll()
         try? readTransactionsStorage.resetZashi()
+    }
+
+    /// The default drain for ``clearDeviceScopedWalletState``: every open voting round session,
+    /// then the sidecar store itself.
+    ///
+    /// The dependency is resolved when this runs rather than when the default is written down,
+    /// so it follows the context the clear is called from — including a test's override.
+    @Sendable
+    static func closeVotingDatabase() async {
+        #if VOTING_ENABLED
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        await votingCrypto.closeDatabase()
+        #endif
+    }
+
+    /// Give the voting sessions back before the wallet database is wiped.
+    ///
+    /// A round session opens `data.db` itself, through `VotingSessionInputs.walletDbPath`, and
+    /// keeps it for the session's whole life — so a wipe that runs while one is open leaves the
+    /// round driver reading and writing an unlinked inode for the length of it. The heal path
+    /// already drains first (through ``clearDeviceScopedWalletState``); the reset path calls this
+    /// to get the same ordering, and still deletes the sidecar later where it always did.
+    ///
+    /// The teardown window is what stops a voting effect suspended in a config fetch from opening
+    /// a session behind this close; the generation it moves goes on refusing an open that started
+    /// before it once the window closes again. The window is reopened by the sidecar deletion
+    /// further down the reset chain, which needs one of its own.
+    @Sendable
+    static func drainVotingBeforeWipe(
+        closeVotingDatabase: @Sendable () async -> Void = Root.closeVotingDatabase
+    ) async {
+        #if VOTING_ENABLED
+        @Dependency(\.votingCrypto)
+        var votingCrypto
+
+        votingCrypto.beginWalletTeardown()
+        defer { votingCrypto.endWalletTeardown() }
+        #endif
+        await closeVotingDatabase()
     }
 
     static func walletInitializationState(

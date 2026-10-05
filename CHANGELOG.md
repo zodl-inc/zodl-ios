@@ -11,6 +11,55 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-1923] Swap and Pay now restore asset and network choices immediately while current prices load in the background.
 
+## [3.15.0] - 2026-09-23
+
+### Added
+
+- [MOB-1877] Export incoming or full viewing keys from Advanced Settings, including for Keystone wallets. Choose a key type, confirm full-key privacy warnings, then reveal its QR code or text and share it with a trusted service. Available in English and Spanish.
+- [MOB-1706] Choose from more supported currencies in Currency Conversion, with a retry option if the currency list cannot be loaded.
+
+### Changed
+
+- [MOB-1916] Coinholder polling now runs on the updated voting protocol and needs a vote chain upgraded to it. With Tor turned on, everything a poll does now travels over Tor, including the private lookups and vote-tree reads that used to connect directly, and a step that cannot reach Tor fails instead of falling back to a direct connection. A poll for which an earlier version of the app had started submitting your vote, and that was still being confirmed when you updated, is shown but can no longer be voted in here, so nothing is sent twice; anything already confirmed still counts.
+
+### Fixed
+
+- [MOB-1364] Turning on Tor from Currency Conversion now protects requests immediately, without requiring an app restart. If Tor cannot connect, requests stay protected.
+- [MOB-1697] Cancelling the payment warning after scanning a payment request now closes the confirmation cleanly and returns to the send form.
+- [MOB-1706] Amounts in Send and payment requests now use the right number of decimal places for the selected currency.
+- [MOB-1706] Currency conversion now loads on Home after you enable it, even if you leave Settings before setup finishes.
+- [MOB-1916] The coinholder polling progress bar and its "Submitting vote N of M" count now move with each question as it is processed, instead of waiting for most of the submission and then jumping to the end.
+- [MOB-1916] When a coinholder poll submission hits a brief network problem, the app now tries again on its own and shows "Reconnecting..." while it waits.
+- [MOB-1916] When a coinholder poll submission fails, the screen now says it failed instead of still reading as in progress.
+
+## [3.14.1] - 2026-09-17
+
+### Changed
+- [MOB-1930] Wallets whose votes span several note bundles submit them in parallel and question by question, so one bundle's waiting for the chain no longer holds up the other, and the progress counter advances as each answer is fully cast instead of staying on the first answer until the end.
+
+## [3.14.0] - 2026-09-15
+
+### Fixed
+
+- [MOB-1964] Coinholder polls stop prolonged loading when Tor cannot connect and let you try again.
+- [MOB-1964] Fixed a database error that could interrupt coinholder polling when several vote bundles were being prepared at the same time.
+- [MOB-1965] The coinholder polling confirmation screen now shows the omitted-weight disclosure in Spanish when the app uses Spanish.
+
+### Changed
+
+- [MOB-1927] Coinholder polling supports rounds with up to 50 questions and works on vote chains upgraded to the new voting circuit. A round the app cannot read is hidden on its own instead of hiding every round.
+- [MOB-1928] Submitting a ballot no longer waits for each question's tally shares to reach the helper servers before starting the next question; a question is reported as submitted once its shares are accepted.
+- [MOB-1929] For software wallets, the authorization proof for a poll is prepared in the background while you choose your answers, so Confirm no longer starts it from scratch.
+- [MOB-1962] Coinholder polling picks up a mined vote sooner and reliably keeps checking over Tor: the app checks the accepting server first, falls back to the others after nine seconds, and keeps each check within the time left.
+- [MOB-1964] Authorizing a wallet for coinholder polling reuses private-information-retrieval server connections across matching note bundles and preparation steps, so wallets with several bundles start faster.
+- [MOB-1965] Coinholder polling submits at most two note bundles when the rest carry under 1 % of the wallet's voting weight (and under 1,000 ZEC), so rounds with many small notes finish in minutes instead of hours. The confirmation screen shows the weight that was left out.
+
+### Fixed
+
+- [MOB-1955] The transaction list loads far faster on wallets with a long history: the app now reads the details of every transaction in one pass instead of one query per transaction.
+- [MOB-1861] Opening the app and visiting Advanced Settings are no longer slowed down by the migration checks re-reading the whole transaction history; on a wallet that never migrated, those checks no longer read it at all, so sync starts right away.
+- [MOB-1954] On a wallet with a long transaction history, the app no longer re-reads the whole history every two seconds once sync is up to date. The list refreshes when a sync pass completes, when a transaction arrives or is mined, and while a sent transaction is still pending. If reading the history fails, the app now retries on its own with increasing delays instead of waiting for the next change.
+
 ## [3.13.0] - 2026-09-10
 
 ### Changed

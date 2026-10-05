@@ -1,6 +1,64 @@
 {
     "releases": [
         {
+            "version": "3.15.0",
+            "date": "24-09-2026",
+            "timestamp": 1790243803,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos la exportación de claves de visualización en Configuración Avanzada, con opciones de código QR y texto de la clave."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos Coinholder Polling para admitir el protocolo de votación más reciente y encuestas de hasta 50 preguntas.",
+                        "Actualizamos Conversión de Moneda para cargar las monedas fiduciarias admitidas directamente desde el proveedor."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.1",
+            "date": "17-09-2026",
+            "timestamp": 1789643406,
+            "sections": [
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Mejoramos el progreso del envío de votos en las coinholder polls."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos soporte para coinholder polls con hasta 50 preguntas."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Hicimos más rápido el envío de tus votos en las coinholder polls."
+                    ]
+                },
+                {
+                    "title": "Corregido:",
+                    "bulletpoints": [
+                        "Corregimos un problema por el cual las billeteras con un historial de transacciones extenso podían tardar en abrirse, cargar lentamente la Actividad y la Configuración Avanzada, o dejar de responder."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.13.0",
             "date": "11-09-2026",
             "timestamp": 1789127082,

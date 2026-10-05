@@ -2,50 +2,6 @@
 import ComposableArchitecture
 import Foundation
 
-// MARK: - Share Status Types
-
-/// Result of polling a helper server for share confirmation status.
-enum ShareConfirmationResult: Equatable, Sendable {
-    case pending
-    case confirmed
-}
-
-/// Info about which servers accepted a delegated share.
-struct DelegatedShareInfo: Equatable, Sendable {
-    let shareIndex: UInt32
-    let proposalId: UInt32
-    let acceptedByServers: [String]
-
-    init(shareIndex: UInt32, proposalId: UInt32, acceptedByServers: [String]) {
-        self.shareIndex = shareIndex
-        self.proposalId = proposalId
-        self.acceptedByServers = acceptedByServers
-    }
-}
-
-/// Result from one active share delegation batch, including the server set that
-/// remained usable after removing POST failures.
-struct ShareDelegationResult: Equatable, Sendable {
-    let delegatedShares: [DelegatedShareInfo]
-    let remainingServerURLs: [String]
-
-    init(delegatedShares: [DelegatedShareInfo], remainingServerURLs: [String]) {
-        self.delegatedShares = delegatedShares
-        self.remainingServerURLs = remainingServerURLs
-    }
-}
-
-enum ShareDelegationError: LocalizedError, Equatable, Sendable {
-    case noReachableVoteServers
-
-    var errorDescription: String? {
-        switch self {
-        case .noReachableVoteServers:
-            return String(localizable: .coinVoteStoreUserErrorNoReachableVoteServers)
-        }
-    }
-}
-
 extension DependencyValues {
     var votingAPI: VotingAPIClient {
         get { self[VotingAPIClient.self] }
@@ -66,32 +22,6 @@ struct VotingAPIClient {
     /// Fetch the set of round ids (lowercase hex) that the `zodl` endorser has endorsed on-chain.
     /// Returns an empty set if the endorser is not configured.
     var fetchZodlEndorsedRoundIds: @Sendable () async throws -> Set<String>
-    var submitDelegation: @Sendable (_ registration: DelegationRegistration) async throws -> TxResult
-    var submitVoteCommitment: @Sendable (_ bundle: VoteCommitmentBundle, _ signature: CastVoteSignature) async throws -> TxResult
-    /// Distribute shares across the provided active-submission vote server set.
-    /// The round id travels inside each payload's crate wire JSON (`vote_round_id`,
-    /// carried by `VoteShareWire` since zcash_voting 3.0.0-rc.3), so no separate
-    /// round id parameter exists here.
-    var delegateShares: @Sendable (
-        _ payloads: [SharePayload],
-        _ proposalId: UInt32,
-        _ serverURLs: [String]
-    ) async throws -> ShareDelegationResult
-    /// Poll a helper server for the confirmation status of a share identified by its nullifier.
-    var fetchShareStatus: @Sendable (_ helperBaseURL: String, _ roundIdHex: String, _ nullifierHex: String) async throws -> ShareConfirmationResult
-    /// Resubmit a single share to configured vote servers, preferring URLs that have not already accepted it.
-    /// Returns the list of server URLs that accepted the share (empty if all failed).
-    var resubmitShare: @Sendable (_ payload: SharePayload, _ excludeURLs: [String]) async throws -> [String]
     var fetchProposalTally: @Sendable (_ roundId: Data, _ proposalId: UInt32) async throws -> TallyResult
-    /// Query the Cosmos SDK TX endpoint for a confirmed transaction and its ABCI events.
-    /// Returns nil if the TX is not yet in a block (404 or network error).
-    var fetchTxConfirmation: @Sendable (_ txHash: String) async throws -> TxConfirmation?
-    /// Kick off a one-shot background health sweep of the configured vote
-    /// servers. Returns as soon as the sweep is spawned; never waits for probe
-    /// results. Submission effects fire this unconditionally as an advisory
-    /// hint, so `testValue` overrides it to a silent no-op in
-    /// VotingAPIClientTestKey — unimplemented-endpoint reporting would flag
-    /// every test that merely passes through those effects.
-    var startHealthProbeSweep: @Sendable () async -> Void
 }
 #endif

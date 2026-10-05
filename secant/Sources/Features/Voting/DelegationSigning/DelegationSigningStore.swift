@@ -5,6 +5,7 @@
 //
 
 import ComposableArchitecture
+@preconcurrency import ZcashLightClientKit
 
 @Reducer
 struct DelegationSigning {
@@ -104,8 +105,8 @@ struct DelegationSigningView: View {
             }
             .enlargeQR(isPresented: $isQRCodeEnlarged) {
                 Group {
-                    if let pczt = store.roundCache[roundId]?.pendingUnsignedDelegationPczt,
-                       let encoder = sdkSynchronizer.urEncoderForPCZT(pczt) {
+                    if let request = store.roundCache[roundId]?.pendingKeystoneRequest,
+                       let encoder = sdkSynchronizer.urEncoderForPCZT(Pczt(request.redactedPczt)) {
                         AnimatedQRCode(urEncoder: encoder, size: UIScreen.main.bounds.width - 64)
                             .padding()
                             .background {
@@ -188,8 +189,10 @@ struct DelegationSigningView: View {
                 )
 
             case .awaitingSignature:
-                if let pczt = store.roundCache[roundId]?.pendingUnsignedDelegationPczt,
-                   let encoder = sdkSynchronizer.urEncoderForPCZT(pczt),
+                // The crate redacted the PCZT when it built the request, so what
+                // the QR carries is exactly what the device is meant to see.
+                if let request = store.roundCache[roundId]?.pendingKeystoneRequest,
+                   let encoder = sdkSynchronizer.urEncoderForPCZT(Pczt(request.redactedPczt)),
                    !isQRCodeEnlarged {
                     // CIQRCodeGenerator emits only a 1-module quiet zone, so the QR is
                     // scannable only on a light surround. Match SignWithKeystoneView's
@@ -395,46 +398,19 @@ struct DelegationSigningView: View {
 
     // MARK: - Memo
 
+    /// What the device is being asked to authorize, in the round's own words.
+    ///
+    /// The weight is the one the crate put on this bundle's signing request —
+    /// the same figure the device shows in its own memo — rather than a note
+    /// bundling repeated on this side.
     private static func currentBundleMemo(session: RoundSession?, pollTitle: String) -> String? {
-        guard
-            let session,
-            session.bundleCount > 0
-        else {
-            return nil
-        }
-
-        let bundles = session.walletNotes.smartBundles().bundles
-        let bundleIndex = Int(session.currentKeystoneBundleIndex)
-        guard bundleIndex < Int(session.bundleCount), bundleIndex < bundles.count else {
-            return nil
-        }
-
-        let bundleTotal = bundles[bundleIndex].reduce(UInt64(0)) { $0 + $1.value }
-        return votingAuthorizationMemo(pollTitle: pollTitle, rawWeight: bundleTotal)
+        guard let request = session?.pendingKeystoneRequest else { return nil }
+        return votingAuthorizationMemo(pollTitle: pollTitle, rawWeight: request.delegatedWeightZatoshi)
     }
 
     private static func bundleWeightSummary(session: RoundSession?) -> (signed: UInt64, pending: UInt64) {
         guard let session else { return (0, 0) }
-
-        let bundles = session.walletNotes.smartBundles().bundles
-        // Drive the signed/pending split from the resolved-prefix count so
-        // recovered bundles roll into the "signed" bucket even when the
-        // current-session signature array hasn't been repopulated yet.
-        let signedCount = min(Int(session.resolvedKeystonePrefixCount), bundles.count)
-        let countedBundleCount = min(Int(session.bundleCount), bundles.count)
-        var signed: UInt64 = 0
-        var pending: UInt64 = 0
-
-        for index in 0..<countedBundleCount {
-            let rawWeight = bundles[index].reduce(UInt64(0)) { $0 + $1.value }
-            if index < signedCount {
-                signed += quantizeWeight(rawWeight)
-            } else {
-                pending += quantizeWeight(rawWeight)
-            }
-        }
-
-        return (signed, pending)
+        return VotingCoordFlow.keystoneWeightSplit(session)
     }
 
     private static func formatZec(_ zatoshi: UInt64) -> String {

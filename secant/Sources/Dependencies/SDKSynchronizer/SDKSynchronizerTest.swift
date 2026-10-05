@@ -86,6 +86,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         rescanFrom: unimplemented("\(Self.self).rescanFrom"),
         rewind: unimplemented("\(Self.self).rewind", placeholder: Fail(error: "Error").eraseToAnyPublisher()),
         getAllTransactions: unimplemented("\(Self.self).getAllTransactions", placeholder: []),
+        getMinedTransactionIds: unimplemented("\(Self.self).getMinedTransactionIds", placeholder: []),
         transactionStatesFromZcashTransactions: unimplemented("\(Self.self).transactionStatesFromZcashTransactions", placeholder: []),
         getMemos: unimplemented("\(Self.self).getMemos", placeholder: []),
         txIdExists: unimplemented("\(Self.self).txIdExists", placeholder: false),
@@ -119,6 +120,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         exchangeRateEnabled: unimplemented("\(Self.self).exchangeRateEnabled"),
         isTorSuccessfullyInitialized: unimplemented("\(Self.self).isTorSuccessfullyInitialized", placeholder: nil),
         httpRequestOverTor: unimplemented("\(Self.self).httpRequestOverTor", placeholder: (Data(), HTTPURLResponse.mockResponse)),
+        boundedTorGET: unimplemented("\(Self.self).boundedTorGET", placeholder: (Data(), HTTPURLResponse.mockResponse)),
         debugDatabaseSql: unimplemented("\(Self.self).debugDatabaseSql", placeholder: ""),
         getSingleUseTransparentAddress: unimplemented(
             "\(Self.self).getSingleUseTransparentAddress",
@@ -128,7 +130,8 @@ extension SDKSynchronizerClient: TestDependencyKey {
         updateTransparentAddressTransactions: unimplemented("\(Self.self).updateTransparentAddressTransactions", placeholder: .notFound),
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
-        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data())
+        getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
+        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession")
     )
 }
 
@@ -187,6 +190,7 @@ extension SDKSynchronizerClient {
         rescanFrom: { _ in },
         rewind: { _ in Empty<Void, Error>().eraseToAnyPublisher() },
         getAllTransactions: { _ in [] },
+        getMinedTransactionIds: { _ in [] },
         transactionStatesFromZcashTransactions: { _, _ in [] },
         getMemos: { _ in [] },
         txIdExists: { _ in false },
@@ -220,6 +224,7 @@ extension SDKSynchronizerClient {
         exchangeRateEnabled: { _ in },
         isTorSuccessfullyInitialized: { nil },
         httpRequestOverTor: { _ in (data: Data(), response: HTTPURLResponse.mockResponse) },
+        boundedTorGET: { _, _ in (data: Data(), response: HTTPURLResponse.mockResponse) },
         debugDatabaseSql: { _ in "" },
         getSingleUseTransparentAddress: { _ in
             SingleUseTransparentAddress(address: "", gapPosition: 0, gapLimit: 0)
@@ -228,7 +233,12 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: { _ in .notFound },
         fetchUTXOsByAddress: { _, _ in .notFound },
         enhanceTransactionBy: { _ in },
-        getTreeState: { _ in Data() }
+        getTreeState: { _ in Data() },
+        // A session cannot be faked: only the SDK can make one, and it opens the
+        // sidecar to do it. Refusing is what "no-op" means here.
+        makeVotingRoundSession: { _, _, _, _, _ in
+            throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
+        }
     )
 
     static let mock = Self.mocked()
@@ -359,6 +369,7 @@ extension SDKSynchronizerClient {
 
             return IdentifiedArrayOf<TransactionState>(uniqueElements: clearedTransactions)
         },
+        getMinedTransactionIds: @escaping @Sendable (AccountUUID) async throws -> Set<String> = { _ in [] },
         transactionStatesFromZcashTransactions: @escaping @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState> = { _, _ in IdentifiedArrayOf<TransactionState>(uniqueElements: []) },
         getMemos: @escaping @Sendable (_ rawID: Data) -> [Memo] = { _ in [] },
         txIdExists: @escaping @Sendable (String?) -> Bool = { _ in false },
@@ -410,6 +421,9 @@ extension SDKSynchronizerClient {
         exchangeRateEnabled: @escaping @Sendable (Bool) async throws -> Void = { _ in },
         isTorSuccessfullyInitialized: @escaping @Sendable () async -> Bool? = { nil },
         httpRequestOverTor: @escaping @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse) = { _ in (Data(), HTTPURLResponse.mockResponse) },
+        boundedTorGET: @escaping @Sendable (URLRequest, UInt64) async throws -> (Data, HTTPURLResponse) = { _, _ in
+            (Data(), HTTPURLResponse.mockResponse)
+        },
         debugDatabaseSql: @escaping @Sendable (String) -> String = { _ in "" },
         getSingleUseTransparentAddress: @escaping @Sendable (AccountUUID) async throws -> SingleUseTransparentAddress = { _ in
             SingleUseTransparentAddress(address: "", gapPosition: 0, gapLimit: 0)
@@ -418,7 +432,16 @@ extension SDKSynchronizerClient {
         updateTransparentAddressTransactions: @escaping @Sendable (String) async throws -> TransparentAddressCheckResult = { _ in .notFound },
         fetchUTXOsByAddress: @escaping @Sendable (String, AccountUUID) async throws -> TransparentAddressCheckResult = { _, _ in .notFound },
         enhanceTransactionBy: @escaping @Sendable (String) async throws -> Void = { _ in },
-        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() }
+        getTreeState: @escaping @Sendable (UInt64) async throws -> Data = { _ in Data() },
+        makeVotingRoundSession: @escaping @Sendable (
+            VotingRustBackend,
+            VotingSessionInputs,
+            VotingSessionBinding,
+            VotingTransportRoute,
+            UInt64
+        ) async throws -> VotingRoundSession = { _, _, _, _, _ in
+            throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
+        }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -470,6 +493,7 @@ extension SDKSynchronizerClient {
             rescanFrom: rescanFrom,
             rewind: rewind,
             getAllTransactions: getAllTransactions,
+            getMinedTransactionIds: getMinedTransactionIds,
             transactionStatesFromZcashTransactions: transactionStatesFromZcashTransactions,
             getMemos: getMemos,
             txIdExists: txIdExists,
@@ -503,13 +527,15 @@ extension SDKSynchronizerClient {
             exchangeRateEnabled: exchangeRateEnabled,
             isTorSuccessfullyInitialized: isTorSuccessfullyInitialized,
             httpRequestOverTor: httpRequestOverTor,
+            boundedTorGET: boundedTorGET,
             debugDatabaseSql: debugDatabaseSql,
             getSingleUseTransparentAddress: getSingleUseTransparentAddress,
             checkSingleUseTransparentAddresses: checkSingleUseTransparentAddresses,
             updateTransparentAddressTransactions: updateTransparentAddressTransactions,
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
-            getTreeState: getTreeState
+            getTreeState: getTreeState,
+            makeVotingRoundSession: makeVotingRoundSession
         )
     }
 }

@@ -1,6 +1,64 @@
 {
     "releases": [
         {
+            "version": "3.15.0",
+            "date": "24-09-2026",
+            "timestamp": 1790243803,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added viewing key export in Advanced Settings, with QR code and key text options."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We updated Coinholder Polling to support the latest voting protocol.",
+                        "We updated Currency Conversion to load supported fiat currencies directly from the provider."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.1",
+            "date": "17-09-2026",
+            "timestamp": 1789643406,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We improved vote submission progress in coinholder polls."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.14.0",
+            "date": "16-09-2026",
+            "timestamp": 1789562143,
+            "sections": [
+                {
+                    "title": "Added:",
+                    "bulletpoints": [
+                        "We added support for coinholder polls with up to 50 questions."
+                    ]
+                },
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We made submitting your votes in coinholder polls faster."
+                    ]
+                },
+                {
+                    "title": "Fixed:",
+                    "bulletpoints": [
+                        "We fixed an issue where wallets with a long transaction history could be slow to open, slow to load Activity and Advanced Settings, or stop responding."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.13.0",
             "date": "11-09-2026",
             "timestamp": 1789127082,

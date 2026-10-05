@@ -729,6 +729,9 @@ extension Root {
         // actually starting -- parking the newly-selected account's fetch forever.
         state.isTransactionsFetchInFlight = false
         state.isTransactionsFetchDirty = false
+        // MOB-1954 (review follow-up): the retry streak belongs to the account just left; the
+        // pending retry effect itself is cancelled below, before the fresh fetch.
+        state.transactionsFetchRetryAttempt = 0
         // MOB-1855: the rows still sitting in the shared `transactions` array belong to the account just
         // LEFT -- both lists above are now invalidated and show their loading placeholder, so
         // nothing renderable may remain for a failed fetch to leave on screen as if it were the new
@@ -747,6 +750,7 @@ extension Root {
             .send(.home(.smartBanner(.walletAccountChanged))),
             .send(.home(.walletBalances(.updateBalances))),
             .concatenate(
+                .cancel(id: state.CancelTransactionsFetchRetryId),
                 .cancel(id: state.CancelTransactionsFetchId),
                 .send(.fetchTransactionsForTheSelectedAccount)
             )

@@ -286,6 +286,11 @@ struct SDKSynchronizerClient: Sendable {
     let rewind: @Sendable (RewindPolicy) -> AnyPublisher<Void, Error>
     
     var getAllTransactions: @Sendable (AccountUUID?) async throws -> IdentifiedArrayOf<TransactionState>
+    /// [MOB-1861] The display-form hex ids (`TransactionState.id`, i.e. `rawID.toHexStringTxId()`)
+    /// of every MINED transaction of `accountUUID` -- the whole answer the migration manager's
+    /// wallet-confirmed set needs, from one `v_transactions` read and none of the per-row output
+    /// reads `getAllTransactions` performs on top of it.
+    var getMinedTransactionIds: @Sendable (AccountUUID) async throws -> Set<String>
     var transactionStatesFromZcashTransactions: @Sendable (AccountUUID?, [ZcashTransaction.Overview]) async throws -> IdentifiedArrayOf<TransactionState>
     var getMemos: @Sendable (Data) async throws -> [Memo]
     var txIdExists: @Sendable (String?) async throws -> Bool
@@ -352,6 +357,7 @@ struct SDKSynchronizerClient: Sendable {
     var exchangeRateEnabled: @Sendable (Bool) async throws -> Void
     var isTorSuccessfullyInitialized: @Sendable () async -> Bool?
     var httpRequestOverTor: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    var boundedTorGET: @Sendable (URLRequest, UInt64) async throws -> (Data, HTTPURLResponse)
     
     var debugDatabaseSql: @Sendable (String) -> String = { _ in "" }
     
@@ -364,6 +370,22 @@ struct SDKSynchronizerClient: Sendable {
     var enhanceTransactionBy: @Sendable (String) async throws -> Void
 
     var getTreeState: @Sendable (_ height: UInt64) async throws -> Data
+
+    /// Open a voting round session on the explicitly selected route.
+    ///
+    /// The route is fixed for the session's whole life. `.tor` fails closed: a
+    /// synchronizer that cannot provide a Tor client throws rather than opening
+    /// the round over a plain connection, so a voter who asked for Tor never
+    /// ends up announcing themselves over HTTP. The Tor runtime stays owned by
+    /// the synchronizer — it is lent to the crate for the duration of this call,
+    /// which reaches no network.
+    var makeVotingRoundSession: @Sendable (
+        _ backend: VotingRustBackend,
+        _ inputs: VotingSessionInputs,
+        _ binding: VotingSessionBinding,
+        _ route: VotingTransportRoute,
+        _ epoch: UInt64
+    ) async throws -> VotingRoundSession
 }
 
 extension SDKSynchronizerClient {
