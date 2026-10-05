@@ -10169,23 +10169,6 @@
         }
       }
     },
-    "ledger.devicePicker.confirmOnDevice" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Confirm the viewing-key export on your Ledger."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Confirma la exportación de la clave de visualización en tu Ledger."
-          }
-        }
-      }
-    },
     "ledger.devicePicker.desc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10203,19 +10186,53 @@
         }
       }
     },
-    "ledger.devicePicker.scanning" : {
+    "ledger.devicePicker.searching" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Looking for your Ledger…"
+            "value" : "Searching"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Buscando tu Ledger…"
+            "value" : "Buscando"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.searchingDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make sure your Ledger is unlocked and Bluetooth is enabled."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Asegúrate de que tu Ledger esté desbloqueado y de que el Bluetooth esté activado."
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.searchingTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Searching for Devices…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscando dispositivos…"
           }
         }
       }
