@@ -367,6 +367,103 @@ import ComposableArchitecture
         #expect(scanner.connectCalls.allSatisfy { $0.deviceID == device.id })
     }
 
+    // MARK: - connect's connection generation, against a concurrent disconnect() or a newer
+    // connect() landing while this one is still suspended past the open step (MOB-2020).
+
+    @Test func aDisconnectDuringTheOpenStepDiscardsTheTransportItReturns() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let openStepEntered = LockIsolated(false)
+        let disconnectHasRun = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, _ in
+                openStepEntered.setValue(true)
+                while !disconnectHasRun.value {
+                    try await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return opened
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let connectTask = Task {
+            try await session.connect(device) { }
+        }
+        try await eventually { openStepEntered.value }
+
+        // Lands while connect is still suspended inside the open step -- transport is nil both
+        // before and after, since this is the first connect ever, so an identity check on it
+        // alone could not see this disconnect() happened at all.
+        await session.disconnect()
+        disconnectHasRun.setValue(true)
+
+        do {
+            try await connectTask.value
+            Issue.record("expected connect to throw")
+        } catch is CancellationError {
+            // expected: a disconnect() that lands mid-open must make connect discard what it
+            // opened rather than adopt a connection the caller already tore down.
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(connected.closeCount == 1)
+        #expect(opened.closeCount == 1)
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+    }
+
+    @Test func aStaleConnectsOpenStepFailureDoesNotResetANewerConnectsTransport() async throws {
+        let connectedA = FakeLedgerAPDUTransport(name: "connectedA")
+        let connectedB = FakeLedgerAPDUTransport(name: "connectedB")
+        let openedB = FakeLedgerAPDUTransport(name: "openedB")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connectedA, connectedB])
+        let signer = FakeLedgerSigner(outcome: .success(Pczt([0xAB])))
+        let aEnteredOpenStep = LockIsolated(false)
+        let releaseA = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            },
+            openZcashApp: { transport, _ in
+                if (transport as? FakeLedgerAPDUTransport) === connectedA {
+                    aEnteredOpenStep.setValue(true)
+                    while !releaseA.value {
+                        try await Task.sleep(nanoseconds: 5_000_000)
+                    }
+                    throw OpenZcashAppFailure()
+                }
+                return openedB
+            }
+        )
+        let deviceA = try await firstDevice(from: scanner)
+
+        let connectATask = Task {
+            try await session.connect(deviceA) { }
+        }
+        try await eventually { aEnteredOpenStep.value }
+
+        // A newer connect(), for a different device, runs to completion and adopts its own
+        // transport while A is still stuck in its own open step.
+        let deviceB = try await firstDevice(from: scanner)
+        try await session.connect(deviceB) { }
+
+        releaseA.setValue(true)
+        await #expect(throws: OpenZcashAppFailure()) {
+            try await connectATask.value
+        }
+
+        #expect(connectedA.closeCount == 1)
+        // A's open-step failure lands after B's connect already stored B's transport -- it must
+        // not reset that newer transport. A following signPCZT reaches it, not nil.
+        for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === openedB)
+    }
+
     // MARK: - connect's "opening the Zcash app" report (MOB-2020)
     //
     // `connect`'s second argument fires once, right after the Bluetooth step, using the same
@@ -962,6 +1059,10 @@ private final class FakeLedgerSigner: @unchecked Sendable {
     enum Outcome {
         case success(Pczt)
         case failure(Error)
+        /// Hangs until cancelled, but only on the first call -- a retry probe that lands before
+        /// the session has dropped the transport from that cancellation would otherwise hang the
+        /// same way, with nothing left to cancel it. Every later call throws
+        /// `SignShouldNotBeCalled()` at once.
         case hangUntilCancelled
         /// Polls every 5ms until `release()` is called, then throws `error` — for a test that needs
         /// to perform other actions (like opening a different transport) while a ceremony is still
@@ -1003,7 +1104,7 @@ private final class FakeLedgerSigner: @unchecked Sendable {
         _ binding: LedgerAccountBinding,
         _ progress: @escaping @Sendable (LedgerSigningProgress) -> Void
     ) async throws -> Pczt {
-        _callCount.withValue { $0 += 1 }
+        let callNumber = _callCount.withValue { $0 += 1; return $0 }
         _receivedTransport.withValue { $0 = transport }
         _receivedPczt.withValue { $0 = pczt }
         _receivedAccountUUID.withValue { $0 = accountUUID }
@@ -1019,6 +1120,9 @@ private final class FakeLedgerSigner: @unchecked Sendable {
         case .failure(let error):
             throw error
         case .hangUntilCancelled:
+            guard callNumber == 1 else {
+                throw SignShouldNotBeCalled()
+            }
             do {
                 while true {
                     try await Task.sleep(nanoseconds: 10_000_000)

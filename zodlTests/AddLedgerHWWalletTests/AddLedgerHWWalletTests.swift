@@ -50,6 +50,37 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MOB-2020: a rescan starts from an empty list, so a selection from the scan it replaces
+    // must not survive it either -- otherwise Connect or "Try again" could stay enabled for a
+    // device that is no longer listed.
+    @MainActor @Test func startScanningClearsAnExistingSelection() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.devices = [device]
+        state.selectedDevice = device
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.scanDevices = {
+                AsyncThrowingStream { continuation in
+                    continuation.finish()
+                }
+            }
+        }
+
+        await store.send(.startScanning) {
+            $0.isScanning = true
+            $0.issue = nil
+            $0.devices = []
+            $0.selectedDevice = nil
+        }
+        await store.send(.stopScanning) {
+            $0.isScanning = false
+        }
+        await store.finish()
+    }
+
     @MainActor @Test func scanFailureShowsItsIssueSheet() async {
         let store = TestStore(initialState: AddLedgerHWWallet.State()) {
             AddLedgerHWWallet()
@@ -140,6 +171,32 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MARK: - isShowingSearchingCopy (MOB-2020: Android `LedgerDeviceScanVM.pageCopy`)
+
+    @MainActor @Test func isShowingSearchingCopyIsTrueWhileScanningWithNoDevices() async {
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = true
+
+        #expect(state.isShowingSearchingCopy)
+    }
+
+    @MainActor @Test func isShowingSearchingCopyIsFalseOnceTheScanHasFailedOrTimedOutWithNoDevices() async {
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = false
+        state.issue = .noDevicesFound
+
+        #expect(!state.isShowingSearchingCopy)
+    }
+
+    @MainActor @Test func isShowingSearchingCopyIsFalseWhenDevicesAreListed() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.isScanning = true
+        state.devices = [device]
+
+        #expect(!state.isShowingSearchingCopy)
+    }
+
     // MARK: - deviceTapped
 
     @MainActor @Test func deviceTappedOnlySelectsTheDevice() async {
@@ -179,6 +236,26 @@ import ComposableArchitecture
         await store.send(.devicesUpdated([weaker])) {
             $0.devices = [weaker]
             $0.selectedDevice = weaker
+        }
+    }
+
+    // MOB-2020 (Android LedgerDeviceScanVM.kt:446-450): a selection the scan no longer lists --
+    // the device went out of range or stopped advertising -- is dropped rather than kept stale.
+    @MainActor @Test func aBatchWithoutTheSelectedIdClearsTheSelection() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -48)
+        let other = LedgerBluetoothDevice(id: UUID(), name: "Nano X B", model: .nanoX, rssi: -55)
+        var state = AddLedgerHWWallet.State()
+        state.devices = [device]
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.deviceTapped(device)) {
+            $0.selectedDevice = device
+        }
+        await store.send(.devicesUpdated([other])) {
+            $0.devices = [other]
+            $0.selectedDevice = nil
         }
     }
 
