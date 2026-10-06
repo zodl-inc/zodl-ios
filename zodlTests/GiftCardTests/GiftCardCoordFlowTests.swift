@@ -3,7 +3,7 @@
 //  zodlTests
 //
 //  The gift card flow's navigation and lifetime: a scanned card replaces the scanner, and
-//  `.cleanUp` (sent by Root on every exit) closes the card's temporary wallet and resets the flow.
+//  internal replacement and `.cleanUp` close the card's temporary wallet. Root owns parent exits.
 //
 
 import Foundation
@@ -69,6 +69,24 @@ import ComposableArchitecture
         #expect(cleaned.value == [handle])
         #expect(store.state.scanState.checkers == [.giftCardScanChecker])
         #expect(store.state.scanState.isPasteEnabled)
+    }
+
+    @Test func replacingTheCardClosesThePreviousHandle() async {
+        let handle = GiftCardHandle()
+        let cleaned = LockIsolated<[GiftCardHandle]>([])
+        var state = GiftCardCoordFlow.State(link: Self.link)
+        state.redeemState?.handle = handle
+        let store = TestStore(initialState: state) { GiftCardCoordFlow() } withDependencies: {
+            var client = GiftCardClient.mock()
+            client.cleanup = { handle in cleaned.withValue { $0.append(handle) } }
+            $0.giftCard = client
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.scan(.foundGiftCard("https://gift.zodl.com/#replacement".redacted)))
+        await store.finish()
+        #expect(cleaned.value == [handle])
+        #expect(store.state.redeemState?.handle == nil)
     }
 
     @Test func cleanUpWithNothingOpenDoesNothing() async {

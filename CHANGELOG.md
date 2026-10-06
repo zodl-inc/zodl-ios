@@ -11,6 +11,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-2142] Redeem Zcash gift cards. Choose Redeem gift card from the More menu on Home and scan the card's QR code or paste its link (Zodl gift links and the legacy payment-link format are supported), scan a gift card where you would scan an address, or open a gift.zodl.com link, which opens the scanner so you can scan the card with Zodl. Zodl checks the card, shows how much it holds and any message from the sender, and moves the funds to a shielded address of your selected account. A small network fee is paid from the card. A card whose funds still need confirmations is checked again automatically; a card that was already redeemed, isn't funded yet, holds less than the network fee, or is for another network says so, and a damaged card link is reported as invalid. The card is checked and redeemed through the server your wallet is currently using, over Tor when protected access is on. The card's temporary data is deleted when you leave the screen, or the next time Zodl starts if it was closed mid-redemption.
 
+### Fixed
+
+- [MOB-2142] Leaving or replacing a gift card now closes its temporary wallet and restores wallet syncing reliably. Redeeming uses the currently selected account, including when you switch accounts while the card is loading.
+
 ## [3.15.0] - 2026-09-23
 
 ### Added

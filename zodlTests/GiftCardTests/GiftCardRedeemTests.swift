@@ -86,8 +86,8 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.ready), receivers: receivers, redeemedTo: redeemedTo)
 
         await store.send(.onAppear)
-        await store.receive(\.opened)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
             $0.syncProgress = nil
         }
@@ -97,7 +97,7 @@ import ComposableArchitecture
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemSucceeded) {
+        await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
             $0.step = .success(amount: Zatoshi(10_000_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
@@ -113,16 +113,16 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
         }
         #expect(!store.state.isRedeemable)
 
         await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
-        await store.receive(\.autoRetryFired) {
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } }) {
             $0.step = .checking
         }
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
         }
 
@@ -135,7 +135,7 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.empty))
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .empty
         }
         #expect(!store.state.isRedeemable)
@@ -148,7 +148,7 @@ import ComposableArchitecture
         let store = makeStore(scenario: base)
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .empty
         }
     }
@@ -277,7 +277,7 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.checkFails))
 
         await store.send(.onAppear)
-        await store.receive(\.checkFailed) {
+        await store.receive({ if case .response(_, .checkFailed) = $0 { true } else { false } }) {
             $0.step = .checkFailed
         }
         #expect(store.state.canRetry)
@@ -285,7 +285,7 @@ import ComposableArchitecture
         await store.send(.retryTapped) {
             $0.step = .checking
         }
-        await store.receive(\.checkFailed) {
+        await store.receive({ if case .response(_, .checkFailed) = $0 { true } else { false } }) {
             $0.step = .checkFailed
         }
     }
@@ -297,13 +297,13 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(GiftCardClient.MockScenario(redeemError: .nothingToRedeem)))
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemFailed) {
+        await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } }) {
             $0.step = .empty
         }
         #expect(!store.state.isRedeemable)
@@ -313,14 +313,14 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.redeemFails))
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
 
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemFailed) {
+        await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } }) {
             $0.step = .failure(amount: Zatoshi(10_000_000))
         }
 
@@ -328,7 +328,7 @@ import ComposableArchitecture
         await store.send(.retryTapped) {
             $0.step = .checking
         }
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
     }
@@ -342,8 +342,8 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.redeemFailsOnce), redeemedTo: redeemedTo, openCalls: openCalls)
 
         await store.send(.onAppear)
-        await store.receive(\.opened)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
         let handle = store.state.handle
@@ -351,7 +351,7 @@ import ComposableArchitecture
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemFailed) {
+        await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } }) {
             $0.step = .failure(amount: Zatoshi(10_000_000))
         }
         #expect(store.state.canRetry)
@@ -359,7 +359,7 @@ import ComposableArchitecture
         await store.send(.retryTapped) {
             $0.step = .checking
         }
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
         #expect(store.state.handle == handle)
@@ -368,7 +368,7 @@ import ComposableArchitecture
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemSucceeded) {
+        await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
             $0.step = .success(amount: Zatoshi(10_000_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
@@ -385,8 +385,8 @@ import ComposableArchitecture
         let store = makeStore(scenario: base, openCalls: openCalls)
 
         await store.send(.onAppear)
-        await store.receive(\.opened)
-        await store.receive(\.checkFailed) {
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .checkFailed) = $0 { true } else { false } }) {
             $0.step = .checkFailed
             $0.handle = nil
         }
@@ -394,7 +394,7 @@ import ComposableArchitecture
         await store.send(.retryTapped) {
             $0.step = .checking
         }
-        await store.receive(\.opened)
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
         #expect(openCalls.value == 2)
     }
 
@@ -402,13 +402,96 @@ import ComposableArchitecture
         let store = makeStore(scenario: scenario(.ready), withAccount: false)
 
         await store.send(.onAppear)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
         #expect(!store.state.isRedeemable)
 
         await store.send(.redeemTapped)
         #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
+    }
+
+    @Test func changingAccountBeforeRedeemDoesNotUseThePreviousCachedAddress() async {
+        let redeemedTo = LockIsolated<[String]>([])
+        let store = makeStore(scenario: scenario(.ready), redeemedTo: redeemedTo)
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .destinationResolved) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        let second = WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 2, count: 16)), name: "Second", keySource: nil,
+            seedFingerprint: nil, hdAccountIndex: Zip32AccountIndex(1), ufvk: nil, uivk: nil
+        ))
+        store.state.$selectedWalletAccount.withLock { $0 = second }
+        store.dependencies.sdkSynchronizer = .mocked(getCustomUnifiedAddress: { id, _ in
+            #expect(id == second.id)
+            return UnifiedAddress(validatedEncoding: "utest1secondaccount", networkType: .testnet)
+        })
+        await store.send(.redeemTapped)
+        await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } })
+        await store.finish()
+        #expect(redeemedTo.value == ["utest1secondaccount"])
+    }
+
+    @Test func accountChangeWhileDestinationIsSuspendedDoesNotCacheOrSendTheOldAddress() async {
+        let entered = GiftCardTestGate()
+        let release = GiftCardTestGate()
+        let redeemedTo = LockIsolated<[String]>([])
+        let store = makeStore(scenario: scenario(.ready), redeemedTo: redeemedTo)
+        store.dependencies.sdkSynchronizer = .mocked(getCustomUnifiedAddress: { _, _ in
+            await entered.open()
+            await release.wait()
+            return Self.orchardUA
+        })
+        await store.send(.onAppear)
+        await entered.wait()
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        store.state.$selectedWalletAccount.withLock { $0 = nil }
+        await release.open()
+        await store.receive({ if case .response(_, .destinationResolved) = $0 { true } else { false } })
+        await store.finish()
+        #expect(store.state.destinationAddress == nil)
+        #expect(redeemedTo.value.isEmpty)
+    }
+
+    @Test func accountChangeDuringRedeemTimeAddressLookupUsesTheCurrentAccount() async {
+        let entered = GiftCardTestGate()
+        let release = GiftCardTestGate()
+        let redeemedTo = LockIsolated<[String]>([])
+        let first = testWalletAccount
+        let second = WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 3, count: 16)), name: "Current", keySource: nil,
+            seedFingerprint: nil, hdAccountIndex: Zip32AccountIndex(1), ufvk: nil, uivk: nil
+        ))
+        var state = GiftCardRedeem.State(link: Self.link)
+        state.handle = GiftCardHandle()
+        state.step = .ready(spendable: Zatoshi(10_000_000))
+        state.$selectedWalletAccount.withLock { $0 = first }
+        let store = TestStore(initialState: state) { GiftCardRedeem() } withDependencies: {
+            var client = GiftCardClient.mock()
+            client.redeem = { _, address in
+                redeemedTo.withValue { $0.append(address) }
+                return "current-tx"
+            }
+            $0.giftCard = client
+            $0.sdkSynchronizer = .mocked(getCustomUnifiedAddress: { id, _ in
+                if id == first.id {
+                    await entered.open()
+                    await release.wait()
+                    return Self.orchardUA
+                }
+                #expect(id == second.id)
+                return UnifiedAddress(validatedEncoding: "utest1currentaccount", networkType: .testnet)
+            })
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.redeemTapped)
+        await entered.wait()
+        store.state.$selectedWalletAccount.withLock { $0 = second }
+        await release.open()
+        await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } })
+        await store.finish()
+        #expect(redeemedTo.value == ["utest1currentaccount"])
+        #expect(store.state.destinationAccountId == second.id)
     }
 
     @Test func closeAsksToDismiss() async {
@@ -589,14 +672,14 @@ import ComposableArchitecture
 
     private func redeemThroughTheLiveWiring(_ store: TestStore<GiftCardRedeem.State, GiftCardRedeem.Action>) async {
         await store.send(.onAppear)
-        await store.receive(\.opened)
-        await store.receive(\.statusLoaded) {
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(spendable: Zatoshi(10_000_000))
         }
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
-        await store.receive(\.redeemSucceeded) {
+        await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
             $0.step = .success(amount: Zatoshi(10_000_000))
             $0.txId = FakeGiftCardSession.txId
         }

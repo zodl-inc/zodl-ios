@@ -35,19 +35,10 @@ extension Root {
                 // redeem flow instead. Nothing has been sent from these flows at scan time.
                 return openGiftCardFlow(GiftCardCoordFlow.State(link: link), state: &state)
 
-            case .giftCardCoordFlow(.redeem(.opened(_))):
-                // The card wallet and the main wallet share one database queue, so the main
-                // wallet's sync (and everything it triggers) would slow the card's check and sweep.
-                // Pause it while a card is open; it resumes when the flow closes.
-                return .run { _ in sdkSynchronizer.stop() }
-
             case .giftCardCoordFlow(.scan(.cancelTapped)),
                     .giftCardCoordFlow(.redeem(.delegate(.dismiss))):
                 state.path = nil
-                return .merge(
-                    .send(.giftCardCoordFlow(.cleanUp)),
-                    .run { _ in try? await sdkSynchronizer.start(true) }
-                )
+                return .none
 
             case .giftCardCoordFlow(.redeem(.delegate(.redeemed))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
@@ -70,21 +61,87 @@ extension Root {
         return openGiftCardFlow(.rescanRequested, state: &state)
     }
 
-    /// Presents a fresh gift card flow starting at `flowState`. A card still open from a previous
-    /// visit is closed first.
+    /// Presents a fresh gift card flow. The outer lifecycle boundary retires the previous visit.
     func openGiftCardFlow(_ flowState: GiftCardCoordFlow.State, state: inout Root.State) -> Effect<Root.Action> {
-        let staleHandles = state.giftCardCoordFlowState.openHandles
         state.isGiftCardRescanPending = false
         state.giftCardCoordFlowState = flowState
         state.path = .giftCardCoordFlow
         exchangeRate.refreshExchangeRateUSD()
-        guard !staleHandles.isEmpty else {
-            return .none
-        }
-        return .run { _ in
-            for handle in staleHandles {
-                await giftCard.cleanup(handle)
+        return .none
+    }
+
+    /// Outermost boundary: parent navigation and onChange routing may both replace child state.
+    /// Reject responses before optional scopes, and snapshot resources before any reducer resets them.
+    func giftCardLifecycle(_ content: some Reducer<State, Action>) -> Reduce<State, Action> {
+        Reduce { state, action in
+            if case let .giftCardCoordFlow(.redeem(.response(visit, response))) = action {
+                guard state.path == .giftCardCoordFlow, state.giftCardCoordFlowState.redeemState?.cancelId == visit else {
+                    if case .opened(let handle) = response {
+                        return .run { _ in await giftCard.cleanup(handle) }
+                    }
+                    return .none
+                }
+                if case .opened = response {
+                    // Synchronous pause at acceptance: an old queued open can never stop a newer visit's sync.
+                    state.giftCardSyncGeneration = UUID()
+                    state.giftCardSyncResumePending = false
+                    sdkSynchronizer.stop()
+                }
             }
+            if case .giftCardResumeSync(let generation) = action {
+                guard state.giftCardSyncGeneration == generation,
+                      state.destinationState.destination == .home, state.splashAppeared,
+                      state.bgTask == nil, state.giftCardCoordFlowState.redeemState?.handle == nil else { return .none }
+                // Start may suspend after it has begun. Always reconcile its completion against
+                // current ownership, even if another card opened while the SDK was awaiting work.
+                return .run { send in
+                    try? await sdkSynchronizer.start(true)
+                    await send(.giftCardSyncResumed(generation))
+                }
+            }
+            if case .giftCardSyncResumed = action {
+                if state.giftCardCoordFlowState.redeemState?.handle != nil
+                    || state.destinationState.destination != .home || !state.splashAppeared || state.bgTask != nil {
+                    sdkSynchronizer.stop()
+                }
+                return .none
+            }
+
+            let previous = state.giftCardCoordFlowState.redeemState
+            let previousPath = state.path
+            let previousScanId = state.giftCardCoordFlowState.scanState.cancelId
+            let effect = content._reduce(into: &state, action: action)
+            let exited = previousPath == .giftCardCoordFlow && state.path != .giftCardCoordFlow
+            let replaced = previous?.cancelId != state.giftCardCoordFlowState.redeemState?.cancelId
+            var effects: [Effect<Action>] = [effect]
+            if exited || previousScanId != state.giftCardCoordFlowState.scanState.cancelId {
+                effects.append(.cancel(id: previousScanId))
+            }
+            if (exited || replaced), let previous {
+                state.giftCardSyncGeneration = UUID()
+                if exited {
+                    state.giftCardCoordFlowState = GiftCardCoordFlow.State()
+                }
+                state.giftCardSyncResumePending = state.giftCardSyncResumePending || previous.handle != nil
+                effects.append(.cancel(id: previous.cancelId))
+                effects.append(.cancel(id: previous.autoRetryCancelId))
+                // The coordinator handles an explicit cleanUp when it is tested or hosted alone.
+                switch action {
+                case .giftCardCoordFlow(.cleanUp), .giftCardCoordFlow(.scan(.foundGiftCard)):
+                    break // Internal replacement is closed by the coordinator.
+                default:
+                    if let handle = previous.handle {
+                        effects.append(.run { _ in await giftCard.cleanup(handle) })
+                    }
+                }
+            }
+            if state.giftCardSyncResumePending,
+               state.destinationState.destination == .home, state.splashAppeared,
+               state.bgTask == nil, state.giftCardCoordFlowState.redeemState?.handle == nil {
+                state.giftCardSyncResumePending = false
+                effects.append(.send(.giftCardResumeSync(state.giftCardSyncGeneration)))
+            }
+            return .merge(effects)
         }
     }
 }

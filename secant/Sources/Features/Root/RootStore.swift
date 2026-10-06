@@ -313,6 +313,8 @@ struct Root {
         var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
+        var giftCardSyncGeneration = UUID()
+        var giftCardSyncResumePending = false
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
@@ -510,6 +512,8 @@ struct Root {
         case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case giftCardCoordFlow(GiftCardCoordFlow.Action)
+        case giftCardResumeSync(UUID)
+        case giftCardSyncResumed(UUID)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
@@ -764,6 +768,10 @@ struct Root {
     /// `isSynchronizerIdleForSwitch` — `lastKnownSyncStatus` / `isSyncStalledSinceLastProgress`)
     /// — keep ALL composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
+        giftCardLifecycle(routedCore)
+    }
+
+    private var routedCore: some Reducer<State, Action> {
         combinedCore
             .onChange(of: \.canApplyAutoServerSwitch) { _, state in
                 guard state.canApplyAutoServerSwitch, let pending = state.pendingServerCandidate else { return .none }
