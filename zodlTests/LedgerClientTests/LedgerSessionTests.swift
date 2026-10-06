@@ -560,6 +560,97 @@ import ComposableArchitecture
         #expect(!reportCalled.value)
     }
 
+    // MOB-2020: the early check after the Bluetooth step only compared the connection
+    // generation, so a connect cancelled (not superseded -- nothing else ran) while still in
+    // that step fell through to query the app and could still make the device show "Open
+    // Zcash?" for a ceremony nothing is waiting on anymore.
+    @Test func aConnectCancelledDuringTheBluetoothStepNeverCallsTheOpenStepOrTheReport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = SuspendingLedgerScanning(transport: transport)
+        let openStepCalled = LockIsolated(false)
+        let reportCalled = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { openedTransport, _ in
+                openStepCalled.setValue(true)
+                return openedTransport
+            },
+            currentApp: { _ in LedgerRunningApp(name: "BOLOS", version: "1.0") }
+        )
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Fake Nano X", model: .nanoX, rssi: -40)
+
+        let connectTask = Task {
+            try await session.connect(device) { reportCalled.setValue(true) }
+        }
+        try await eventually { scanner.hasEntered }
+
+        connectTask.cancel()
+        scanner.release()
+
+        do {
+            try await connectTask.value
+            Issue.record("expected connect to throw")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(transport.closeCount == 1)
+        #expect(!openStepCalled.value)
+        #expect(!reportCalled.value)
+    }
+
+    // MOB-2020: nothing re-checked between the app query and the open step, so a connect
+    // cancelled specifically while that query was in flight still went on to call the open step
+    // and could still make the device show "Open Zcash?" for a ceremony nothing is waiting on.
+    @Test func aConnectCancelledWhileTheAppQueryIsInFlightNeverCallsTheOpenStep() async throws {
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let scanner = FakeLedgerScanning(transportsToReturn: [opened])
+        let queryEntered = LockIsolated(false)
+        let releaseQuery = LockIsolated(false)
+        let openStepCalled = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { openedTransport, _ in
+                openStepCalled.setValue(true)
+                return openedTransport
+            },
+            currentApp: { _ in
+                queryEntered.setValue(true)
+                // `try?`, not `try await`: `connect` already swallows this query's failures with
+                // `try?`, so a plain cancellation throw here would just vanish the same way --
+                // this keeps polling until released regardless, so a cancellation lands mid-query
+                // instead of unwinding it early.
+                while !releaseQuery.value {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return LedgerRunningApp(name: "BOLOS", version: "1.0")
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let connectTask = Task {
+            try await session.connect(device) { }
+        }
+        try await eventually { queryEntered.value }
+
+        connectTask.cancel()
+        releaseQuery.setValue(true)
+
+        do {
+            try await connectTask.value
+            Issue.record("expected connect to throw")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(opened.closeCount == 1)
+        #expect(!openStepCalled.value)
+    }
+
     // MARK: - connect's "opening the Zcash app" report (MOB-2020)
     //
     // `connect`'s second argument fires once, right after the Bluetooth step, using the same
@@ -1148,9 +1239,9 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
 }
 
 /// A `LedgerScanning` conformance whose `connect(to:timeout:)` suspends until `release()` is
-/// called, then returns `transport` -- for the one test above that needs a supersession to land
-/// while the Bluetooth step itself is still in flight. `FakeLedgerScanning` always resolves at
-/// once, with no way to delay that specific call.
+/// called, then returns `transport` -- for the tests above that need a supersession or a
+/// cancellation to land while the Bluetooth step itself is still in flight. `FakeLedgerScanning`
+/// always resolves at once, with no way to delay that specific call.
 private final class SuspendingLedgerScanning: LedgerScanning, @unchecked Sendable {
     private let transport: FakeLedgerAPDUTransport
     private let _hasEntered = LockIsolated(false)

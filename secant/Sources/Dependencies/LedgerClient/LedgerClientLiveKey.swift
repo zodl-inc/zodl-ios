@@ -137,11 +137,12 @@ actor LedgerSession {
         }
 
         // MOB-2020: a disconnect() or a newer connect() may already have run by the time the
-        // Bluetooth step above returns -- caught here, before the app is ever queried or asked
-        // to open the Zcash app, so a superseded connect never makes the device show "Open
+        // Bluetooth step above returns, or Cancel Transaction or Pair Ledger may have cancelled
+        // this very call -- caught here, before the app is ever queried or asked to open the
+        // Zcash app, so a superseded or cancelled connect never makes the device show "Open
         // Zcash?" for a ceremony nothing is waiting on anymore.
-        guard connectionGeneration == generation else {
-            LoggerProxy.event("Ledger: discarding a connection a disconnect() or a newer connect() has superseded")
+        guard connectionGeneration == generation, !Task.isCancelled else {
+            LoggerProxy.event("Ledger: discarding a connection a disconnect(), a newer connect() or a cancellation has superseded")
             await opened.close()
             throw CancellationError()
         }
@@ -155,6 +156,15 @@ actor LedgerSession {
         if let runningApp = try? await currentApp(opened), !runningApp.isZcash {
             LoggerProxy.event("Ledger: the Zcash app isn't running yet, reporting before opening it")
             await willOpenZcashApp()
+        }
+
+        // MOB-2020: nothing above re-checks while the query was in flight -- a disconnect(), a
+        // newer connect() or a cancellation landing during it must still stop here, before the
+        // device is ever asked to open the Zcash app for a ceremony nothing is waiting on.
+        guard connectionGeneration == generation, !Task.isCancelled else {
+            LoggerProxy.event("Ledger: discarding a connection a disconnect(), a newer connect() or a cancellation has superseded")
+            await opened.close()
+            throw CancellationError()
         }
 
         LoggerProxy.event("Ledger: opening the Zcash app if needed")
