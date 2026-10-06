@@ -69,10 +69,11 @@ private final class GiftCardSyncFixture: @unchecked Sendable {
 }
 
 @Suite(.serialized) @MainActor struct RootGiftCardSyncOwnershipTests {
-    private func makeStore(sync: GiftCardSyncFixture) -> StoreOf<Root> {
+    private func makeStore(sync: GiftCardSyncFixture, appStartState: AppStartState = .unknown) -> StoreOf<Root> {
         var state = Root.State.initial
         state.destinationState.destination = .home
         state.splashAppeared = true
+        state.appStartState = appStartState
         state.$selectedWalletAccount.withLock { $0 = nil }
         state.path = .giftCardCoordFlow
         state.giftCardCoordFlowState = GiftCardCoordFlow.State(link: "https://gift.zodl.com/#fixture".redacted)
@@ -153,6 +154,26 @@ private final class GiftCardSyncFixture: @unchecked Sendable {
         // The initial pause plus the post-start correction. Background must not enqueue an
         // additional unowned fire-and-forget stop that could outlive the next foreground.
         #expect(sync.stops.value == 2)
+    }
+
+    @Test(arguments: [false, true]) func rescanResetRetainsBackgroundEligibilityUntilThePendingStopCompletes(backgroundTask: Bool) async throws {
+        let background: AppStartState = backgroundTask ? .backgroundTask : .didEnterBackground
+        let sync = GiftCardSyncFixture(delayedStop: true)
+        let store = makeStore(sync: sync, appStartState: background)
+        let visit = try #require(store.state.giftCardCoordFlowState.redeemState?.cancelId)
+        let opening = store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle())))))
+        await sync.stopEntered.wait()
+        await store.send(.deeplinkWarning(.rescanInZashi)).finish()
+        #expect(store.state.appStartState == background)
+        #expect(store.state.destinationState.destination == .home)
+        #expect(store.state.splashAppeared)
+        #expect(store.state.bgTask == nil)
+        #expect(sync.starts.value == 0)
+        await sync.finishStops()
+        await opening.finish()
+        #expect(sync.starts.value == 0)
+        #expect(sync.states.value.syncStatus == .stopped)
+        #expect(store.state.giftCardSyncResumePending)
     }
 
     @Test(arguments: [false, true]) func deferredStopIsObservedAcrossExitAndBackground(background: Bool) async throws {

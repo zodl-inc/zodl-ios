@@ -124,7 +124,7 @@ extension Root {
             let previousStartId = state.giftCardSyncStartId
             let wasPaused = state.giftCardSyncIsPaused
             let resumeWasPending = state.giftCardSyncResumePending
-            let wasBackgrounded = state.appStartState == .didEnterBackground
+            let previousAppStartState = state.appStartState
             let previousScanId = state.giftCardCoordFlowState.scanState.cancelId
             let effect = content._reduce(into: &state, action: action)
             // Parent reducers can replace Root.State wholesale. Work already handed to the SDK
@@ -134,7 +134,10 @@ extension Root {
             state.giftCardSyncStartId = previousStartId
             state.giftCardSyncIsPaused = wasPaused
             state.giftCardSyncResumePending = resumeWasPending
-            if wasBackgrounded, state.appStartState == .unknown { state.appStartState = .didEnterBackground }
+            if state.appStartState == .unknown,
+               previousAppStartState == .didEnterBackground || previousAppStartState == .backgroundTask {
+                state.appStartState = previousAppStartState
+            }
             let exited = previousPath == .giftCardCoordFlow && state.path != .giftCardCoordFlow
             let replaced = previous?.cancelId != state.giftCardCoordFlowState.redeemState?.cancelId
             var effects: [Effect<Action>] = [effect]
