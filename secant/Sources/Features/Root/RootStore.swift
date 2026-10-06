@@ -317,6 +317,7 @@ struct Root {
         var giftCardSyncResumePending = false
         var giftCardSyncRecovery = GiftCardSyncRecovery.none
         var giftCardSyncStartGeneration: UUID?
+        var giftCardSyncObservationGeneration: UUID?
         var giftCardSyncGateClearedDuringStart = false
         /// One seed recheck bridges a gate that cleared before feeds were restored. Refusal and
         /// re-registration do not replenish it; genuine gate edges and external triggers do.

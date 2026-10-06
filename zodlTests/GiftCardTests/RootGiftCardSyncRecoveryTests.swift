@@ -395,4 +395,44 @@ import ComposableArchitecture
         await drain(store)
     }
 
+
+    @Test(arguments: [false, true])
+    func foregroundRefreshesTheMigrationGateThatWasUnobservedInBackground(gateClears: Bool) async {
+        let engine = Engine()
+        engine.migrationFailure = true
+        engine.blocked.setValue(true)
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.receive({
+            if case .migrationSyncGateChanged(true) = $0 { return true }
+            return false
+        }, timeout: .seconds(2))
+        #expect(store.state.lastMigrationSyncGateBlocked)
+        let subscriptionsBeforeBackground = engine.subscriptions.value
+        let retiredGeneration = store.state.giftCardSyncGeneration
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        // No reducer gate action: the actual SDK gate changes while its observations are cancelled.
+        engine.blocked.setValue(!gateClears)
+        await store.send(.giftCardSyncObserve(retiredGeneration))
+        #expect(engine.subscriptions.value == subscriptionsBeforeBackground)
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.receive(\.giftCardSyncObserve, timeout: .seconds(2))
+        await store.receive({
+            if case .migrationSyncGateChanged(let blocked) = $0 { return blocked == !gateClears }
+            return false
+        }, timeout: .seconds(2))
+        #expect(engine.subscriptions.value > subscriptionsBeforeBackground)
+        if gateClears {
+            await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        }
+        await store.skipReceivedActions(strict: false)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == (gateClears ? 2 : 1))
+        #expect(store.state.giftCardSyncResumePending == !gateClears)
+        #expect(store.state.lastMigrationSyncGateBlocked == !gateClears)
+        await drain(store)
+    }
+
 }

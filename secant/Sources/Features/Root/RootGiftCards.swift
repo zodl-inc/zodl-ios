@@ -145,6 +145,7 @@ extension Root {
             }
             if case .giftCardSyncObserve(let generation) = action {
                 guard generation == state.giftCardSyncGeneration, state.canResumeGiftCardSync else { return .none }
+                state.giftCardSyncObservationGeneration = generation
                 return .merge(
                     initializationReduce()._reduce(into: &state, action: .initialization(.registerForSynchronizersUpdate(generation: nil))),
                     .send(.observeTransactions)
@@ -156,7 +157,7 @@ extension Root {
                 }
                 if visit == .send { state.syncDeferredByMigrationGate = true }
                 return .run { send in
-                    await migrationManager.advance(.beforeSync)
+                    _ = await migrationManager.advance(.beforeSync)
                     if visit == .send {
                         await send(.giftCardSyncStartFinished(startId, .migrationDeferred))
                     } else {
@@ -170,7 +171,7 @@ extension Root {
                 }
                 state.syncDeferredByMigrationGate = true
                 return .run { send in
-                    await migrationManager.advance(.beforeSync)
+                    _ = await migrationManager.advance(.beforeSync)
                     await send(.giftCardSyncStartFinished(startId, .migrationDeferred))
                 }
             }
@@ -365,8 +366,14 @@ extension Root {
         if state.ownsGiftCardSyncLifecycle, !state.canResumeGiftCardSync, !state.giftCardSyncIsPaused {
             return stopGiftCardSync(state: &state)
         }
-        if state.giftCardSyncResumePending, state.canResumeGiftCardSync,
-           !state.lastMigrationSyncGateBlocked, state.giftCardSyncRecovery == .none {
+        if state.giftCardSyncResumePending, state.canResumeGiftCardSync, state.giftCardSyncRecovery == .none {
+            if state.lastMigrationSyncGateBlocked {
+                // Background cancels the gate feeds. Refresh once in this recovery generation
+                // before trusting a cached block that may have cleared while nobody observed it.
+                guard state.giftCardSyncObservationGeneration != state.giftCardSyncGeneration else { return .none }
+                state.giftCardSyncObservationGeneration = state.giftCardSyncGeneration
+                return .send(.giftCardSyncObserve(state.giftCardSyncGeneration))
+            }
             return .send(.giftCardResumeSync(state.giftCardSyncGeneration))
         }
         return .none
