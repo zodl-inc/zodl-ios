@@ -41,7 +41,7 @@ struct GiftCardRedeem {
             /// This build cannot redeem gift cards yet.
             case unavailable
             case redeeming(amount: Zatoshi)
-            case success(amount: Zatoshi)
+            case success
             case failure(amount: Zatoshi)
         }
 
@@ -68,12 +68,12 @@ struct GiftCardRedeem {
             return message
         }
 
-        /// The amount the screen is about, whichever step it is on.
+        /// The card's pre-fee amount, available only before a successful redemption.
         var amount: Zatoshi? {
             switch step {
-            case .ready(let amount), .pending(let amount, _), .redeeming(let amount), .success(let amount), .failure(let amount):
+            case .ready(let amount), .pending(let amount, _), .redeeming(let amount), .failure(let amount):
                 return amount
-            case .checking, .empty, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable:
+            case .checking, .empty, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable, .success:
                 return nil
             }
         }
@@ -262,11 +262,11 @@ struct GiftCardRedeem {
                 .cancellable(id: visit)
 
             case .response(_, .redeemSucceeded(let txId)):
-                guard case .redeeming(let amount) = state.step else {
+                guard case .redeeming = state.step else {
                     return .none
                 }
                 state.txId = txId
-                state.step = .success(amount: amount)
+                state.step = .success
                 return .send(.delegate(.redeemed))
 
             case .response(_, .redeemFailed(let error)):

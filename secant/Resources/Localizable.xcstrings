@@ -8889,13 +8889,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ is on its way to your wallet. The funds will appear in your balance shortly."
+            "value" : "Your gift card was redeemed. The funds will appear in your wallet shortly."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ va en camino a tu billetera. Los fondos aparecerán en tu saldo en breve."
+            "value" : "Tu tarjeta de regalo se ha canjeado. Los fondos aparecerán en tu billetera en breve."
           }
         }
       }

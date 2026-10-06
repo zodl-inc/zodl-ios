@@ -13,6 +13,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-2142] The gift-card success screen confirms redemption without showing the card's amount before the network fee as the amount received.
 - [MOB-2142] Leaving or replacing a gift card now closes its temporary wallet. Wallet syncing resumes correctly after gift-card errors or navigation and stays stopped while the app is in the background, including when a link opens the scanner. Redeeming uses the currently selected account, including when you switch accounts while the card is loading.
 
 ## [3.15.0] - 2026-09-23
