@@ -62,6 +62,7 @@ struct LedgerDevicePickerView: View {
                                 isExpanded: store.isAdvancedOptionsExpanded,
                                 accountIndexText: $store.accountIndexText,
                                 isAccountIndexValid: store.selectedAccountIndex != nil,
+                                isConnecting: store.isConnecting,
                                 onToggle: { store.send(.advancedOptionsToggleTapped) }
                             )
                         }

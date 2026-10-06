@@ -22,6 +22,11 @@ struct LedgerAdvancedOptionsCard: View {
     let isExpanded: Bool
     @Binding var accountIndexText: String
     let isAccountIndexValid: Bool
+    /// MOB-2020: disables the field and the header toggle while the phone is bonding, as Android
+    /// does (`LedgerDeviceScanVM.kt:252`) -- the index is already snapshotted at Connect by then,
+    /// so disabling here is about not inviting an edit that looks live but can no longer change
+    /// what gets paired, not about protecting the snapshot itself.
+    let isConnecting: Bool
     let onToggle: () -> Void
 
     var body: some View {
@@ -40,6 +45,7 @@ struct LedgerAdvancedOptionsCard: View {
                 .frame(height: 48)
                 .contentShape(Rectangle())
             }
+            .disabled(isConnecting)
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
@@ -52,6 +58,7 @@ struct LedgerAdvancedOptionsCard: View {
                         error: isAccountIndexValid ? nil : String(localizable: .ledgerDevicePickerAccountIndexHint)
                     )
                     .keyboardType(.numberPad)
+                    .disabled(isConnecting)
                     .padding(.top, 16)
 
                     if isAccountIndexValid {
@@ -81,6 +88,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: false,
             accountIndexText: .constant("0"),
             isAccountIndexValid: true,
+            isConnecting: false,
             onToggle: { }
         )
 
@@ -88,6 +96,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: true,
             accountIndexText: .constant("3"),
             isAccountIndexValid: true,
+            isConnecting: false,
             onToggle: { }
         )
 
@@ -95,6 +104,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: true,
             accountIndexText: .constant("150"),
             isAccountIndexValid: false,
+            isConnecting: false,
             onToggle: { }
         )
     }
