@@ -68,6 +68,9 @@ struct LedgerDevicePickerView: View {
                         }
                     }
                     .padding(.top, 24)
+                    // MOB-2020: .numberPad has no Return key, and nothing else here dismisses it
+                    // -- without this, Connect can end up under the keyboard on small screens.
+                    .scrollDismissesKeyboard(.interactively)
                 }
 
                 Spacer()
