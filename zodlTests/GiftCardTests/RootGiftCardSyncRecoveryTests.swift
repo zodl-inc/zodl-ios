@@ -311,7 +311,7 @@ import ComposableArchitecture
         await store.receive(\.giftCardSyncStopped)
         #expect(store.state.ordinarySyncOperations.isEmpty)
         #expect(engine.starts.value == 1)
-        #expect(engine.stops.value == 1)
+        #expect(engine.stops.value == 2)
         await drain(store)
     }
 

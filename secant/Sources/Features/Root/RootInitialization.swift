@@ -847,7 +847,7 @@ extension Root {
                 let completion = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
                 let pipeline: Effect<Action> = .run { [state, generation, admission] send in
                     // The sibling listener is not cancelled with this pipeline. Even a cancelled
-                    // native call must release Root's admission fence after its actual return.
+                    // native call and its owed undo must finish before Root's admission fence releases.
                     defer {
                         completion.continuation.yield(())
                         completion.continuation.finish()
@@ -949,7 +949,9 @@ extension Root {
                                     // start began.
                                     @Shared(.inMemory(.retryStartAdmissionGeneration)) var retryStartAdmissionGeneration: Int = 0
                                     if retryStartAdmissionGeneration == admission {
-                                        sdkSynchronizer.stop()
+                                        // Classic stop() returns before its independent task finishes.
+                                        // Keep this undo inside the owned pipeline until actual teardown.
+                                        await sdkSynchronizer.stopAndWait()
                                     }
                                     return
                                 }
