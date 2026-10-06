@@ -219,6 +219,26 @@ import ComposableArchitecture
         }
     }
 
+    // MOB-2020: the boundaries themselves, and leading zeros, which `UInt32(accountIndexText)`
+    // parses the same as the value without them.
+    @MainActor @Test func accountIndexValidatesItsBoundariesAndLeadingZeros() async {
+        var state = AddLedgerHWWallet.State()
+
+        state.accountIndexText = "100"
+        #expect(state.selectedAccountIndex == Zip32AccountIndex(100))
+
+        state.accountIndexText = "0"
+        #expect(state.selectedAccountIndex == Zip32AccountIndex(0))
+
+        state.accountIndexText = "007"
+        #expect(state.selectedAccountIndex == Zip32AccountIndex(7))
+
+        for invalid in ["101", "00101"] {
+            state.accountIndexText = invalid
+            #expect(state.selectedAccountIndex == nil, "\"\(invalid)\" should be invalid")
+        }
+    }
+
     @MainActor @Test func advancedOptionsToggleTappedRefusesToCollapseWhileInvalid() async {
         var state = AddLedgerHWWallet.State()
         state.isAdvancedOptionsExpanded = true
@@ -726,6 +746,37 @@ import ComposableArchitecture
             $0.ledgerClient.pairDevice = { pairedDevice, zip32AccountIndex in
                 #expect(pairedDevice == device)
                 #expect(zip32AccountIndex == Zip32AccountIndex(3))
+                return fixture
+            }
+        }
+
+        await store.send(.connectDeviceTapped) {
+            $0.isPairing = true
+            $0.issue = nil
+        }
+        await store.receive(.pairingSucceeded(fixture)) {
+            $0.isPairing = false
+            $0.pairing = fixture
+        }
+        await store.finish()
+    }
+
+    // MOB-2020: leading zeros are valid input -- "007" pairs account 7, not account 0 or 7
+    // misread some other way.
+    @MainActor @Test func connectDeviceTappedPairsAccountSevenFromALeadingZerosIndex() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let fixture = try Self.makePairingFixture()
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.accountIndexText = "007"
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { pairedDevice, zip32AccountIndex in
+                #expect(pairedDevice == device)
+                #expect(zip32AccountIndex == Zip32AccountIndex(7))
                 return fixture
             }
         }
