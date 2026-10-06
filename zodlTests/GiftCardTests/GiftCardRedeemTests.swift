@@ -157,6 +157,37 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    @Test func closeCancelsPendingCardRecheck() async {
+        let mainQueue = DispatchQueue.test
+        let checkCalls = LockIsolated(0)
+        var client = GiftCardClient.mock(scenario(.pending))
+        client.check = { _ in
+            checkCalls.withValue { $0 += 1 }
+            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
+        }
+
+        var state = GiftCardRedeem.State(link: Self.link)
+        state.handle = GiftCardHandle()
+        let store = TestStore(initialState: state) {
+            GiftCardRedeem()
+        } withDependencies: {
+            $0.giftCard = client
+            $0.mainQueue = mainQueue.eraseToAnyScheduler()
+            $0.zcashSDKEnvironment = .testnet
+        }
+
+        await store.send(.response(state.cancelId, .statusLoaded(.pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)))) {
+            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
+        }
+        await store.send(.closeTapped)
+        await store.receive(\.delegate.dismiss)
+
+        let countAtClose = checkCalls.value
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checkCalls.value == countAtClose)
+        await store.finish()
+    }
+
     @Test func emptyCardSaysSo() async {
         let store = makeStore(scenario: scenario(.empty))
 
