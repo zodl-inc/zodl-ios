@@ -117,6 +117,11 @@ extension Root {
                 return reconcileGiftCardSync(state: &state)
             }
 
+            if case .initialization(.appDelegate(.didEnterBackground)) = action, state.ownsGiftCardSyncLifecycle {
+                // A foreground retry can start the SDK before its throttled running state arrives.
+                // Background must request an owned stop even when the last observed pause completed.
+                state.giftCardSyncIsPaused = false
+            }
             let previous = state.giftCardCoordFlowState.redeemState
             let previousPath = state.path
             let previousPauseOwner = state.giftCardSyncPauseOwner
