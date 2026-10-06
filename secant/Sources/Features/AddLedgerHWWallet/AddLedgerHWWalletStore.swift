@@ -72,10 +72,9 @@ struct AddLedgerHWWallet {
 
         /// Whether the picker should show "Searching for Devices" copy rather than the
         /// no-selection copy: true only while the scan is still running and no device has turned
-        /// up yet, so a scan that has failed, timed out, or already found devices reads the same
-        /// as one that was never started (Android `LedgerDeviceScanVM.pageCopy`). The skeleton
-        /// rows themselves stay keyed off `devices.isEmpty` alone -- they already stop shimmering
-        /// once the scan stops.
+        /// up yet, so a scan that has failed or timed out with none found reads the same as one
+        /// that was never started. The skeleton rows themselves stay keyed off `devices.isEmpty`
+        /// alone -- they already stop shimmering once the scan stops.
         var isShowingSearchingCopy: Bool { isScanning && devices.isEmpty }
 
         /// MOB-2020: the "Advanced options" card's own account index field, raw user input.

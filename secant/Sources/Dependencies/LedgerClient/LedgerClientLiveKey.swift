@@ -165,9 +165,6 @@ actor LedgerSession {
             }
             LoggerProxy.event("Ledger: the Zcash app is open")
         } catch {
-            if connectionGeneration == generation {
-                transport = nil
-            }
             await opened.close()
             LoggerProxy.warn("Ledger: opening the Zcash app failed (\(Self.errorTag(error)))")
             throw error

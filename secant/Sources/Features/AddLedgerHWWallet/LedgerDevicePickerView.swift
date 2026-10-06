@@ -154,5 +154,8 @@ struct LedgerDevicePickerView: View {
             LedgerDeviceCard(device: device, isSelected: isSelected)
         }
         .disabled(store.isConnecting)
+        // MOB-2020: on the Button itself, the element VoiceOver reads, not the card label
+        // underneath it.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
