@@ -664,101 +664,11 @@ struct Root {
     var core: some Reducer<State, Action> {
         BindingReducer()
         
-        Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
-            DeeplinkWarning()
-        }
-
-        Scope(state: \.serverSetupState, action: \.serverSetup) {
-            ServerSetup()
-        }
-
-        Scope(state: \.homeState, action: \.home) {
-            Home()
-        }
-
-        Scope(state: \.exportLogsState, action: \.exportLogs) {
-            ExportLogs()
-        }
-
-        Scope(state: \.notEnoughFreeSpaceState, action: \.notEnoughFreeSpace) {
-            NotEnoughFreeSpace()
-        }
-
-        Scope(state: \.onboardingState, action: \.onboarding) {
-            RestoreWalletCoordFlow()
-        }
-
-        Scope(state: \.welcomeState, action: \.welcome) {
-            Welcome()
-        }
-
-        Scope(state: \.phraseDisplayState, action: \.phraseDisplay) {
-            RecoveryPhraseDisplay()
-        }
-
-        Scope(state: \.osStatusErrorState, action: \.osStatusError) {
-            OSStatusError()
-        }
-
-        Scope(state: \.settingsState, action: \.settings) {
-            Settings()
-        }
-
-        Scope(state: \.receiveState, action: \.receive) {
-            Receive()
-        }
-        
-        Scope(state: \.requestZecCoordFlowState, action: \.requestZecCoordFlow) {
-            RequestZecCoordFlow()
-        }
-        
-        Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
-            MigrationCoordFlow()
-        }
-
-        Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
-            SendCoordFlow()
-        }
-        
-        Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
-            ScanCoordFlow()
-        }
-        
-        Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
-            AddKeystoneHWWalletCoordFlow()
-        }
-
-        Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
-            TransactionsCoordFlow()
-        }
-        
-        Scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow) {
-            WalletBackupCoordFlow()
-        }
-
-        Scope(state: \.currencyConversionSetupState, action: \.currencyConversionSetup) {
-            CurrencyConversionSetup()
-        }
-
-        Scope(state: \.giftCardCoordFlowState, action: \.giftCardCoordFlow) {
-            GiftCardCoordFlow()
-        }
-
-        Scope(state: \.signWithKeystoneCoordFlowState, action: \.signWithKeystoneCoordFlow) {
-            SignWithKeystoneCoordFlow()
-        }
-
-        Scope(state: \.torSetupState, action: \.torSetup) {
-            TorSetup()
-        }
-
-        Scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow) {
-            SwapAndPayCoordFlow()
-        }
-
-        Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
-            IronwoodAnnouncement()
-        }
+        // Concrete group boundaries keep nested reducer construction off oversized stack frames.
+        coreInitialScreens
+        coreAccountScreens
+        coreWalletFlows
+        coreAdditionalFlows
 
         initializationReduce()
 
@@ -783,6 +693,126 @@ struct Root {
         giftCardsReduce()
     }
     
+    private var coreInitialScreens: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
+                    DeeplinkWarning()
+                }
+
+                Scope(state: \.serverSetupState, action: \.serverSetup) {
+                    ServerSetup()
+                }
+
+                Scope(state: \.homeState, action: \.home) {
+                    Home()
+                }
+
+                Scope(state: \.exportLogsState, action: \.exportLogs) {
+                    ExportLogs()
+                }
+
+                Scope(state: \.notEnoughFreeSpaceState, action: \.notEnoughFreeSpace) {
+                    NotEnoughFreeSpace()
+                }
+
+                Scope(state: \.onboardingState, action: \.onboarding) {
+                    RestoreWalletCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreAccountScreens: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.welcomeState, action: \.welcome) {
+                    Welcome()
+                }
+
+                Scope(state: \.phraseDisplayState, action: \.phraseDisplay) {
+                    RecoveryPhraseDisplay()
+                }
+
+                Scope(state: \.osStatusErrorState, action: \.osStatusError) {
+                    OSStatusError()
+                }
+
+                Scope(state: \.settingsState, action: \.settings) {
+                    Settings()
+                }
+
+                Scope(state: \.receiveState, action: \.receive) {
+                    Receive()
+                }
+
+                Scope(state: \.requestZecCoordFlowState, action: \.requestZecCoordFlow) {
+                    RequestZecCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreWalletFlows: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
+                    MigrationCoordFlow()
+                }
+
+                Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
+                    SendCoordFlow()
+                }
+
+                Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
+                    ScanCoordFlow()
+                }
+
+                Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
+                    AddKeystoneHWWalletCoordFlow()
+                }
+
+                Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
+                    TransactionsCoordFlow()
+                }
+
+                Scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow) {
+                    WalletBackupCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreAdditionalFlows: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.currencyConversionSetupState, action: \.currencyConversionSetup) {
+                    CurrencyConversionSetup()
+                }
+
+                Scope(state: \.giftCardCoordFlowState, action: \.giftCardCoordFlow) {
+                    GiftCardCoordFlow()
+                }
+
+                Scope(state: \.signWithKeystoneCoordFlowState, action: \.signWithKeystoneCoordFlow) {
+                    SignWithKeystoneCoordFlow()
+                }
+
+                Scope(state: \.torSetupState, action: \.torSetup) {
+                    TorSetup()
+                }
+
+                Scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow) {
+                    SwapAndPayCoordFlow()
+                }
+
+                Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
+                    IronwoodAnnouncement()
+                }
+            }
+        )
+    }
+
     /// The `onChange` wrapper must observe every reducer that can mutate an input of
     /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path, and — via
     /// `isSynchronizerIdleForSwitch` — `lastKnownSyncStatus` / `isSyncStalledSinceLastProgress`)
