@@ -22,7 +22,18 @@ struct LedgerAdvancedOptionsCard: View {
     let isExpanded: Bool
     @Binding var accountIndexText: String
     let isAccountIndexValid: Bool
+    /// MOB-2020: disables the field and the header toggle while the phone is bonding, as Android
+    /// does (`LedgerDeviceScanVM.kt:252`) -- the index is already snapshotted at Connect by then,
+    /// so disabling here is about not inviting an edit that looks live but can no longer change
+    /// what gets paired, not about protecting the snapshot itself.
+    let isConnecting: Bool
     let onToggle: () -> Void
+
+    /// MOB-2020: formats `AddLedgerHWWallet.State.maxAccountIndex` into the hint instead of
+    /// hard-coding it a second time, the same way `ledgerStepProgress` formats the step count.
+    private var accountIndexHint: String {
+        String(localizable: .ledgerDevicePickerAccountIndexHint(0, Int(AddLedgerHWWallet.State.maxAccountIndex)))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,11 +46,18 @@ struct LedgerAdvancedOptionsCard: View {
 
                     (isExpanded ? Asset.Assets.chevronUp : Asset.Assets.chevronDown).image
                         .zImage(size: 20, style: Design.Text.primary)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 48)
                 .contentShape(Rectangle())
             }
+            .disabled(isConnecting)
+            .accessibilityValue(
+                isExpanded
+                ? String(localizable: .ledgerDevicePickerAdvancedOptionsExpanded)
+                : String(localizable: .ledgerDevicePickerAdvancedOptionsCollapsed)
+            )
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
@@ -49,13 +67,15 @@ struct LedgerAdvancedOptionsCard: View {
                     ZashiTextField(
                         text: $accountIndexText,
                         title: String(localizable: .ledgerDevicePickerAccountIndex),
-                        error: isAccountIndexValid ? nil : String(localizable: .ledgerDevicePickerAccountIndexHint)
+                        error: isAccountIndexValid ? nil : accountIndexHint,
+                        inputAccessibilityIdentifier: AccessibilityID.AddLedgerHWWallet.accountIndexField
                     )
                     .keyboardType(.numberPad)
+                    .disabled(isConnecting)
                     .padding(.top, 16)
 
                     if isAccountIndexValid {
-                        Text(localizable: .ledgerDevicePickerAccountIndexHint)
+                        Text(accountIndexHint)
                             .zFont(size: 14, style: Design.Inputs.Default.hint)
                             .padding(.top, 6)
                     }
@@ -81,6 +101,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: false,
             accountIndexText: .constant("0"),
             isAccountIndexValid: true,
+            isConnecting: false,
             onToggle: { }
         )
 
@@ -88,6 +109,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: true,
             accountIndexText: .constant("3"),
             isAccountIndexValid: true,
+            isConnecting: false,
             onToggle: { }
         )
 
@@ -95,6 +117,7 @@ struct LedgerAdvancedOptionsCard: View {
             isExpanded: true,
             accountIndexText: .constant("150"),
             isAccountIndexValid: false,
+            isConnecting: false,
             onToggle: { }
         )
     }

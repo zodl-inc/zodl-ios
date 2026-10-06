@@ -47,7 +47,7 @@ struct LedgerDeviceSkeletons<Overlay: View>: View {
                 .fill(Design.Surfaces.bgSecondary.color(colorScheme))
                 .shimmer(isShimmering)
                 .clipShape(Circle())
-                .frame(width: 32, height: 32)
+                .frame(width: 40, height: 40)
                 .padding(.trailing, 12)
 
             VStack(alignment: .leading, spacing: 4) {

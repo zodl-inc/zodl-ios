@@ -273,11 +273,10 @@ struct LedgerDeviceCard: View {
         // (and any implicit animation) stays stable across selection changes.
         .shadow(color: .black.opacity(isSelected ? 0.02 : 0), radius: 0.66667, x: 0, y: 1.33333)
         .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 1.33333, x: 0, y: 1.33333)
-        // The icon, name and radio read as one VoiceOver element -- the row's own Button, at
-        // each call site, carries this same label -- rather than a button followed by a
-        // separately announced radio; `.isSelected` replaces the radio's own state for VoiceOver.
+        // MOB-2020: the icon, name and radio combine into one VoiceOver element here, but the
+        // `.isSelected` trait itself lives on the row's own Button at each call site instead --
+        // that is the element VoiceOver actually reads, not this label underneath it.
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private func radio(isSelected: Bool) -> some View {

@@ -136,6 +136,16 @@ actor LedgerSession {
             throw error
         }
 
+        // MOB-2020: a disconnect() or a newer connect() may already have run by the time the
+        // Bluetooth step above returns -- caught here, before the app is ever queried or asked
+        // to open the Zcash app, so a superseded connect never makes the device show "Open
+        // Zcash?" for a ceremony nothing is waiting on anymore.
+        guard connectionGeneration == generation else {
+            LoggerProxy.event("Ledger: discarding a connection a disconnect() or a newer connect() has superseded")
+            await opened.close()
+            throw CancellationError()
+        }
+
         // MOB-2020: the same `currentApp` seam `bond(_:)` uses, asked once so a caller can tell
         // the user to look at the device before the open request (below) shows its own "Open
         // Zcash?" prompt there. Unlike `bond(_:)`, any failure here -- including cancellation --
@@ -155,20 +165,19 @@ actor LedgerSession {
             }
             LoggerProxy.event("Ledger: the Zcash app is open")
         } catch {
-            if connectionGeneration == generation {
-                transport = nil
-            }
             await opened.close()
             LoggerProxy.warn("Ledger: opening the Zcash app failed (\(Self.errorTag(error)))")
             throw error
         }
 
         // MOB-2020: a disconnect() or a newer connect() may have run while the two awaits above
-        // were suspended. Adopting this transport now would either resurrect a session the caller
-        // already tore down, or clobber the newer one that ran underneath it -- so it's discarded
-        // instead, the same way a teardown that arrived earlier would have closed it.
-        guard connectionGeneration == generation else {
-            LoggerProxy.event("Ledger: discarding a connection a disconnect() or a newer connect() has superseded")
+        // were suspended, or Cancel Transaction may have cancelled this very call without
+        // either -- it never calls disconnect() itself, relying on this cancellation unwinding
+        // instead (see LedgerSigningStore's own comment on its `.cancelled` case). Adopting the
+        // transport now would resurrect a session the caller already tore down, clobber a newer
+        // one, or keep a cancelled ceremony's Bluetooth link open -- so it's discarded instead.
+        guard connectionGeneration == generation, !Task.isCancelled else {
+            LoggerProxy.event("Ledger: discarding a connection a disconnect(), a newer connect() or a cancellation has superseded")
             await appTransport.close()
             if appTransport as AnyObject !== opened as AnyObject {
                 await opened.close()

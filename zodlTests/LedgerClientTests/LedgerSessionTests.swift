@@ -464,6 +464,102 @@ import ComposableArchitecture
         #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === openedB)
     }
 
+    // MOB-2020: Cancel Transaction never calls disconnect() itself (LedgerSigningStore's own
+    // comment on its `.cancelled` case) -- cancelling the connect's own Task is the only signal
+    // this adopt guard has for that case, since the generation never changes. A cancellation
+    // landing right as the open step returns, or after it, must still close what was opened
+    // rather than leave the Bluetooth link up.
+    @Test func aConnectCancelledAsTheOpenStepReturnsDiscardsTheTransportItReturns() async throws {
+        let connected = FakeLedgerAPDUTransport(name: "connected")
+        let opened = FakeLedgerAPDUTransport(name: "opened")
+        let scanner = FakeLedgerScanning(transportsToReturn: [connected])
+        let openStepEntered = LockIsolated(false)
+        let releaseOpenStep = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { _, _ in
+                openStepEntered.setValue(true)
+                // `try?`, not `try await`: this must keep polling (and eventually return a
+                // transport) even after the connect's own Task is cancelled below, the same way
+                // a real in-flight Bluetooth operation would not necessarily abort on its own --
+                // that is exactly the case this guard exists for.
+                while !releaseOpenStep.value {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return opened
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+
+        let connectTask = Task {
+            try await session.connect(device) { }
+        }
+        try await eventually { openStepEntered.value }
+
+        connectTask.cancel()
+        releaseOpenStep.setValue(true)
+
+        do {
+            try await connectTask.value
+            Issue.record("expected connect to throw")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(connected.closeCount == 1)
+        #expect(opened.closeCount == 1)
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+    }
+
+    // MOB-2020: a supersession caught before the Bluetooth step even finishes must stop there --
+    // querying the app or asking it to open the Zcash app would show "Open Zcash?" on the device
+    // for a ceremony nothing is waiting on anymore. `FakeLedgerScanning` always resolves at once,
+    // so this uses its own minimal `LedgerScanning` conformance to land a disconnect() while the
+    // Bluetooth step is still suspended.
+    @Test func aConnectSupersededDuringTheBluetoothStepNeverCallsTheOpenStepOrTheReport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = SuspendingLedgerScanning(transport: transport)
+        let openStepCalled = LockIsolated(false)
+        let reportCalled = LockIsolated(false)
+        let session = makeSession(
+            makeScanner: { scanner },
+            openZcashApp: { openedTransport, _ in
+                openStepCalled.setValue(true)
+                return openedTransport
+            },
+            // A non-Zcash answer is what makes `connect` call the report below -- configured so
+            // that assertion is a real one, not coincidentally false because the default fake
+            // throws and gets swallowed regardless of this fix.
+            currentApp: { _ in LedgerRunningApp(name: "BOLOS", version: "1.0") }
+        )
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Fake Nano X", model: .nanoX, rssi: -40)
+
+        let connectTask = Task {
+            try await session.connect(device) { reportCalled.setValue(true) }
+        }
+        try await eventually { scanner.hasEntered }
+
+        await session.disconnect()
+        scanner.release()
+
+        do {
+            try await connectTask.value
+            Issue.record("expected connect to throw")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(transport.closeCount == 1)
+        #expect(!openStepCalled.value)
+        #expect(!reportCalled.value)
+    }
+
     // MARK: - connect's "opening the Zcash app" report (MOB-2020)
     //
     // `connect`'s second argument fires once, right after the Bluetooth step, using the same
@@ -1048,6 +1144,42 @@ private final class FakeLedgerScanning: LedgerScanning, @unchecked Sendable {
 
         log?.append("connect-\(index)")
         return transportsToReturn[index]
+    }
+}
+
+/// A `LedgerScanning` conformance whose `connect(to:timeout:)` suspends until `release()` is
+/// called, then returns `transport` -- for the one test above that needs a supersession to land
+/// while the Bluetooth step itself is still in flight. `FakeLedgerScanning` always resolves at
+/// once, with no way to delay that specific call.
+private final class SuspendingLedgerScanning: LedgerScanning, @unchecked Sendable {
+    private let transport: FakeLedgerAPDUTransport
+    private let _hasEntered = LockIsolated(false)
+    private let released = LockIsolated(false)
+
+    init(transport: FakeLedgerAPDUTransport) {
+        self.transport = transport
+    }
+
+    var hasEntered: Bool { _hasEntered.value }
+
+    func release() {
+        released.setValue(true)
+    }
+
+    func devices() -> AsyncThrowingStream<[LedgerBluetoothDevice], Error> {
+        AsyncThrowingStream { continuation in
+            let device = LedgerBluetoothDevice(id: UUID(), name: "Fake Nano X", model: .nanoX, rssi: -40)
+            continuation.yield([device])
+            continuation.finish()
+        }
+    }
+
+    func connect(to device: LedgerBluetoothDevice, timeout: TimeInterval) async throws -> any LedgerAPDUTransport {
+        _hasEntered.setValue(true)
+        while !released.value {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return transport
     }
 }
 

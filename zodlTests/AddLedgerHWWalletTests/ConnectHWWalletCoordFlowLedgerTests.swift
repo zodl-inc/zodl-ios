@@ -164,7 +164,14 @@ import ComposableArchitecture
         let store = makeStore(initialState: initialState)
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: false)))))
+        store.send(
+            .path(
+                .element(
+                    id: id,
+                    action: .ledgerDevicePicker(.deviceBonded(device: device, accountIndex: Zip32AccountIndex(0), isZcashAppRunning: false))
+                )
+            )
+        )
 
         #expect(store.state.path.count == 2)
         if case .ledgerOpenApp(let openAppState) = store.state.path.last {
@@ -196,7 +203,14 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: device, isZcashAppRunning: true)))))
+        store.send(
+            .path(
+                .element(
+                    id: id,
+                    action: .ledgerDevicePicker(.deviceBonded(device: device, accountIndex: Zip32AccountIndex(0), isZcashAppRunning: true))
+                )
+            )
+        )
 
         #expect(store.state.path.count == 3)
         if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
@@ -244,7 +258,14 @@ import ComposableArchitecture
         }
         let id = store.state.path.ids.first!
 
-        store.send(.path(.element(id: id, action: .ledgerDevicePicker(.deviceBonded(device: deviceA, isZcashAppRunning: true)))))
+        store.send(
+            .path(
+                .element(
+                    id: id,
+                    action: .ledgerDevicePicker(.deviceBonded(device: deviceA, accountIndex: Zip32AccountIndex(0), isZcashAppRunning: true))
+                )
+            )
+        )
 
         #expect(store.state.path.count == 3)
         if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
@@ -266,6 +287,61 @@ import ComposableArchitecture
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(pairedDevices.value == [deviceA])
+    }
+
+    // MOB-2020: an edit to the account index field while the bond was still running must not
+    // change what gets paired -- this arm must carry the index `.approveOnDeviceTapped`
+    // snapshotted (the action's own payload), never whatever the picker's text field ends up
+    // holding by the time the bond's outcome arrives.
+    @Test func deviceBondedTrustsItsOwnAccountIndexOverThePickersLiveText() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var devicePickerState = AddLedgerHWWallet.State.initial
+        devicePickerState.selectedDevice = device
+        // Edited after Connect, before the bond settled -- the snapshot the action below carries
+        // (account 3) must win over this live value.
+        devicePickerState.accountIndexText = "99"
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(devicePickerState))
+        let fixture = try Self.makePairingFixture()
+        let pairedIndices = LockIsolated<[Zip32AccountIndex]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { _, accountIndex in
+                pairedIndices.withValue { $0.append(accountIndex) }
+                return fixture
+            }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(
+            .path(
+                .element(
+                    id: id,
+                    action: .ledgerDevicePicker(.deviceBonded(device: device, accountIndex: Zip32AccountIndex(3), isZcashAppRunning: true))
+                )
+            )
+        )
+
+        #expect(store.state.path.count == 3)
+        if case .ledgerOpenApp(let openAppState) = store.state.path[id: store.state.path.ids[1]] {
+            #expect(openAppState.accountIndexText == "3")
+        } else {
+            Issue.record("expected an idle .ledgerOpenApp carrying the bonded account index")
+        }
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.accountIndexText == "3")
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the bonded account index")
+        }
+
+        // The follow-up `.connectDeviceTapped` this arm sends chains asynchronously -- poll for
+        // `ledgerClient.pairDevice` to have been reached instead of asserting synchronously. A
+        // stale `accountIndexText` would pair account 99 instead.
+        for _ in 0..<50 {
+            if !pairedIndices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pairedIndices.value == [Zip32AccountIndex(3)])
     }
 
     // MARK: - Ledger Open the Zcash App (step 3, MOB-2020, Android 8cf16518/efe21904)
@@ -308,6 +384,45 @@ import ComposableArchitecture
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(pairedDevices.value == [device])
+    }
+
+    // MOB-2020: step 3 has no UI of its own for the account index field, so nothing can edit it
+    // between `.deviceBonded`'s own copy and this one -- a straight state copy already keeps it,
+    // but this guards the mechanism regardless, the same as the `.deviceBonded` arm's own test.
+    @Test func zcashAppOpenedKeepsTheAccountIndexSnapshot() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var openAppState = AddLedgerHWWallet.State.initial
+        openAppState.selectedDevice = device
+        openAppState.accountIndexText = "7"
+        openAppState.isOpenAppScreen = true
+        openAppState.isOpeningApp = true
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+        initialState.path.append(.ledgerOpenApp(openAppState))
+        let fixture = try Self.makePairingFixture()
+        let pairedIndices = LockIsolated<[Zip32AccountIndex]>([])
+        let store = makeStore(initialState: initialState) {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { _, accountIndex in
+                pairedIndices.withValue { $0.append(accountIndex) }
+                return fixture
+            }
+        }
+        let id = store.state.path.ids.last!
+
+        store.send(.path(.element(id: id, action: .ledgerOpenApp(.zcashAppOpened))))
+
+        if case .ledgerApproveOnDevice(let approveState) = store.state.path.last {
+            #expect(approveState.accountIndexText == "7")
+        } else {
+            Issue.record("expected .ledgerApproveOnDevice to be pushed carrying the account index snapshot")
+        }
+
+        for _ in 0..<50 {
+            if !pairedIndices.value.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pairedIndices.value == [Zip32AccountIndex(7)])
     }
 
     // Android 76e345e5: Back on step 3 pops back to the picker, whether step 3 was reached alone

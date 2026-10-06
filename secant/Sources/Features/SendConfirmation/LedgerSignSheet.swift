@@ -104,11 +104,17 @@ extension LedgerSignSheetView {
 
                 VStack(spacing: 8) {
                     ForEach(store.ledgerSigning.devices) { device in
+                        // MOB-2020: `isSelected` is always `false` here -- this list has no
+                        // selected-row concept of its own, unlike the device picker's.
+                        let isSelected = false
                         Button {
                             store.send(.ledgerSigning(.deviceTapped(device)))
                         } label: {
-                            LedgerDeviceCard(device: device, isSelected: false)
+                            LedgerDeviceCard(device: device, isSelected: isSelected)
                         }
+                        // On the Button itself, the element VoiceOver reads, not the card label
+                        // underneath it.
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
                     }
                 }
             }

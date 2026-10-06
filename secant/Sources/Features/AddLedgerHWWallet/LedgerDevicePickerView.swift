@@ -62,11 +62,15 @@ struct LedgerDevicePickerView: View {
                                 isExpanded: store.isAdvancedOptionsExpanded,
                                 accountIndexText: $store.accountIndexText,
                                 isAccountIndexValid: store.selectedAccountIndex != nil,
+                                isConnecting: store.isConnecting,
                                 onToggle: { store.send(.advancedOptionsToggleTapped) }
                             )
                         }
                     }
                     .padding(.top, 24)
+                    // MOB-2020: .numberPad has no Return key, and nothing else here dismisses it
+                    // -- without this, Connect can end up under the keyboard on small screens.
+                    .scrollDismissesKeyboard(.interactively)
                 }
 
                 Spacer()
@@ -150,5 +154,8 @@ struct LedgerDevicePickerView: View {
             LedgerDeviceCard(device: device, isSelected: isSelected)
         }
         .disabled(store.isConnecting)
+        // MOB-2020: on the Button itself, the element VoiceOver reads, not the card label
+        // underneath it.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

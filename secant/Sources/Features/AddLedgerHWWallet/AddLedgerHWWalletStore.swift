@@ -72,10 +72,9 @@ struct AddLedgerHWWallet {
 
         /// Whether the picker should show "Searching for Devices" copy rather than the
         /// no-selection copy: true only while the scan is still running and no device has turned
-        /// up yet, so a scan that has failed, timed out, or already found devices reads the same
-        /// as one that was never started (Android `LedgerDeviceScanVM.pageCopy`). The skeleton
-        /// rows themselves stay keyed off `devices.isEmpty` alone -- they already stop shimmering
-        /// once the scan stops.
+        /// up yet, so a scan that has failed or timed out with none found reads the same as one
+        /// that was never started. The skeleton rows themselves stay keyed off `devices.isEmpty`
+        /// alone -- they already stop shimmering once the scan stops.
         var isShowingSearchingCopy: Bool { isScanning && devices.isEmpty }
 
         /// MOB-2020: the "Advanced options" card's own account index field, raw user input.
@@ -162,10 +161,11 @@ struct AddLedgerHWWallet {
         case connectTapped
         /// MOB-2020 (Android aac01e65): `approveOnDeviceTapped`'s `ledgerClient.bond` succeeded --
         /// carries the device that was bonded (never read off `selectedDevice`: a tap on another
-        /// row while the bond was running could otherwise have changed it) and whether that
-        /// device already runs the Zcash app, which ConnectHWWalletCoordFlowCoordinator reads to
-        /// decide what it pushes next.
-        case deviceBonded(device: LedgerBluetoothDevice, isZcashAppRunning: Bool)
+        /// row while the bond was running could otherwise have changed it), the account index
+        /// `approveOnDeviceTapped` snapshotted the same way (an edit to the field while the bond
+        /// ran must not change what gets paired), and whether the device already runs the Zcash
+        /// app, which ConnectHWWalletCoordFlowCoordinator reads to decide what it pushes next.
+        case deviceBonded(device: LedgerBluetoothDevice, accountIndex: Zip32AccountIndex, isZcashAppRunning: Bool)
         case deviceTapped(LedgerBluetoothDevice)
         case devicesUpdated([LedgerBluetoothDevice])
         case forgetThisDeviceTapped
@@ -338,9 +338,12 @@ struct AddLedgerHWWallet {
                 // app until the bond (and this device's already-running-app answer) is in.
                 // MOB-2020: the picker's own Connect is already disabled while
                 // `selectedAccountIndex` is `nil` (Android's own `onConnectClick`), checked again
-                // here rather than trusting the view alone.
+                // here rather than trusting the view alone. Snapshotted into `accountIndex` right
+                // here, the same as `device` -- the field stays editable (though disabled once
+                // `isConnecting`) while the bond below runs, and a late edit must not change what
+                // eventually gets paired.
                 guard let device = state.selectedDevice,
-                      state.selectedAccountIndex != nil,
+                      let accountIndex = state.selectedAccountIndex,
                       !state.isConnecting,
                       !state.isPairing
                 else {
@@ -355,7 +358,7 @@ struct AddLedgerHWWallet {
                     .run { send in
                         do {
                             let isZcashAppRunning = try await ledgerClient.bond(device)
-                            await send(.deviceBonded(device: device, isZcashAppRunning: isZcashAppRunning))
+                            await send(.deviceBonded(device: device, accountIndex: accountIndex, isZcashAppRunning: isZcashAppRunning))
                         } catch {
                             let issue = LedgerIssue(error, in: .pairing)
                             await send(.pairingFailed(issue: issue, connectionLost: true))
@@ -432,15 +435,17 @@ struct AddLedgerHWWallet {
                 // Connect/auto-start -- pairs on a fresh connection of its own (`pairDevice`)
                 // instead of the old connect()-then-pairAccount() pair. One atomic call, so
                 // there is no separate "connected" checkpoint to report mid-flight any more.
-                // MOB-2020: `accountIndex` guards the same way `device` does -- the picker's own
-                // Connect is already disabled while it's `nil`, but this screen can auto-start a
-                // pairing (`.ledgerDevicePicker(.deviceBonded)`/`.ledgerOpenApp(.zcashAppOpened)`
-                // in the coordinator), so it checks again rather than trusting the picker alone.
-                guard let device = state.selectedDevice,
-                      let accountIndex = state.selectedAccountIndex,
-                      !state.isConnecting,
-                      !state.isPairing
-                else {
+                guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
+                    return .none
+                }
+                // MOB-2020: unreachable now that `.approveOnDeviceTapped` snapshots the index and
+                // carries it through `.deviceBonded`/`.zcashAppOpened` the way `device` is --
+                // presented as an issue, the same way a pairing failure already is, rather than a
+                // silent no-op that would strand this screen with nowhere to go, in case a future
+                // caller ever reaches it without a snapshot.
+                guard let accountIndex = state.selectedAccountIndex else {
+                    state.issue = LedgerIssue(ZcashError.ledgerInvalidInput("no account index"), in: .pairing)
+                    state.isIssueSheetPresented = true
                     return .none
                 }
                 state.isPairing = true
