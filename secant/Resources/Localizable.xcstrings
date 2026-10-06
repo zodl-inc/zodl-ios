@@ -10311,13 +10311,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enter a number from 0 to 100"
+            "value" : "Enter a number from %1$lld to %2$lld"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Introduce un número del 0 al 100"
+            "value" : "Introduce un número del %1$lld al %2$lld"
           }
         }
       }

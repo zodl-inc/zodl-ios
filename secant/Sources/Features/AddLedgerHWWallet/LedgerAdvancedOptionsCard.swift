@@ -29,6 +29,12 @@ struct LedgerAdvancedOptionsCard: View {
     let isConnecting: Bool
     let onToggle: () -> Void
 
+    /// MOB-2020: formats `AddLedgerHWWallet.State.maxAccountIndex` into the hint instead of
+    /// hard-coding it a second time, the same way `ledgerStepProgress` formats the step count.
+    private var accountIndexHint: String {
+        String(localizable: .ledgerDevicePickerAccountIndexHint(0, Int(AddLedgerHWWallet.State.maxAccountIndex)))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
@@ -61,7 +67,7 @@ struct LedgerAdvancedOptionsCard: View {
                     ZashiTextField(
                         text: $accountIndexText,
                         title: String(localizable: .ledgerDevicePickerAccountIndex),
-                        error: isAccountIndexValid ? nil : String(localizable: .ledgerDevicePickerAccountIndexHint),
+                        error: isAccountIndexValid ? nil : accountIndexHint,
                         inputAccessibilityIdentifier: AccessibilityID.AddLedgerHWWallet.accountIndexField
                     )
                     .keyboardType(.numberPad)
@@ -69,7 +75,7 @@ struct LedgerAdvancedOptionsCard: View {
                     .padding(.top, 16)
 
                     if isAccountIndexValid {
-                        Text(localizable: .ledgerDevicePickerAccountIndexHint)
+                        Text(accountIndexHint)
                             .zFont(size: 14, style: Design.Inputs.Default.hint)
                             .padding(.top, 6)
                     }
