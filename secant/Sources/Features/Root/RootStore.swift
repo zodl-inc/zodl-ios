@@ -315,6 +315,13 @@ struct Root {
         var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
         var giftCardSyncGeneration = UUID()
         var giftCardSyncResumePending = false
+        var giftCardSyncRecovery = GiftCardSyncRecovery.none
+        var giftCardSyncStartGeneration: UUID?
+        var giftCardSyncGateClearedDuringStart = false
+        /// One seed recheck bridges a gate that cleared before feeds were restored. Refusal and
+        /// re-registration do not replenish it; genuine gate edges and external triggers do.
+        var giftCardSyncDidRecheckMigrationSeed = false
+        var ordinarySyncOperations: Set<UUID> = []
         /// The accepted visit owns the pause even if retry discovers that its card handle is gone.
         var giftCardSyncPauseOwner: UUID?
         var giftCardSyncStopId: UUID?
@@ -518,7 +525,13 @@ struct Root {
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case giftCardCoordFlow(GiftCardCoordFlow.Action)
         case giftCardResumeSync(UUID)
-        case giftCardSyncResumed(UUID)
+        case giftCardSyncStartFinished(UUID, GiftCardSyncStartOutcome)
+        case giftCardRetrySync(UUID)
+        case giftCardSyncVisitReady(UUID, MigrationVisit)
+        case giftCardSyncStartReady(UUID)
+        case giftCardSyncMigrationRefused(UUID)
+        case giftCardSyncObserve(UUID)
+        case ordinarySyncFinished(UUID)
         case giftCardSyncStopped(UUID)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)

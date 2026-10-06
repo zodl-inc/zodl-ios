@@ -787,7 +787,8 @@ extension Root {
                     .run { [migrationManager, accountUUID = state.selectedWalletAccount?.id] _ in
                         await migrationManager.armNextWindowNotifications(accountUUID)
                     },
-                    .send(.initialization(.retryStart))
+                    // The outer gift lifecycle reconciles this edge through its owned start.
+                    state.ownsGiftCardSyncLifecycle ? .none : .send(.initialization(.retryStart))
                 )
 
             case .initialization(.retryStart):
@@ -841,7 +842,16 @@ extension Root {
                     counter += 1
                     return counter
                 }
-                return .run { [state, generation, admission] send in
+                let operationId = UUID()
+                state.ordinarySyncOperations.insert(operationId)
+                let completion = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+                let pipeline: Effect<Action> = .run { [state, generation, admission] send in
+                    // The sibling listener is not cancelled with this pipeline. Even a cancelled
+                    // native call must release Root's admission fence after its actual return.
+                    defer {
+                        completion.continuation.yield(())
+                        completion.continuation.finish()
+                    }
                     do {
                         // ZIP 318 session separation, decided BEFORE the wire is touched: if any
                         // account has a proven transfer due, this open is a BROADCAST session and
@@ -1054,6 +1064,14 @@ extension Root {
                 // rather than running unconditionally: an ungated undo could tear down the newer
                 // pipeline's fresh start instead of anything of its own.
                 .cancellable(id: state.retryStartCancelId)
+                return .merge(
+                    pipeline,
+                    .run { send in
+                        for await _ in completion.stream {
+                            await send(.ordinarySyncFinished(operationId))
+                        }
+                    }
+                )
 
             case .initialization(.retryStartFinished(let generation)):
                 // MOB-1854: a pipeline superseded by a newer one (background, or a fresh admitted

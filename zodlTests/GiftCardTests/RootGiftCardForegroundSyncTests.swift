@@ -67,9 +67,7 @@ import ComposableArchitecture
             return store
         }
         let visit = try #require(store.state.giftCardCoordFlowState.redeemState?.cancelId)
-        await store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle())))))
-        await store.receive(\.giftCardSyncStopped)
-        #expect(awaitedStops.value == 1)
+        // The ordinary start is admitted before a card has accepted pause ownership.
         await store.send(.initialization(.appDelegate(.willEnterForeground)))
         if backgroundWhileStarting {
             await store.receive { action in
@@ -86,9 +84,10 @@ import ComposableArchitecture
             #expect(starts.value == 1)
             #expect(engine.value.syncStatus == .syncing(0.5, false))
         }
+        await store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle())))))
+        if !backgroundWhileStarting { await store.receive(\.giftCardSyncStopped) }
         await store.send(.initialization(.appDelegate(.didEnterBackground)))
         if backgroundWhileStarting {
-            await store.receive(\.giftCardSyncStopped)
             await startRelease.open()
             await undoEntered.wait()
             // The existing canceled retry still performs its undo after the SDK start returns.
@@ -96,7 +95,7 @@ import ComposableArchitecture
             await undoCompleted.wait()
         }
         await store.finish()
-        #expect(awaitedStops.value == 2)
+        #expect(awaitedStops.value == (backgroundWhileStarting ? 1 : 2))
         #expect(legacyStops.value == (backgroundWhileStarting ? 1 : 0))
         #expect(engine.value.syncStatus == .stopped)
     }

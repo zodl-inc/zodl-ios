@@ -53,6 +53,9 @@ import ComposableArchitecture
             $0.giftCard = client
             $0.zcashSDKEnvironment = .live(network: ZcashNetworkBuilder.network(for: .mainnet))
             $0.exchangeRate = .noOp
+            $0.walletStorage = .noOp
+            $0.userMetadataProvider = UserMetadataProviderClient()
+            $0.migrationManager.migrationSyncGateFeed = { AsyncStream { $0.finish() } }
             $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.sdkSynchronizer = .mocked(start: { _ in
                 starts.withValue { $0 += 1 }

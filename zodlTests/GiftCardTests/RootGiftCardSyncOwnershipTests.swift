@@ -80,13 +80,15 @@ private final class GiftCardSyncFixture: @unchecked Sendable {
         return Store(initialState: state) { Root() } withDependencies: {
             $0.giftCard = .mock()
             $0.sdkSynchronizer = .mocked(
-                stateStream: { sync.states.eraseToAnyPublisher() },
+                stateStream: { Empty().eraseToAnyPublisher() },
                 latestState: { sync.states.value },
                 start: { _ in await sync.start() },
                 stop: { sync.stop() },
                 stopAndWait: { await sync.stopAndWait() }
             )
             $0.exchangeRate = .noOp
+            $0.walletStorage = .noOp
+            $0.migrationManager.migrationSyncGateFeed = { AsyncStream { $0.finish() } }
             $0.mainQueue = .immediate
             $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.date.now = { Date(timeIntervalSince1970: 1_000_000) }
@@ -116,7 +118,7 @@ private final class GiftCardSyncFixture: @unchecked Sendable {
         await store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle()))))).finish()
         await store.send(.giftCardCoordFlow(.redeem(.response(visit, .checkFailed(.unknownHandle))))).finish()
         sync.publish(.syncing(0.5, false))
-        await store.send(.giftCardSyncResumed(UUID())).finish()
+        await store.send(.giftCardSyncStartFinished(UUID(), .success)).finish()
         #expect(sync.states.value.syncStatus == .stopped)
     }
 
