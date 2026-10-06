@@ -8515,13 +8515,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Checking the gift card on the Zcash network. This can take a moment."
+            "value" : "Checking your gift card. This can take a moment."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Revisando la tarjeta de regalo en la red de Zcash. Esto puede tardar un momento."
+            "value" : "Revisando tu tarjeta de regalo. Esto puede tardar un momento."
           }
         }
       }
@@ -8543,36 +8543,19 @@
         }
       }
     },
-    "giftCard.destination" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Will be sent to"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se enviará a"
-          }
-        }
-      }
-    },
     "giftCard.empty.desc" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This gift card has already been redeemed, or it isn't funded yet."
+            "value" : "This gift card was already redeemed, or hasn't been funded yet. Try again in a few minutes."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta tarjeta de regalo ya fue canjeada, o todavía no tiene fondos."
+            "value" : "Esta tarjeta de regalo ya fue canjeada o todavía no tiene fondos. Inténtalo de nuevo en unos minutos."
           }
         }
       }
@@ -8628,19 +8611,36 @@
         }
       }
     },
-    "giftCard.fee.desc" : {
+    "giftCard.moreTitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A small network fee is paid from the gift card, so you'll receive slightly less than the amount above."
+            "value" : "Redeem Gift Card"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "La tarjeta de regalo paga una pequeña tarifa de red, así que recibirás un poco menos que el monto de arriba."
+            "value" : "Canjear tarjeta de regalo"
+          }
+        }
+      }
+    },
+    "giftCard.ready.note" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The funds will be sent to your Zodl wallet. The network fee is paid from the gift card."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los fondos se enviarán a tu billetera Zodl. La tarifa de red se paga con la tarjeta de regalo."
           }
         }
       }
@@ -8651,7 +8651,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gift card"
+            "value" : "Gift Card"
           }
         },
         "es" : {
@@ -8662,36 +8662,19 @@
         }
       }
     },
-    "giftCard.fee.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Network fee"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tarifa de red"
-          }
-        }
-      }
-    },
     "giftCard.homeDesc" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Scan or paste a gift card link to add its ZEC to your wallet."
+            "value" : "Scan or paste a Zcash gift card to add its funds to your wallet."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Escanea o pega el enlace de una tarjeta de regalo para añadir sus ZEC a tu billetera."
+            "value" : "Escanea o pega una tarjeta de regalo de Zcash para sumar sus fondos a tu billetera."
           }
         }
       }
@@ -8753,13 +8736,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ is on this gift card, but it needs a few more minutes of confirmations before it can be redeemed. We'll check again automatically."
+            "value" : "%@ needs a few more confirmations before it can be redeemed. We'll keep checking while this screen is open."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta tarjeta de regalo tiene %@, pero necesita unos minutos más de confirmaciones antes de poder canjearse. Lo volveremos a revisar automáticamente."
+            "value" : "%@ necesita algunas confirmaciones más antes de poder canjearse. Seguiremos revisando mientras esta pantalla esté abierta."
           }
         }
       }
@@ -8770,13 +8753,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your gift is on its way"
+            "value" : "Preparing your gift…"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu regalo está en camino"
+            "value" : "Preparando tu regalo…"
           }
         }
       }
@@ -8787,13 +8770,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You've got a gift!"
+            "value" : "You received a gift!"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¡Tienes un regalo!"
+            "value" : "¡Recibiste un regalo!"
           }
         }
       }
@@ -8889,13 +8872,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your gift card was redeemed. The funds will appear in your wallet shortly."
+            "value" : "%@ is on its way to your wallet.\nIt will show up in your activity shortly."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tu tarjeta de regalo se ha canjeado. Los fondos aparecerán en tu billetera en breve."
+            "value" : "%@ está en camino a tu billetera.\nAparecerá en tu actividad en breve."
           }
         }
       }

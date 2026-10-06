@@ -13,7 +13,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-// Serialized: mutates the process-global selected-account and exchange-rate `@Shared` slots.
+// Serialized: mutates the process-global selected-account `@Shared` slot.
 @Suite(.serialized) @MainActor struct GiftCardRedeemTests {
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000&amount=0.1".redacted
     nonisolated(unsafe) private static let orchardUA = UnifiedAddress(validatedEncoding: "utest1orchardonlyfixture", networkType: .testnet)
@@ -98,7 +98,7 @@ import ComposableArchitecture
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            $0.step = .success(received: Zatoshi(9_990_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -108,18 +108,16 @@ import ComposableArchitecture
         #expect(redeemedTo.value == [Self.orchardUA.stringEncoded])
     }
 
-    @Test func successfulRedeemKeepsTheTransactionIdWithoutReportingThePreFeeAmount() async {
+    @Test func successfulRedeemKeepsTheTransactionIdAndReportsTheReceivedAmount() async {
         var card = scenario(.ready)
         card.txId = "redeemed-tx"
         let store = makeStore(scenario: card)
-        store.state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: 30, timestamp: 0) }
-        defer { store.state.$currencyConversion.withLock { $0 = nil } }
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
         #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
         #expect(store.state.amount == Zatoshi(10_000_000))
-        #expect(store.state.fiatAmount != nil)
+        #expect(store.state.receivedAmount == Zatoshi(9_990_000))
 
         await store.send(.redeemTapped)
         #expect(store.state.step == .redeeming(amount: Zatoshi(10_000_000)))
@@ -128,10 +126,45 @@ import ComposableArchitecture
         await store.receive(\.delegate.redeemed)
         await store.finish()
 
-        #expect(store.state.step == .success)
+        // The success screen shows the same received figure as the Ready screen, never the
+        // card's pre-fee balance.
+        #expect(store.state.step == .success(received: Zatoshi(9_990_000)))
         #expect(store.state.txId == "redeemed-tx")
         #expect(store.state.amount == nil)
-        #expect(store.state.fiatAmount == nil)
+        #expect(store.state.receivedAmount == Zatoshi(9_990_000))
+    }
+
+    /// A standard card is funded with its stated amount plus the fee of sweeping it, and the screens
+    /// show the stated amount: 0.1001 ZEC on the card is shown, and received, as 0.1 ZEC.
+    @Test(arguments: [
+        (Int64(10_010_000), Int64(10_000_000)),
+        (Int64(200_000), Int64(190_000)),
+        (Int64(10_001), Int64(1)),
+        // Not even the fee is covered (the SDK reports such a card as empty): shown as it is.
+        (Int64(10_000), Int64(10_000)),
+        (Int64(0), Int64(0))
+    ])
+    func receivedAmountIsTheCardValueMinusTheSweepFee(spendable: Int64, received: Int64) {
+        #expect(GiftCardRedeem.received(from: Zatoshi(spendable)) == Zatoshi(received))
+    }
+
+    @Test func receivedAmountFollowsEveryStepThatHasAnAmount() {
+        var state = GiftCardRedeem.State(link: Self.link)
+        let cases: [(GiftCardRedeem.State.Step, Zatoshi?)] = [
+            (.checking, nil),
+            (.ready(spendable: Zatoshi(10_010_000)), Zatoshi(10_000_000)),
+            (.pending(amount: Zatoshi(10_010_000), confirmationsNeeded: nil), Zatoshi(10_000_000)),
+            (.redeeming(amount: Zatoshi(10_010_000)), Zatoshi(10_000_000)),
+            (.failure(amount: Zatoshi(10_010_000)), Zatoshi(10_000_000)),
+            (.success(received: Zatoshi(10_000_000)), Zatoshi(10_000_000)),
+            (.empty, nil),
+            (.invalidLink, nil),
+            (.checkFailed, nil)
+        ]
+        for (step, expected) in cases {
+            state.step = step
+            #expect(state.receivedAmount == expected, "\(step)")
+        }
     }
 
     @Test func pendingCardChecksAgainOnItsOwn() async {
@@ -485,7 +518,7 @@ import ComposableArchitecture
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            $0.step = .success(received: Zatoshi(9_990_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -796,7 +829,7 @@ import ComposableArchitecture
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            $0.step = .success(received: Zatoshi(9_990_000))
             $0.txId = FakeGiftCardSession.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -836,7 +869,7 @@ import ComposableArchitecture
         await redeemThroughTheLiveWiring(store)
 
         #expect(recordedIn.value == [ObjectIdentifier(mainWallet)])
-        #expect(store.state.step == .success)
+        #expect(store.state.step == .success(received: Zatoshi(9_990_000)))
     }
 
     @Test func liveRedeemWithoutAMainWalletStillSucceeds() async throws {
@@ -917,12 +950,12 @@ private struct FakeGiftCardSession: GiftCardSession {
 @Suite struct GiftCardRedeemMemoTests {
     @Test func cardWithoutMessageGetsTheLabelOnly() throws {
         let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: nil))
-        #expect(memo == (try Memo(string: "Gift card")))
+        #expect(memo == (try Memo(string: "Gift Card")))
     }
 
     @Test func cardMessageFollowsTheLabel() throws {
         let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: "  Welcome to Zcash Summit \n"))
-        #expect(memo == (try Memo(string: "Gift card · Welcome to Zcash Summit")))
+        #expect(memo == (try Memo(string: "Gift Card · Welcome to Zcash Summit")))
     }
 
     /// A card whose message hides a right-to-left override, a newline and a bell: the memo is
@@ -940,7 +973,7 @@ private struct FakeGiftCardSession: GiftCardSession {
             return
         }
         let string = text.string
-        #expect(string.hasPrefix("Gift card · Happy"))
+        #expect(string.hasPrefix("Gift Card · Happy"))
         #expect(string.contains("birthday"))
         #expect(!string.unicodeScalars.contains { $0.properties.generalCategory == .control || $0.properties.generalCategory == .format })
     }
@@ -953,7 +986,7 @@ private struct FakeGiftCardSession: GiftCardSession {
             return
         }
         let string = text.string
-        #expect(string.hasPrefix("Gift card · é"))
+        #expect(string.hasPrefix("Gift Card · é"))
         #expect(string.utf8.count <= MemoBytes.capacity)
         #expect(!string.hasSuffix("\u{FFFD}"))
     }

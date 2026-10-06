@@ -41,7 +41,8 @@ struct GiftCardRedeem {
             /// This build cannot redeem gift cards yet.
             case unavailable
             case redeeming(amount: Zatoshi)
-            case success
+            /// Redeemed; `received` is what the wallet gets, after the network fee.
+            case success(received: Zatoshi)
             case failure(amount: Zatoshi)
         }
 
@@ -58,7 +59,6 @@ struct GiftCardRedeem {
         var destinationAddress: RedactableString?
         var destinationAccountId: AccountUUID?
         var txId: String?
-        @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         var message: String? {
@@ -78,12 +78,13 @@ struct GiftCardRedeem {
             }
         }
 
-        var fiatAmount: String? {
-            guard let amount, let currencyConversion else {
-                return nil
+        /// What the wallet receives from this card: the amount the screens show. See
+        /// `GiftCardRedeem.received(from:)`.
+        var receivedAmount: Zatoshi? {
+            if case .success(let received) = step {
+                return received
             }
-            let converted: String = currencyConversion.convert(amount)
-            return converted
+            return amount.map(GiftCardRedeem.received(from:))
         }
 
         var isRedeemable: Bool {
@@ -262,11 +263,11 @@ struct GiftCardRedeem {
                 .cancellable(id: visit)
 
             case .response(_, .redeemSucceeded(let txId)):
-                guard case .redeeming = state.step else {
+                guard case .redeeming(let amount) = state.step else {
                     return .none
                 }
                 state.txId = txId
-                state.step = .success
+                state.step = .success(received: Self.received(from: amount))
                 return .send(.delegate(.redeemed))
 
             case .response(_, .redeemFailed(let error)):
@@ -300,6 +301,22 @@ struct GiftCardRedeem {
 }
 
 extension GiftCardRedeem {
+    /// What the wallet receives when `spendable` is swept: `spendable` minus the network fee.
+    ///
+    /// The wallet SDK computes the sweep's fee when it builds the transaction and does not report it
+    /// beforehand, so this deducts the ZIP 317 minimum fee the SDK uses as its default, which is the
+    /// fee of sweeping a card funded by a single note (every Zodl card). For such a card this is the
+    /// amount the card was issued for, e.g. 0.1001 ZEC on the card shows as 0.1 ZEC. A card holding
+    /// several notes pays a little more, so it receives slightly less than shown. An amount that
+    /// would not even cover the fee is shown as it is.
+    static func received(from spendable: Zatoshi) -> Zatoshi {
+        let fee = ZcashSDKMainnetConstants.defaultFee()
+        guard spendable > fee else {
+            return spendable
+        }
+        return spendable - fee
+    }
+
     /// Parses the link and, if it is a card for this wallet's network, opens it and resolves the
     /// destination address in parallel.
     private func start(_ state: inout State) -> Effect<Action> {
