@@ -8600,13 +8600,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "We couldn't redeem this gift card. Your gift is still on the card, so you can try again."
+            "value" : "We couldn't confirm redemption. Tap Try again to check the card's current status."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No pudimos canjear esta tarjeta de regalo. Tu regalo sigue en la tarjeta, así que puedes intentarlo de nuevo."
+            "value" : "No pudimos confirmar el canje. Pulsa Intentar de nuevo para comprobar el estado actual de la tarjeta."
           }
         }
       }
@@ -8617,13 +8617,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Redeem failed"
+            "value" : "Redemption not confirmed"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No se pudo canjear"
+            "value" : "Canje no confirmado"
           }
         }
       }

@@ -335,6 +335,61 @@ import ComposableArchitecture
         #expect(!store.state.isRedeemable)
     }
 
+    @Test(arguments: [
+        ("en", "Redemption not confirmed", "We couldn't confirm redemption. Tap Try again to check the card's current status."),
+        ("es", "Canje no confirmado", "No pudimos confirmar el canje. Pulsa Intentar de nuevo para comprobar el estado actual de la tarjeta.")
+    ])
+    func failedRedemptionCopyDoesNotClaimTheFundsStayedOnTheCard(language: String, title: String, description: String) throws {
+        let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
+        let bundle = try #require(Bundle(path: path))
+        #expect(bundle.localizedString(forKey: "giftCard.failure.title", value: nil, table: "Localizable") == title)
+        #expect(bundle.localizedString(forKey: "giftCard.failure.desc", value: nil, table: "Localizable") == description)
+    }
+
+    @Test func ambiguousSubmissionRechecksEmptyWithoutAnotherBroadcast() async {
+        let redeemedTo = LockIsolated<[String]>([])
+        let checks = LockIsolated(0)
+        let state = GiftCardRedeem.State(link: Self.link)
+        let previousAccount = state.selectedWalletAccount
+        state.$selectedWalletAccount.withLock { $0 = testWalletAccount }
+        defer { state.$selectedWalletAccount.withLock { $0 = previousAccount } }
+        var client = GiftCardClient.mock(scenario(.redeemFails))
+        client.check = { _ in
+            checks.withValue { count in
+                count += 1
+                return count == 1 ? .ready(spendable: Zatoshi(10_000_000)) : .empty
+            }
+        }
+        client.redeem = { _, address in
+            redeemedTo.withValue { $0.append(address) }
+            throw GiftCardClientError.redeemFailed
+        }
+        let store = TestStore(initialState: state) { GiftCardRedeem() } withDependencies: {
+            $0.giftCard = client
+            $0.mainQueue = .immediate
+            $0.zcashSDKEnvironment = .testnet
+            $0.sdkSynchronizer = .mocked(getCustomUnifiedAddress: { _, _ in Self.orchardUA })
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
+        await store.send(.redeemTapped)
+        await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } })
+        #expect(store.state.step == .failure(amount: Zatoshi(10_000_000)))
+        #expect(store.state.txId == nil)
+
+        await store.send(.retryTapped)
+        #expect(store.state.step == .checking)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        await store.finish()
+        #expect(store.state.step == .empty)
+        #expect(store.state.txId == nil)
+        #expect(checks.value == 2)
+        #expect(redeemedTo.value == [Self.orchardUA.stringEncoded])
+    }
+
     @Test func failedRedeemKeepsTheAmountAndRechecksOnRetry() async {
         let store = makeStore(scenario: scenario(.redeemFails))
 
@@ -390,7 +445,11 @@ import ComposableArchitecture
         }
         #expect(store.state.handle == handle)
         #expect(openCalls.value == 1)
+        await store.finish()
+        #expect(store.state.txId == nil)
+        #expect(redeemedTo.value == [Self.orchardUA.stringEncoded])
 
+        // A fresh explicit Redeem tap is required after the recheck finds funds.
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }

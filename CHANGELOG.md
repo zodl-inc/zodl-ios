@@ -13,6 +13,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
+- [MOB-2142] An unconfirmed gift-card redemption now offers to check the card’s current status without claiming its funds are still available. If funds remain, tap Redeem again to continue.
 - [MOB-2142] Wallet syncing recovers from temporary restart failures after leaving a gift card and resumes when a migration pause clears, including when you return to the app.
 
 - [MOB-2142] Scanning a gift card in Swap or Pay opens redemption. Gift-card links are rejected as swap addresses to keep card secrets private.
