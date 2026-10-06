@@ -10288,6 +10288,74 @@
         }
       }
     },
+    "ledger.devicePicker.accountIndex" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account index"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Índice de cuenta"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.accountIndexHint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a number from 0 to 100"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Introduce un número del 0 al 100"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.advancedOptions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced options"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opciones avanzadas"
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.advancedOptionsDesc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave this at 0 unless you used another account number on this Ledger in a different wallet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Déjalo en 0 a menos que hayas usado otro número de cuenta de este Ledger en otra billetera."
+          }
+        }
+      }
+    },
     "ledger.devicePicker.desc" : {
       "extractionState" : "manual",
       "localizations" : {

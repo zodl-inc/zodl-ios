@@ -87,6 +87,64 @@ import ComposableArchitecture
         #expect(isDevicePicker(store.state.path.last))
     }
 
+    // MOB-2020: pairing an account again prefills the picker's "Advanced options" card with the
+    // index the target's stored binding holds, expanded up front -- Android's own
+    // `LedgerDeviceScanVM.initialState`.
+    @Test func continuePushesDevicePickerPrefilledWithTheRepairTargetsStoredIndex() async throws {
+        let target = Self.walletAccount(idByte: 0x05)
+        let binding = LedgerAccountBinding(
+            deviceIdentity: try LedgerDeviceIdentity(encoding: "tpk0-" + String(repeating: "a", count: 64)),
+            zip32AccountIndex: Zip32AccountIndex(5)
+        )
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState) {
+            $0.bluetoothPermission = .noOp
+            $0.bluetoothPermission.authorizationStatus = { .allowedAlways }
+            $0.walletStorage.exportLedgerBinding = { accountId in
+                #expect(accountId == target.id)
+                return binding
+            }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerTurnOn(.connectTapped))))
+
+        guard case let .ledgerDevicePicker(pickerState) = store.state.path.last else {
+            Issue.record("expected the device picker")
+            return
+        }
+        #expect(pickerState.accountIndexText == "5")
+        #expect(pickerState.isAdvancedOptionsExpanded)
+    }
+
+    // MOB-2020: a target whose binding can't be read (never paired yet, or a decode failure)
+    // falls back to the same defaults as a fresh pairing, rather than failing the push.
+    @Test func continuePushesDevicePickerWithDefaultsWhenTheRepairTargetsBindingCantBeRead() async {
+        let target = Self.walletAccount(idByte: 0x06)
+        var initialState = ConnectHWWalletCoordFlow.State()
+        initialState.ledgerRepairTarget = target.id
+        initialState.path.append(.ledgerTurnOn(AddLedgerHWWallet.State.initial))
+        let store = makeStore(initialState: initialState) {
+            $0.bluetoothPermission = .noOp
+            $0.bluetoothPermission.authorizationStatus = { .allowedAlways }
+            $0.walletStorage.exportLedgerBinding = { _ in
+                throw WalletStorage.WalletStorageError.uninitializedLedgerBinding
+            }
+        }
+        let id = store.state.path.ids.first!
+
+        store.send(.path(.element(id: id, action: .ledgerTurnOn(.connectTapped))))
+
+        guard case let .ledgerDevicePicker(pickerState) = store.state.path.last else {
+            Issue.record("expected the device picker")
+            return
+        }
+        #expect(pickerState.accountIndexText == "0")
+        #expect(!pickerState.isAdvancedOptionsExpanded)
+    }
+
     // MARK: - Device Picker
 
     // MOB-2020 (Android aac01e65): Connect bonds right on the picker (AddLedgerHWWalletStore);

@@ -197,6 +197,48 @@ import ComposableArchitecture
         #expect(!state.isShowingSearchingCopy)
     }
 
+    // MARK: - Advanced options: account index (MOB-2020, Android LedgerDeviceScanVM)
+
+    @MainActor @Test func accountIndexDefaultsToZeroCollapsedAndValid() async {
+        let state = AddLedgerHWWallet.State()
+
+        #expect(state.accountIndexText == "0")
+        #expect(!state.isAdvancedOptionsExpanded)
+        #expect(state.selectedAccountIndex == Zip32AccountIndex(0))
+    }
+
+    @MainActor @Test func accountIndexValidatesDigitsOnlyFromZeroTo100() async {
+        var state = AddLedgerHWWallet.State()
+
+        state.accountIndexText = "3"
+        #expect(state.selectedAccountIndex == Zip32AccountIndex(3))
+
+        for invalid in ["", "abc", "-1", "1.5", "101"] {
+            state.accountIndexText = invalid
+            #expect(state.selectedAccountIndex == nil, "\"\(invalid)\" should be invalid")
+        }
+    }
+
+    @MainActor @Test func advancedOptionsToggleTappedRefusesToCollapseWhileInvalid() async {
+        var state = AddLedgerHWWallet.State()
+        state.isAdvancedOptionsExpanded = true
+        state.accountIndexText = "101"
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        }
+
+        // Refused: the card stays open so the reason Connect is disabled stays visible.
+        await store.send(.advancedOptionsToggleTapped)
+
+        await store.send(.binding(.set(\.accountIndexText, "5"))) {
+            $0.accountIndexText = "5"
+        }
+        // Fixed: now it collapses.
+        await store.send(.advancedOptionsToggleTapped) {
+            $0.isAdvancedOptionsExpanded = false
+        }
+    }
+
     // MARK: - deviceTapped
 
     @MainActor @Test func deviceTappedOnlySelectsTheDevice() async {
@@ -310,6 +352,21 @@ import ComposableArchitecture
         // selectedDevice is nil; no ledgerClient override, so a reach into bond would trip "has
         // no test implementation" and fail the test.
         let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.approveOnDeviceTapped)
+        await store.finish()
+    }
+
+    @MainActor @Test func approveOnDeviceTappedIsIgnoredWithAnInvalidAccountIndex() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.accountIndexText = "101"
+        // No ledgerClient override: an invalid index must never reach bond, or it would trip
+        // "has no test implementation".
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         }
 
@@ -608,6 +665,37 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    // MOB-2020: the account index the user chose on the picker -- not account 0 -- is what gets
+    // paired, for a first pairing the same as a repair.
+    @MainActor @Test func connectDeviceTappedPairsWithTheChosenAccountIndex() async throws {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        let fixture = try Self.makePairingFixture()
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.accountIndexText = "3"
+
+        let store = TestStore(initialState: state) {
+            AddLedgerHWWallet()
+        } withDependencies: {
+            $0.continuousClock = SignalledClock()
+            $0.ledgerClient.pairDevice = { pairedDevice, zip32AccountIndex in
+                #expect(pairedDevice == device)
+                #expect(zip32AccountIndex == Zip32AccountIndex(3))
+                return fixture
+            }
+        }
+
+        await store.send(.connectDeviceTapped) {
+            $0.isPairing = true
+            $0.issue = nil
+        }
+        await store.receive(.pairingSucceeded(fixture)) {
+            $0.isPairing = false
+            $0.pairing = fixture
+        }
+        await store.finish()
+    }
+
     // MOB-2020: a pairing request that never answers must not keep the flow waiting indefinitely
     // -- the approval-timeout cap wins after five minutes and reports it the same way a lost
     // connection already is. Unlike the old connect()+pairAccount() pair, pairDevice closes its
@@ -650,6 +738,21 @@ import ComposableArchitecture
         // selectedDevice is nil; no ledgerClient override, so a reach into pairDevice would trip
         // "has no test implementation" and fail the test.
         let store = TestStore(initialState: AddLedgerHWWallet.State()) {
+            AddLedgerHWWallet()
+        }
+
+        await store.send(.connectDeviceTapped)
+        await store.finish()
+    }
+
+    @MainActor @Test func connectDeviceTappedIsIgnoredWithAnInvalidAccountIndex() async {
+        let device = LedgerBluetoothDevice(id: UUID(), name: "Nano X", model: .nanoX, rssi: -40)
+        var state = AddLedgerHWWallet.State()
+        state.selectedDevice = device
+        state.accountIndexText = "101"
+        // No ledgerClient override: an invalid index must never reach pairDevice, or it would
+        // trip "has no test implementation".
+        let store = TestStore(initialState: state) {
             AddLedgerHWWallet()
         }
 
