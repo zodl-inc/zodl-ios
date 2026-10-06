@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 import Testing
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
@@ -16,18 +17,24 @@ import ComposableArchitecture
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000".redacted
 
     @Test func pastedLinkOpensTheRedeemScreen() async {
+        let cleared = OSAllocatedUnfairLock(initialState: [String]())
         let store = TestStore(initialState: GiftCardCoordFlow.State()) {
             GiftCardCoordFlow()
         } withDependencies: {
             $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.giftCard = .mock()
-            $0.pasteboard.getString = { Self.link }
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in Issue.record("Unexpected clipboard write") },
+                clearIfMatches: { value in cleared.withLock { $0.append(value.data) } },
+                getString: { Self.link }
+            )
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.scan(.pasteTapped))
         await store.receive(\.scan.foundGiftCard)
         #expect(store.state.redeemState?.link == Self.link)
+        #expect(cleared.withLock { $0 } == [Self.link.data])
     }
 
     @Test func scannedCardOpensTheRedeemScreen() async {
