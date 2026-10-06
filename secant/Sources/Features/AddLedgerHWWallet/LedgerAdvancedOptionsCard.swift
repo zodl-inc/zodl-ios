@@ -40,12 +40,18 @@ struct LedgerAdvancedOptionsCard: View {
 
                     (isExpanded ? Asset.Assets.chevronUp : Asset.Assets.chevronDown).image
                         .zImage(size: 20, style: Design.Text.primary)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 48)
                 .contentShape(Rectangle())
             }
             .disabled(isConnecting)
+            .accessibilityValue(
+                isExpanded
+                ? String(localizable: .ledgerDevicePickerAdvancedOptionsExpanded)
+                : String(localizable: .ledgerDevicePickerAdvancedOptionsCollapsed)
+            )
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
@@ -55,7 +61,8 @@ struct LedgerAdvancedOptionsCard: View {
                     ZashiTextField(
                         text: $accountIndexText,
                         title: String(localizable: .ledgerDevicePickerAccountIndex),
-                        error: isAccountIndexValid ? nil : String(localizable: .ledgerDevicePickerAccountIndexHint)
+                        error: isAccountIndexValid ? nil : String(localizable: .ledgerDevicePickerAccountIndexHint),
+                        inputAccessibilityIdentifier: AccessibilityID.AddLedgerHWWallet.accountIndexField
                     )
                     .keyboardType(.numberPad)
                     .disabled(isConnecting)

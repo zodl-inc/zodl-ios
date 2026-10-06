@@ -10339,6 +10339,23 @@
         }
       }
     },
+    "ledger.devicePicker.advancedOptionsCollapsed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapsed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraído"
+          }
+        }
+      }
+    },
     "ledger.devicePicker.advancedOptionsDesc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10352,6 +10369,23 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Déjalo en 0 a menos que hayas usado otro número de cuenta de este Ledger en otra billetera."
+          }
+        }
+      }
+    },
+    "ledger.devicePicker.advancedOptionsExpanded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expanded"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Expandido"
           }
         }
       }
