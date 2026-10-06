@@ -17,6 +17,8 @@ REPO_ROOT="${SDK_PIN_REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 PBXPROJ="${SDK_PIN_PBXPROJ:-$REPO_ROOT/secant.xcodeproj/project.pbxproj}"
 PIN_FILE="${SDK_PIN_FILE:-$REPO_ROOT/.sdk-pin}"
 SDK_REPO_URL="${SDK_REPO_URL:-https://github.com/zodl-inc/zodl-swift-wallet-sdk.git}"
+# GitHub API base for the durability check; must name the same repo as SDK_REPO_URL.
+SDK_API_URL="${SDK_API_URL:-https://api.github.com/repos/zodl-inc/zodl-swift-wallet-sdk}"
 
 source "$SCRIPT_DIR/sdk-pin-common.sh"
 
@@ -62,7 +64,7 @@ emit() {
 # validate gate on CI), so tests and builds stay offline.
 check_durability() {
     [ "${SDK_PIN_DURABILITY_CHECK:-}" = "1" ] || return 0
-    local api="https://api.github.com/repos/zodl-inc/zodl-swift-wallet-sdk"
+    local api="$SDK_API_URL"
     local auth=()
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
