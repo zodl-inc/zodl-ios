@@ -82,35 +82,59 @@ extension Root {
                     return .none
                 }
                 if case .opened = response {
-                    // Synchronous pause at acceptance: an old queued open can never stop a newer visit's sync.
                     state.giftCardSyncGeneration = UUID()
                     state.giftCardSyncResumePending = false
-                    sdkSynchronizer.stop()
+                    state.giftCardSyncPauseOwner = visit
                 }
             }
             if case .giftCardResumeSync(let generation) = action {
-                guard state.giftCardSyncGeneration == generation,
-                      state.destinationState.destination == .home, state.splashAppeared,
-                      state.bgTask == nil, state.giftCardCoordFlowState.redeemState?.handle == nil else { return .none }
-                // Start may suspend after it has begun. Always reconcile its completion against
-                // current ownership, even if another card opened while the SDK was awaiting work.
+                guard state.giftCardSyncGeneration == generation, state.canResumeGiftCardSync,
+                      state.giftCardSyncStopId == nil, state.giftCardSyncStartId == nil else { return .none }
+                let startId = UUID()
+                state.giftCardSyncStartId = startId
+                state.giftCardSyncResumePending = false
+                state.giftCardSyncIsPaused = false
                 return .run { send in
                     try? await sdkSynchronizer.start(true)
-                    await send(.giftCardSyncResumed(generation))
+                    await send(.giftCardSyncResumed(startId))
                 }
             }
-            if case .giftCardSyncResumed = action {
-                if state.giftCardCoordFlowState.redeemState?.handle != nil
-                    || state.destinationState.destination != .home || !state.splashAppeared || state.bgTask != nil {
-                    sdkSynchronizer.stop()
+            if case .giftCardSyncResumed(let startId) = action {
+                if state.giftCardSyncStartId == startId { state.giftCardSyncStartId = nil }
+                // A start may finish after a new visit or backgrounding. Retain its completion
+                // and correct current desired state; cancelling its effect would hide that race.
+                if !state.canResumeGiftCardSync {
+                    state.giftCardSyncIsPaused = false
+                    state.giftCardSyncResumePending = state.giftCardSyncPauseOwner == nil
+                    return stopGiftCardSync(state: &state)
                 }
-                return .none
+                return reconcileGiftCardSync(state: &state)
+            }
+            if case .giftCardSyncStopped(let stopId) = action {
+                guard state.giftCardSyncStopId == stopId else { return .none }
+                state.giftCardSyncStopId = nil
+                state.giftCardSyncIsPaused = true
+                return reconcileGiftCardSync(state: &state)
             }
 
             let previous = state.giftCardCoordFlowState.redeemState
             let previousPath = state.path
+            let previousPauseOwner = state.giftCardSyncPauseOwner
+            let previousStopId = state.giftCardSyncStopId
+            let previousStartId = state.giftCardSyncStartId
+            let wasPaused = state.giftCardSyncIsPaused
+            let resumeWasPending = state.giftCardSyncResumePending
+            let wasBackgrounded = state.appStartState == .didEnterBackground
             let previousScanId = state.giftCardCoordFlowState.scanState.cancelId
             let effect = content._reduce(into: &state, action: action)
+            // Parent reducers can replace Root.State wholesale. Work already handed to the SDK
+            // must retain its identity until actual completion, independently of child state.
+            state.giftCardSyncPauseOwner = previousPauseOwner
+            state.giftCardSyncStopId = previousStopId
+            state.giftCardSyncStartId = previousStartId
+            state.giftCardSyncIsPaused = wasPaused
+            state.giftCardSyncResumePending = resumeWasPending
+            if wasBackgrounded, state.appStartState == .unknown { state.appStartState = .didEnterBackground }
             let exited = previousPath == .giftCardCoordFlow && state.path != .giftCardCoordFlow
             let replaced = previous?.cancelId != state.giftCardCoordFlowState.redeemState?.cancelId
             var effects: [Effect<Action>] = [effect]
@@ -122,7 +146,9 @@ extension Root {
                 if exited {
                     state.giftCardCoordFlowState = GiftCardCoordFlow.State()
                 }
-                state.giftCardSyncResumePending = state.giftCardSyncResumePending || previous.handle != nil
+                state.giftCardSyncResumePending = state.giftCardSyncResumePending
+                    || previousPauseOwner == previous.cancelId || previous.handle != nil
+                if previousPauseOwner == previous.cancelId { state.giftCardSyncPauseOwner = nil }
                 effects.append(.cancel(id: previous.cancelId))
                 effects.append(.cancel(id: previous.autoRetryCancelId))
                 // The coordinator handles an explicit cleanUp when it is tested or hosted alone.
@@ -135,13 +161,54 @@ extension Root {
                     }
                 }
             }
-            if state.giftCardSyncResumePending,
-               state.destinationState.destination == .home, state.splashAppeared,
-               state.bgTask == nil, state.giftCardCoordFlowState.redeemState?.handle == nil {
-                state.giftCardSyncResumePending = false
-                effects.append(.send(.giftCardResumeSync(state.giftCardSyncGeneration)))
+            if case .synchronizerStateChanged(let snapshot) = action, state.giftCardSyncPauseOwner != nil {
+                switch snapshot.data.syncStatus {
+                case .syncing, .upToDate:
+                    // Other app lifecycle code can also start the SDK. Reconcile its observed
+                    // running state while this visit owns a pause; stream ticks are not stop acknowledgments.
+                    state.giftCardSyncIsPaused = false
+                case .stopped, .unprepared, .error:
+                    break
+                }
             }
+            effects.append(reconcileGiftCardSync(state: &state))
             return .merge(effects)
         }
+    }
+
+    private func reconcileGiftCardSync(state: inout State) -> Effect<Action> {
+        guard state.giftCardSyncStopId == nil, state.giftCardSyncStartId == nil else { return .none }
+        if state.ownsGiftCardSyncLifecycle, !state.canResumeGiftCardSync, !state.giftCardSyncIsPaused {
+            return stopGiftCardSync(state: &state)
+        }
+        if state.giftCardSyncResumePending, state.canResumeGiftCardSync {
+            return .send(.giftCardResumeSync(state.giftCardSyncGeneration))
+        }
+        return .none
+    }
+
+    private func stopGiftCardSync(state: inout State) -> Effect<Action> {
+        guard state.giftCardSyncStopId == nil, state.giftCardSyncStartId == nil else { return .none }
+        let stopId = UUID()
+        state.giftCardSyncStopId = stopId
+        // This effect belongs to Root, not the exiting visit or its foreground subscriptions.
+        // Awaiting the native operation also handles idle engines that emit no stopped event.
+        return .run { send in
+            await sdkSynchronizer.stopAndWait()
+            await send(.giftCardSyncStopped(stopId))
+        }
+    }
+}
+
+extension Root.State {
+    var ownsGiftCardSyncLifecycle: Bool {
+        giftCardSyncPauseOwner != nil || giftCardSyncStopId != nil
+            || giftCardSyncStartId != nil || giftCardSyncResumePending
+    }
+
+    var canResumeGiftCardSync: Bool {
+        giftCardSyncPauseOwner == nil
+            && destinationState.destination == .home && splashAppeared && bgTask == nil
+            && appStartState != .didEnterBackground && appStartState != .backgroundTask
     }
 }

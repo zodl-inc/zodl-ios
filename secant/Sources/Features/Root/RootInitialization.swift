@@ -217,13 +217,15 @@ extension Root {
                 }
 
             case .initialization(.appDelegate(.didEnterBackground)):
-                // See the cold-launch marker above. `sdkSynchronizer.stop()` on the next line is
-                // why this boundary matters so much to a migration run: sync does not merely pause
+                // See the cold-launch marker above. Stopping the synchronizer at this boundary is
+                // why backgrounding matters so much to a migration run: sync does not merely pause
                 // here, it STOPS, and nothing restarts it until the next foreground's `.retryStart`.
                 // Anything the run was waiting to observe — a preparation mining, a transfer
                 // confirming — waits for the user to come back.
                 MigrationTrace.endSession(reason: "BACKGROUND — sync stopping")
-                sdkSynchronizer.stop()
+                // Gift-card lifecycle work awaits its stop/start completions in Root's outer
+                // boundary. Do not enqueue an untracked stop that could outlive its next resume.
+                if !state.ownsGiftCardSyncLifecycle { sdkSynchronizer.stop() }
                 state.bgTask?.setTaskCompleted(success: false)
                 state.bgTask = nil
                 state.appStartState = .didEnterBackground

@@ -315,6 +315,11 @@ struct Root {
         var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
         var giftCardSyncGeneration = UUID()
         var giftCardSyncResumePending = false
+        /// The accepted visit owns the pause even if retry discovers that its card handle is gone.
+        var giftCardSyncPauseOwner: UUID?
+        var giftCardSyncStopId: UUID?
+        var giftCardSyncStartId: UUID?
+        var giftCardSyncIsPaused = false
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
@@ -514,6 +519,7 @@ struct Root {
         case giftCardCoordFlow(GiftCardCoordFlow.Action)
         case giftCardResumeSync(UUID)
         case giftCardSyncResumed(UUID)
+        case giftCardSyncStopped(UUID)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
