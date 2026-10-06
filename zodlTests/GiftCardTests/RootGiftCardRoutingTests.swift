@@ -139,6 +139,70 @@ import ComposableArchitecture
         #expect(!hasContact)
     }
 
+    // Removing the Settings checker or Root route must leave these real scans out of redemption.
+    @Test(arguments: [
+        "  https://gift.zodl.com/#v=1&key=synthetic-settings-fixture\n",
+        "\nhttps://link.vizor.cash/payment-links/open#v3=synthetic-settings-fixture  "
+    ])
+    func settingsAddressBookScannerRoutesGiftCardsWithoutCreatingAContact(original: String) async throws {
+        var state = homeState()
+        state.path = .settings
+        state.settingsState.path.append(.addressBook(AddressBook.State.initial))
+        let store = makeStore(state: state)
+        let bookId = try #require(store.state.settingsState.path.ids.last)
+        await store.send(.settings(.path(.element(id: bookId, action: .addressBook(.scanButtonTapped)))))
+        let scanId = try #require(store.state.settingsState.path.ids.last)
+        await store.send(.settings(.path(.element(id: scanId, action: .scan(.scan(original.redacted))))))
+        await store.receive { action in
+            switch action {
+            case .settings(.path(.element(id: _, action: .scan(.foundGiftCard)))),
+                    .settings(.path(.element(id: _, action: .scan(.foundString)))):
+                return true
+            default: return false
+            }
+        }
+        await store.finish()
+        #expect(store.state.path == .giftCardCoordFlow)
+        let link = original.trimmingCharacters(in: .whitespacesAndNewlines).redacted
+        #expect(store.state.giftCardCoordFlowState.redeemState?.link == link)
+        let hasContact = store.state.settingsState.path.contains { element in
+            if case .addressBookContact = element { return true }
+            return false
+        }
+        #expect(!hasContact)
+    }
+
+    // The gift interception must preserve both the Zcash and catch-all contact consumers.
+    @Test(arguments: ["t1gXqfSSQt6WfpwyuCU3Wi7sSVZ66DYQ3Po", "ordinary-address"])
+    func settingsAddressBookScannerKeepsOrdinaryContacts(address: String) async throws {
+        var state = homeState()
+        state.path = .settings
+        state.settingsState.path.append(.addressBook(AddressBook.State.initial))
+        let store = makeStore(state: state)
+        store.dependencies.uriParser = URIParserClient.live()
+        let bookId = try #require(store.state.settingsState.path.ids.last)
+        await store.send(.settings(.path(.element(id: bookId, action: .addressBook(.scanButtonTapped)))))
+        let scanId = try #require(store.state.settingsState.path.ids.last)
+        await store.send(.settings(.path(.element(id: scanId, action: .scan(.scan(address.redacted))))))
+        await store.receive { action in
+            switch action {
+            case .settings(.path(.element(id: _, action: .scan(.foundAddress)))),
+                    .settings(.path(.element(id: _, action: .scan(.foundString)))):
+                return true
+            default: return false
+            }
+        }
+        await store.finish()
+        #expect(store.state.path == .settings)
+        guard case .some(.addressBookContact(let contact)) = store.state.settingsState.path.last else {
+            Issue.record("Ordinary address did not reach the Settings contact form")
+            return
+        }
+        #expect(contact.address == address)
+        #expect(contact.isValidZcashAddress == (address == "t1gXqfSSQt6WfpwyuCU3Wi7sSVZ66DYQ3Po"))
+        #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+    }
+
     @Test(arguments: [false, true]) func parentNavigationClosesTheCard(rescan: Bool) async {
         let handle = GiftCardHandle()
         let cleaned = LockIsolated<[GiftCardHandle]>([])

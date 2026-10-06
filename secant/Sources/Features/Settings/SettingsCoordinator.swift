@@ -43,7 +43,7 @@ extension Settings {
                 
             case .path(.element(id: _, action: .addressBook(.scanButtonTapped))):
                 var scanState = Scan.State.initial
-                scanState.checkers = [.zcashAddressScanChecker, .swapStringScanChecker]
+                scanState.checkers = [.giftCardScanChecker, .zcashAddressScanChecker, .swapStringScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
 

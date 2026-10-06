@@ -16,7 +16,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 - [MOB-2142] An unconfirmed gift-card redemption now offers to check the card’s current status without claiming its funds are still available. If funds remain, tap Redeem again to continue.
 - [MOB-2142] Wallet syncing recovers from temporary restart failures after leaving a gift card and resumes when a migration pause clears, including when you return to the app. Returning to the app and leaving a gift card while syncing is still stopping no longer interrupts the resumed sync.
 
-- [MOB-2142] Scanning a gift card in Swap or Pay opens redemption. Gift-card links are rejected as swap addresses to keep card secrets private.
+- [MOB-2142] Scanning a gift card in Swap, Pay or the Settings address book opens redemption and keeps its secret out of contact addresses. Gift-card links are rejected as swap addresses. Pasting a recognized gift link clears it from the clipboard if the clipboard still contains that same link.
 - [MOB-2142] The gift-card success screen confirms redemption without showing the card's amount before the network fee as the amount received.
 - [MOB-2142] Leaving or replacing a gift card now closes its temporary wallet. Wallet syncing resumes correctly after gift-card errors or navigation and stays stopped while the app is in the background, including after reopening the app or when a link opens the scanner. Redeeming uses the currently selected account, including when you switch accounts while the card is loading.
 

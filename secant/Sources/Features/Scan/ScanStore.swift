@@ -255,6 +255,9 @@ struct Scan {
                 for checker in state.checkers {
                     if let action = checker.checker.checkQRCode(text.data) {
                         LoggerProxy.event("[Scan] paste: matched checker \(checker.checker.id), \(text.data.count) chars")
+                        if case .foundGiftCard = action {
+                            pasteboard.clearIfMatches(text)
+                        }
                         return .send(action)
                     }
                 }
