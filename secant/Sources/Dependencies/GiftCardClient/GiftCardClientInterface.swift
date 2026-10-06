@@ -128,6 +128,13 @@ enum GiftCardLink {
         return hasPrefix(trimmed, zodlPrefix) || hasPrefix(trimmed, zodlBarePrefix) || hasPrefix(trimmed, vizorPrefix)
     }
 
+    /// `true` while `text` could still grow into a gift card link: it is empty or the start of one
+    /// of the known prefixes. Lets an input field hold back its error while a link is being typed.
+    static func isCandidatePrefix(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return [zodlPrefix, zodlBarePrefix, vizorPrefix].contains { $0.lowercased().hasPrefix(trimmed) }
+    }
+
     /// `true` for a URL the app was opened with that belongs to the gift card flow, whatever
     /// else is in it. Used to keep such URLs away from other handlers (e.g. Flexa).
     static func isGiftCardURL(_ url: URL) -> Bool {

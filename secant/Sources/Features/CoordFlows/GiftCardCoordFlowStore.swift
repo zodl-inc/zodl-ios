@@ -9,8 +9,9 @@ import SwiftUI
 import ComposableArchitecture
 @preconcurrency import ZcashLightClientKit
 
-/// The "Redeem gift card" flow. It starts either on the scanner (from Home, with a "Paste link"
-/// option) or directly on the card (a scanned or opened link), and ends when the user closes it.
+/// The "Redeem gift card" flow. It starts either on the scanner (from Home, whose "Paste link"
+/// opens the paste screen) or directly on the card (a scanned or opened link), and ends when the
+/// user closes it.
 ///
 /// Root owns cleanup when parent navigation leaves or replaces this flow. This reducer owns
 /// internal card replacement and explicit `.cleanUp`, including cancellation of child work.
@@ -19,7 +20,9 @@ struct GiftCardCoordFlow {
     @ObservableState
     struct State: Equatable {
         var scanState = Scan.State.giftCardScanner
-        /// The card being redeemed. `nil` while the scanner is showing.
+        /// The paste screen, over the scanner. `nil` while it is not showing.
+        var pasteLinkState: GiftCardPasteLink.State?
+        /// The card being redeemed. `nil` while the scanner or the paste screen is showing.
         var redeemState: GiftCardRedeem.State?
 
         /// Every open card this flow knows about, for `.cleanUp`.
@@ -46,6 +49,7 @@ struct GiftCardCoordFlow {
     enum Action: Equatable {
         /// Closes the card's temporary wallet and resets the flow.
         case cleanUp
+        case pasteLink(GiftCardPasteLink.Action)
         case redeem(GiftCardRedeem.Action)
         case scan(Scan.Action)
     }
@@ -84,6 +88,9 @@ struct GiftCardCoordFlow {
         }
 
         coordinatorReduce()
+            .ifLet(\.pasteLinkState, action: \.pasteLink) {
+                GiftCardPasteLink()
+            }
             .ifLet(\.redeemState, action: \.redeem) {
                 GiftCardRedeem()
             }
@@ -91,7 +98,8 @@ struct GiftCardCoordFlow {
 }
 
 extension Scan.State {
-    /// The scanner as the gift card flow uses it: gift card links only, plus "Paste link".
+    /// The scanner as the gift card flow uses it: gift card links only, plus "Paste link", which
+    /// opens the paste screen.
     static var giftCardScanner: Scan.State {
         var state = Scan.State.initial
         state.checkers = [.giftCardScanChecker]

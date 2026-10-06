@@ -21,8 +21,6 @@ struct Scan {
         case noQRCodeFound
         case severalQRCodesFound
         case keystoneCheckOnly
-        case nothingToPaste
-        case unsupportedPaste
     }
     
     @ObservableState
@@ -38,8 +36,8 @@ struct Scan {
         var isTorchAvailable = false
         var isTorchOn = false
         var isRPFound = false
-        /// Shows a "Paste link" button that runs the pasteboard's text through the same checkers
-        /// as a scanned code (used by the gift card flow).
+        /// Shows a "Paste link" button (used by the gift card flow, which opens its own paste screen
+        /// on `.pasteTapped`).
         var isPasteEnabled = false
         var progress: Int?
         var expectedParts = 0
@@ -86,7 +84,6 @@ struct Scan {
     @Dependency(\.captureDevice) var captureDevice
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.keystoneHandler) var keystoneHandler
-    @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.qrImageDetector) var qrImageDetector
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.uriParser) var uriParser
@@ -245,24 +242,8 @@ struct Scan {
                 return .none
 
             case .pasteTapped:
-                guard !state.isAnythingFound else {
-                    return .none
-                }
-                guard let text = pasteboard.getString(), !text.data.isEmpty else {
-                    LoggerProxy.event("[Scan] paste: nothing to paste")
-                    return .send(.scanFailed(.nothingToPaste))
-                }
-                for checker in state.checkers {
-                    if let action = checker.checker.checkQRCode(text.data) {
-                        LoggerProxy.event("[Scan] paste: matched checker \(checker.checker.id), \(text.data.count) chars")
-                        if case .foundGiftCard = action {
-                            pasteboard.clearIfMatches(text)
-                        }
-                        return .send(action)
-                    }
-                }
-                LoggerProxy.event("[Scan] paste: unsupported, \(text.data.count) chars, \(state.checkers.count) checkers")
-                return .send(.scanFailed(.unsupportedPaste))
+                // The flow that enabled "Paste link" opens its own paste screen.
+                return .none
 
             case .cancelTapped:
                 return .none
@@ -310,10 +291,6 @@ struct Scan {
                     state.info = String(localizable: .scanSeveralCodesFound)
                 case .keystoneCheckOnly:
                     state.info = ""
-                case .nothingToPaste:
-                    state.info = String(localizable: .scanPasteEmpty)
-                case .unsupportedPaste:
-                    state.info = String(localizable: .scanPasteUnsupported)
                 }
                 return .concatenate(
                     .cancel(id: state.cancelId),

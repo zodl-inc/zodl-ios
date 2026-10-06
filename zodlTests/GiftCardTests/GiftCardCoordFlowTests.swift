@@ -15,19 +15,60 @@ import ComposableArchitecture
 @Suite(.serialized) @MainActor struct GiftCardCoordFlowTests {
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000".redacted
 
-    @Test func pastedLinkOpensTheRedeemScreen() async {
+    @Test func pasteLinkOpensThePasteScreenAndContinueOpensTheCard() async {
+        let link = Self.link
         let store = TestStore(initialState: GiftCardCoordFlow.State()) {
             GiftCardCoordFlow()
         } withDependencies: {
-            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.giftCard = .mock()
-            $0.pasteboard.getString = { Self.link }
+            $0.pasteboard = PasteboardClient(setString: { _ in }, clearIfMatches: { _ in }, getString: { link })
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.scan(.pasteTapped))
-        await store.receive(\.scan.foundGiftCard)
+        #expect(store.state.pasteLinkState == GiftCardPasteLink.State())
+        #expect(store.state.redeemState == nil)
+
+        await store.send(.pasteLink(.pasteTapped))
+        #expect(store.state.pasteLinkState?.isValid == true)
+
+        await store.send(.pasteLink(.continueTapped))
+        await store.receive(\.pasteLink.delegate.open)
+        #expect(store.state.pasteLinkState == nil)
         #expect(store.state.redeemState?.link == Self.link)
+        #expect(store.state.redeemState?.step == .checking)
+    }
+
+    @Test func backFromThePasteScreenReturnsToTheScanner() async {
+        let store = TestStore(initialState: GiftCardCoordFlow.State()) {
+            GiftCardCoordFlow()
+        } withDependencies: {
+            $0.giftCard = .mock()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.scan(.pasteTapped))
+        #expect(store.state.pasteLinkState != nil)
+
+        await store.send(.pasteLink(.backTapped))
+        await store.receive(\.pasteLink.delegate.back)
+        #expect(store.state.pasteLinkState == nil)
+        #expect(store.state.redeemState == nil)
+        #expect(store.state.scanState.isPasteEnabled)
+    }
+
+    @Test func cleanUpClosesThePasteScreen() async {
+        var state = GiftCardCoordFlow.State()
+        state.pasteLinkState = GiftCardPasteLink.State()
+        let store = TestStore(initialState: state) {
+            GiftCardCoordFlow()
+        } withDependencies: {
+            $0.giftCard = .mock()
+        }
+
+        await store.send(.cleanUp) {
+            $0.pasteLinkState = nil
+        }
     }
 
     @Test func scannedCardOpensTheRedeemScreen() async {

@@ -22,6 +22,8 @@ struct GiftCardCoordFlowView: View {
             NavigationStack {
                 if let redeemStore = store.scope(state: \.redeemState, action: \.redeem) {
                     GiftCardRedeemView(store: redeemStore, tokenName: tokenName)
+                } else if let pasteLinkStore = store.scope(state: \.pasteLinkState, action: \.pasteLink) {
+                    GiftCardPasteLinkView(store: pasteLinkStore)
                 } else {
                     ScanView(
                         store:

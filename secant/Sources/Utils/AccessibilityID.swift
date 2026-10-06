@@ -28,6 +28,13 @@ enum AccessibilityID {
         static let redeemGiftCard = "moreSheet.redeemGiftCard"
     }
 
+    enum GiftCard {
+        static let pasteLinkField = "giftCard.pasteLink.field"
+        static let pasteLinkPaste = "giftCard.pasteLink.paste"
+        static let pasteLinkClear = "giftCard.pasteLink.clear"
+        static let pasteLinkContinue = "giftCard.pasteLink.continue"
+    }
+
     enum Settings {
         static let addressBook = "settings.addressBook"
     }

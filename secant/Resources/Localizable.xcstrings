@@ -8628,6 +8628,125 @@
         }
       }
     },
+    "giftCard.paste.clear" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Borrar"
+          }
+        }
+      }
+    },
+    "giftCard.paste.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste the link that came with your Zcash gift card. You will see the amount before you redeem it."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pega el enlace que vino con tu tarjeta de regalo de Zcash. Verás el monto antes de canjearla."
+          }
+        }
+      }
+    },
+    "giftCard.paste.fieldTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gift card link"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enlace de la tarjeta de regalo"
+          }
+        }
+      }
+    },
+    "giftCard.paste.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This link is not a valid gift card. Check it and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este enlace no es una tarjeta de regalo válida. Revísalo e inténtalo de nuevo."
+          }
+        }
+      }
+    },
+    "giftCard.paste.paste" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pegar"
+          }
+        }
+      }
+    },
+    "giftCard.paste.placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste link here"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pega el enlace aquí"
+          }
+        }
+      }
+    },
+    "giftCard.paste.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste your gift card link"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pega el enlace de tu tarjeta de regalo"
+          }
+        }
+      }
+    },
     "giftCard.ready.note" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8685,13 +8804,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The gift card link is damaged or incomplete. Try scanning the QR code again."
+            "value" : "The gift card link is damaged or incomplete. Scan its QR code or paste its link again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El enlace de la tarjeta de regalo está dañado o incompleto. Intenta escanear el código QR de nuevo."
+            "value" : "El enlace de la tarjeta de regalo está dañado o incompleto. Escanea su código QR o pega su enlace de nuevo."
           }
         }
       }
@@ -17273,23 +17392,6 @@
         }
       }
     },
-    "scan.pasteEmpty" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "There's nothing to paste. Copy the gift card link first."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No hay nada que pegar. Copia primero el enlace de la tarjeta de regalo."
-          }
-        }
-      }
-    },
     "scan.pasteLink" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17303,23 +17405,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pegar enlace"
-          }
-        }
-      }
-    },
-    "scan.pasteUnsupported" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The copied text isn't a gift card link."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El texto copiado no es un enlace de tarjeta de regalo."
           }
         }
       }
