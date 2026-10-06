@@ -55,6 +55,15 @@ struct LedgerDevicePickerView: View {
                             ForEach(store.devices) { device in
                                 deviceRow(device)
                             }
+
+                            // MOB-2020: part of the list, not pinned above Connect -- scrolls
+                            // with the device rows instead of sitting fixed at the bottom.
+                            LedgerAdvancedOptionsCard(
+                                isExpanded: store.isAdvancedOptionsExpanded,
+                                accountIndexText: $store.accountIndexText,
+                                isAccountIndexValid: store.selectedAccountIndex != nil,
+                                onToggle: { store.send(.advancedOptionsToggleTapped) }
+                            )
                         }
                     }
                     .padding(.top, 24)
@@ -126,7 +135,9 @@ struct LedgerDevicePickerView: View {
             ) {
                 store.send(.approveOnDeviceTapped)
             }
-            .disabled(store.selectedDevice == nil)
+            // MOB-2020: an invalid account index disables Connect on top of the existing
+            // no-selection condition.
+            .disabled(store.selectedDevice == nil || store.selectedAccountIndex == nil)
         }
     }
 
