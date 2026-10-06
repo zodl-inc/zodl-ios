@@ -231,6 +231,7 @@ struct SendConfirmation {
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.derivationTool) var derivationTool
     @Dependency(\.keystoneHandler) var keystoneHandler
+    @Dependency(\.ledgerClient) var ledgerClient
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.mnemonic) var mnemonic
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
@@ -750,18 +751,24 @@ struct SendConfirmation {
                     .cancel(id: CancelId.ledgerSignRequest),
                     .cancel(id: LedgerSigning.CancelId.sign),
                     .cancel(id: LedgerSigning.CancelId.scan),
-                    .cancel(id: LedgerSigning.CancelId.connect)
+                    .cancel(id: LedgerSigning.CancelId.connect),
+                    // MOB-2020: closes the Bluetooth link directly -- a connect that already
+                    // adopted it (connected, not signing yet) has nothing else closing it; the
+                    // connection generation makes this safe even against a connect still running,
+                    // which discards what it opened once it notices.
+                    .run { _ in await ledgerClient.disconnect() }
                 )
 
             case .pairLedgerTapped:
                 // MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): "Pair Ledger" on the `.notPaired`
                 // issue sheet. Ends the session exactly like `.ledgerSignCancelTapped` above -- same
-                // state resets, same cancels -- so the host reactions tied specifically to Cancel
-                // (there are none today; see that arm) never fire for this one too. Kept as its own
-                // action, rather than reusing `.ledgerSignCancelTapped` itself, so Root can tell
-                // which one arrived: its `coordinatorReduce()` observes this exact case, from every
-                // host of this sheet, to close that host and open the connect flow in repair mode
-                // once the sheet finishes closing (`.ledgerSignSheetDismissed`).
+                // state resets, same cancels, same disconnect -- so the host reactions tied
+                // specifically to Cancel (there are none today; see that arm) never fire for this
+                // one too. Kept as its own action, rather than reusing `.ledgerSignCancelTapped`
+                // itself, so Root can tell which one arrived: its `coordinatorReduce()` observes
+                // this exact case, from every host of this sheet, to close that host and open the
+                // connect flow in repair mode once the sheet finishes closing
+                // (`.ledgerSignSheetDismissed`).
                 state.isLedgerSignSheetPresented = false
                 state.pczt = nil
                 state.pcztWithProofs = nil
@@ -775,7 +782,9 @@ struct SendConfirmation {
                     .cancel(id: CancelId.ledgerSignRequest),
                     .cancel(id: LedgerSigning.CancelId.sign),
                     .cancel(id: LedgerSigning.CancelId.scan),
-                    .cancel(id: LedgerSigning.CancelId.connect)
+                    .cancel(id: LedgerSigning.CancelId.connect),
+                    // MOB-2020: see `.ledgerSignCancelTapped` above -- same reasoning.
+                    .run { _ in await ledgerClient.disconnect() }
                 )
 
             case .ledgerSignSheetDismissed:

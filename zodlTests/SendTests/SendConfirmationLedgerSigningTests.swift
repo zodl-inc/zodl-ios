@@ -534,6 +534,8 @@ import ComposableArchitecture
                 SendConfirmation()
             } withDependencies: {
                 $0.mainQueue = .immediate
+                // MOB-2020: `.pairLedgerTapped` now also calls ledgerClient.disconnect() itself.
+                $0.ledgerClient = .noOp
             }
 
             await store.send(.pairLedgerTapped) {
@@ -663,6 +665,72 @@ import ComposableArchitecture
             // No `.connectionFailed` ever arrives -- exhaustive mode would catch an unreceived
             // action -- and this fails if the connect effect is still running.
             await store.finish()
+        }
+    }
+
+    // MOB-2020: once `connect` has adopted a transport (connected, not signing yet), cancelling
+    // the signing effects alone leaves the Bluetooth link up -- nothing else was going to close
+    // it. Cancel Transaction now closes it directly instead of relying only on a still-running
+    // connect's own cancellation unwinding.
+    @Test func ledgerSignCancelTappedClosesTheLedgerLink() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let disconnectCount = LockIsolated(0)
+
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+            initialState.ledgerSigning.phase = .signing(.awaitingReviewOnDevice)
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.ledgerClient = .noOp
+                $0.ledgerClient.disconnect = {
+                    disconnectCount.withValue { $0 += 1 }
+                }
+            }
+
+            await store.send(.ledgerSignCancelTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+            await store.finish()
+
+            #expect(disconnectCount.value == 1)
+        }
+    }
+
+    // MOB-2020: the same gap as Cancel Transaction above, for "Pair Ledger".
+    @Test func pairLedgerTappedClosesTheLedgerLink() async throws {
+        try await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let disconnectCount = LockIsolated(0)
+
+            var initialState = makeState(account: Self.ledgerAccount())
+            initialState.isLedgerSignSheetPresented = true
+            initialState.ledgerSigning.phase = .failed
+            initialState.ledgerSigning.issue = .notPaired
+
+            let store = TestStore(initialState: initialState) {
+                SendConfirmation()
+            } withDependencies: {
+                $0.mainQueue = .immediate
+                $0.ledgerClient = .noOp
+                $0.ledgerClient.disconnect = {
+                    disconnectCount.withValue { $0 += 1 }
+                }
+            }
+
+            await store.send(.pairLedgerTapped) {
+                $0.isLedgerSignSheetPresented = false
+                $0.ledgerSigning = LedgerSigning.State()
+            }
+            await store.finish()
+
+            #expect(disconnectCount.value == 1)
         }
     }
 }

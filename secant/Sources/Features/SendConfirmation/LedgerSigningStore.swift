@@ -287,10 +287,10 @@ struct LedgerSigning {
                             await send(.connectionFailed(.disconnected))
                         case .cancelled:
                             // MOB-2020: the ceremony was torn down, not timed out -- nothing to
-                            // clean up here. Cancel Transaction and Pair Ledger never call
-                            // ledgerClient.disconnect() themselves; the cleanup comes from the
-                            // cancellation unwinding ledgerClient.connect() itself --
-                            // LedgerSession.connect's own catch closes the transport it opened.
+                            // clean up here. Cancel Transaction and Pair Ledger call
+                            // ledgerClient.disconnect() themselves as part of that teardown, and a
+                            // connect still in flight discards whatever it opened once it sees the
+                            // cancellation or the new generation (LedgerSession.connect's guards).
                             break
                         }
                     }

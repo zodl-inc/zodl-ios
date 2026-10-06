@@ -464,11 +464,11 @@ import ComposableArchitecture
         #expect((signer.receivedTransport as? FakeLedgerAPDUTransport) === openedB)
     }
 
-    // MOB-2020: Cancel Transaction never calls disconnect() itself (LedgerSigningStore's own
-    // comment on its `.cancelled` case) -- cancelling the connect's own Task is the only signal
-    // this adopt guard has for that case, since the generation never changes. A cancellation
-    // landing right as the open step returns, or after it, must still close what was opened
-    // rather than leave the Bluetooth link up.
+    // MOB-2020: Cancel Transaction and Pair Ledger also call ledgerClient.disconnect(), but that
+    // separate call may reach the session only after a cancelled connect resumes, so the
+    // generation can still match at the adopt guard -- cancelling the connect's own Task is then
+    // the only signal it has. A cancellation landing right as the open step returns, or after
+    // it, must still close what was opened rather than leave the Bluetooth link up.
     @Test func aConnectCancelledAsTheOpenStepReturnsDiscardsTheTransportItReturns() async throws {
         let connected = FakeLedgerAPDUTransport(name: "connected")
         let opened = FakeLedgerAPDUTransport(name: "opened")
