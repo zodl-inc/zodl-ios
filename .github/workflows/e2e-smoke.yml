@@ -48,6 +48,8 @@ jobs:
         uses: ./.github/actions/setup-sdk-companion
         with:
           validate-only: 'true'
+          sdk-repo: ${{ vars.SDK_REPO }}
+          sdk-token: ${{ secrets.SDK_COMPANION_TOKEN }}
 
   build_ffi:
     # Builds the SDK's Rust core (libzcashlc) once per push, shared with the
@@ -70,6 +72,9 @@ jobs:
       - name: Fetch SDK at the pinned commit
         id: companion
         uses: ./.github/actions/setup-sdk-companion
+        with:
+          sdk-repo: ${{ vars.SDK_REPO }}
+          sdk-token: ${{ secrets.SDK_COMPANION_TOKEN }}
       - name: Compute FFI cache keys
         id: keys
         run: |
@@ -168,6 +173,9 @@ jobs:
       - name: Set up SDK companion
         id: companion
         uses: ./.github/actions/setup-sdk-companion
+        with:
+          sdk-repo: ${{ vars.SDK_REPO }}
+          sdk-token: ${{ secrets.SDK_COMPANION_TOKEN }}
       - name: Download built FFI (local SDK mode)
         if: needs.validate_sdk_pin.outputs.mode == 'local'
         uses: actions/download-artifact@v4
