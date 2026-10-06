@@ -20647,6 +20647,23 @@
         }
       }
     },
+    "swap.giftCardAddressNotAllowed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gift-card links cannot be used as swap addresses. Use Redeem gift card instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los enlaces de tarjetas de regalo no se pueden usar como direcciones de intercambio. Usa Canjear tarjeta de regalo."
+          }
+        }
+      }
+    },
     "swap.nearProvider" : {
       "extractionState" : "manual",
       "localizations" : {

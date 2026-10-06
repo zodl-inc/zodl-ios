@@ -121,6 +121,72 @@ import ComposableArchitecture
         #expect(pushed?.first == .giftCardScanChecker)
     }
 
+    @Test(arguments: [false, true]) func swapCoordinatorRegistersGiftCardCheckerFirst(addressBook: Bool) {
+        var state = SwapAndPayCoordFlow.State()
+        if addressBook { state.path.append(.addressBook(AddressBook.State.initial)) }
+        let store = Store(initialState: state) { SwapAndPayCoordFlow() }
+        if addressBook {
+            guard let id = store.withState({ $0.path.ids.last }) else {
+                Issue.record("Address book entry missing")
+                return
+            }
+            store.send(.path(.element(id: id, action: .addressBook(.scanButtonTapped))))
+        } else {
+            store.send(.swapAndPay(.scanTapped))
+        }
+        let checkers = store.withState { state -> [ScanCheckerWrapper]? in
+            guard case .some(.scan(let scanState)) = state.path.last else { return nil }
+            return scanState.checkers
+        }
+        #expect(checkers?.first == .giftCardScanChecker)
+    }
+
+    @Test(arguments: RootGiftCardRoutingTests.SwapScannerEntry.allCases)
+    func swapCoordinatorKeepsOrdinaryAddressScanning(entry: RootGiftCardRoutingTests.SwapScannerEntry) async throws {
+        var state = SwapAndPayCoordFlow.State()
+        switch entry {
+        case .form: break
+        case .nestedForm: state.path.append(.swapAndPayForm(SwapAndPay.State.initial))
+        case .addressBook: state.path.append(.addressBook(AddressBook.State.initial))
+        }
+        let store = Store(initialState: state) { SwapAndPayCoordFlow() }
+        switch entry {
+        case .form: store.send(.swapAndPay(.scanTapped))
+        case .nestedForm:
+            let id = try #require(store.withState { $0.path.ids.last })
+            store.send(.path(.element(id: id, action: .swapAndPayForm(.scanTapped))))
+        case .addressBook:
+            let id = try #require(store.withState { $0.path.ids.last })
+            store.send(.path(.element(id: id, action: .addressBook(.scanButtonTapped))))
+        }
+        state = store.withState { $0 }
+        guard case .some(.scan(let scanState)) = state.path.last else {
+            Issue.record("Scanner missing")
+            return
+        }
+        let action = scanState.checkers.lazy.compactMap { $0.checker.checkQRCode("ordinary-address") }.first
+        #expect(action == .foundString("ordinary-address"))
+        let scanId = try #require(state.path.ids.last)
+        // Exercise the coordinator's address consumer directly: its existing direct-scan pop
+        // precedes the child reducer and produces a TCA missing-element warning in the full store.
+        withDependencies {
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        } operation: {
+            _ = SwapAndPayCoordFlow().coordinatorReduce().reduce(
+                into: &state, action: .path(.element(id: scanId, action: .scan(.foundString("ordinary-address"))))
+            )
+        }
+        if entry == .form {
+            #expect(state.swapAndPayState.address == "ordinary-address")
+        } else {
+            guard case .some(.addressBookContact(let contact)) = state.path.last else {
+                Issue.record("Ordinary address did not reach the contact form")
+                return
+            }
+            #expect(contact.address == "ordinary-address")
+        }
+    }
+
     @Test func pastedGiftCardLinkIsFound() async {
         var state = Scan.State.giftCardScanner
         state.instructions = nil

@@ -9,7 +9,7 @@ import ComposableArchitecture
 import Foundation
 
 /// Routing for the "Redeem gift card" flow: Home's entry point, gift card links found by the
-/// scanners of the Scan and Send flows, and gift card links the app was opened with.
+/// scanners of the Scan, Send and Swap/Pay flows, and gift card links the app was opened with.
 ///
 /// Only a card scanned (or pasted) inside the app is ever redeemed. A link handed to the app from
 /// outside (a universal link, another app) could have been altered on its way in, so it is
@@ -30,7 +30,8 @@ extension Root {
 
             case .scanCoordFlow(.scan(.foundGiftCard(let link))),
                     .scanCoordFlow(.path(.element(id: _, action: .scan(.foundGiftCard(let link))))),
-                    .sendCoordFlow(.path(.element(id: _, action: .scan(.foundGiftCard(let link))))):
+                    .sendCoordFlow(.path(.element(id: _, action: .scan(.foundGiftCard(let link))))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .scan(.foundGiftCard(let link))))):
                 // The user scanned a gift card where they expected an address: take them to the
                 // redeem flow instead. Nothing has been sent from these flows at scan time.
                 return openGiftCardFlow(GiftCardCoordFlow.State(link: link), state: &state)

@@ -76,6 +76,66 @@ import ComposableArchitecture
         return state
     }
 
+    enum SwapScannerEntry: CaseIterable {
+        case form
+        case nestedForm
+        case addressBook
+    }
+
+    private func openSwapScanner(_ entry: SwapScannerEntry, store: TestStore<Root.State, Root.Action>) async throws {
+        switch entry {
+        case .form:
+            await store.send(.swapAndPayCoordFlow(.swapAndPay(.scanTapped)))
+        case .nestedForm:
+            let id = try #require(store.state.swapAndPayCoordFlowState.path.ids.last)
+            await store.send(.swapAndPayCoordFlow(.path(.element(id: id, action: .swapAndPayForm(.scanTapped)))))
+        case .addressBook:
+            let id = try #require(store.state.swapAndPayCoordFlowState.path.ids.last)
+            await store.send(.swapAndPayCoordFlow(.path(.element(id: id, action: .addressBook(.scanButtonTapped)))))
+        }
+    }
+
+    private func swapScannerState(_ entry: SwapScannerEntry) -> Root.State {
+        var state = homeState()
+        state.path = .swapAndPayCoordFlow
+        if entry == .nestedForm {
+            state.swapAndPayCoordFlowState.path.append(.swapAndPayForm(SwapAndPay.State.initial))
+        } else if entry == .addressBook {
+            state.swapAndPayCoordFlowState.path.append(.addressBook(AddressBook.State.initial))
+        }
+        return state
+    }
+
+    @Test(arguments: SwapScannerEntry.allCases, [false, true])
+    func swapScannerRoutesGiftCardsWithoutPopulatingAnAddress(entry: SwapScannerEntry, legacy: Bool) async throws {
+        let link = legacy
+            ? "https://link.vizor.cash/payment-links/open#v3=synthetic-fixture"
+            : Self.linkString
+        let store = makeStore(state: swapScannerState(entry))
+        try await openSwapScanner(entry, store: store)
+        let scanId = try #require(store.state.swapAndPayCoordFlowState.path.ids.last)
+        await store.send(.swapAndPayCoordFlow(.path(.element(id: scanId, action: .scan(.scan(link.redacted))))))
+        await store.receive { action in
+            switch action {
+            case .swapAndPayCoordFlow(.path(.element(id: _, action: .scan(.foundGiftCard)))),
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .scan(.foundString)))):
+                return true
+            default: return false
+            }
+        }
+        await store.finish()
+        #expect(store.state.path == .giftCardCoordFlow)
+        let cardHasScannedLink = store.state.giftCardCoordFlowState.redeemState?.link == link.redacted
+        let destinationIsEmpty = store.state.swapAndPayCoordFlowState.swapAndPayState.address.isEmpty
+        #expect(cardHasScannedLink)
+        #expect(destinationIsEmpty)
+        let hasContact = store.state.swapAndPayCoordFlowState.path.contains { element in
+            if case .addressBookContact = element { return true }
+            return false
+        }
+        #expect(!hasContact)
+    }
+
     @Test(arguments: [false, true]) func parentNavigationClosesTheCard(rescan: Bool) async {
         let handle = GiftCardHandle()
         let cleaned = LockIsolated<[GiftCardHandle]>([])
