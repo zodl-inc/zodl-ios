@@ -78,6 +78,37 @@ struct AddLedgerHWWallet {
         /// once the scan stops.
         var isShowingSearchingCopy: Bool { isScanning && devices.isEmpty }
 
+        /// MOB-2020: the "Advanced options" card's own account index field, raw user input.
+        /// Defaults to "0" for a fresh pairing; seeded from the repair target's stored binding
+        /// instead when pairing an account again (ConnectHWWalletCoordFlowCoordinator, which
+        /// alone knows the target).
+        var accountIndexText = "0"
+
+        /// Whether the "Advanced options" card is expanded. Defaults to collapsed; the
+        /// coordinator expands it up front when the repair prefill above isn't "0", and
+        /// `advancedOptionsToggleTapped` refuses to collapse it while `selectedAccountIndex`
+        /// is `nil`, so the reason Connect is disabled stays in view.
+        var isAdvancedOptionsExpanded = false
+
+        /// The ZIP 32 account index `accountIndexText` names, when it is a whole number from 0
+        /// to `Self.maxAccountIndex` inclusive: digits only, so an empty string, a sign or a
+        /// separator (`"1.5"`) is invalid, same as a value outside that range. `nil` while
+        /// invalid -- `connectDeviceTapped` reads this instead of hard-coding account 0, and the
+        /// view disables Connect and refuses to collapse the card while it's `nil`.
+        var selectedAccountIndex: Zip32AccountIndex? {
+            guard !accountIndexText.isEmpty, accountIndexText.allSatisfy({ ("0"..."9").contains($0) }) else {
+                return nil
+            }
+            guard let value = UInt32(accountIndexText), value <= Self.maxAccountIndex else {
+                return nil
+            }
+            return Zip32AccountIndex(value)
+        }
+
+        /// pczt_ledger's `MAX_BIP44_ACCOUNT`, the highest account index the Ledger Zcash app
+        /// derives.
+        static let maxAccountIndex: UInt32 = 100
+
         /// The paired account's address, derived from the pairing's UFVK the same way Keystone's
         /// `keystoneAddress` is — empty when there is no pairing yet or derivation fails.
         var pairedAddress: String {
@@ -111,6 +142,10 @@ struct AddLedgerHWWallet {
         case accountImportFailed(String)
         case accountImportSucceeded
         case accountTapped
+        /// MOB-2020: the "Advanced options" card's header -- expands or collapses it, but refuses
+        /// to collapse while `selectedAccountIndex` is `nil` (Android's own
+        /// `LedgerDeviceScanVM.onAdvancedOptionsToggle`).
+        case advancedOptionsToggleTapped
         /// The picker's Connect button (MOB-2020, Android aac01e65): bonds `selectedDevice` right
         /// here, on the picker element -- unlike before, nothing is pushed until the bond
         /// succeeds or fails. `deviceBonded` reports the outcome.
@@ -287,12 +322,28 @@ struct AddLedgerHWWallet {
                 state.isIssueSheetPresented = false
                 return .none
 
+            case .advancedOptionsToggleTapped:
+                // MOB-2020: an invalid index keeps the card open, so the reason Connect is
+                // disabled stays visible instead of collapsing out of view.
+                if state.isAdvancedOptionsExpanded && state.selectedAccountIndex == nil {
+                    return .none
+                }
+                state.isAdvancedOptionsExpanded.toggle()
+                return .none
+
             case .approveOnDeviceTapped:
                 // MOB-2020 (Android 48b8d5bc, 6c9491c7, e3480698): bonds right here, on the
                 // picker, instead of pushing first -- a first Bluetooth pairing with the Zcash
                 // app already open freezes the device on its pairing screen, so nothing opens the
                 // app until the bond (and this device's already-running-app answer) is in.
-                guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
+                // MOB-2020: the picker's own Connect is already disabled while
+                // `selectedAccountIndex` is `nil` (Android's own `onConnectClick`), checked again
+                // here rather than trusting the view alone.
+                guard let device = state.selectedDevice,
+                      state.selectedAccountIndex != nil,
+                      !state.isConnecting,
+                      !state.isPairing
+                else {
                     return .none
                 }
                 state.isConnecting = true
@@ -381,7 +432,15 @@ struct AddLedgerHWWallet {
                 // Connect/auto-start -- pairs on a fresh connection of its own (`pairDevice`)
                 // instead of the old connect()-then-pairAccount() pair. One atomic call, so
                 // there is no separate "connected" checkpoint to report mid-flight any more.
-                guard let device = state.selectedDevice, !state.isConnecting, !state.isPairing else {
+                // MOB-2020: `accountIndex` guards the same way `device` does -- the picker's own
+                // Connect is already disabled while it's `nil`, but this screen can auto-start a
+                // pairing (`.ledgerDevicePicker(.deviceBonded)`/`.ledgerOpenApp(.zcashAppOpened)`
+                // in the coordinator), so it checks again rather than trusting the picker alone.
+                guard let device = state.selectedDevice,
+                      let accountIndex = state.selectedAccountIndex,
+                      !state.isConnecting,
+                      !state.isPairing
+                else {
                     return .none
                 }
                 state.isPairing = true
@@ -390,7 +449,7 @@ struct AddLedgerHWWallet {
                 return .run { send in
                     let outcome = await LedgerIssue.racingApprovalTimeout(clock: clock) { () -> ConnectAndPairOutcome in
                         do {
-                            let pairing = try await ledgerClient.pairDevice(device, Zip32AccountIndex(0))
+                            let pairing = try await ledgerClient.pairDevice(device, accountIndex)
                             return .paired(pairing)
                         } catch {
                             // MOB-2020: classified as setup, not bonding -- the picker's own

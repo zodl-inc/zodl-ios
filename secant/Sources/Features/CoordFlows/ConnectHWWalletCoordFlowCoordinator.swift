@@ -113,7 +113,7 @@ extension ConnectHWWalletCoordFlow {
                 // reports "Bluetooth Access Required" (LedgerIssue.bluetoothUnauthorized).
             case .path(.element(id: _, action: .ledgerTurnOn(.connectTapped))):
                 guard bluetoothPermission.authorizationStatus() == .notDetermined else {
-                    state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+                    state.path.append(.ledgerDevicePicker(ledgerDevicePickerInitialState(state: state)))
                     return .none
                 }
                 return .run { send in
@@ -125,7 +125,7 @@ extension ConnectHWWalletCoordFlow {
                 // A no-op if the user already backed out of the Turn On step while the request
                 // was in flight -- only push the picker while it's still the element on top.
                 guard case .ledgerTurnOn = state.path.last else { return .none }
-                state.path.append(.ledgerDevicePicker(AddLedgerHWWallet.State.initial))
+                state.path.append(.ledgerDevicePicker(ledgerDevicePickerInitialState(state: state)))
                 return .none
 
                 // MARK: - Ledger Device Picker
@@ -377,5 +377,24 @@ extension ConnectHWWalletCoordFlow {
             }
         }
         return .keystone
+    }
+
+    /// MOB-2020: the device picker's initial state -- `.initial` for a fresh pairing, or, when
+    /// `state.ledgerRepairTarget` is set, prefilled with the account index the target's stored
+    /// binding holds, its "Advanced options" card expanded up front when that index isn't 0
+    /// (Android's own `LedgerDeviceScanVM.initialState`). A target whose binding can't be read
+    /// (never paired yet, or a decode failure) falls back to the same defaults as a fresh
+    /// pairing, the same way `ConnectHWWalletCoordFlowStore`'s own repair read already tolerates
+    /// a missing binding with `try?`.
+    private func ledgerDevicePickerInitialState(state: ConnectHWWalletCoordFlow.State) -> AddLedgerHWWallet.State {
+        var pickerState = AddLedgerHWWallet.State.initial
+        guard let target = state.ledgerRepairTarget,
+              let index = try? walletStorage.exportLedgerBinding(target).zip32AccountIndex.index
+        else {
+            return pickerState
+        }
+        pickerState.accountIndexText = String(index)
+        pickerState.isAdvancedOptionsExpanded = index != 0
+        return pickerState
     }
 }
