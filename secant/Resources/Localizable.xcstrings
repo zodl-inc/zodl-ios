@@ -389,6 +389,23 @@
         }
       }
     },
+    "addressBook.error.giftCardLink" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gift card links can't be saved as contacts. Use Redeem Gift Card instead."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los enlaces de tarjetas de regalo no se pueden guardar como contactos. Usa Canjear tarjeta de regalo."
+          }
+        }
+      }
+    },
     "addressBook.error.invalidAddress" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8543,6 +8560,23 @@
         }
       }
     },
+    "giftCard.dust.desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This gift card holds too little to cover the network fee, so there's nothing to redeem."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta tarjeta de regalo tiene muy poco para cubrir la tarifa de red, así que no hay nada que canjear."
+          }
+        }
+      }
+    },
     "giftCard.empty.desc" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8753,13 +8787,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The funds will be sent to your Zodl wallet. The network fee is paid from the gift card."
+            "value" : "The funds will be sent to your %@ wallet. The network fee is already deducted from the amount shown."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Los fondos se enviarán a tu billetera Zodl. La tarifa de red se paga con la tarjeta de regalo."
+            "value" : "Los fondos se enviarán a tu billetera %@. La tarifa de red ya está descontada del monto mostrado."
+          }
+        }
+      }
+    },
+    "giftCard.ready.noteNoWallet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The network fee is already deducted from the amount shown."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La tarifa de red ya está descontada del monto mostrado."
           }
         }
       }
@@ -8957,13 +9008,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "For better safety and security, rescan the QR code on your gift card with Zodl."
+            "value" : "Looks like you opened a gift card from another app. For better safety and security, scan the gift card's QR code with Zodl."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Para mayor seguridad y protección, vuelve a escanear el código QR de tu tarjeta de regalo con Zodl."
+            "value" : "Parece que abriste una tarjeta de regalo desde otra aplicación. Para mayor seguridad y protección, escanea el código QR de la tarjeta de regalo con Zodl."
           }
         }
       }
@@ -8981,6 +9032,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Escanea el código QR de tu tarjeta de regalo"
+          }
+        }
+      }
+    },
+    "giftCard.scanInvalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This isn't a valid gift card. Scan the gift card's QR code or copy its link and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta no es una tarjeta de regalo válida. Escanea el código QR de la tarjeta o copia su enlace e inténtalo de nuevo."
           }
         }
       }
@@ -20721,7 +20789,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gift-card links cannot be used as swap addresses. Use Redeem gift card instead."
+            "value" : "Gift card links can't be used as swap addresses. Use Redeem Gift Card instead."
           }
         },
         "es" : {

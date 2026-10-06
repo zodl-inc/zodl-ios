@@ -92,7 +92,7 @@ import ComposableArchitecture
 
         var state = GiftCardCoordFlow.State(link: Self.link)
         state.redeemState?.handle = handle
-        state.redeemState?.step = .ready(spendable: Zatoshi(10_000_000))
+        state.redeemState?.step = .ready(redeemable: Zatoshi(10_000_000))
 
         let store = TestStore(initialState: state) {
             GiftCardCoordFlow()

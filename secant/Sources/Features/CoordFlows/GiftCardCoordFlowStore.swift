@@ -105,11 +105,12 @@ extension Scan.State {
         state.checkers = [.giftCardScanChecker]
         state.isPasteEnabled = true
         state.instructions = String(localizable: .giftCardScanInstructions)
+        state.invalidCodeInfo = String(localizable: .giftCardScanInvalid)
         return state
     }
 
     /// The gift card scanner opened for a gift card link that came from outside the app, which is
-    /// not used: it explains why the card has to be scanned again.
+    /// not used: it says the card was opened from another app and asks to scan it with Zodl.
     static var giftCardRescanner: Scan.State {
         var state = Scan.State.giftCardScanner
         state.instructions = String(localizable: .giftCardRescanInstructions)

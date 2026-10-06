@@ -17,7 +17,8 @@ extension GiftCardClient: TestDependencyKey {
 extension GiftCardClient {
     /// What the mocked card holds and how redeeming it ends.
     struct MockScenario: Sendable {
-        var status: GiftCardStatus = .ready(spendable: Zatoshi(10_000_000))
+        /// A Zodl card: its value plus the fee of sweeping it, so it gives exactly its stated amount.
+        var status: GiftCardStatus = .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000))
         var networkType: NetworkType = .mainnet
         var message: String? = "Welcome to Zcash Summit"
         var statedAmount: Zatoshi? = Zatoshi(10_000_000)
@@ -27,6 +28,8 @@ extension GiftCardClient {
         /// does. Models a broadcast that fails once and goes through on the retry.
         var redeemFailuresBeforeSuccess: Int?
         var txId = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+        /// What a redemption reports as received; by default the ready card's `redeemable`.
+        var received: Zatoshi?
         /// Progress values reported before `check` answers.
         var progressSteps: [Double] = [0.25, 0.5, 0.75, 1.0]
         /// Simulated sync time; zero in tests.
@@ -35,6 +38,7 @@ extension GiftCardClient {
         static let ready = MockScenario()
         static let pending = MockScenario(status: .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3))
         static let empty = MockScenario(status: .empty)
+        static let dust = MockScenario(status: .dust)
         static let testnet = MockScenario(networkType: .testnet)
         static let redeemFails = MockScenario(redeemError: .redeemFailed)
         static let redeemFailsOnce = MockScenario(redeemError: .redeemFailed, redeemFailuresBeforeSuccess: 1)
@@ -93,7 +97,13 @@ extension GiftCardClient {
                 if let error = scenario.redeemError, scenario.redeemFailuresBeforeSuccess.map({ attempt <= $0 }) ?? true {
                     throw error
                 }
-                return scenario.txId
+                if let received = scenario.received {
+                    return GiftCardRedemption(txId: scenario.txId, received: received)
+                }
+                if case let .ready(_, redeemable) = scenario.status {
+                    return GiftCardRedemption(txId: scenario.txId, received: redeemable)
+                }
+                return GiftCardRedemption(txId: scenario.txId, received: nil)
             },
             cleanup: { _ in },
             removeLeftoverWallets: { }

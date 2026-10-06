@@ -41,8 +41,9 @@ struct GiftCardClient {
     /// Syncs the card's wallet and reports what can be redeemed.
     var check: @Sendable (_ handle: GiftCardHandle) async throws -> GiftCardStatus
     /// Sends everything the card holds, minus the network fee, to `toAddress` and returns the
-    /// transaction id. This broadcasts, so the live implementation takes the transaction guard.
-    var redeem: @Sendable (_ handle: GiftCardHandle, _ toAddress: String) async throws -> String
+    /// transaction id and what the wallet receives. This broadcasts, so the live implementation
+    /// takes the transaction guard.
+    var redeem: @Sendable (_ handle: GiftCardHandle, _ toAddress: String) async throws -> GiftCardRedemption
     /// Stops the card's wallet and deletes everything stored for it. Safe to call more than once
     /// and with a handle that is already gone.
     var cleanup: @Sendable (_ handle: GiftCardHandle) async -> Void
@@ -81,14 +82,27 @@ struct GiftCardHandle: Hashable, Sendable {
 
 /// What a synced card holds.
 enum GiftCardStatus: Equatable, Sendable {
-    /// Funds that can be redeemed right now. `spendable` is the card's value; the network fee is
-    /// paid from it, so the user receives slightly less.
-    case ready(spendable: Zatoshi)
+    /// Funds that can be redeemed right now. `spendable` is the card's value; `redeemable` is what
+    /// the wallet receives: `spendable` minus the network fee, as the wallet SDK proposes the
+    /// redemption for the card's actual notes.
+    case ready(spendable: Zatoshi, redeemable: Zatoshi)
     /// The card has been funded but the funds need more confirmations before they can be spent.
+    /// `amount` is what is still waiting for them.
     case pending(amount: Zatoshi, confirmationsNeeded: Int?)
-    /// Nothing to redeem: the card was already redeemed, it has not been funded yet, or what it
-    /// holds would not even cover the network fee.
+    /// The card holds something, but no more than the network fee a redemption would pay: there is
+    /// nothing to redeem, and checking again cannot change that.
+    case dust
+    /// Nothing to redeem: the card was already redeemed, or it has not been funded yet.
     case empty
+}
+
+/// A redemption a server accepted.
+struct GiftCardRedemption: Equatable, Sendable {
+    /// The id of the transaction that sweeps the card.
+    let txId: String
+    /// What the wallet receives, after the network fee, as the redemption's proposal computed it;
+    /// `nil` when it is not known.
+    let received: Zatoshi?
 }
 
 /// Errors from `GiftCardClient`. They never carry any part of the link.
@@ -108,7 +122,8 @@ enum GiftCardClientError: Error, Equatable, Sendable {
     /// Redeeming failed; nothing is known to have been broadcast.
     case redeemFailed
     /// The card holds nothing worth redeeming: it was redeemed meanwhile, or the network fee would
-    /// take everything it holds. Nothing was created or broadcast.
+    /// take everything it holds. Nothing was created or broadcast; checking the card again tells
+    /// which.
     case nothingToRedeem
     /// This build cannot redeem gift cards (the wallet SDK does not provide it yet).
     case unavailable

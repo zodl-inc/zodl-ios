@@ -76,6 +76,16 @@ struct GiftCardRedeemView: View {
             )
             .applyFailureScreenBackground()
 
+        case .dust:
+            // Checking again cannot help a card whose funds would all go to the fee: Close only.
+            statusScreen(
+                illustration: Asset.Assets.Illustrations.giftEmpty.image,
+                title: String(localizable: .giftCardEmptyTitle),
+                desc: String(localizable: .giftCardDustDesc),
+                retryTitle: nil
+            )
+            .applyFailureScreenBackground()
+
         case .invalidLink:
             errorScreen(title: String(localizable: .giftCardInvalidTitle), desc: String(localizable: .giftCardInvalidDesc))
 
@@ -184,7 +194,7 @@ extension GiftCardRedeemView {
                     .zImage(size: 16, style: Design.Text.tertiary)
                     .padding(.trailing, 8)
 
-                Text(localizable: .giftCardReadyNote)
+                Text(readyNote())
                     .zFont(size: 12, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -272,10 +282,19 @@ extension GiftCardRedeemView {
             Spacer()
 
             if let retryTitle {
-                ZashiButton(retryTitle, type: .tertiary) {
-                    store.send(.retryTapped)
+                if store.isRechecking {
+                    // Check again runs without leaving the screen; the button shows it is busy.
+                    ZashiButton(retryTitle, type: .tertiary, accessoryView: ProgressView()) {
+                        store.send(.retryTapped)
+                    }
+                    .disabled(true)
+                    .padding(.bottom, 12)
+                } else {
+                    ZashiButton(retryTitle, type: .tertiary) {
+                        store.send(.retryTapped)
+                    }
+                    .padding(.bottom, 12)
                 }
-                .padding(.bottom, 12)
             }
 
             ZashiButton(String(localizable: .generalClose)) {
@@ -285,6 +304,15 @@ extension GiftCardRedeemView {
         }
         .padding(.vertical, 1)
         .screenHorizontalPadding()
+    }
+
+    /// Where the funds go, named after the selected account's wallet, and that the amount shown is
+    /// already net of the network fee.
+    func readyNote() -> String {
+        guard let wallet = store.selectedWalletAccount?.vendor.name() else {
+            return String(localizable: .giftCardReadyNoteNoWallet)
+        }
+        return String(localizable: .giftCardReadyNote(wallet))
     }
 
     /// The amount the wallet receives, as the screens show it, e.g. "0.100 ZEC": at least three
@@ -319,7 +347,7 @@ extension GiftCardRedeemView {
 
 #Preview("Ready") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.ready(spendable: Zatoshi(10_010_000))), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.ready(redeemable: Zatoshi(10_000_000))), tokenName: "ZEC")
     }
 }
 
@@ -332,6 +360,12 @@ extension GiftCardRedeemView {
 #Preview("Empty") {
     NavigationView {
         GiftCardRedeemView(store: GiftCardRedeem.preview(.empty), tokenName: "ZEC")
+    }
+}
+
+#Preview("Dust") {
+    NavigationView {
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.dust), tokenName: "ZEC")
     }
 }
 

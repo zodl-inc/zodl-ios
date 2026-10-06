@@ -14,7 +14,8 @@ import ComposableArchitecture
 ///
 /// The link is a bearer secret: it lives only in `state.text` (redacted) and is never logged.
 /// When it came from the clipboard, the clipboard is cleared as the screen is left (Continue or
-/// back), but only while it still holds that same gift card link.
+/// back), but only while it still holds that same text. That includes pasted text that holds a
+/// card's link or key anywhere in it, even when it is not a link Continue accepts.
 @Reducer
 struct GiftCardPasteLink {
     @ObservableState
@@ -61,8 +62,10 @@ struct GiftCardPasteLink {
                     return .none
                 }
                 let text = pasted.data.trimmingCharacters(in: .whitespacesAndNewlines)
-                if giftCard.isGiftCardLink(text) {
-                    // The clipboard is matched against the original, untrimmed value.
+                // Anything pasted that holds a card's secret, even inside other text, is cleared
+                // from the clipboard on leaving. The clipboard is matched against the original,
+                // untrimmed value.
+                if giftCard.isGiftCardLink(text) || GiftCardSecretDetector.mayContainGiftCardSecret(text) {
                     state.pastedLink = pasted
                 }
                 update(&state, text: text)

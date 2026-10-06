@@ -194,12 +194,16 @@ extension GiftCardClient {
     /// switch, exactly like the wallet's own sends (see AGENTS.md, "Transaction guard"). The guard
     /// is taken here, once, and never by callers.
     ///
-    /// The claim is recorded in the wallet's own synchronizer as an untrusted incoming transaction:
-    /// it shows in history at once and follows the normal policy (10 confirmations by default). The
-    /// SDK writes it straight to the wallet database, so this works while the main synchronizer is
+    /// The claim is recorded in the wallet's own synchronizer as a trusted incoming transaction
+    /// (ZIP 315): it shows in history at once and is spendable after 3 confirmations. The SDK
+    /// writes it straight to the wallet database, so this works while the main synchronizer is
     /// stopped for the card (see `RootGiftCards`). A claim that could not be recorded is only
     /// logged: the wallet then finds it on chain like any other receive.
-    private static func redeem(_ handle: GiftCardHandle, to toAddress: String, registry: GiftCardSessionRegistry) async throws -> String {
+    private static func redeem(
+        _ handle: GiftCardHandle,
+        to toAddress: String,
+        registry: GiftCardSessionRegistry
+    ) async throws -> GiftCardRedemption {
         guard let session = await registry.session(for: handle) else {
             throw GiftCardClientError.unknownHandle
         }
@@ -217,7 +221,7 @@ extension GiftCardClient {
                 if !sweep.recordedInMainWallet {
                     LoggerProxy.warn("[GiftCard] redeem: the claim was not recorded in the wallet; it will show once synced")
                 }
-                return sweep.txId
+                return GiftCardRedemption(txId: sweep.txId, received: sweep.received)
             }
         } catch let error as GiftCardClientError {
             throw error
@@ -282,7 +286,7 @@ protocol GiftCardSession: Sendable {
     /// Syncs (if needed) and reports what the card holds.
     func status() async throws -> GiftCardStatus
     /// Sends everything, minus the fee, to `address`, records the accepted claim in `mainWallet`
-    /// (the synchronizer of the wallet `address` belongs to) as an untrusted incoming transaction, and
+    /// (the synchronizer of the wallet `address` belongs to) as a trusted incoming transaction, and
     /// returns what happened. Throws `GiftCardSubmissionFailed` when a transaction was created but
     /// no server accepted it: the session is then spent and must be replaced with `reopen()`
     /// before another attempt. Failing to record never throws.
@@ -306,9 +310,12 @@ struct GiftCardClaimDestination: @unchecked Sendable {
 struct GiftCardSweep: Equatable, Sendable {
     /// The id of the first transaction a server accepted.
     let txId: String
-    /// Whether the wallet's own synchronizer stored the claim with the normal incoming trust policy. When it
-    /// did not, the wallet learns about the claim from the chain, as an ordinary receive.
+    /// Whether the wallet's own synchronizer stored the claim as a trusted receive. When it did not,
+    /// the wallet learns about the claim from the chain, as an ordinary receive.
     let recordedInMainWallet: Bool
+    /// What the wallet receives, after the fee, as the sweep's proposal computed it; `nil` when
+    /// not known.
+    var received: Zatoshi?
 }
 
 /// How the card's wallet is set up: like the wallet's own synchronizer, so that opening a card
@@ -403,17 +410,20 @@ struct GiftCardRedeemerSession: GiftCardSession {
         return Self.appStatus(status)
     }
 
-    /// The SDK's view of a card, as the redeem screen shows it.
+    /// The SDK's view of a card, as the redeem screen shows it. A ready card's `redeemable` is what
+    /// the SDK's own proposal of the redemption sends, after the fee its notes require.
     static func appStatus(_ status: ZcashLightClientKit.GiftCardStatus) -> GiftCardStatus {
         switch status.state {
         case .ready:
-            return .ready(spendable: status.spendable)
+            return .ready(spendable: status.spendable, redeemable: status.redeemable)
         case .pending:
             // The SDK does not say how many confirmations are still missing; funds from another
             // wallet need 10, and the pending screen re-checks on its own.
-            return .pending(amount: status.total, confirmationsNeeded: nil)
-        case .dust, .empty:
-            // A dust card's fee would take everything it holds: there is nothing to redeem.
+            return .pending(amount: status.pending, confirmationsNeeded: nil)
+        case .dust:
+            // The fee would take everything the card holds.
+            return .dust
+        case .empty:
             return .empty
         }
     }
@@ -462,7 +472,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
         guard let txId = outcome.txId else {
             throw GiftCardSubmissionFailed()
         }
-        return GiftCardSweep(txId: txId, recordedInMainWallet: outcome.recordedInDestination)
+        return GiftCardSweep(txId: txId, recordedInMainWallet: outcome.recordedInDestination, received: outcome.received)
     }
 
     func reopen() async throws -> any GiftCardSession {
@@ -495,8 +505,11 @@ extension GiftCardRedeemer {
         /// One line per transaction that was not accepted; never contains the link, nor any text
         /// the server sent back.
         let failures: [String]
-        /// Whether the destination synchronizer stored the accepted claim with the normal incoming trust policy.
+        /// Whether the destination synchronizer stored the accepted claim as a trusted receive.
         let recordedInDestination: Bool
+        /// What the recipient receives, after the fee, as the redemption's proposal computed it;
+        /// `nil` when it is not positive.
+        let received: Zatoshi?
     }
 
     /// `redeem(to:memo:recordIn:)`, with its results reduced on the actor: the SDK's submit
@@ -517,7 +530,12 @@ extension GiftCardRedeemer {
                 failures.append(failure)
             }
         }
-        return SubmissionOutcome(txId: txId, failures: failures, recordedInDestination: redemption.recordedInDestination)
+        return SubmissionOutcome(
+            txId: txId,
+            failures: failures,
+            recordedInDestination: redemption.recordedInDestination,
+            received: redemption.amount > .zero ? redemption.amount : nil
+        )
     }
 
     /// A log line for a submission no server accepted, `nil` for an accepted one. A server's

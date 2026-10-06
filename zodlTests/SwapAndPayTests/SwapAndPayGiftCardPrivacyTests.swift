@@ -10,6 +10,11 @@ import os
         case vizor
         case malformedZodl
         case malformedVizor
+        /// Disguised: inside other text, with a zero-width space, percent-encoded, or a bare key.
+        case embedded
+        case zeroWidth
+        case percentEncoded
+        case bareKey
 
         var link: String {
             switch self {
@@ -18,6 +23,10 @@ import os
             case .vizor: "https://link.vizor.cash/payment-links/open#v3=synthetic-bearer-fixture"
             case .malformedZodl: "https://gift.zodl.com/#key=synthetic-bearer-fixture&v=broken"
             case .malformedVizor: "https://link.vizor.cash/payment-links/open#v3=%%%synthetic-bearer-fixture"
+            case .embedded: "Your gift: https://gift.zodl.com/#v=1&key=synthetic-bearer-fixture&height=3000000 enjoy"
+            case .zeroWidth: "https://gift\u{200B}.zodl.com/#v=1&key=synthetic-bearer-fixture"
+            case .percentEncoded: "https%3A%2F%2Fgift.zodl.com%2F%23v%3D1%26key%3Dsynthetic-bearer-fixture"
+            case .bareKey: "zgift1synthetic-bearer-fixture"
             }
         }
     }

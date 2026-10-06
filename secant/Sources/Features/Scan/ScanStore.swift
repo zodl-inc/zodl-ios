@@ -31,6 +31,9 @@ struct Scan {
         var forceLibraryToHide = false
         var info = ""
         var instructions: String?
+        /// What a scanned code none of the `checkers` accepts is called, in place of the default
+        /// "not a valid Zcash address" (the gift card scanner names gift cards instead).
+        var invalidCodeInfo: String?
         var isAnythingFound = false
         var isCameraEnabled = true
         var isTorchAvailable = false
@@ -284,7 +287,7 @@ struct Scan {
             case .scanFailed(let result):
                 switch result {
                 case .invalidQRCode:
-                    state.info = String(localizable: .scanInvalidQR)
+                    state.info = state.invalidCodeInfo ?? String(localizable: .scanInvalidQR)
                 case .noQRCodeFound:
                     state.info = String(localizable: .scanInvalidImage)
                 case .severalQRCodesFound:
@@ -313,6 +316,9 @@ struct Scan {
 
                 if state.checkers.count == 2 && state.checkers[0] == .keystoneScanChecker && state.checkers[1] == .keystonePCZTScanChecker {
                     return .none
+                }
+                if state.invalidCodeInfo != nil {
+                    return .send(.scanFailed(.invalidQRCode))
                 }
                 return .send(.scanFailed(.noQRCodeFound))
 

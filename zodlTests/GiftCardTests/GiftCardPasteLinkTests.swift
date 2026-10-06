@@ -197,7 +197,18 @@ import ComposableArchitecture
         ("en", "giftCard.empty.desc", "This gift card was already redeemed, or hasn't been funded yet. Try again in a few minutes."),
         ("en", "giftCard.ready.title", "You received a gift!"),
         ("es", "giftCard.ready.title", "¡Recibiste un regalo!"),
-        ("en", "giftCard.ready.note", "The funds will be sent to your Zodl wallet. The network fee is paid from the gift card."),
+        ("en", "giftCard.ready.note", "The funds will be sent to your %@ wallet. The network fee is already deducted from the amount shown."),
+        ("es", "giftCard.ready.note", "Los fondos se enviarán a tu billetera %@. La tarifa de red ya está descontada del monto mostrado."),
+        ("en", "giftCard.ready.noteNoWallet", "The network fee is already deducted from the amount shown."),
+        ("en", "giftCard.dust.desc", "This gift card holds too little to cover the network fee, so there's nothing to redeem."),
+        ("es", "giftCard.dust.desc", "Esta tarjeta de regalo tiene muy poco para cubrir la tarifa de red, así que no hay nada que canjear."),
+        ("en", "giftCard.scanInvalid", "This isn't a valid gift card. Scan the gift card's QR code or copy its link and try again."),
+        ("es", "giftCard.scanInvalid", "Esta no es una tarjeta de regalo válida. Escanea el código QR de la tarjeta o copia su enlace e inténtalo de nuevo."),
+        ("en", "giftCard.rescanInstructions", "Looks like you opened a gift card from another app. For better safety and security, scan the gift card's QR code with Zodl."),
+        ("es", "giftCard.rescanInstructions", "Parece que abriste una tarjeta de regalo desde otra aplicación. Para mayor seguridad y protección, escanea el código QR de la tarjeta de regalo con Zodl."),
+        ("en", "swap.giftCardAddressNotAllowed", "Gift card links can't be used as swap addresses. Use Redeem Gift Card instead."),
+        ("en", "addressBook.error.giftCardLink", "Gift card links can't be saved as contacts. Use Redeem Gift Card instead."),
+        ("es", "addressBook.error.giftCardLink", "Los enlaces de tarjetas de regalo no se pueden guardar como contactos. Usa Canjear tarjeta de regalo."),
         ("en", "giftCard.paste.title", "Paste your gift card link"),
         ("es", "giftCard.paste.title", "Pega el enlace de tu tarjeta de regalo"),
         ("en", "giftCard.paste.invalid", "This link is not a valid gift card. Check it and try again."),
@@ -208,6 +219,14 @@ import ComposableArchitecture
         let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
         let bundle = try #require(Bundle(path: path))
         #expect(bundle.localizedString(forKey: key, value: nil, table: "Localizable") == value)
+    }
+
+    @Test(arguments: ["en", "es"])
+    func readyNoteNamesTheWallet(language: String) throws {
+        let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
+        let bundle = try #require(Bundle(path: path))
+        let format = bundle.localizedString(forKey: "giftCard.ready.note", value: nil, table: "Localizable")
+        #expect(String(format: format, "Keystone").contains("Keystone"))
     }
 
     @Test(arguments: ["en", "es"])

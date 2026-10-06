@@ -28,10 +28,15 @@ struct GiftCardRedeem {
         enum Step: Equatable {
             /// Opening and syncing the card's wallet.
             case checking
-            case ready(spendable: Zatoshi)
+            /// The card can be redeemed; `redeemable` is what the wallet receives, after the fee.
+            case ready(redeemable: Zatoshi)
+            /// `amount` is still waiting for confirmations.
             case pending(amount: Zatoshi, confirmationsNeeded: Int?)
-            /// Already redeemed, not funded yet, or holding less than the network fee.
+            /// Already redeemed, or not funded yet. Check again may find funds.
             case empty
+            /// Holding no more than the network fee: nothing to redeem, and checking again cannot
+            /// change that.
+            case dust
             case invalidLink
             /// A card for a newer link format.
             case unsupportedVersion
@@ -40,9 +45,11 @@ struct GiftCardRedeem {
             case checkFailed
             /// This build cannot redeem gift cards yet.
             case unavailable
+            /// `amount` is what the wallet is to receive, after the network fee.
             case redeeming(amount: Zatoshi)
             /// Redeemed; `received` is what the wallet gets, after the network fee.
             case success(received: Zatoshi)
+            /// `amount` is what the wallet was to receive.
             case failure(amount: Zatoshi)
         }
 
@@ -55,6 +62,12 @@ struct GiftCardRedeem {
         var step: Step = .checking
         /// Sync progress of the card's wallet, `0...1`, while `step == .checking`.
         var syncProgress: Double?
+        /// A Check again the user asked for on the Pending or Nothing to redeem screen is running:
+        /// the screen stays, with its button busy.
+        var isRechecking = false
+        /// A check of a pending or empty card is running in the background (Check again, or the
+        /// pending screen's own periodic check). Its failure keeps the screen as it is.
+        var isQuietCheckInFlight = false
         /// The selected account's Orchard-only unified address, resolved in the background.
         var destinationAddress: RedactableString?
         var destinationAccountId: AccountUUID?
@@ -68,35 +81,54 @@ struct GiftCardRedeem {
             return message
         }
 
-        /// The card's pre-fee amount, available only before a successful redemption.
+        /// The amount the step is about, available only before a successful redemption: what the
+        /// wallet is to receive (Ready, Redeeming, Redemption not confirmed), or what is still
+        /// waiting for confirmations (Pending).
         var amount: Zatoshi? {
             switch step {
             case .ready(let amount), .pending(let amount, _), .redeeming(let amount), .failure(let amount):
                 return amount
-            case .checking, .empty, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable, .success:
+            case .checking, .empty, .dust, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable, .success:
                 return nil
             }
         }
 
-        /// What the wallet receives from this card: the amount the screens show. See
-        /// `GiftCardRedeem.received(from:)`.
+        /// The amount the screens show: what the wallet receives from this card, after the network
+        /// fee the wallet SDK computed for the card's notes, or (Pending) what is still waiting for
+        /// confirmations.
         var receivedAmount: Zatoshi? {
             if case .success(let received) = step {
                 return received
             }
-            return amount.map(GiftCardRedeem.received(from:))
+            return amount
         }
 
         var isRedeemable: Bool {
-            if case .ready(let spendable) = step {
-                return spendable.amount > 0 && selectedWalletAccount != nil
+            if case .ready(let redeemable) = step {
+                return redeemable.amount > 0 && selectedWalletAccount != nil
             }
             return false
         }
 
+        /// Whether the step offers Check again / Try again. A dust card does not: checking it again
+        /// cannot help.
         var canRetry: Bool {
             switch step {
             case .pending, .empty, .checkFailed, .failure:
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// Whether a retry keeps the screen and checks the card in the background: Pending and
+        /// Nothing to redeem, while the card's wallet is open.
+        var retriesQuietly: Bool {
+            guard handle != nil else {
+                return false
+            }
+            switch step {
+            case .pending, .empty:
                 return true
             default:
                 return false
@@ -124,8 +156,12 @@ struct GiftCardRedeem {
             case opened(GiftCardHandle)
             case openFailed(GiftCardClientError)
             case progressUpdated(Double)
+            /// A background check of a pending or empty card failed; the screen stays.
+            case recheckFailed(GiftCardClientError)
+            /// A background check of a pending or empty card answered.
+            case recheckLoaded(GiftCardStatus)
             case redeemFailed(GiftCardClientError)
-            case redeemSucceeded(String)
+            case redeemSucceeded(GiftCardRedemption)
             case statusLoaded(GiftCardStatus)
         }
 
@@ -161,10 +197,24 @@ struct GiftCardRedeem {
                 }
                 return start(&state)
 
-            case .retryTapped, .response(_, .autoRetryFired):
+            case .retryTapped where state.retriesQuietly:
+                // Pending and Nothing to redeem keep their screen while the card is checked again.
+                state.isRechecking = true
+                return quietCheck(&state)
+
+            case .response(_, .autoRetryFired):
+                // The pending screen checks again on its own, quietly.
+                guard state.retriesQuietly, !state.isRechecking else {
+                    return .none
+                }
+                return quietCheck(&state)
+
+            case .retryTapped:
                 guard state.canRetry else {
                     return .none
                 }
+                state.isRechecking = false
+                state.isQuietCheckInFlight = false
                 state.step = .checking
                 state.syncProgress = nil
                 if let handle = state.handle {
@@ -201,22 +251,29 @@ struct GiftCardRedeem {
 
             case .response(_, .statusLoaded(let status)):
                 state.syncProgress = nil
-                switch status {
-                case .ready(let spendable):
-                    state.step = spendable.amount > 0 ? .ready(spendable: spendable) : .empty
-                    return .none
-                case let .pending(amount, confirmationsNeeded):
-                    state.step = .pending(amount: amount, confirmationsNeeded: confirmationsNeeded)
-                    let visit = state.cancelId
-                    return .run { send in
-                        try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
-                        await send(.response(visit, .autoRetryFired))
-                    }
-                    .cancellable(id: state.autoRetryCancelId, cancelInFlight: true)
-                case .empty:
-                    state.step = .empty
+                return show(status, state: &state)
+
+            case .response(_, .recheckLoaded(let status)):
+                state.isRechecking = false
+                state.isQuietCheckInFlight = false
+                // A redemption, a close or a full retry may have started meanwhile.
+                guard state.retriesQuietly else {
                     return .none
                 }
+                return show(status, state: &state)
+
+            case .response(_, .recheckFailed(let error)):
+                state.isRechecking = false
+                state.isQuietCheckInFlight = false
+                if error == .unknownHandle {
+                    // The card's wallet is gone: the next Check again opens the card again.
+                    state.handle = nil
+                }
+                // A pending card keeps checking on its own while its wallet is open.
+                guard case .pending = state.step, state.handle != nil else {
+                    return .none
+                }
+                return scheduleAutoRetry(state)
 
             case .response(_, .destinationResolved(let accountId, let address)):
                 guard state.selectedWalletAccount?.id == accountId else { return .none }
@@ -225,10 +282,12 @@ struct GiftCardRedeem {
                 return .none
 
             case .redeemTapped:
-                guard state.isRedeemable, case .ready(let spendable) = state.step, state.handle != nil else {
+                guard state.isRedeemable, case .ready(let redeemable) = state.step, state.handle != nil else {
                     return .none
                 }
-                state.step = .redeeming(amount: spendable)
+                state.isRechecking = false
+                state.isQuietCheckInFlight = false
+                state.step = .redeeming(amount: redeemable)
                 return resolveRedemptionDestination(state)
 
             case .response(_, .redemptionDestinationResolved(let accountId, let address)):
@@ -250,8 +309,8 @@ struct GiftCardRedeem {
                         return
                     }
                     do {
-                        let txId = try await giftCard.redeem(handle, address.data)
-                        await send(.response(visit, .redeemSucceeded(txId)))
+                        let redemption = try await giftCard.redeem(handle, address.data)
+                        await send(.response(visit, .redeemSucceeded(redemption)))
                     } catch is CancellationError {
                         return
                     } catch let error as GiftCardClientError {
@@ -262,12 +321,13 @@ struct GiftCardRedeem {
                 }
                 .cancellable(id: visit)
 
-            case .response(_, .redeemSucceeded(let txId)):
+            case .response(_, .redeemSucceeded(let redemption)):
                 guard case .redeeming(let amount) = state.step else {
                     return .none
                 }
-                state.txId = txId
-                state.step = .success(received: Self.received(from: amount))
+                state.txId = redemption.txId
+                // What the redemption's own proposal sent; the Ready figure if it is not known.
+                state.step = .success(received: redemption.received ?? amount)
                 return .send(.delegate(.redeemed))
 
             case .response(_, .redeemFailed(let error)):
@@ -278,15 +338,23 @@ struct GiftCardRedeem {
                 case .unavailable:
                     state.step = .unavailable
                 case .nothingToRedeem:
-                    // Nothing was sent, and sending again cannot help: the card is spent, or what
-                    // it holds would all go to the fee.
-                    state.step = .empty
+                    // Nothing was created or sent: the card was redeemed elsewhere meanwhile, or
+                    // what it holds would all go to the fee. A fresh check tells which (Nothing to
+                    // redeem, or the dust screen) instead of offering a Retry that fails the same way.
+                    guard let handle = state.handle else {
+                        state.step = .empty
+                        return .none
+                    }
+                    state.step = .checking
+                    return check(handle, state: state)
                 default:
                     state.step = .failure(amount: amount)
                 }
                 return .none
 
             case .closeTapped:
+                state.isRechecking = false
+                state.isQuietCheckInFlight = false
                 return .merge(
                     .cancel(id: state.cancelId),
                     .cancel(id: state.autoRetryCancelId),
@@ -301,20 +369,66 @@ struct GiftCardRedeem {
 }
 
 extension GiftCardRedeem {
-    /// What the wallet receives when `spendable` is swept: `spendable` minus the network fee.
-    ///
-    /// The wallet SDK computes the sweep's fee when it builds the transaction and does not report it
-    /// beforehand, so this deducts the ZIP 317 minimum fee the SDK uses as its default, which is the
-    /// fee of sweeping a card funded by a single note (every Zodl card). For such a card this is the
-    /// amount the card was issued for, e.g. 0.1001 ZEC on the card shows as 0.1 ZEC. A card holding
-    /// several notes pays a little more, so it receives slightly less than shown. An amount that
-    /// would not even cover the fee is shown as it is.
-    static func received(from spendable: Zatoshi) -> Zatoshi {
-        let fee = ZcashSDKMainnetConstants.defaultFee()
-        guard spendable > fee else {
-            return spendable
+    /// Moves to the screen for `status`. A pending card checks again on its own after
+    /// `Constants.autoRetryInterval`.
+    private func show(_ status: GiftCardStatus, state: inout State) -> Effect<Action> {
+        switch status {
+        case let .ready(spendable, redeemable):
+            // The wallet SDK reports a card as ready only when the fee leaves something to send.
+            if redeemable.amount > 0 {
+                state.step = .ready(redeemable: redeemable)
+            } else {
+                state.step = spendable.amount > 0 ? .dust : .empty
+            }
+            return .cancel(id: state.autoRetryCancelId)
+        case let .pending(amount, confirmationsNeeded):
+            state.step = .pending(amount: amount, confirmationsNeeded: confirmationsNeeded)
+            return scheduleAutoRetry(state)
+        case .dust:
+            state.step = .dust
+            return .cancel(id: state.autoRetryCancelId)
+        case .empty:
+            state.step = .empty
+            return .cancel(id: state.autoRetryCancelId)
         }
-        return spendable - fee
+    }
+
+    private func scheduleAutoRetry(_ state: State) -> Effect<Action> {
+        let visit = state.cancelId
+        return .run { send in
+            try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
+            await send(.response(visit, .autoRetryFired))
+        }
+        .cancellable(id: state.autoRetryCancelId, cancelInFlight: true)
+    }
+
+    /// Checks the card again without leaving the Pending or Nothing to redeem screen. A check
+    /// already running in the background is joined rather than repeated.
+    private func quietCheck(_ state: inout State) -> Effect<Action> {
+        guard let handle = state.handle else {
+            return .none
+        }
+        guard !state.isQuietCheckInFlight else {
+            return .none
+        }
+        state.isQuietCheckInFlight = true
+        let visit = state.cancelId
+        return .merge(
+            .cancel(id: state.autoRetryCancelId),
+            .run { send in
+                do {
+                    let status = try await giftCard.check(handle)
+                    await send(.response(visit, .recheckLoaded(status)))
+                } catch is CancellationError {
+                    return
+                } catch let error as GiftCardClientError {
+                    await send(.response(visit, .recheckFailed(error)))
+                } catch {
+                    await send(.response(visit, .recheckFailed(.checkFailed)))
+                }
+            }
+            .cancellable(id: visit)
+        )
     }
 
     /// Parses the link and, if it is a card for this wallet's network, opens it and resolves the
