@@ -27,6 +27,7 @@ extension Root {
     enum GiftCardSyncRecovery: Equatable {
         case none
         case delayedRetry
+        case retryDue
         case migrationDeferred
         case waitingForExternalTrigger
     }
@@ -104,6 +105,7 @@ extension Root {
     /// Reject responses before optional scopes, and snapshot resources before any reducer resets them.
     func giftCardLifecycle(_ content: some Reducer<State, Action>) -> Reduce<State, Action> {
         Reduce { state, action in
+            var effects: [Effect<Action>] = []
             if case let .giftCardCoordFlow(.redeem(.response(visit, response))) = action {
                 guard state.path == .giftCardCoordFlow, state.giftCardCoordFlowState.redeemState?.cancelId == visit else {
                     if case .opened(let handle) = response {
@@ -112,17 +114,20 @@ extension Root {
                     return .none
                 }
                 if case .opened = response {
+                    effects.append(.cancel(id: state.startFailureRetryCancelId))
                     state.giftCardSyncGeneration = UUID()
                     state.giftCardSyncResumePending = false
                     state.giftCardSyncRecovery = .none
+                    state.giftCardSyncRetryId = nil
                     state.giftCardSyncDidRecheckMigrationSeed = false
                     state.giftCardSyncPauseOwner = visit
                 }
             }
-            if case .giftCardRetrySync(let generation) = action {
-                guard state.giftCardSyncGeneration == generation,
+            if case .giftCardRetrySync(let retryId) = action {
+                guard state.giftCardSyncRetryId == retryId,
                       state.giftCardSyncRecovery == .delayedRetry else { return .none }
-                state.giftCardSyncRecovery = .none
+                state.giftCardSyncRetryId = nil
+                state.giftCardSyncRecovery = .retryDue
                 return reconcileGiftCardSync(state: &state)
             }
             if case .ordinarySyncFinished(let operation) = action {
@@ -251,19 +256,22 @@ extension Root {
                     state.giftCardSyncRecovery = state.didScheduleStartFailureRetry ? .waitingForExternalTrigger : .delayedRetry
                 }
                 var effects: [Effect<Action>] = []
+                if state.giftCardSyncRecovery == .delayedRetry {
+                    // Navigation can temporarily hide Home while the current native start fails.
+                    // Its one foreground retry still owns the original deadline in that case.
+                    state.didScheduleStartFailureRetry = true
+                    let retryId = UUID()
+                    state.giftCardSyncRetryId = retryId
+                    effects.append(.run { send in
+                        try await continuousClock.sleep(for: .seconds(15))
+                        await send(.giftCardRetrySync(retryId))
+                    }.cancellable(id: state.startFailureRetryCancelId, cancelInFlight: true))
+                }
                 if state.canResumeGiftCardSync {
                     // Restore the same state and migration feeds the ordinary failure path restores.
                     // A migration hold admits only one seed recheck until a genuine edge or
                     // external trigger. Re-registering these feeds cannot replenish that allowance.
                     effects.append(.send(.giftCardSyncObserve(state.giftCardSyncGeneration)))
-                    if state.giftCardSyncRecovery == .delayedRetry {
-                        state.didScheduleStartFailureRetry = true
-                        let generation = state.giftCardSyncGeneration
-                        effects.append(.run { send in
-                            try await continuousClock.sleep(for: .seconds(15))
-                            await send(.giftCardRetrySync(generation))
-                        }.cancellable(id: state.startFailureRetryCancelId, cancelInFlight: true))
-                    }
                 }
                 effects.append(reconcileGiftCardSync(state: &state))
                 return .merge(effects)
@@ -275,16 +283,28 @@ extension Root {
                 return reconcileGiftCardSync(state: &state)
             }
 
+            if case .resetZashiSDKSucceeded = action {
+                // The keys-missing reset path keeps Root.State, so retire this wallet's recovery
+                // explicitly even when no wholesale state replacement follows. Native UUIDs stay owned.
+                effects.append(.cancel(id: state.startFailureRetryCancelId))
+                state.giftCardSyncGeneration = UUID()
+                state.giftCardSyncRecovery = .waitingForExternalTrigger
+                state.giftCardSyncRetryId = nil
+                state.giftCardSyncDidRecheckMigrationSeed = false
+            }
             if case .initialization(.appDelegate(.didEnterBackground)) = action, state.ownsGiftCardSyncLifecycle {
                 // A foreground retry can start the SDK before its throttled running state arrives.
                 // Background must request an owned stop even when the last observed pause completed.
                 state.giftCardSyncIsPaused = false
                 state.giftCardSyncGeneration = UUID()
                 state.giftCardSyncRecovery = .waitingForExternalTrigger
+                state.giftCardSyncRetryId = nil
             }
             if case .initialization(.appDelegate(.willEnterForeground)) = action {
+                effects.append(.cancel(id: state.startFailureRetryCancelId))
                 state.giftCardSyncGeneration = UUID()
                 state.giftCardSyncRecovery = .none
+                state.giftCardSyncRetryId = nil
                 state.giftCardSyncDidRecheckMigrationSeed = false
             }
             if case .migrationSyncGateChanged(false) = action, state.ownsGiftCardSyncLifecycle {
@@ -308,6 +328,14 @@ extension Root {
             let previousGeneration = state.giftCardSyncGeneration
             let previousRecovery = state.giftCardSyncRecovery
             let previousRetryBudget = state.didScheduleStartFailureRetry
+            let previousRetryId = state.giftCardSyncRetryId
+            let previousRetryCancelId = state.startFailureRetryCancelId
+            let previousMigrationGateBlocked = state.lastMigrationSyncGateBlocked
+            let previousMigrationDeferred = state.syncDeferredByMigrationGate
+            let previousMigrationSeedRecheck = state.giftCardSyncDidRecheckMigrationSeed
+            let previousGateClearedDuringStart = state.giftCardSyncGateClearedDuringStart
+            let previousObservationGeneration = state.giftCardSyncObservationGeneration
+            let previousMigrationGateCancelId = state.migrationSyncGateCancelId
             let wasPaused = state.giftCardSyncIsPaused
             let resumeWasPending = state.giftCardSyncResumePending
             let previousAppStartState = state.appStartState
@@ -320,10 +348,31 @@ extension Root {
             state.giftCardSyncStartId = previousStartId
             state.giftCardSyncStartGeneration = previousStartGeneration
             state.ordinarySyncOperations.formUnion(previousOrdinaryOperations)
-            if state.giftCardSyncGeneration != previousGeneration {
-                // A wholesale reset retires timer work but preserves already-admitted native work.
-                state.giftCardSyncRecovery = previousRecovery == .none ? .none : .waitingForExternalTrigger
+            if case .deeplinkWarning(.rescanInZashi) = action {
+                // Continue is a new Root navigation state for the same wallet. Transfer only
+                // recovery and migration admission context; keep the timer already sleeping.
+                state.giftCardSyncRecovery = previousRecovery
+                state.giftCardSyncRetryId = previousRetryId
+                state.startFailureRetryCancelId = previousRetryCancelId
                 state.didScheduleStartFailureRetry = previousRetryBudget
+                state.lastMigrationSyncGateBlocked = previousMigrationGateBlocked
+                state.syncDeferredByMigrationGate = previousMigrationDeferred
+                state.giftCardSyncDidRecheckMigrationSeed = previousMigrationSeedRecheck
+                state.giftCardSyncGateClearedDuringStart = previousGateClearedDuringStart
+                state.migrationSyncGateCancelId = previousMigrationGateCancelId
+                if previousObservationGeneration == previousGeneration {
+                    state.giftCardSyncObservationGeneration = state.giftCardSyncGeneration
+                }
+                // This admitted operation retains its UUID and completion fence. Only a start
+                // that was current before the same-wallet reset can recover its new Root state.
+                if previousStartId != nil, previousStartGeneration == previousGeneration {
+                    state.giftCardSyncStartGeneration = state.giftCardSyncGeneration
+                }
+            } else if state.giftCardSyncGeneration != previousGeneration {
+                // A genuine reset retires timer work while admitted native work still completes.
+                state.giftCardSyncRecovery = previousRecovery == .none ? .none : .waitingForExternalTrigger
+                state.giftCardSyncRetryId = nil
+                effects.append(.cancel(id: previousRetryCancelId))
             }
             state.giftCardSyncIsPaused = wasPaused
             state.giftCardSyncResumePending = resumeWasPending
@@ -333,15 +382,16 @@ extension Root {
             }
             let exited = previousPath == .giftCardCoordFlow && state.path != .giftCardCoordFlow
             let replaced = previous?.cancelId != state.giftCardCoordFlowState.redeemState?.cancelId
-            var effects: [Effect<Action>] = [effect]
+            effects.append(effect)
             if exited || previousScanId != state.giftCardCoordFlowState.scanState.cancelId {
                 effects.append(.cancel(id: previousScanId))
             }
             if (exited || replaced), let previous {
                 state.giftCardSyncGeneration = UUID()
                 state.giftCardSyncRecovery = .none
+                state.giftCardSyncRetryId = nil
                 state.giftCardSyncDidRecheckMigrationSeed = false
-                effects.append(.cancel(id: state.startFailureRetryCancelId))
+                effects.append(.cancel(id: previousRetryCancelId))
                 if exited {
                     state.giftCardCoordFlowState = GiftCardCoordFlow.State()
                 }
@@ -380,7 +430,8 @@ extension Root {
         if state.ownsGiftCardSyncLifecycle, !state.canResumeGiftCardSync, !state.giftCardSyncIsPaused {
             return stopGiftCardSync(state: &state)
         }
-        if state.giftCardSyncResumePending, state.canResumeGiftCardSync, state.giftCardSyncRecovery == .none {
+        if state.giftCardSyncResumePending, state.canResumeGiftCardSync,
+           state.giftCardSyncRecovery == .none || state.giftCardSyncRecovery == .retryDue {
             if state.lastMigrationSyncGateBlocked {
                 // Background cancels the gate feeds. Refresh once in this recovery generation
                 // before trusting a cached block that may have cleared while nobody observed it.
@@ -388,6 +439,7 @@ extension Root {
                 state.giftCardSyncObservationGeneration = state.giftCardSyncGeneration
                 return .send(.giftCardSyncObserve(state.giftCardSyncGeneration))
             }
+            state.giftCardSyncRecovery = .none
             return .send(.giftCardResumeSync(state.giftCardSyncGeneration))
         }
         return .none

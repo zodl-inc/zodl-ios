@@ -16,6 +16,7 @@ import ComposableArchitecture
         let release = GiftCardTestGate()
         let preparationEntered = GiftCardTestGate()
         let preparationRelease = GiftCardTestGate()
+        let resetDocuments = FileManager.default.temporaryDirectory.appendingPathComponent("gift-card-reset-\(UUID().uuidString)")
         var holdPreparation = false
         var visit: MigrationVisit = .sync
         var cancelled = false
@@ -41,7 +42,8 @@ import ComposableArchitecture
     }
 
     private func makeStore(
-        _ engine: Engine, clock: TestClock<Swift.Duration>, pending: Bool = true, cardPresented: Bool = false
+        _ engine: Engine, clock: TestClock<Swift.Duration>, pending: Bool = true, cardPresented: Bool = false,
+        keysMissing: Bool = false
     ) -> TestStore<Root.State, Root.Action> {
         withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -49,6 +51,7 @@ import ComposableArchitecture
             var state = Root.State.initial
             state.destinationState.destination = .home
             state.splashAppeared = true
+            if keysMissing { state.appInitializationState = .keysMissing }
             state.giftCardSyncResumePending = pending
             if cardPresented {
                 state.path = .giftCardCoordFlow
@@ -63,6 +66,19 @@ import ComposableArchitecture
                 $0.migrationTickInterval = .zero
                 $0.exchangeRate = .noOp
                 $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+                $0.walletStorage = .noOp
+                $0.databaseFiles = .noOp
+                $0.databaseFiles.documentsDirectory = { engine.resetDocuments }
+                $0.userDefaults = .noOp
+                $0.flexaHandler = .noOp
+                $0.userStoredPreferences.removeAll = { }
+                $0.readTransactionsStorage = .noOp
+                $0.userMetadataProvider.reset = { }
+                $0.votingMetadata.reset = { }
+                $0.votingCrypto.beginWalletTeardown = { }
+                $0.votingCrypto.endWalletTeardown = { }
+                $0.votingCrypto.closeDatabase = { }
+                $0.migrationManager.wipeAllMigrationState = { }
                 $0.migrationManager.visitKind = {
                     if engine.holdPreparation {
                         await engine.preparationEntered.open()
@@ -126,27 +142,231 @@ import ComposableArchitecture
         await drain(store)
     }
 
-    @Test(arguments: [0, 1, 2]) func delayedRetryCannotOutliveBackgroundAcceptedVisitOrRootReset(boundary: Int) async throws {
+    @Test(arguments: [0, 1]) func delayedRetryCannotOutliveBackgroundOrAcceptedVisit(boundary: Int) async throws {
         let engine = Engine()
         let clock = TestClock()
         let store = makeStore(engine, clock: clock)
-        let retiredGeneration = store.state.giftCardSyncGeneration
-        await store.send(.giftCardResumeSync(retiredGeneration))
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
         await store.receive(\.giftCardSyncStartFinished)
+        let retiredRetry = try #require(store.state.giftCardSyncRetryId)
         #expect(store.state.giftCardSyncResumePending)
         if boundary == 0 {
             await store.send(.initialization(.appDelegate(.didEnterBackground)))
-        } else if boundary == 1 {
+        } else {
             await store.send(.home(.redeemGiftCardTapped))
             await store.send(.giftCardCoordFlow(.scan(.foundGiftCard("https://gift.zodl.com/#fixture".redacted))))
             let visit = try #require(store.state.giftCardCoordFlowState.redeemState?.cancelId)
             await store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle())))))
-        } else {
-            await store.send(.deeplinkWarning(.rescanInZashi))
         }
-        await store.send(.giftCardRetrySync(retiredGeneration))
+        await store.send(.giftCardRetrySync(retiredRetry))
         await clock.advance(by: .seconds(60))
         #expect(engine.starts.value == 1)
+        await drain(store)
+    }
+
+    // Continue replaces the entire Root state, but it is navigation in the same wallet.
+    // Losing the timer or restarting its countdown would miss the original 15-second retry.
+    @Test(arguments: [false, true])
+    func continueBeforeDeadlinePreservesTheOriginalRetryAfterWarning(failureFinishesUnderWarning: Bool) async {
+        let engine = Engine()
+        engine.suspended = failureFinishesUnderWarning
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        if failureFinishesUnderWarning {
+            await engine.entered.wait()
+            await store.send(.destination(.updateDestination(.deeplinkWarning)))
+            await engine.release.open()
+        }
+        await store.receive(\.giftCardSyncStartFinished)
+        if !failureFinishesUnderWarning {
+            await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        }
+        await clock.advance(by: .seconds(5))
+        await store.send(.deeplinkWarning(.rescanInZashi))
+        await store.receive({
+            if case .destination(.updateDestination(.home)) = $0 { return true }
+            return false
+        })
+        await clock.advance(by: .seconds(9))
+        #expect(engine.starts.value == 1)
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        #expect(!store.state.giftCardSyncResumePending)
+        await drain(store)
+    }
+
+    @Test func retryDueUnderWarningStartsOnceWhenContinueReturnsHome() async {
+        let engine = Engine()
+        engine.suspended = true
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.entered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await engine.release.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await clock.advance(by: .seconds(15))
+        await store.receive(\.giftCardRetrySync, timeout: .seconds(2))
+        #expect(engine.starts.value == 1)
+        await store.send(.deeplinkWarning(.rescanInZashi))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        await drain(store)
+    }
+
+    @Test func continueDuringSuspendedFailureKeepsItsSameWalletRecovery() async {
+        let engine = Engine()
+        engine.suspended = true
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.entered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await store.send(.deeplinkWarning(.rescanInZashi))
+        await store.receive({
+            if case .destination(.updateDestination(.home)) = $0 { return true }
+            return false
+        })
+        #expect(engine.starts.value == 1)
+        await engine.release.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await clock.advance(by: .seconds(14))
+        #expect(engine.starts.value == 1)
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        await drain(store)
+    }
+
+    @Test(arguments: [false, true])
+    func genuineWalletResetRetiresTheOldRetryBeforeReturningHome(keysMissing: Bool) async throws {
+        let engine = Engine()
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock, keysMissing: keysMissing)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        let retiredRetry = try #require(store.state.giftCardSyncRetryId)
+        await store.send(.resetZashiSDKSucceeded)
+        await store.receive(\.resetZashiKeychainRequest)
+        await store.skipReceivedActions(strict: false)
+        await store.send(.destination(.updateDestination(.home)))
+        await store.send(.splashFinished)
+        await store.send(.giftCardRetrySync(retiredRetry))
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 1)
+        await drain(store)
+    }
+
+    @Test func foregroundStartsANewRetryBudgetWithoutAdmittingTheRetiredTimer() async throws {
+        let engine = Engine()
+        engine.failures = 2
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        let retiredRetry = try #require(store.state.giftCardSyncRetryId)
+        await clock.advance(by: .seconds(5))
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 2)
+        await store.send(.giftCardRetrySync(retiredRetry))
+        await clock.advance(by: .seconds(14))
+        #expect(engine.starts.value == 2)
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 3)
+        await drain(store)
+    }
+
+    @Test func continueCannotReplenishTheMigrationSeedRecheck() async {
+        let engine = Engine()
+        engine.migrationFailure = true
+        engine.failures = 100
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 2)
+        for _ in 0..<3 {
+            await store.send(.deeplinkWarning(.rescanInZashi))
+            await store.receive({
+                if case .destination(.updateDestination(.home)) = $0 { return true }
+                return false
+            })
+            await store.send(.migrationSyncGateChanged(false))
+        }
+        await store.skipReceivedActions(strict: false)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        #expect(store.state.giftCardSyncResumePending)
+        await drain(store)
+    }
+
+    @Test func repeatedContinueDoesNotReplenishTheSpentForegroundRetry() async {
+        let engine = Engine()
+        engine.failures = 100
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await clock.advance(by: .seconds(5))
+        await store.send(.deeplinkWarning(.rescanInZashi))
+        await store.receive({
+            if case .destination(.updateDestination(.home)) = $0 { return true }
+            return false
+        })
+        await clock.advance(by: .seconds(10))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        for _ in 0..<3 {
+            await store.send(.destination(.updateDestination(.deeplinkWarning)))
+            await store.send(.deeplinkWarning(.rescanInZashi))
+            await store.receive({
+                if case .destination(.updateDestination(.home)) = $0 { return true }
+                return false
+            })
+        }
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.didScheduleStartFailureRetry)
+        await drain(store)
+    }
+
+    @Test func dueRetryPreservesTheMigrationBlockAcrossContinueUntilActualClearance() async {
+        let engine = Engine()
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        engine.blocked.setValue(true)
+        await store.send(.migrationSyncGateChanged(true))
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await clock.advance(by: .seconds(15))
+        await store.receive(\.giftCardRetrySync, timeout: .seconds(2))
+        #expect(engine.starts.value == 1)
+        for _ in 0..<3 {
+            await store.send(.deeplinkWarning(.rescanInZashi))
+            await store.receive({
+                if case .destination(.updateDestination(.home)) = $0 { return true }
+                return false
+            })
+            await store.send(.migrationSyncGateChanged(true))
+            #expect(store.state.lastMigrationSyncGateBlocked)
+            #expect(engine.starts.value == 1)
+        }
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        #expect(!store.state.giftCardSyncResumePending)
         await drain(store)
     }
 
