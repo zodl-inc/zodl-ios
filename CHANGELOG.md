@@ -15,7 +15,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-2142] Fixed a crash when opening the app on an iPhone.
 - [MOB-2142] An unconfirmed gift-card redemption now offers to check the card’s current status without claiming its funds are still available. If funds remain, tap Redeem again to continue.
-- [MOB-2142] Wallet syncing recovers from temporary restart failures after leaving a gift card, including when you continue past a payment-link warning, and resumes when a migration pause clears or you return to the app. Returning to the app and leaving a gift card while syncing is still stopping no longer interrupts the resumed sync.
+- [MOB-2142] Wallet syncing recovers from temporary restart failures after leaving a gift card, including when you continue past a payment-link warning. Leaving a card for another network or one that failed to open no longer makes syncing retry early. Syncing resumes when a migration pause clears or you return to the app. Returning to the app and leaving a gift card while syncing is still stopping no longer interrupts the resumed sync.
 
 - [MOB-2142] Scanning a gift card in Swap, Pay or the Settings address book opens redemption and keeps its secret out of contact addresses. Gift-card links are rejected as swap addresses. Pasting a recognized gift link clears it from the clipboard if the clipboard still contains that same link.
 - [MOB-2142] The gift-card success screen confirms redemption without showing the card's amount before the network fee as the amount received.

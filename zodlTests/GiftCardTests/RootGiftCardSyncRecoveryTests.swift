@@ -6,6 +6,17 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 @Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct RootGiftCardSyncRecoveryTests {
+    private enum UnacceptedCard: String, CaseIterable, Sendable {
+        case wrongNetwork
+        case openFailed
+    }
+
+    private enum UnacceptedRetirement: String, CaseIterable, Sendable {
+        case continueAfterWarning
+        case dismiss
+        case replace
+    }
+
     private final class Engine: @unchecked Sendable {
         let starts = LockIsolated(0)
         let stops = LockIsolated(0)
@@ -43,7 +54,7 @@ import ComposableArchitecture
 
     private func makeStore(
         _ engine: Engine, clock: TestClock<Swift.Duration>, pending: Bool = true, cardPresented: Bool = false,
-        keysMissing: Bool = false
+        keysMissing: Bool = false, unacceptedCard: UnacceptedCard? = nil
     ) -> TestStore<Root.State, Root.Action> {
         withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -60,7 +71,13 @@ import ComposableArchitecture
             state.giftCardSyncIsPaused = pending
             state.$featureFlags.withLock { $0 = FeatureFlags(appLaunchBiometric: false) }
             let store = TestStore(initialState: state) { Root() } withDependencies: {
-                $0.giftCard = .mock()
+                $0.giftCard = GiftCardClient.mock(unacceptedCard == .wrongNetwork ? .testnet : .ready)
+                if unacceptedCard != nil {
+                    $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
+                }
+                if unacceptedCard == .openFailed {
+                    $0.giftCard.open = { _ in throw GiftCardClientError.checkFailed }
+                }
                 $0.mainQueue = .immediate
                 $0.continuousClock = clock
                 $0.migrationTickInterval = .zero
@@ -116,6 +133,127 @@ import ComposableArchitecture
         await store.send(.initialization(.appDelegate(.didEnterBackground)))
         await store.skipReceivedActions(strict: false)
         await store.skipInFlightEffects(strict: false)
+    }
+
+    private func presentUnacceptedCard(
+        _ card: UnacceptedCard, in store: TestStore<Root.State, Root.Action>
+    ) async throws -> UUID {
+        await store.send(.home(.redeemGiftCardTapped))
+        await store.send(.giftCardCoordFlow(.scan(.foundGiftCard("https://gift.zodl.com/#unaccepted-fixture".redacted))))
+        let visit = try #require(store.state.giftCardCoordFlowState.redeemState?.cancelId)
+        await store.send(.giftCardCoordFlow(.redeem(.onAppear)))
+        if card == .openFailed {
+            await store.receive({
+                if case .giftCardCoordFlow(.redeem(.response(visit, .openFailed(.checkFailed)))) = $0 { return true }
+                return false
+            })
+        }
+        #expect(store.state.giftCardCoordFlowState.redeemState?.step == (card == .wrongNetwork ? .wrongNetwork : .checkFailed))
+        #expect(store.state.giftCardCoordFlowState.redeemState?.handle == nil)
+        #expect(store.state.giftCardSyncPauseOwner == nil)
+        return visit
+    }
+
+    private func retireUnacceptedCard(
+        _ retirement: UnacceptedRetirement, visit: UUID, in store: TestStore<Root.State, Root.Action>
+    ) async throws {
+        switch retirement {
+        case .continueAfterWarning:
+            await store.send(.destination(.updateDestination(.deeplinkWarning)))
+            await store.send(.deeplinkWarning(.rescanInZashi))
+            await store.receive({
+                if case .destination(.updateDestination(.home)) = $0 { return true }
+                return false
+            })
+        case .dismiss:
+            await store.send(.giftCardCoordFlow(.redeem(.closeTapped)))
+            await store.receive({
+                if case .giftCardCoordFlow(.redeem(.delegate(.dismiss))) = $0 { return true }
+                return false
+            })
+        case .replace:
+            let replacement = "https://gift.zodl.com/#replacement-fixture".redacted
+            await store.send(.giftCardCoordFlow(.scan(.foundGiftCard(replacement))))
+            let candidate = try #require(store.state.giftCardCoordFlowState.redeemState)
+            #expect(candidate.cancelId != visit)
+            #expect(candidate.link == replacement)
+            #expect(candidate.handle == nil)
+        }
+        #expect(store.state.giftCardCoordFlowState.redeemState?.cancelId != visit)
+        #expect(store.state.giftCardSyncPauseOwner == nil)
+        await store.skipReceivedActions(strict: false)
+    }
+
+    // A card rejected before opening never owns the sync pause. Its retirement must not
+    // shorten the original recovery deadline or turn a spent retry into another start.
+    @Test(arguments: UnacceptedCard.allCases, UnacceptedRetirement.allCases)
+    private func unacceptedCardRetirementKeepsTheOriginalRetryDeadline(
+        card: UnacceptedCard, retirement: UnacceptedRetirement
+    ) async throws {
+        let engine = Engine()
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock, unacceptedCard: card)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        let retry = try #require(store.state.giftCardSyncRetryId)
+        await clock.advance(by: .seconds(5))
+        let visit = try await presentUnacceptedCard(card, in: store)
+        try await retireUnacceptedCard(retirement, visit: visit, in: store)
+        #expect(store.state.giftCardSyncRetryId == retry)
+        await clock.advance(by: .seconds(9))
+        #expect(engine.starts.value == 1)
+        await clock.advance(by: .seconds(1))
+        await store.receive(\.giftCardSyncStartFinished, timeout: .seconds(2))
+        #expect(engine.starts.value == 2)
+        #expect(!store.state.giftCardSyncResumePending)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        await drain(store)
+    }
+
+    @Test(arguments: UnacceptedCard.allCases, UnacceptedRetirement.allCases)
+    private func unacceptedCardRetirementKeepsTheSpentForegroundRetryBudget(
+        card: UnacceptedCard, retirement: UnacceptedRetirement
+    ) async throws {
+        let engine = Engine()
+        engine.failures = 100
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock, unacceptedCard: card)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await clock.advance(by: .seconds(15))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 2)
+        let visit = try await presentUnacceptedCard(card, in: store)
+        try await retireUnacceptedCard(retirement, visit: visit, in: store)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.didScheduleStartFailureRetry)
+        await drain(store)
+    }
+
+    @Test(arguments: UnacceptedCard.allCases, UnacceptedRetirement.allCases)
+    private func unacceptedCardRetirementCannotReplenishTheMigrationSeedRecheck(
+        card: UnacceptedCard, retirement: UnacceptedRetirement
+    ) async throws {
+        let engine = Engine()
+        engine.migrationFailure = true
+        engine.failures = 100
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock, unacceptedCard: card)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 2)
+        let visit = try await presentUnacceptedCard(card, in: store)
+        try await retireUnacceptedCard(retirement, visit: visit, in: store)
+        for _ in 0..<3 { await store.send(.migrationSyncGateChanged(false)) }
+        await store.skipReceivedActions(strict: false)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 2)
+        #expect(store.state.giftCardSyncResumePending)
+        await drain(store)
     }
 
     // Swallowing the first failure strands sync; immediately reconciling pending demand spins.

@@ -374,11 +374,15 @@ extension Root {
                 effects.append(.cancel(id: previousScanId))
             }
             if (exited || replaced), let previous {
-                state.giftCardSyncGeneration = UUID()
-                state.giftCardSyncRecovery = .none
-                state.giftCardSyncRetryId = nil
-                state.giftCardSyncDidRecheckMigrationSeed = false
-                effects.append(.cancel(id: previousRetryCancelId))
+                // A rejected or failed open never owned the sync pause. Retire its child work
+                // without changing recovery already waiting for its deadline or external trigger.
+                if previousPauseOwner == previous.cancelId {
+                    state.giftCardSyncGeneration = UUID()
+                    state.giftCardSyncRecovery = .none
+                    state.giftCardSyncRetryId = nil
+                    state.giftCardSyncDidRecheckMigrationSeed = false
+                    effects.append(.cancel(id: previousRetryCancelId))
+                }
                 if exited {
                     state.giftCardCoordFlowState = GiftCardCoordFlow.State()
                 }
