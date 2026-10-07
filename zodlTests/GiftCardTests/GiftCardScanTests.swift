@@ -195,8 +195,10 @@ import ComposableArchitecture
             $0.pasteboard = PasteboardClient(
                 setString: { _ in },
                 clearIfMatches: { value in cleared.withValue { $0.append(value) } },
-                getString: { reads.withValue { $0 += 1 }
-                    return "replacement".redacted }
+                getString: {
+                    reads.withValue { $0 += 1 }
+                    return "replacement".redacted
+                }
             )
         }
         await store.send(.scan(Self.zodlLink.redacted))
@@ -211,13 +213,16 @@ import ComposableArchitecture
     @Test func pasteLinkLeavesTheClipboardToThePasteScreen() async {
         let reads = LockIsolated(0)
         let cleared = LockIsolated<[RedactableString]>([])
+        let link = Self.zodlLink
         let store = TestStore(initialState: Scan.State.giftCardScanner) { Scan() } withDependencies: {
             $0.giftCard = GiftCardClient.mock()
             $0.pasteboard = PasteboardClient(
                 setString: { _ in },
                 clearIfMatches: { value in cleared.withValue { $0.append(value) } },
-                getString: { reads.withValue { $0 += 1 }
-                    return Self.zodlLink.redacted }
+                getString: {
+                    reads.withValue { $0 += 1 }
+                    return link.redacted
+                }
             )
         }
         await store.send(.pasteTapped)
