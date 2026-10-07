@@ -329,13 +329,225 @@ import ComposableArchitecture
         #expect(store.state.giftCardSyncRecovery == .none)
         #expect(engine.gateObservations.value == 1)
         await store.send(.giftCardSyncRestoreMigrationObservation(generation))
+        await store.send(.giftCardSyncRestoreMigrationObservation(UUID()))
+        #expect(engine.gateObservations.value == 1)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
         await engine.beforeSyncRelease.open()
         await store.receive(\.giftCardSyncStartFinished)
+        // Completing beforeSync enters a new hold and needs one fresh seed, independently of
+        // the rejected duplicates above. The consumed seed allowance still prevents a restart.
+        await store.receive(\.giftCardSyncRestoreMigrationObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        await store.send(.giftCardSyncRestoreMigrationObservation(generation))
+        await store.send(.giftCardSyncRestoreMigrationObservation(UUID()))
         await store.skipReceivedActions(strict: false)
-        #expect(engine.gateObservations.value == 1)
+        #expect(engine.gateObservations.value == 2)
         #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
         #expect(engine.advances.value.filter { $0 == .beforeSync }.count == 1)
         #expect(engine.starts.value == 0)
+        await drain(store)
+    }
+
+    private enum NewMigrationHold: String, CaseIterable, Sendable {
+        case nativeRefusal
+        case sendPreparation
+
+        var startsBeforeRecovery: Int { self == .nativeRefusal ? 2 : 1 }
+        var advancesBeforeRecovery: Int { self == .nativeRefusal ? 3 : 2 }
+    }
+
+    private enum RefreshedSeedPolicy: String, CaseIterable, Sendable {
+        case blocked
+        case consumed
+    }
+
+    private func observedTransientFailure(
+        _ engine: Engine, clock: TestClock<Swift.Duration>, consumedSeed: Bool = false
+    ) async -> TestStore<Root.State, Root.Action> {
+        engine.failures = 2
+        let store = makeStore(engine, clock: clock, configure: {
+            $0.giftCardSyncDidRecheckMigrationSeed = consumedSeed
+        })
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.receive(\.giftCardSyncObserve)
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        #expect(engine.starts.value == 1)
+        #expect(engine.gateObservations.value == 1)
+        #expect(store.state.giftCardSyncObservationGeneration == store.state.giftCardSyncGeneration)
+        #expect(store.state.giftCardSyncRecovery == .delayedRetry)
+        #expect(!store.state.syncDeferredByMigrationGate)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed == consumedSeed)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId != nil)
+        return store
+    }
+
+    private func completeNewMigrationHold(
+        _ hold: NewMigrationHold, underWarning: Bool, engine: Engine,
+        clock: TestClock<Swift.Duration>, store: TestStore<Root.State, Root.Action>
+    ) async {
+        // Delay the first restoration for this new hold, after the earlier false seed.
+        engine.holdObservation = true
+        engine.migrationFailure = true
+        engine.suspended = hold == .nativeRefusal
+        engine.visit = hold == .sendPreparation ? .send : .sync
+        engine.heldAdvanceCall = hold == .sendPreparation ? 2 : nil
+        await clock.advance(by: .seconds(15))
+        await store.receive(\.giftCardRetrySync)
+        if hold == .nativeRefusal {
+            await store.receive(\.giftCardSyncStartReady)
+            await engine.entered.wait()
+        } else {
+            await store.receive(\.giftCardSyncVisitReady)
+            await engine.beforeSyncEntered.wait()
+        }
+        // Only the subsequent recovery visit waits here, so fresh-seed assertions
+        // cannot race its native completion or the regular post-start observation.
+        engine.holdPreparation = true
+        if underWarning { await store.send(.destination(.updateDestination(.deeplinkWarning))) }
+        if hold == .nativeRefusal {
+            await engine.release.open()
+            await store.receive(\.giftCardSyncMigrationRefused)
+        } else {
+            await engine.beforeSyncRelease.open()
+        }
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncStartId == nil)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        #expect(engine.starts.value == hold.startsBeforeRecovery)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == hold.advancesBeforeRecovery)
+        // The next admitted visit is sync. No gate edge or synthetic observer event is emitted.
+        engine.visit = .sync
+        engine.suspended = false
+        engine.failures = hold == .sendPreparation ? 1 : 2
+    }
+
+    private func releaseNewHoldObservation(_ engine: Engine, store: TestStore<Root.State, Root.Action>) async {
+        await store.receive(\.giftCardSyncRestoreMigrationObservation)
+        #expect(engine.delayedObservation.value)
+        // Opening an existing gate does not wait for a restoration the old code never requests.
+        await engine.observationRelease.open()
+        await store.receive(\.giftCardSyncRestoreMigrationObservation)
+    }
+
+    // A false seed observed before the hold cannot discharge that hold's still-unused allowance.
+    @Test(arguments: NewMigrationHold.allCases, [false, true])
+    private func newMigrationHoldRefreshesSeedAfterObservedTransientFailure(
+        hold: NewMigrationHold, underWarning: Bool
+    ) async {
+        let engine = Engine()
+        let clock = TestClock()
+        let store = await observedTransientFailure(engine, clock: clock)
+        await completeNewMigrationHold(hold, underWarning: underWarning, engine: engine, clock: clock, store: store)
+        #expect(!store.state.giftCardSyncDidRecheckMigrationSeed)
+        if underWarning {
+            #expect(engine.gateObservations.value == 1)
+            #expect(store.state.giftCardSyncObservationGeneration == nil)
+            await continueHome(store)
+        }
+        await releaseNewHoldObservation(engine, store: store)
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        #expect(engine.gateObservations.value == 2)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        #expect(store.state.didScheduleStartFailureRetry)
+        await engine.preparationRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == hold.startsBeforeRecovery + 1)
+        #expect(!store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        #expect(store.state.didScheduleStartFailureRetry)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == hold.startsBeforeRecovery + 1)
+        await drain(store)
+    }
+
+    @Test(arguments: NewMigrationHold.allCases, RefreshedSeedPolicy.allCases)
+    private func newMigrationHoldFreshSeedKeepsGateAndSpentAllowances(
+        hold: NewMigrationHold, policy: RefreshedSeedPolicy
+    ) async {
+        let engine = Engine()
+        let clock = TestClock()
+        let consumed = policy == .consumed
+        let store = await observedTransientFailure(engine, clock: clock, consumedSeed: consumed)
+        // The publisher remains empty: only the new explicit seed can see this value.
+        engine.blocked.setValue(policy == .blocked)
+        await completeNewMigrationHold(hold, underWarning: true, engine: engine, clock: clock, store: store)
+        #expect(engine.gateObservations.value == 1)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed == consumed)
+        await continueHome(store)
+        await releaseNewHoldObservation(engine, store: store)
+        await store.receive({
+            if case .migrationSyncGateChanged(let blocked) = $0 { return blocked == (policy == .blocked) }
+            return false
+        })
+        #expect(engine.gateObservations.value == 2)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed == consumed)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        for _ in 0..<2 {
+            await continueHome(store)
+            await store.send(.giftCardSyncRestoreMigrationObservation(store.state.giftCardSyncGeneration))
+        }
+        await store.skipReceivedActions(strict: false)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.gateObservations.value == 2)
+        #expect(engine.starts.value == hold.startsBeforeRecovery)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == hold.advancesBeforeRecovery)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed == consumed)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        // A genuine edge may begin a new recovery epoch even when the old seed was consumed.
+        await store.send(.migrationSyncGateChanged(true))
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await engine.preparationRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == hold.startsBeforeRecovery + 1)
+        #expect(!store.state.giftCardSyncResumePending)
+        #expect(store.state.didScheduleStartFailureRetry)
+        await drain(store)
+    }
+
+    @Test func refreshedSeedCannotReplenishSpentTransientRetry() async {
+        let engine = Engine()
+        let clock = TestClock()
+        let store = await observedTransientFailure(engine, clock: clock)
+        await completeNewMigrationHold(.nativeRefusal, underWarning: false, engine: engine, clock: clock, store: store)
+        engine.failures = 3
+        engine.migrationFailure = false
+        await releaseNewHoldObservation(engine, store: store)
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        #expect(engine.gateObservations.value == 2)
+        await engine.preparationRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 3)
+        #expect(store.state.giftCardSyncRecovery == .waitingForExternalTrigger)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 3)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        #expect(store.state.giftCardSyncResumePending)
         await drain(store)
     }
 

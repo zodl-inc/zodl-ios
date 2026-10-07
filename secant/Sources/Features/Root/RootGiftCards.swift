@@ -250,6 +250,11 @@ extension Root {
                 case .migrationDeferred:
                     state.syncDeferredByMigrationGate = true
                     state.giftCardSyncRecovery = state.giftCardSyncGateClearedDuringStart ? .none : .migrationDeferred
+                    if state.giftCardSyncRecovery == .migrationDeferred {
+                        // Installed observations may have seeded before this hold. Refresh once
+                        // after each new hold without replenishing its one-seed recovery allowance.
+                        state.giftCardSyncObservationGeneration = nil
+                    }
                 case .transientFailure:
                     state.giftCardSyncRecovery = state.didScheduleStartFailureRetry ? .waitingForExternalTrigger : .delayedRetry
                 }
@@ -266,7 +271,7 @@ extension Root {
                     }.cancellable(id: state.startFailureRetryCancelId, cancelInFlight: true))
                 }
                 if state.canResumeGiftCardSync, state.giftCardSyncRecovery != .migrationDeferred {
-                    // Migration holds restore once per generation through reconciliation below.
+                    // Migration holds restore once per completed hold through reconciliation below.
                     // Restore the same state and migration feeds the ordinary failure path restores.
                     // A migration hold admits only one seed recheck until a genuine edge or
                     // external trigger. Re-registering these feeds cannot replenish that allowance.
