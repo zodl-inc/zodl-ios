@@ -23,7 +23,7 @@ extension DependencyValues {
 /// log it either: keep it in a `RedactableString` and pass it straight to `parse` and `open`.
 ///
 /// Lifecycle: `parse` (pure, cheap) → `open` (creates the card's own isolated wallet) →
-/// `progress` / `check` (syncs it and reports what it holds) → `redeem` (sends everything to an
+/// `check` (syncs it and reports what it holds) → `redeem` (sends everything to an
 /// address of the user's wallet) → `cleanup` (always, whenever the flow is left).
 @DependencyClient
 struct GiftCardClient {
@@ -35,9 +35,6 @@ struct GiftCardClient {
     /// Creates the card's isolated, temporary wallet and returns the handle used by every later
     /// call. Only one card is open at a time: opening another one closes the previous one.
     var open: @Sendable (_ link: String) async throws -> GiftCardHandle
-    /// Sync progress of the card's wallet in `0...1`. Finishes once `check` has an answer, or
-    /// immediately when the handle is unknown.
-    var progress: @Sendable (_ handle: GiftCardHandle) -> AsyncStream<Double> = { _ in AsyncStream { $0.finish() } }
     /// Syncs the card's wallet and reports what can be redeemed.
     var check: @Sendable (_ handle: GiftCardHandle) async throws -> GiftCardStatus
     /// Sends everything the card holds, minus the network fee, to `toAddress` and returns the

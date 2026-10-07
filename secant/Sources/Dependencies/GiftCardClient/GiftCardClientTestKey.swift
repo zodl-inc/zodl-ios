@@ -30,8 +30,6 @@ extension GiftCardClient {
         var txId = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
         /// What a redemption reports as received; by default the ready card's `redeemable`.
         var received: Zatoshi?
-        /// Progress values reported before `check` answers.
-        var progressSteps: [Double] = [0.25, 0.5, 0.75, 1.0]
         /// Simulated sync time; zero in tests.
         var delay: Duration = .zero
 
@@ -69,14 +67,6 @@ extension GiftCardClient {
                 )
             },
             open: { _ in GiftCardHandle() },
-            progress: { _ in
-                AsyncStream { continuation in
-                    for step in scenario.progressSteps {
-                        continuation.yield(step)
-                    }
-                    continuation.finish()
-                }
-            },
             check: { _ in
                 if scenario.delay > .zero {
                     try await Task.sleep(for: scenario.delay)

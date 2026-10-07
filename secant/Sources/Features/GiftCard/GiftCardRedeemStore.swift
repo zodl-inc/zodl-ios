@@ -60,8 +60,6 @@ struct GiftCardRedeem {
         var summary: GiftCardSummary?
         var handle: GiftCardHandle?
         var step: Step = .checking
-        /// Sync progress of the card's wallet, `0...1`, while `step == .checking`.
-        var syncProgress: Double?
         /// A Check again the user asked for on the Pending or Nothing to redeem screen is running:
         /// the screen stays, with its button busy.
         var isRechecking = false
@@ -155,7 +153,6 @@ struct GiftCardRedeem {
             case redemptionDestinationResolved(AccountUUID, RedactableString?)
             case opened(GiftCardHandle)
             case openFailed(GiftCardClientError)
-            case progressUpdated(Double)
             /// A background check of a pending or empty card failed; the screen stays.
             case recheckFailed(GiftCardClientError)
             /// A background check of a pending or empty card answered.
@@ -216,7 +213,6 @@ struct GiftCardRedeem {
                 state.isRechecking = false
                 state.isQuietCheckInFlight = false
                 state.step = .checking
-                state.syncProgress = nil
                 if let handle = state.handle {
                     return .merge(
                         .cancel(id: state.autoRetryCancelId),
@@ -233,7 +229,6 @@ struct GiftCardRedeem {
                 return check(handle, state: state)
 
             case .response(_, .openFailed(let error)), .response(_, .checkFailed(let error)):
-                state.syncProgress = nil
                 state.step = step(for: error)
                 if error == .unknownHandle {
                     // The card's wallet is gone (it could not be reopened after a failed sweep),
@@ -242,15 +237,7 @@ struct GiftCardRedeem {
                 }
                 return .cancel(id: state.cancelId)
 
-            case .response(_, .progressUpdated(let progress)):
-                guard state.step == .checking else {
-                    return .none
-                }
-                state.syncProgress = min(max(progress, 0), 1)
-                return .none
-
             case .response(_, .statusLoaded(let status)):
-                state.syncProgress = nil
                 return show(status, state: &state)
 
             case .response(_, .recheckLoaded(let status)):
@@ -488,28 +475,21 @@ extension GiftCardRedeem {
         )
     }
 
-    /// Syncs the card and reports its status, streaming sync progress meanwhile.
+    /// Syncs the card and reports its status.
     private func check(_ handle: GiftCardHandle, state: State) -> Effect<Action> {
         let visit = state.cancelId
-        return .merge(
-            .run { send in
-                for await progress in giftCard.progress(handle) {
-                    await send(.response(visit, .progressUpdated(progress)))
-                }
-            },
-            .run { send in
-                do {
-                    let status = try await giftCard.check(handle)
-                    await send(.response(visit, .statusLoaded(status)))
-                } catch is CancellationError {
-                    return
-                } catch let error as GiftCardClientError {
-                    await send(.response(visit, .checkFailed(error)))
-                } catch {
-                    await send(.response(visit, .checkFailed(.checkFailed)))
-                }
+        return .run { send in
+            do {
+                let status = try await giftCard.check(handle)
+                await send(.response(visit, .statusLoaded(status)))
+            } catch is CancellationError {
+                return
+            } catch let error as GiftCardClientError {
+                await send(.response(visit, .checkFailed(error)))
+            } catch {
+                await send(.response(visit, .checkFailed(.checkFailed)))
             }
-        )
+        }
         .cancellable(id: state.cancelId)
     }
 

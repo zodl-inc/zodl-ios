@@ -89,7 +89,6 @@ import ComposableArchitecture
         await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .ready(redeemable: Zatoshi(10_000_000))
-            $0.syncProgress = nil
         }
         #expect(store.state.summary?.message == "Welcome to Zcash Summit")
         #expect(store.state.isRedeemable)
@@ -1127,10 +1126,6 @@ private struct FakeGiftCardSession: GiftCardSession {
     let reopened: LockIsolated<Int>
     var recordsClaim = true
     var recordedIn = LockIsolated<[ObjectIdentifier?]>([])
-
-    func progress() -> AsyncStream<Double> {
-        AsyncStream { $0.finish() }
-    }
 
     func status() async throws -> zodl_internal.GiftCardStatus {
         held

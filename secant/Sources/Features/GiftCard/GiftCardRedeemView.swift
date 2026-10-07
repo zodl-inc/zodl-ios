@@ -349,7 +349,7 @@ extension GiftCardRedeemView {
 
 #Preview("Checking") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.checking, progress: 0.4), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.checking), tokenName: "ZEC")
     }
 }
 
@@ -424,7 +424,7 @@ extension GiftCardRedeem.State {
 }
 
 extension GiftCardRedeem {
-    @MainActor static func preview(_ step: State.Step, progress: Double? = nil) -> StoreOf<GiftCardRedeem> {
+    @MainActor static func preview(_ step: State.Step) -> StoreOf<GiftCardRedeem> {
         var state = State.initial
         state.summary = GiftCardSummary(
             origin: .zodl,
@@ -434,7 +434,6 @@ extension GiftCardRedeem {
             message: "Welcome to Zcash Summit"
         )
         state.step = step
-        state.syncProgress = progress
         state.destinationAddress = "u1previewdestinationaddressorchardonly".redacted
         return StoreOf<GiftCardRedeem>(initialState: state) {
             GiftCardRedeem()

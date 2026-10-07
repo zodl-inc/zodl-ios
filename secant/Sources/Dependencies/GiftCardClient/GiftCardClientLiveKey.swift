@@ -24,21 +24,6 @@ extension GiftCardClient: DependencyKey {
             open: { link in
                 try await Self.open(link, registry: registry)
             },
-            progress: { handle in
-                AsyncStream { continuation in
-                    let task = Task {
-                        guard let session = await registry.session(for: handle) else {
-                            continuation.finish()
-                            return
-                        }
-                        for await value in session.progress() {
-                            continuation.yield(value)
-                        }
-                        continuation.finish()
-                    }
-                    continuation.onTermination = { _ in task.cancel() }
-                }
-            },
             check: { handle in
                 guard let session = await registry.session(for: handle) else {
                     throw GiftCardClientError.unknownHandle
@@ -281,8 +266,6 @@ extension GiftCardSummary {
 /// One opened card, as the app needs it. The live wiring adapts the wallet SDK's gift card
 /// redeemer to this protocol, which keeps the SDK surface the app depends on this small.
 protocol GiftCardSession: Sendable {
-    /// Sync progress in `0...1`; finishes when the sync is done.
-    func progress() -> AsyncStream<Double>
     /// Syncs (if needed) and reports what the card holds.
     func status() async throws -> GiftCardStatus
     /// Sends everything, minus the fee, to `address`, records the accepted claim in `mainWallet`
@@ -391,13 +374,6 @@ struct GiftCardRedeemerSession: GiftCardSession {
             }
         }
         return try? Memo(string: text)
-    }
-
-    /// The SDK does not report the card wallet's sync progress (`check()` only returns once the
-    /// wallet is up to date), so the stream finishes at once and the screen shows an indeterminate
-    /// wait. A card's history is short, so the sync is usually a matter of seconds.
-    func progress() -> AsyncStream<Double> {
-        AsyncStream { $0.finish() }
     }
 
     func status() async throws -> GiftCardStatus {

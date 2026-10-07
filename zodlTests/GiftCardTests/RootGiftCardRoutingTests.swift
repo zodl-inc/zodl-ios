@@ -260,7 +260,7 @@ import ComposableArchitecture
     }
 
     @Test(arguments: [
-        GiftCardRedeem.Action.Response.statusLoaded(.empty), .progressUpdated(0.7), .redeemSucceeded(GiftCardRedemption(txId: "old-tx", received: nil)), .recheckLoaded(.empty), .recheckFailed(.checkFailed),
+        GiftCardRedeem.Action.Response.statusLoaded(.empty), .redeemSucceeded(GiftCardRedemption(txId: "old-tx", received: nil)), .recheckLoaded(.empty), .recheckFailed(.checkFailed),
         .redeemFailed(.redeemFailed), .checkFailed(.checkFailed), .openFailed(.checkFailed), .autoRetryFired,
         .destinationResolved(AccountUUID(id: [UInt8](repeating: 0, count: 16)), "old-address".redacted)
     ]) func queuedOldResponseCannotMutateAReplacementVisit(response: GiftCardRedeem.Action.Response) async throws {
@@ -274,7 +274,6 @@ import ComposableArchitecture
         #expect(store.state.giftCardCoordFlowState.redeemState?.step == .checking)
         #expect(store.state.giftCardCoordFlowState.redeemState?.destinationAddress == nil)
         #expect(store.state.giftCardCoordFlowState.redeemState?.txId == nil)
-        #expect(store.state.giftCardCoordFlowState.redeemState?.syncProgress == nil)
     }
 
     @Test func staleOpenAfterStateRemovalClosesHandleWithoutStoppingSync() async {
