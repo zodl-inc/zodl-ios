@@ -251,12 +251,12 @@ import ComposableArchitecture
 
         await store.send(.pasteTapped) {
             $0.text = pasted.redacted
-            $0.pastedLink = pasted.redacted
+            $0.clipboardCandidates = [pasted.redacted]
             $0.isInvalid = true
         }
         await store.send(.backTapped) {
             $0.text = .empty
-            $0.pastedLink = nil
+            $0.clipboardCandidates = []
             $0.isInvalid = false
         }
         await store.receive(.delegate(.back))

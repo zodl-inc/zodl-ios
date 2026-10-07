@@ -12,19 +12,19 @@ import ComposableArchitecture
 /// as text. The field takes a paste (from its own Paste button or the keyboard) or typing, and
 /// Continue is enabled only for text the gift card client accepts as a card link.
 ///
-/// The link is a bearer secret: it lives only in `state.text` (redacted) and is never logged.
-/// On Clear or leaving the screen (Continue, back, or the flow's cleanup), the clipboard is cleared only
-/// while it still holds the same text: what the Paste button took when it holds a card's link or
-/// key anywhere in it, even when it is not a link Continue accepts, and the field's text when it
-/// holds one, which covers a paste from the keyboard or a long press.
+/// The link is a bearer secret: sensitive values observed during this visit are retained redacted
+/// in memory and never logged. Editing or deleting the field keeps those exact cleanup candidates.
+/// On Clear or leaving the screen (Continue, back, or the flow's cleanup), the clipboard is cleared
+/// only while it still holds one of those values, then the visit's candidates are forgotten.
 @Reducer
 struct GiftCardPasteLink {
     @ObservableState
     struct State: Equatable {
         /// The field's text, as entered.
         var text: RedactableString = .empty
-        /// Sensitive text this screen took from the clipboard; forgotten on Clear or leaving.
-        var pastedLink: RedactableString?
+        /// Exact sensitive field values and Paste-button originals observed during this visit.
+        /// Forgotten on Clear or leaving, but retained through edits and keyboard deletion.
+        var clipboardCandidates: [RedactableString] = []
         /// Whether `text` is a gift card link that can be opened (enables Continue).
         var isValid = false
         /// Whether `text` cannot be a gift card link (marks the field and shows the error).
@@ -66,9 +66,7 @@ struct GiftCardPasteLink {
                 // Anything pasted that holds a card's secret, even inside other text, is cleared
                 // from the clipboard on Clear or leaving. The clipboard is matched against the original,
                 // untrimmed value.
-                if giftCard.isGiftCardLink(text) || GiftCardSecretDetector.mayContainGiftCardSecret(text) {
-                    state.pastedLink = pasted
-                }
+                retainClipboardCandidate(pasted, in: &state)
                 update(&state, text: text)
                 return .none
 
@@ -105,9 +103,19 @@ struct GiftCardPasteLink {
 extension GiftCardPasteLink {
     private func update(_ state: inout State, text: String) {
         state.text = text.redacted
+        retainClipboardCandidate(state.text, in: &state)
         let isValid = isOpenable(text)
         state.isValid = isValid
         state.isInvalid = !isValid && !GiftCardLink.isCandidatePrefix(text)
+    }
+
+    private func retainClipboardCandidate(_ candidate: RedactableString, in state: inout State) {
+        let text = candidate.data.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard giftCard.isGiftCardLink(text) || GiftCardSecretDetector.mayContainGiftCardSecret(text),
+              !state.clipboardCandidates.contains(candidate) else {
+            return
+        }
+        state.clipboardCandidates.append(candidate)
     }
 
     /// A link Continue can open: recognized by the gift card client and not rejected by its parser
@@ -132,18 +140,15 @@ extension GiftCardPasteLink {
         for value in state.clipboardValuesToClear {
             pasteboard.clearIfMatches(value)
         }
-        state.pastedLink = nil
+        state.clipboardCandidates = []
     }
 }
 
 extension GiftCardPasteLink.State {
-    /// What Clear or leaving the screen clears from the clipboard, if it still holds it: the
-    /// text the Paste button took, and the field's text when it holds a card's link or key.
+    /// Exact values this visit may clear, with a sensitive current-text fallback for state that
+    /// was initialized directly rather than updated through the reducer.
     var clipboardValuesToClear: [RedactableString] {
-        var values: [RedactableString] = []
-        if let pastedLink {
-            values.append(pastedLink)
-        }
+        var values = clipboardCandidates
         if !values.contains(text), GiftCardSecretDetector.mayContainGiftCardSecret(text.data) {
             values.append(text)
         }

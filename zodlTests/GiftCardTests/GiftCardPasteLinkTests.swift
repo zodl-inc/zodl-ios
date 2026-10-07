@@ -17,6 +17,7 @@ import ComposableArchitecture
 private struct GiftCardPasteboardFixture {
     var string: RedactableString?
     var readCount = 0
+    var writeCount = 0
     var clearCandidates: [RedactableString] = []
 
     init(_ string: String? = nil) {
@@ -30,14 +31,20 @@ private struct GiftCardPasteboardFixture {
 
     private func makeStore(
         clipboard: LockIsolated<GiftCardPasteboardFixture> = LockIsolated(GiftCardPasteboardFixture()),
-        client: GiftCardClient = GiftCardClient.mock()
+        client: GiftCardClient = GiftCardClient.mock(),
+        state: GiftCardPasteLink.State = GiftCardPasteLink.State()
     ) -> TestStore<GiftCardPasteLink.State, GiftCardPasteLink.Action> {
-        TestStore(initialState: GiftCardPasteLink.State()) {
+        TestStore(initialState: state) {
             GiftCardPasteLink()
         } withDependencies: {
             $0.giftCard = client
             $0.pasteboard = PasteboardClient(
-                setString: { value in clipboard.withValue { $0.string = value } },
+                setString: { value in
+                    clipboard.withValue {
+                        $0.writeCount += 1
+                        $0.string = value
+                    }
+                },
                 clearIfMatches: { value in
                     clipboard.withValue {
                         $0.clearCandidates.append(value)
@@ -69,7 +76,7 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.pasteTapped) {
             $0.text = link.redacted
-            $0.pastedLink = "  \(link)\n".redacted
+            $0.clipboardCandidates = ["  \(link)\n".redacted, link.redacted]
             $0.isValid = true
         }
     }
@@ -87,6 +94,7 @@ private struct GiftCardPasteboardFixture {
         // Not a gift card link, so leaving does not touch the clipboard.
         await store.send(.backTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isInvalid = false
         }
         await store.receive(\.delegate.back)
@@ -106,6 +114,7 @@ private struct GiftCardPasteboardFixture {
         let store = makeStore()
         await store.send(.textChanged("https://gift.zodl.com/#".redacted)) {
             $0.text = "https://gift.zodl.com/#".redacted
+            $0.clipboardCandidates = ["https://gift.zodl.com/#".redacted]
             $0.isInvalid = true
         }
     }
@@ -118,6 +127,7 @@ private struct GiftCardPasteboardFixture {
         let store = makeStore(client: client)
         await store.send(.textChanged(Self.link.redacted)) {
             $0.text = Self.link.redacted
+            $0.clipboardCandidates = [Self.link.redacted]
             $0.isValid = true
         }
     }
@@ -128,6 +138,9 @@ private struct GiftCardPasteboardFixture {
         let store = makeStore()
         await store.send(.textChanged(text.redacted)) {
             $0.text = text.redacted
+            if text == "HTTPS://GIFT.ZODL.COM/" {
+                $0.clipboardCandidates = [text.redacted]
+            }
         }
     }
 
@@ -139,6 +152,7 @@ private struct GiftCardPasteboardFixture {
         }
         await store.send(.clearTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isInvalid = false
         }
     }
@@ -160,12 +174,12 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.pasteTapped) {
             $0.text = Self.link.redacted
-            $0.pastedLink = original.redacted
+            $0.clipboardCandidates = [original.redacted, Self.link.redacted]
             $0.isValid = true
         }
         await store.send(.continueTapped) {
             $0.text = .empty
-            $0.pastedLink = nil
+            $0.clipboardCandidates = []
             $0.isValid = false
         }
         await store.receive(.delegate(.open(Self.link.redacted)))
@@ -183,10 +197,12 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.textChanged(Self.link.redacted)) {
             $0.text = Self.link.redacted
+            $0.clipboardCandidates = [Self.link.redacted]
             $0.isValid = true
         }
         await store.send(.continueTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isValid = false
         }
         await store.receive(.delegate(.open(Self.link.redacted)))
@@ -200,11 +216,13 @@ private struct GiftCardPasteboardFixture {
         let store = makeStore(clipboard: clipboard)
 
         await store.send(.textChanged(text)) {
+            $0.clipboardCandidates = [text]
             $0.text = text
             $0.isInvalid = true
         }
         await store.send(.backTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isInvalid = false
         }
         await store.receive(.delegate(.back))
@@ -224,12 +242,14 @@ private struct GiftCardPasteboardFixture {
         }
         await store.send(.clearTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isInvalid = false
         }
         await store.send(.backTapped)
         await store.receive(\.delegate.back)
         #expect(clipboard.value.clearCandidates.isEmpty)
         #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
         #expect(clipboard.value.string == "ordinary clipboard".redacted)
     }
 
@@ -239,12 +259,12 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.pasteTapped) {
             $0.text = Self.link.redacted
-            $0.pastedLink = Self.link.redacted
+            $0.clipboardCandidates = [Self.link.redacted]
             $0.isValid = true
         }
         await store.send(.backTapped) {
             $0.text = .empty
-            $0.pastedLink = nil
+            $0.clipboardCandidates = []
             $0.isValid = false
         }
         await store.receive(.delegate(.back))
@@ -267,18 +287,20 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.textChanged(text.redacted)) {
             $0.text = text.redacted
+            $0.clipboardCandidates = [text.redacted]
             $0.isValid = isValid
             $0.isInvalid = !isValid
         }
         #expect(clipboard.value.readCount == 0)
         await store.send(.clearTapped) {
             $0.text = .empty
+            $0.clipboardCandidates = []
             $0.isValid = false
             $0.isInvalid = false
         }
         #expect(clipboard.value.string == nil)
         #expect(clipboard.value.clearCandidates == [text.redacted])
-        #expect(store.state.pastedLink == nil)
+        #expect(store.state.clipboardCandidates.isEmpty)
         #expect(!store.state.isValid)
         #expect(!store.state.isInvalid)
 
@@ -297,13 +319,13 @@ private struct GiftCardPasteboardFixture {
 
         await store.send(.pasteTapped) {
             $0.text = text.redacted
-            $0.pastedLink = original.redacted
+            $0.clipboardCandidates = [original.redacted, text.redacted]
             $0.isValid = isValid
             $0.isInvalid = !isValid
         }
         await store.send(.clearTapped) {
             $0.text = .empty
-            $0.pastedLink = nil
+            $0.clipboardCandidates = []
             $0.isValid = false
             $0.isInvalid = false
         }
@@ -327,11 +349,12 @@ private struct GiftCardPasteboardFixture {
         if usePasteButton {
             await store.send(.pasteTapped) {
                 $0.text = Self.link.redacted
-                $0.pastedLink = original.redacted
+                $0.clipboardCandidates = [original.redacted, Self.link.redacted]
                 $0.isValid = true
             }
         } else {
             await store.send(.textChanged(original.redacted)) {
+                $0.clipboardCandidates = [original.redacted]
                 $0.text = original.redacted
                 $0.isValid = true
             }
@@ -339,7 +362,7 @@ private struct GiftCardPasteboardFixture {
         clipboard.withValue { $0.string = replacement }
         await store.send(.clearTapped) {
             $0.text = .empty
-            $0.pastedLink = nil
+            $0.clipboardCandidates = []
             $0.isValid = false
         }
         #expect(clipboard.value.string == replacement)
@@ -351,6 +374,263 @@ private struct GiftCardPasteboardFixture {
         await store.receive(\.delegate.back)
         #expect(clipboard.value.string == replacement)
         #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    enum KeyboardEdit: CaseIterable {
+        case appendSpace
+        case removeFinalCharacter
+        case removeMarkers
+        case ordinaryText
+        case empty
+
+        func apply(to original: String) -> String {
+            switch self {
+            case .appendSpace:
+                return "\(original) "
+            case .removeFinalCharacter:
+                return String(original.trimmingCharacters(in: .whitespacesAndNewlines).dropLast())
+            case .removeMarkers:
+                return original
+                    .replacingOccurrences(of: "gift.zodl.com", with: "example.com")
+                    .replacingOccurrences(of: "zgifttest1", with: "fixture")
+                    .replacingOccurrences(of: "link.vizor.cash/payment-links", with: "example.com/cards")
+            case .ordinaryText:
+                return "ordinary replacement text"
+            case .empty:
+                return ""
+            }
+        }
+    }
+
+    @Test(
+        arguments: [link, vizorLink, "  \(link)\n", "  \(vizorLink)\n"],
+        KeyboardEdit.allCases.flatMap { edit in [false, true].map { (edit, $0) } }
+    )
+    func editedKeyboardPasteClearsOriginalOnExit(original: String, exit: (KeyboardEdit, Bool)) async {
+        let (edit, useBack) = exit
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(original))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        let edited = edit.apply(to: original)
+
+        await store.send(.textChanged(original.redacted))
+        #expect(store.state.isValid)
+        await store.send(.textChanged(edited.redacted))
+        #expect(store.state.text == edited.redacted)
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        store.exhaustivity = .on
+        if useBack {
+            await store.send(.backTapped) {
+                $0 = GiftCardPasteLink.State()
+            }
+            await store.receive(.delegate(.back))
+        } else {
+            await store.send(.clearTapped) {
+                $0 = GiftCardPasteLink.State()
+            }
+        }
+        #expect(clipboard.value.string == nil)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+        #expect(store.state.text == .empty)
+        #expect(!store.state.isValid)
+        #expect(!store.state.isInvalid)
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+    }
+
+    @Test(arguments: [link, vizorLink, "  \(link)\n", "  \(vizorLink)\n"])
+    func editedKeyboardPasteContinuesWithTrimmedLink(original: String) async {
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(original))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(original.redacted))
+        await store.send(.textChanged("\(original) ".redacted))
+        #expect(store.state.isValid)
+        #expect(!store.state.isInvalid)
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        store.exhaustivity = .on
+        await store.send(.continueTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        let link = original.trimmingCharacters(in: .whitespacesAndNewlines).redacted
+        await store.receive(.delegate(.open(link)))
+        #expect(clipboard.value.string == nil)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+        #expect(store.state.text == .empty)
+    }
+
+    @Test func invalidContinueRetainsEditedPasteCandidates() async {
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(Self.link))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(Self.link.redacted))
+        await store.send(.textChanged("ordinary replacement text".redacted))
+        #expect(!store.state.isValid)
+        #expect(store.state.isInvalid)
+        store.exhaustivity = .on
+        await store.send(.continueTapped)
+        await store.finish()
+        #expect(store.state.clipboardValuesToClear == [Self.link.redacted])
+        #expect(store.state.text == "ordinary replacement text".redacted)
+        #expect(clipboard.value.string == Self.link.redacted)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+        await store.send(.backTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        await store.receive(.delegate(.back))
+        #expect(clipboard.value.string == nil)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], [false, true])
+    func mixedInputsKeepEveryOriginalUntilExit(routes: (Bool, Bool), clearEarlier: Bool) async {
+        let first = "  \(Self.link)\n"
+        let second = "\t\(Self.vizorLink) "
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(first))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        if routes.0 {
+            await store.send(.pasteTapped)
+        } else {
+            await store.send(.textChanged(first.redacted))
+        }
+        #expect(store.state.isValid)
+        await store.send(.textChanged("".redacted))
+        #expect(!store.state.isValid)
+        #expect(!store.state.isInvalid)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        clipboard.withValue { $0.string = second.redacted }
+        if routes.1 {
+            await store.send(.pasteTapped)
+        } else {
+            await store.send(.textChanged(second.redacted))
+        }
+        #expect(store.state.isValid)
+        await store.send(.textChanged("ordinary replacement text".redacted))
+        #expect(!store.state.isValid)
+        #expect(store.state.isInvalid)
+        #expect(store.state.clipboardValuesToClear.contains(first.redacted))
+        #expect(store.state.clipboardValuesToClear.contains(second.redacted))
+        #expect(!store.state.clipboardValuesToClear.contains("ordinary replacement text".redacted))
+        #expect(clipboard.value.readCount == (routes.0 ? 1 : 0) + (routes.1 ? 1 : 0))
+        #expect(clipboard.value.writeCount == 0)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        clipboard.withValue { $0.string = (clearEarlier ? first : second).redacted }
+        store.exhaustivity = .on
+        await store.send(.backTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        await store.receive(.delegate(.back))
+        #expect(clipboard.value.string == nil)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test func exactVariantsAreRetainedOnceUntilCleanup() async {
+        let first = "  \(Self.link)\n".redacted
+        let second = "\t\(Self.link) ".redacted
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(second.data))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(first))
+        await store.send(.textChanged(second))
+        await store.send(.textChanged(first))
+        await store.send(.textChanged("".redacted))
+        #expect(store.state.clipboardValuesToClear == [first, second])
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+        #expect(clipboard.value.clearCandidates.isEmpty)
+        store.exhaustivity = .on
+        await store.send(.clearTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        #expect(clipboard.value.string == nil)
+        #expect(clipboard.value.clearCandidates == [first, second])
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test func clearedVisitDoesNotReuseEarlierCandidates() async {
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(Self.link))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(Self.link.redacted))
+        store.exhaustivity = .on
+        await store.send(.clearTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        #expect(clipboard.value.string == nil)
+        clipboard.withValue { $0.string = Self.link.redacted }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(Self.vizorLink.redacted))
+        await store.send(.textChanged("".redacted))
+        #expect(store.state.clipboardValuesToClear == [Self.vizorLink.redacted])
+        store.exhaustivity = .on
+        await store.send(.backTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        await store.receive(.delegate(.back))
+        #expect(clipboard.value.string == Self.link.redacted)
+        #expect(clipboard.value.clearCandidates == [Self.link.redacted, Self.vizorLink.redacted])
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test(arguments: ["ordinary replacement text", "https://gift.zodl.com/#v=1&key=zgifttest1unseen&height=3000000"])
+    func editedPastePreservesUnseenClipboardReplacement(replacement: String) async {
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(Self.link))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(Self.link.redacted))
+        await store.send(.textChanged("".redacted))
+        clipboard.withValue { $0.string = replacement.redacted }
+        store.exhaustivity = .on
+        await store.send(.clearTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        #expect(clipboard.value.string == replacement.redacted)
+        #expect(clipboard.value.clearCandidates == [Self.link.redacted])
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test(arguments: [link, vizorLink, "my card zgifttest1fixture"])
+    func directlyInitializedSensitiveTextIsCleared(text: String) async {
+        var state = GiftCardPasteLink.State()
+        state.text = text.redacted
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(text))
+        let store = makeStore(clipboard: clipboard, state: state)
+        await store.send(.clearTapped) {
+            $0.text = .empty
+        }
+        #expect(clipboard.value.string == nil)
+        #expect(clipboard.value.clearCandidates == [text.redacted])
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+    }
+
+    @Test func invalidSensitiveKeyboardInputIsRetainedAfterEditing() async {
+        let original = "my card zgifttest1fixture"
+        let clipboard = LockIsolated(GiftCardPasteboardFixture(original))
+        let store = makeStore(clipboard: clipboard)
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.textChanged(original.redacted))
+        #expect(!store.state.isValid)
+        #expect(store.state.isInvalid)
+        await store.send(.textChanged("ordinary replacement text".redacted))
+        #expect(store.state.clipboardValuesToClear == [original.redacted])
+        store.exhaustivity = .on
+        await store.send(.backTapped) {
+            $0 = GiftCardPasteLink.State()
+        }
+        await store.receive(.delegate(.back))
+        #expect(clipboard.value.string == nil)
+        #expect(store.state.clipboardValuesToClear.isEmpty)
+        #expect(clipboard.value.readCount == 0)
+        #expect(clipboard.value.writeCount == 0)
     }
 }
 

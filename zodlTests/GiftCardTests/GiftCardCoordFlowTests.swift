@@ -78,7 +78,7 @@ import ComposableArchitecture
         var state = GiftCardCoordFlow.State()
         var paste = GiftCardPasteLink.State()
         paste.text = Self.link
-        paste.pastedLink = Self.link
+        paste.clipboardCandidates = [Self.link]
         paste.isValid = true
         state.pasteLinkState = paste
         let store = TestStore(initialState: state) {
@@ -96,6 +96,58 @@ import ComposableArchitecture
             $0.pasteLinkState = nil
         }
         #expect(cleared.value == [Self.link])
+    }
+
+    @Test(arguments: [false, true])
+    func editedKeyboardPasteIsClearedByStandaloneCoordinator(deleteField: Bool) async {
+        let link = Self.link
+        let clipboard = LockIsolated<(string: RedactableString?, reads: Int, writes: Int, candidates: [RedactableString])>(
+            (link, 0, 0, [])
+        )
+        let store = TestStore(initialState: GiftCardCoordFlow.State()) {
+            GiftCardCoordFlow()
+        } withDependencies: {
+            $0.giftCard = GiftCardClient.mock()
+            $0.pasteboard = PasteboardClient(
+                setString: { value in
+                    clipboard.withValue {
+                        $0.writes += 1
+                        $0.string = value
+                    }
+                },
+                clearIfMatches: { value in
+                    clipboard.withValue {
+                        $0.candidates.append(value)
+                        if $0.string == value { $0.string = nil }
+                    }
+                },
+                getString: {
+                    clipboard.withValue {
+                        $0.reads += 1
+                        return $0.string
+                    }
+                }
+            )
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.scan(.pasteTapped))
+        await store.send(.pasteLink(.textChanged(Self.link)))
+        await store.send(.pasteLink(.textChanged((deleteField ? "" : "ordinary replacement text").redacted)))
+        #expect(clipboard.value.reads == 0)
+        #expect(clipboard.value.writes == 0)
+        #expect(clipboard.value.candidates.isEmpty)
+        store.exhaustivity = .on
+        await store.send(.cleanUp) {
+            $0.pasteLinkState = nil
+        }
+        #expect(store.state.pasteLinkState == nil)
+        #expect(store.state.redeemState == nil)
+        #expect(clipboard.value.string == nil)
+        #expect(clipboard.value.candidates == [Self.link])
+        await store.send(.cleanUp)
+        #expect(clipboard.value.candidates == [Self.link])
+        #expect(clipboard.value.reads == 0)
+        #expect(clipboard.value.writes == 0)
     }
 
     @Test func scannedCardOpensTheRedeemScreen() async {

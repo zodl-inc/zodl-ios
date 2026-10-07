@@ -153,7 +153,7 @@ import ComposableArchitecture
         #expect(clipboard.value.reads == 0)
     }
 
-    @Test func editedPasteRetainsOnlyItsOriginalCandidateUntilParentExit() async {
+    @Test func editedPasteRetainsItsSensitiveCandidatesUntilParentExit() async {
         let original = "  \(Self.link)\n"
         let clipboard = LockIsolated(Clipboard(original))
         let store = makeStore(clipboard)
@@ -164,7 +164,7 @@ import ComposableArchitecture
         await store.finish()
 
         #expect(clipboard.value.string == nil)
-        #expect(clipboard.value.candidates == [original.redacted])
+        #expect(clipboard.value.candidates == [original.redacted, Self.link.redacted])
         #expect(clipboard.value.reads == 1)
         #expect(store.state.giftCardCoordFlowState.pasteLinkState == nil)
     }
@@ -238,5 +238,81 @@ import ComposableArchitecture
         #expect(clipboard.value.reads == 0)
         #expect(clipboard.value.writes == 0)
         #expect(store.state.giftCardCoordFlowState.pasteLinkState == nil)
+    }
+
+    enum ParentTransition: CaseIterable {
+        case settings
+        case freshScanner
+        case newCard
+        case warningContinue
+        case coordinatorCleanup
+    }
+
+    @Test(arguments: [false, true], ParentTransition.allCases)
+    func editedKeyboardPasteClearsOnParentTransition(deleteField: Bool, transition: ParentTransition) async throws {
+        let original = "  \(Self.link)\n"
+        let edited = deleteField ? "" : "\(original) "
+        let clipboard = LockIsolated(Clipboard(original))
+        let store = makeStore(clipboard)
+        await openPaste(store)
+        await store.send(.giftCardCoordFlow(.pasteLink(.textChanged(original.redacted))))
+        #expect(store.state.giftCardCoordFlowState.pasteLinkState?.isValid == true)
+        await store.send(.giftCardCoordFlow(.pasteLink(.textChanged(edited.redacted))))
+        #expect(store.state.giftCardCoordFlowState.pasteLinkState?.text == edited.redacted)
+        #expect(store.state.giftCardCoordFlowState.pasteLinkState?.isValid == !deleteField)
+        #expect(clipboard.value.reads == 0)
+        #expect(clipboard.value.writes == 0)
+        #expect(clipboard.value.candidates.isEmpty)
+
+        switch transition {
+        case .settings:
+            await store.send(.home(.settingsTapped))
+            #expect(store.state.path != .giftCardCoordFlow)
+        case .freshScanner:
+            await store.send(.home(.redeemGiftCardTapped))
+            #expect(store.state.path == .giftCardCoordFlow)
+            #expect(store.state.giftCardCoordFlowState.scanState.isPasteEnabled)
+            #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+        case .newCard:
+            await store.send(.scanCoordFlow(.scan(.foundGiftCard(Self.replacementLink.redacted))))
+            #expect(store.state.path == .giftCardCoordFlow)
+            #expect(store.state.giftCardCoordFlowState.redeemState?.link == Self.replacementLink.redacted)
+        case .warningContinue:
+            let payment = try #require(URL(string: "zcash:t1gXqfSSQt6WfpwyuCU3Wi7sSVZ66DYQ3Po?amount=1"))
+            await store.send(.destination(.deeplink(payment)))
+            await store.receive {
+                if case .destination(.updateDestination(.deeplinkWarning)) = $0 { true } else { false }
+            }
+            #expect(store.state.destinationState.destination == .deeplinkWarning)
+            #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+            #expect(clipboard.value.string == original.redacted)
+            await store.send(.deeplinkWarning(.rescanInZashi))
+            await store.receive(\.home.scanTapped)
+            #expect(store.state.path == .scanCoordFlow)
+        case .coordinatorCleanup:
+            await store.send(.giftCardCoordFlow(.cleanUp))
+            #expect(store.state.giftCardCoordFlowState.redeemState == nil)
+            #expect(store.state.giftCardCoordFlowState.scanState.isPasteEnabled)
+        }
+        await store.finish()
+        #expect(store.state.giftCardCoordFlowState.pasteLinkState == nil)
+        #expect(clipboard.value.string == nil)
+        let expectedCandidates = deleteField ? [original.redacted] : [original.redacted, edited.redacted]
+        #expect(clipboard.value.candidates == expectedCandidates)
+        #expect(clipboard.value.reads == 0)
+        #expect(clipboard.value.writes == 0)
+
+        if transition == .freshScanner {
+            await store.send(.giftCardCoordFlow(.scan(.pasteTapped)))
+            clipboard.withValue { $0.string = Self.replacementLink.redacted }
+            await store.send(.giftCardCoordFlow(.pasteLink(.textChanged(Self.replacementLink.redacted))))
+            #expect(store.state.giftCardCoordFlowState.pasteLinkState?.text == Self.replacementLink.redacted)
+            #expect(store.state.giftCardCoordFlowState.pasteLinkState?.clipboardValuesToClear == [Self.replacementLink.redacted])
+            #expect(clipboard.value.string == Self.replacementLink.redacted)
+        } else {
+            await store.send(.home(.settingsTapped))
+        }
+        await store.finish()
+        #expect(clipboard.value.candidates == expectedCandidates)
     }
 }
