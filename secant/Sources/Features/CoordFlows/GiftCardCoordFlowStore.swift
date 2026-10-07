@@ -56,6 +56,7 @@ struct GiftCardCoordFlow {
 
     @Dependency(\.audioServices) var audioServices
     @Dependency(\.giftCard) var giftCard
+    @Dependency(\.pasteboard) var pasteboard
 
     init() { }
 

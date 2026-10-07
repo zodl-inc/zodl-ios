@@ -71,6 +71,33 @@ import ComposableArchitecture
         }
     }
 
+    /// Cleanup while the paste screen holds a pasted card link clears it from the clipboard (if
+    /// the clipboard still holds it), as leaving the screen does.
+    @Test func cleanUpClearsALinkPastedOnThePasteScreen() async {
+        let cleared = LockIsolated<[RedactableString]>([])
+        var state = GiftCardCoordFlow.State()
+        var paste = GiftCardPasteLink.State()
+        paste.text = Self.link
+        paste.pastedLink = Self.link
+        paste.isValid = true
+        state.pasteLinkState = paste
+        let store = TestStore(initialState: state) {
+            GiftCardCoordFlow()
+        } withDependencies: {
+            $0.giftCard = .mock()
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in },
+                clearIfMatches: { value in cleared.withValue { $0.append(value) } },
+                getString: { nil }
+            )
+        }
+
+        await store.send(.cleanUp) {
+            $0.pasteLinkState = nil
+        }
+        #expect(cleared.value == [Self.link])
+    }
+
     @Test func scannedCardOpensTheRedeemScreen() async {
         let store = TestStore(initialState: GiftCardCoordFlow.State()) {
             GiftCardCoordFlow()

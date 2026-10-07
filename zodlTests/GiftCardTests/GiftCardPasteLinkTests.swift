@@ -145,11 +145,14 @@ import ComposableArchitecture
             $0.isValid = false
         }
         await store.receive(.delegate(.open(Self.link.redacted)))
-        // Matched against the untrimmed original: the clipboard holds that, not the trimmed text.
-        #expect(cleared.value == [original.redacted])
+        // Matched against the untrimmed original, which the clipboard holds, and against the
+        // field's text; each is cleared only if the clipboard still holds exactly that.
+        #expect(cleared.value == [original.redacted, Self.link.redacted])
     }
 
-    @Test func typedLinkDoesNotTouchTheClipboard() async {
+    /// A link that reached the field without the Paste button (a paste from the keyboard or a long
+    /// press) is cleared from the clipboard too, if the clipboard still holds exactly that text.
+    @Test func linkPastedIntoTheFieldIsClearedFromTheClipboardOnContinue() async {
         let cleared = LockIsolated<[RedactableString]>([])
         let store = makeStore(cleared: cleared)
 
@@ -162,6 +165,37 @@ import ComposableArchitecture
             $0.isValid = false
         }
         await store.receive(.delegate(.open(Self.link.redacted)))
+        #expect(cleared.value == [Self.link.redacted])
+    }
+
+    @Test func textHoldingACardSecretIsClearedFromTheClipboardOnBack() async {
+        let cleared = LockIsolated<[RedactableString]>([])
+        let store = makeStore(cleared: cleared)
+        let text = "my card zgifttest1fixture".redacted
+
+        await store.send(.textChanged(text)) {
+            $0.text = text
+            $0.isInvalid = true
+        }
+        await store.send(.backTapped) {
+            $0.text = .empty
+            $0.isInvalid = false
+        }
+        await store.receive(.delegate(.back))
+        #expect(cleared.value == [text])
+    }
+
+    @Test func typedTextWithoutACardSecretDoesNotTouchTheClipboard() async {
+        let cleared = LockIsolated<[RedactableString]>([])
+        let store = makeStore(cleared: cleared)
+
+        await store.send(.textChanged("https://gift.zo".redacted)) {
+            $0.text = "https://gift.zo".redacted
+        }
+        await store.send(.backTapped) {
+            $0.text = .empty
+        }
+        await store.receive(.delegate(.back))
         #expect(cleared.value.isEmpty)
     }
 

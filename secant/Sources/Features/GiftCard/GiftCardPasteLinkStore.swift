@@ -13,9 +13,10 @@ import ComposableArchitecture
 /// Continue is enabled only for text the gift card client accepts as a card link.
 ///
 /// The link is a bearer secret: it lives only in `state.text` (redacted) and is never logged.
-/// When it came from the clipboard, the clipboard is cleared as the screen is left (Continue or
-/// back), but only while it still holds that same text. That includes pasted text that holds a
-/// card's link or key anywhere in it, even when it is not a link Continue accepts.
+/// As the screen is left (Continue, back, or the flow's cleanup) the clipboard is cleared, but only
+/// while it still holds the same text: what the Paste button took when it holds a card's link or
+/// key anywhere in it, even when it is not a link Continue accepts, and the field's text when it
+/// holds one, which covers a paste from the keyboard or a long press.
 @Reducer
 struct GiftCardPasteLink {
     @ObservableState
@@ -84,12 +85,12 @@ struct GiftCardPasteLink {
                     return .none
                 }
                 let link = state.text.data.trimmingCharacters(in: .whitespacesAndNewlines).redacted
-                clearPastedLink(&state)
+                clearClipboard(&state)
                 update(&state, text: "")
                 return .send(.delegate(.open(link)))
 
             case .backTapped:
-                clearPastedLink(&state)
+                clearClipboard(&state)
                 update(&state, text: "")
                 return .send(.delegate(.back))
 
@@ -126,11 +127,25 @@ extension GiftCardPasteLink {
         }
     }
 
-    private func clearPastedLink(_ state: inout State) {
-        guard let pasted = state.pastedLink else {
-            return
+    private func clearClipboard(_ state: inout State) {
+        for value in state.clipboardValuesToClear {
+            pasteboard.clearIfMatches(value)
         }
         state.pastedLink = nil
-        pasteboard.clearIfMatches(pasted)
+    }
+}
+
+extension GiftCardPasteLink.State {
+    /// What leaving the screen clears from the clipboard, if the clipboard still holds it: the
+    /// text the Paste button took, and the field's text when it holds a card's link or key.
+    var clipboardValuesToClear: [RedactableString] {
+        var values: [RedactableString] = []
+        if let pastedLink {
+            values.append(pastedLink)
+        }
+        if !values.contains(text), GiftCardSecretDetector.mayContainGiftCardSecret(text.data) {
+            values.append(text)
+        }
+        return values
     }
 }
