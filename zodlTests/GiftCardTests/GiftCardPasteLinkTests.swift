@@ -213,7 +213,9 @@ import ComposableArchitecture
         ("es", "giftCard.paste.title", "Pega el enlace de tu tarjeta de regalo"),
         ("en", "giftCard.paste.invalid", "This link is not a valid gift card. Check it and try again."),
         ("es", "giftCard.paste.invalid", "Este enlace no es una tarjeta de regalo válida. Revísalo e inténtalo de nuevo."),
-        ("en", "giftCard.redeem.memo", "Gift Card")
+        ("en", "giftCard.redeem.memo", "Gift Card"),
+        ("en", "giftCard.success.descNoAmount", "Your gift is on its way to your wallet.\nIt will show up in your activity shortly."),
+        ("es", "giftCard.success.descNoAmount", "Tu regalo está en camino a tu billetera.\nAparecerá en tu actividad en breve.")
     ])
     func copyMatchesTheDesign(language: String, key: String, value: String) throws {
         let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))

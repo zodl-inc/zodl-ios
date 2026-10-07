@@ -112,7 +112,7 @@ struct GiftCardRedeemView: View {
             statusScreen(
                 illustration: Asset.Assets.Illustrations.giftOpen.image,
                 title: String(localizable: .giftCardSuccessTitle),
-                desc: String(localizable: .giftCardSuccessDesc(receivedFormatted())),
+                desc: successDesc(),
                 buttons: .close
             )
             .applySuccessScreenBackground()
@@ -358,6 +358,14 @@ extension GiftCardRedeemView {
             return String(localizable: .giftCardReadyNoteNoWallet)
         }
         return String(localizable: .giftCardReadyNote(wallet))
+    }
+
+    /// What the success screen says: the amount received, when the redemption reported it.
+    func successDesc() -> String {
+        guard store.receivedAmount != nil else {
+            return String(localizable: .giftCardSuccessDescNoAmount)
+        }
+        return String(localizable: .giftCardSuccessDesc(receivedFormatted()))
     }
 
     /// The amount the wallet receives, as the screens show it, e.g. "0.100 ZEC": at least three

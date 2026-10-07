@@ -51,8 +51,9 @@ struct GiftCardRedeem {
             case unavailable
             /// `amount` is what the wallet is to receive, after the network fee.
             case redeeming(amount: Zatoshi)
-            /// Redeemed; `received` is what the wallet gets, after the network fee.
-            case success(received: Zatoshi)
+            /// Redeemed; `received` is what the wallet gets, after the network fee, or `nil` when
+            /// the redemption did not report it.
+            case success(received: Zatoshi?)
             /// `amount` is what the wallet was to receive.
             case failure(amount: Zatoshi)
         }
@@ -333,12 +334,13 @@ struct GiftCardRedeem {
                 .cancellable(id: visit)
 
             case .response(_, .redeemSucceeded(let redemption)):
-                guard case .redeeming(let amount) = state.step else {
+                guard case .redeeming = state.step else {
                     return .none
                 }
                 state.txId = redemption.txId
-                // What the redemption's own proposal sent; the Ready figure if it is not known.
-                state.step = .success(received: redemption.received ?? amount)
+                // What the redemption's own proposal sent. The Ready figure is not a stand-in: more
+                // funds may have become spendable since, so an unknown amount is shown as such.
+                state.step = .success(received: redemption.received)
                 return .send(.delegate(.redeemed))
 
             case .response(_, .redeemFailed(let error)):

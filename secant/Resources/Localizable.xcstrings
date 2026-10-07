@@ -9070,6 +9070,23 @@
         }
       }
     },
+    "giftCard.success.descNoAmount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your gift is on its way to your wallet.\nIt will show up in your activity shortly."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu regalo está en camino a tu billetera.\nAparecerá en tu actividad en breve."
+          }
+        }
+      }
+    },
     "giftCard.success.title" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -148,9 +148,10 @@ import ComposableArchitecture
     }
 
     /// Success shows what the redemption's own proposal sent, which can differ from the Ready
-    /// figure (more funds became spendable meanwhile), and falls back to the Ready figure.
-    @Test(arguments: [(Optional(Zatoshi(10_500_000)), Zatoshi(10_500_000)), (nil, Zatoshi(10_000_000))])
-    func successShowsWhatTheRedemptionSent(reported: Zatoshi?, shown: Zatoshi) async {
+    /// figure (more funds became spendable meanwhile). An amount the redemption did not report is
+    /// left unknown rather than replaced with the Ready figure.
+    @Test(arguments: [(Optional(Zatoshi(10_500_000)), Optional(Zatoshi(10_500_000))), (nil, nil)])
+    func successShowsWhatTheRedemptionSent(reported: Zatoshi?, shown: Zatoshi?) async {
         var state = GiftCardRedeem.State(link: Self.link)
         state.handle = GiftCardHandle()
         state.step = .redeeming(amount: Zatoshi(10_000_000))
@@ -162,6 +163,18 @@ import ComposableArchitecture
             $0.txId = "tx"
         }
         await store.receive(\.delegate.redeemed)
+        #expect(store.state.receivedAmount == shown)
+    }
+
+    /// Success names the amount received when it is known, and says the gift is on its way
+    /// without an amount otherwise (Android's `redeemGift_success_subtitle_noAmount`).
+    @Test func successCopyFollowsWhetherTheAmountIsKnown() {
+        let known = GiftCardRedeemView(store: GiftCardRedeem.preview(.success(received: Zatoshi(10_000_000))), tokenName: "ZEC")
+        let amount = "\(Zatoshi(10_000_000).atLeastThreeDecimalsZashiFormatted()) ZEC"
+        #expect(known.successDesc() == String(localizable: .giftCardSuccessDesc(amount)))
+
+        let unknown = GiftCardRedeemView(store: GiftCardRedeem.preview(.success(received: nil)), tokenName: "ZEC")
+        #expect(unknown.successDesc() == String(localizable: .giftCardSuccessDescNoAmount))
     }
 
     @Test func receivedAmountFollowsEveryStepThatHasAnAmount() {
