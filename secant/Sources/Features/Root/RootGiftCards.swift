@@ -20,6 +20,7 @@ extension Root {
     enum GiftCardSyncStartOutcome: Equatable {
         case success
         case cancelled
+        case admissionDeferred
         case transientFailure(ZcashError)
         case migrationDeferred
     }
@@ -151,15 +152,19 @@ extension Root {
             }
             if case .giftCardSyncObserve(let generation) = action {
                 guard generation == state.giftCardSyncGeneration, state.canResumeGiftCardSync else { return .none }
-                state.giftCardSyncObservationGeneration = generation
-                return .merge(
-                    initializationReduce()._reduce(into: &state, action: .initialization(.registerForSynchronizersUpdate(generation: nil))),
-                    .send(.observeTransactions)
-                )
+                return observeGiftCardSync(generation: generation, state: &state)
+            }
+            if case .giftCardSyncRestoreMigrationObservation(let generation) = action {
+                guard generation == state.giftCardSyncGeneration, state.canResumeGiftCardSync,
+                      state.giftCardSyncRecovery == .migrationDeferred,
+                      state.giftCardSyncObservationGeneration != generation else { return .none }
+                // Reserve only admitted restoration. Navigation may deny or retire a queued request,
+                // and duplicate requests must not re-register feeds after their first seed clears recovery.
+                return observeGiftCardSync(generation: generation, state: &state)
             }
             if case .giftCardSyncVisitReady(let startId, let visit) = action {
                 guard state.canContinueGiftCardSyncStart(startId) else {
-                    return .send(.giftCardSyncStartFinished(startId, .cancelled))
+                    return .send(.giftCardSyncStartFinished(startId, .admissionDeferred))
                 }
                 if visit == .send { state.syncDeferredByMigrationGate = true }
                 return .run { send in
@@ -172,7 +177,9 @@ extension Root {
                 }
             }
             if case .giftCardSyncMigrationRefused(let startId) = action {
-                guard state.canContinueGiftCardSyncStart(startId) else {
+                // Discharge required migration work under a same-wallet warning while retaining
+                // foreground and operation ownership fences. Home still gates native SDK admission.
+                guard state.ownsCurrentGiftCardSyncStart(startId), state.canPrepareGiftCardSync else {
                     return .send(.giftCardSyncStartFinished(startId, .cancelled))
                 }
                 state.syncDeferredByMigrationGate = true
@@ -183,7 +190,7 @@ extension Root {
             }
             if case .giftCardSyncStartReady(let startId) = action {
                 guard state.canContinueGiftCardSyncStart(startId) else {
-                    return .send(.giftCardSyncStartFinished(startId, .cancelled))
+                    return .send(.giftCardSyncStartFinished(startId, .admissionDeferred))
                 }
                 if state.lastMigrationSyncGateBlocked {
                     return .send(.giftCardSyncStartFinished(startId, .migrationDeferred))
@@ -205,7 +212,7 @@ extension Root {
             }
             if case .giftCardSyncStartFinished(let startId, let outcome) = action {
                 let isOwned = state.giftCardSyncStartId == startId
-                let isCurrent = isOwned && state.giftCardSyncStartGeneration == state.giftCardSyncGeneration
+                let isCurrent = state.ownsCurrentGiftCardSyncStart(startId)
                 if isOwned {
                     state.giftCardSyncStartId = nil
                     state.giftCardSyncStartGeneration = nil
@@ -236,6 +243,10 @@ extension Root {
                     break
                 case .cancelled:
                     state.giftCardSyncRecovery = .waitingForExternalTrigger
+                case .admissionDeferred:
+                    // Preparation never entered the SDK. Retain demand and all retry/seed budgets
+                    // until foreground Home admission returns, independently of native cancellation.
+                    state.giftCardSyncRecovery = .none
                 case .migrationDeferred:
                     state.syncDeferredByMigrationGate = true
                     state.giftCardSyncRecovery = state.giftCardSyncGateClearedDuringStart ? .none : .migrationDeferred
@@ -254,7 +265,8 @@ extension Root {
                         await send(.giftCardRetrySync(retryId))
                     }.cancellable(id: state.startFailureRetryCancelId, cancelInFlight: true))
                 }
-                if state.canResumeGiftCardSync {
+                if state.canResumeGiftCardSync, state.giftCardSyncRecovery != .migrationDeferred {
+                    // Migration holds restore once per generation through reconciliation below.
                     // Restore the same state and migration feeds the ordinary failure path restores.
                     // A migration hold admits only one seed recheck until a genuine edge or
                     // external trigger. Re-registering these feeds cannot replenish that allowance.
@@ -416,10 +428,23 @@ extension Root {
         }
     }
 
+    private func observeGiftCardSync(generation: UUID, state: inout State) -> Effect<Action> {
+        state.giftCardSyncObservationGeneration = generation
+        return .merge(
+            initializationReduce()._reduce(into: &state, action: .initialization(.registerForSynchronizersUpdate(generation: nil))),
+            .send(.observeTransactions)
+        )
+    }
+
     private func reconcileGiftCardSync(state: inout State) -> Effect<Action> {
         guard state.giftCardSyncStopId == nil, state.giftCardSyncStartId == nil, state.ordinarySyncOperations.isEmpty else { return .none }
         if state.ownsGiftCardSyncLifecycle, !state.canResumeGiftCardSync, !state.giftCardSyncIsPaused {
             return stopGiftCardSync(state: &state)
+        }
+        if state.giftCardSyncResumePending, state.canResumeGiftCardSync,
+           state.giftCardSyncRecovery == .migrationDeferred,
+           state.giftCardSyncObservationGeneration != state.giftCardSyncGeneration {
+            return .send(.giftCardSyncRestoreMigrationObservation(state.giftCardSyncGeneration))
         }
         if state.giftCardSyncResumePending, state.canResumeGiftCardSync,
            state.giftCardSyncRecovery == .none || state.giftCardSyncRecovery == .retryDue {
@@ -450,8 +475,12 @@ extension Root {
 }
 
 extension Root.State {
+    func ownsCurrentGiftCardSyncStart(_ startId: UUID) -> Bool {
+        giftCardSyncStartId == startId && giftCardSyncStartGeneration == giftCardSyncGeneration
+    }
+
     func canContinueGiftCardSyncStart(_ startId: UUID) -> Bool {
-        giftCardSyncStartId == startId && giftCardSyncStartGeneration == giftCardSyncGeneration && canResumeGiftCardSync
+        ownsCurrentGiftCardSyncStart(startId) && canResumeGiftCardSync
     }
 
     var ownsGiftCardSyncLifecycle: Bool {
@@ -459,9 +488,12 @@ extension Root.State {
             || giftCardSyncStartId != nil || giftCardSyncResumePending
     }
 
-    var canResumeGiftCardSync: Bool {
-        giftCardSyncPauseOwner == nil
-            && destinationState.destination == .home && splashAppeared && bgTask == nil
+    var canPrepareGiftCardSync: Bool {
+        giftCardSyncPauseOwner == nil && splashAppeared && bgTask == nil
             && appStartState != .didEnterBackground && appStartState != .backgroundTask
+    }
+
+    var canResumeGiftCardSync: Bool {
+        canPrepareGiftCardSync && destinationState.destination == .home
     }
 }

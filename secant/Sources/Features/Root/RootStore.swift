@@ -534,6 +534,7 @@ struct Root {
         case giftCardSyncStartReady(UUID)
         case giftCardSyncMigrationRefused(UUID)
         case giftCardSyncObserve(UUID)
+        case giftCardSyncRestoreMigrationObservation(UUID)
         case ordinarySyncFinished(UUID)
         case giftCardSyncStopped(UUID)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
