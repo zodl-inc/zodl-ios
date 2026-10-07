@@ -13,7 +13,7 @@ import ComposableArchitecture
 /// Continue is enabled only for text the gift card client accepts as a card link.
 ///
 /// The link is a bearer secret: it lives only in `state.text` (redacted) and is never logged.
-/// As the screen is left (Continue, back, or the flow's cleanup) the clipboard is cleared, but only
+/// On Clear or leaving the screen (Continue, back, or the flow's cleanup), the clipboard is cleared only
 /// while it still holds the same text: what the Paste button took when it holds a card's link or
 /// key anywhere in it, even when it is not a link Continue accepts, and the field's text when it
 /// holds one, which covers a paste from the keyboard or a long press.
@@ -23,7 +23,7 @@ struct GiftCardPasteLink {
     struct State: Equatable {
         /// The field's text, as entered.
         var text: RedactableString = .empty
-        /// A gift card link this screen took from the clipboard; cleared from there on leaving.
+        /// Sensitive text this screen took from the clipboard; forgotten on Clear or leaving.
         var pastedLink: RedactableString?
         /// Whether `text` is a gift card link that can be opened (enables Continue).
         var isValid = false
@@ -64,7 +64,7 @@ struct GiftCardPasteLink {
                 }
                 let text = pasted.data.trimmingCharacters(in: .whitespacesAndNewlines)
                 // Anything pasted that holds a card's secret, even inside other text, is cleared
-                // from the clipboard on leaving. The clipboard is matched against the original,
+                // from the clipboard on Clear or leaving. The clipboard is matched against the original,
                 // untrimmed value.
                 if giftCard.isGiftCardLink(text) || GiftCardSecretDetector.mayContainGiftCardSecret(text) {
                     state.pastedLink = pasted
@@ -77,6 +77,7 @@ struct GiftCardPasteLink {
                 return .none
 
             case .clearTapped:
+                clearClipboard(&state)
                 update(&state, text: "")
                 return .none
 
@@ -136,7 +137,7 @@ extension GiftCardPasteLink {
 }
 
 extension GiftCardPasteLink.State {
-    /// What leaving the screen clears from the clipboard, if the clipboard still holds it: the
+    /// What Clear or leaving the screen clears from the clipboard, if it still holds it: the
     /// text the Paste button took, and the field's text when it holds a card's link or key.
     var clipboardValuesToClear: [RedactableString] {
         var values: [RedactableString] = []
