@@ -26,6 +26,7 @@ struct GiftCardPasteLinkView: View {
                                 height: GiftCardRedeemView.Constants.closedGiftSize,
                                 style: Design.Text.primary
                             )
+                            .accessibilityHidden(true)
                             .padding(.top, 24)
 
                         Text(localizable: .giftCardPasteTitle)
@@ -48,6 +49,7 @@ struct GiftCardPasteLinkView: View {
                             title: String(localizable: .giftCardPasteFieldTitle),
                             error: store.isInvalid ? String(localizable: .giftCardPasteInvalid) : nil,
                             inputAccessibilityIdentifier: AccessibilityID.GiftCard.pasteLinkField,
+                            errorAccessibilityIdentifier: AccessibilityID.GiftCard.pasteLinkInvalid,
                             accessoryView: fieldButton()
                         )
                         .padding(.top, 32)

@@ -140,6 +140,7 @@ extension GiftCardRedeemView {
                 VStack(spacing: 0) {
                     Asset.Assets.Illustrations.giftClosed.image
                         .zImage(width: Constants.closedGiftSize, height: Constants.closedGiftSize, style: Design.Text.primary)
+                        .accessibilityHidden(true)
                         .padding(.top, 24)
 
                     Text(localizable: .giftCardReadyTitle)
@@ -156,6 +157,7 @@ extension GiftCardRedeemView {
                         .zFont(.semiBold, size: 48, style: Design.Text.primary)
                         .minimumScaleFactor(0.1)
                         .lineLimit(1)
+                        .accessibilityIdentifier(AccessibilityID.GiftCard.redeemAmount)
                         .padding(.top, 4)
                     }
                 }
@@ -172,6 +174,7 @@ extension GiftCardRedeemView {
                             // the same label the redemption's memo carries.
                             Text(verbatim: "\(String(localizable: .giftCardRedeemMemo)) · \(message)")
                                 .zFont(.medium, size: 14, style: Design.Inputs.Filled.text)
+                                .accessibilityIdentifier(AccessibilityID.GiftCard.redeemMessage)
 
                             Spacer(minLength: 0)
                         }
@@ -192,11 +195,13 @@ extension GiftCardRedeemView {
             HStack(alignment: .top, spacing: 0) {
                 Asset.Assets.infoOutline.image
                     .zImage(size: 16, style: Design.Text.tertiary)
+                    .accessibilityHidden(true)
                     .padding(.trailing, 8)
 
                 Text(readyNote())
                     .zFont(size: 12, style: Design.Text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(AccessibilityID.GiftCard.redeemDisclaimer)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 20)
@@ -205,6 +210,7 @@ extension GiftCardRedeemView {
                 store.send(.redeemTapped)
             }
             .disabled(!store.isRedeemable)
+            .accessibilityIdentifier(AccessibilityID.GiftCard.redeemButton)
             .padding(.bottom, 24)
         }
         .screenHorizontalPadding()
@@ -262,10 +268,12 @@ extension GiftCardRedeemView {
             if templated {
                 illustration
                     .zImage(width: Constants.statusIllustrationSize, height: Constants.statusIllustrationSize, style: Design.Text.primary)
+                    .accessibilityHidden(true)
             } else {
                 illustration
                     .resizable()
                     .frame(width: Constants.statusIllustrationSize, height: Constants.statusIllustrationSize)
+                    .accessibilityHidden(true)
             }
 
             Text(title)
