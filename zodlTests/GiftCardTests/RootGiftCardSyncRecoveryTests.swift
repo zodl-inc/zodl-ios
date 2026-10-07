@@ -22,11 +22,19 @@ import ComposableArchitecture
         let stops = LockIsolated(0)
         let advances = LockIsolated<[MigrationOpenPhase]>([])
         let subscriptions = LockIsolated(0)
+        let gateObservations = LockIsolated(0)
+        let delayedObservation = LockIsolated(false)
+        let observationEntered = GiftCardTestGate()
+        let observationRelease = GiftCardTestGate()
+        var holdObservation = false
         let blocked = LockIsolated(false)
         let entered = GiftCardTestGate()
         let release = GiftCardTestGate()
         let preparationEntered = GiftCardTestGate()
         let preparationRelease = GiftCardTestGate()
+        let beforeSyncEntered = GiftCardTestGate()
+        let beforeSyncRelease = GiftCardTestGate()
+        var heldAdvanceCall: Int?
         let resetDocuments = FileManager.default.temporaryDirectory.appendingPathComponent("gift-card-reset-\(UUID().uuidString)")
         var holdPreparation = false
         var visit: MigrationVisit = .sync
@@ -54,7 +62,7 @@ import ComposableArchitecture
 
     private func makeStore(
         _ engine: Engine, clock: TestClock<Swift.Duration>, pending: Bool = true, cardPresented: Bool = false,
-        keysMissing: Bool = false, unacceptedCard: UnacceptedCard? = nil
+        keysMissing: Bool = false, unacceptedCard: UnacceptedCard? = nil, configure: (inout Root.State) -> Void = { _ in }
     ) -> TestStore<Root.State, Root.Action> {
         withDependencies {
             $0.defaultInMemoryStorage = InMemoryStorage()
@@ -70,7 +78,35 @@ import ComposableArchitecture
             }
             state.giftCardSyncIsPaused = pending
             state.$featureFlags.withLock { $0 = FeatureFlags(appLaunchBiometric: false) }
-            let store = TestStore(initialState: state) { Root() } withDependencies: {
+            configure(&state)
+            let store = TestStore(initialState: state) {
+                Reduce<Root.State, Root.Action> { state, action in
+                    if engine.holdObservation, let generation = Self.observationGeneration(action),
+                       engine.delayedObservation.withValue({ delayed in
+                           guard !delayed else { return false }
+                           delayed = true
+                           return true
+                       }) {
+                        let migrationRestore: Bool
+                        if case .giftCardSyncRestoreMigrationObservation = action {
+                            migrationRestore = true
+                        } else {
+                            migrationRestore = false
+                        }
+                        // Suspend effect delivery before Root admits it, reproducing queued navigation races.
+                        return .run { send in
+                            await engine.observationEntered.open()
+                            await engine.observationRelease.wait()
+                            if migrationRestore {
+                                await send(.giftCardSyncRestoreMigrationObservation(generation))
+                            } else {
+                                await send(.giftCardSyncObserve(generation))
+                            }
+                        }
+                    }
+                    return Root()._reduce(into: &state, action: action)
+                }
+            } withDependencies: {
                 $0.giftCard = GiftCardClient.mock(unacceptedCard == .wrongNetwork ? .testnet : .ready)
                 if unacceptedCard != nil {
                     $0.zcashSDKEnvironment.network = { ZcashNetworkBuilder.network(for: .mainnet) }
@@ -106,7 +142,14 @@ import ComposableArchitecture
                 $0.diskSpaceChecker.hasEnoughFreeSpaceForSync = { true }
                 $0.autoServerSelection.findBestServer = { nil }
                 $0.migrationManager.advance = { phase in
-                    engine.advances.withValue { $0.append(phase) }
+                    let call = engine.advances.withValue {
+                        $0.append(phase)
+                        return $0.filter { $0 == .beforeSync }.count
+                    }
+                    if phase == .beforeSync, engine.heldAdvanceCall == call {
+                        await engine.beforeSyncEntered.open()
+                        await engine.beforeSyncRelease.wait()
+                    }
                     return .broadcast(id: 1)
                 }
                 $0.sdkSynchronizer = .mocked(
@@ -121,7 +164,10 @@ import ComposableArchitecture
                     },
                     start: { _ in try await engine.start() },
                     stopAndWait: { engine.stops.withValue { $0 += 1 } },
-                    isMigrationSyncBlocked: { engine.blocked.value }
+                    isMigrationSyncBlocked: {
+                        engine.gateObservations.withValue { $0 += 1 }
+                        return engine.blocked.value
+                    }
                 )
             }
             store.exhaustivity = .off
@@ -182,6 +228,461 @@ import ComposableArchitecture
         #expect(store.state.giftCardCoordFlowState.redeemState?.cancelId != visit)
         #expect(store.state.giftCardSyncPauseOwner == nil)
         await store.skipReceivedActions(strict: false)
+    }
+
+    private static func observationGeneration(_ action: Root.Action) -> UUID? {
+        switch action {
+        case .giftCardSyncObserve(let generation), .giftCardSyncRestoreMigrationObservation(let generation):
+            return generation
+        default:
+            return nil
+        }
+    }
+
+    private static func isObservation(_ action: Root.Action) -> Bool {
+        switch action {
+        case .giftCardSyncObserve, .giftCardSyncRestoreMigrationObservation:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @Test func homeMigrationCompletionRestoresObservationOnce() async {
+        let engine = Engine()
+        engine.migrationFailure = true
+        engine.blocked.setValue(true)
+        let store = makeStore(engine, clock: TestClock())
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.receive(Self.isObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(true) = $0 { return true }
+            return false
+        })
+        #expect(engine.gateObservations.value == 1)
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        for _ in 0..<2 { await store.send(.destination(.updateDestination(.home))) }
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.gateObservations.value == 1)
+        await drain(store)
+    }
+
+    @Test(arguments: [false, true])
+    func queuedMigrationObservationInterruptedByWarningRestoresOnContinue(continueBeforeCompletion: Bool) async {
+        let engine = Engine()
+        engine.holdObservation = true
+        engine.blocked.setValue(true)
+        let store = makeStore(engine, clock: TestClock(), configure: {
+            $0.giftCardSyncRecovery = .migrationDeferred
+            $0.syncDeferredByMigrationGate = true
+        })
+        await store.send(.splashFinished)
+        await store.receive(Self.isObservation)
+        await engine.observationEntered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        if continueBeforeCompletion {
+            await continueHome(store)
+            await store.receive(Self.isObservation)
+            await store.receive({
+                if case .migrationSyncGateChanged(true) = $0 { return true }
+                return false
+            })
+        }
+        await engine.observationRelease.open()
+        await store.receive(Self.isObservation)
+        if !continueBeforeCompletion {
+            #expect(engine.gateObservations.value == 0)
+            #expect(store.state.giftCardSyncObservationGeneration == nil)
+            await continueHome(store)
+            await store.receive(Self.isObservation)
+            await store.receive({
+                if case .migrationSyncGateChanged(true) = $0 { return true }
+                return false
+            })
+        }
+        #expect(engine.gateObservations.value == 1)
+        #expect(engine.starts.value == 0)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        await drain(store)
+    }
+
+    @Test func duplicateQueuedMigrationObservationAfterSeedClearanceDoesNotRegisterAgain() async {
+        let engine = Engine()
+        engine.failures = 0
+        engine.visit = .send
+        engine.heldAdvanceCall = 1
+        let store = makeStore(engine, clock: TestClock(), configure: {
+            $0.giftCardSyncRecovery = .migrationDeferred
+            $0.syncDeferredByMigrationGate = true
+        })
+        let generation = store.state.giftCardSyncGeneration
+        await store.send(.giftCardSyncRestoreMigrationObservation(generation))
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        await store.receive(\.giftCardSyncVisitReady)
+        await engine.beforeSyncEntered.wait()
+        #expect(store.state.giftCardSyncRecovery == .none)
+        #expect(engine.gateObservations.value == 1)
+        await store.send(.giftCardSyncRestoreMigrationObservation(generation))
+        await engine.beforeSyncRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.gateObservations.value == 1)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == 1)
+        #expect(engine.starts.value == 0)
+        await drain(store)
+    }
+
+    private enum PreparationStage: String, CaseIterable, Sendable {
+        case visitKind
+        case beforeSync
+
+        func hold(_ engine: Engine) {
+            engine.holdPreparation = self == .visitKind
+            engine.heldAdvanceCall = self == .beforeSync ? 1 : nil
+        }
+
+        func wait(_ engine: Engine, store: TestStore<Root.State, Root.Action>) async {
+            if self == .visitKind {
+                await engine.preparationEntered.wait()
+            } else {
+                await store.receive(\.giftCardSyncVisitReady)
+                await engine.beforeSyncEntered.wait()
+            }
+        }
+
+        func release(_ engine: Engine) async {
+            if self == .visitKind {
+                await engine.preparationRelease.open()
+            } else {
+                await engine.beforeSyncRelease.open()
+            }
+        }
+    }
+
+    private enum Retirement: String, CaseIterable, Sendable {
+        case background
+        case walletReset
+        case acceptedVisit
+    }
+
+    private func continueHome(_ store: TestStore<Root.State, Root.Action>) async {
+        await store.send(.deeplinkWarning(.rescanInZashi))
+        await store.receive({
+            if case .destination(.updateDestination(.home)) = $0 { return true }
+            return false
+        })
+    }
+
+    private func retire(_ boundary: Retirement, store: TestStore<Root.State, Root.Action>) async throws {
+        switch boundary {
+        case .background:
+            await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        case .walletReset:
+            await store.send(.resetZashiSDKSucceeded)
+            await store.receive(\.resetZashiKeychainRequest)
+        case .acceptedVisit:
+            await store.send(.home(.redeemGiftCardTapped))
+            await store.send(.giftCardCoordFlow(.scan(.foundGiftCard("https://gift.zodl.com/#retirement-fixture".redacted))))
+            let visit = try #require(store.state.giftCardCoordFlowState.redeemState?.cancelId)
+            await store.send(.giftCardCoordFlow(.redeem(.response(visit, .opened(GiftCardHandle())))))
+        }
+    }
+
+    // Hiding Home during preparation must defer admission, whereas native cancellation stays external-trigger-only.
+    @Test(arguments: PreparationStage.allCases, [false, true])
+    private func preparationNavigationPreservesRestartIntent(stage: PreparationStage, continueFirst: Bool) async throws {
+        let engine = Engine()
+        engine.failures = 0
+        stage.hold(engine)
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await stage.wait(engine, store: store)
+        let start = try #require(store.state.giftCardSyncStartId)
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        if continueFirst {
+            await continueHome(store)
+            #expect(engine.starts.value == 0)
+            #expect(store.state.giftCardSyncStartId == start)
+        }
+        await stage.release(engine)
+        await store.receive(\.giftCardSyncStartFinished)
+        if !continueFirst {
+            #expect(engine.starts.value == 0)
+            #expect(store.state.giftCardSyncResumePending)
+            #expect(store.state.giftCardSyncRecovery == .none)
+            #expect(store.state.giftCardSyncRetryId == nil)
+            #expect(!store.state.didScheduleStartFailureRetry)
+            #expect(!store.state.giftCardSyncDidRecheckMigrationSeed)
+            await continueHome(store)
+            await store.receive(\.giftCardSyncStartFinished)
+        }
+        #expect(engine.starts.value == 1)
+        #expect(!store.state.giftCardSyncResumePending)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 1)
+        await drain(store)
+    }
+
+    @Test func realCancellationUnderWarningStillWaitsForExternalTrigger() async {
+        let engine = Engine()
+        engine.suspended = true
+        engine.cancelled = true
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock)
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.entered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await engine.release.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await continueHome(store)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncRecovery == .waitingForExternalTrigger)
+        #expect(!store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        await drain(store)
+    }
+
+    @Test(arguments: PreparationStage.allCases)
+    private func spentRetryBudgetSurvivesPreparationNavigation(stage: PreparationStage) async {
+        let engine = Engine()
+        stage.hold(engine)
+        engine.failures = 100
+        let clock = TestClock()
+        let store = makeStore(engine, clock: clock, configure: {
+            $0.didScheduleStartFailureRetry = true
+            $0.giftCardSyncDidRecheckMigrationSeed = true
+        })
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await stage.wait(engine, store: store)
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await stage.release(engine)
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        await continueHome(store)
+        await store.receive(\.giftCardSyncStartFinished)
+        await clock.advance(by: .seconds(60))
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncRecovery == .waitingForExternalTrigger)
+        #expect(store.state.didScheduleStartFailureRetry)
+        #expect(store.state.giftCardSyncRetryId == nil)
+        await drain(store)
+    }
+
+    @Test(arguments: PreparationStage.allCases, Retirement.allCases)
+    private func preparationRetirementDoesNotAdmitOldWork(stage: PreparationStage, boundary: Retirement) async throws {
+        let engine = Engine()
+        engine.failures = 0
+        stage.hold(engine)
+        let store = makeStore(engine, clock: TestClock())
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await stage.wait(engine, store: store)
+        let generation = store.state.giftCardSyncGeneration
+        let start = try #require(store.state.giftCardSyncStartId)
+        try await retire(boundary, store: store)
+        #expect(store.state.giftCardSyncGeneration != generation)
+        #expect(store.state.giftCardSyncStartId == start)
+        let recovery = store.state.giftCardSyncRecovery
+        await stage.release(engine)
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.starts.value == 0)
+        #expect(store.state.giftCardSyncStartId == nil)
+        #expect(store.state.giftCardSyncRecovery == recovery)
+        await drain(store)
+    }
+
+    @Test func cachedMigrationBlockSurvivesPreparationNavigation() async {
+        let engine = Engine()
+        engine.failures = 0
+        engine.holdPreparation = true
+        let store = makeStore(engine, clock: TestClock(), configure: { $0.giftCardSyncDidRecheckMigrationSeed = true })
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.preparationEntered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        engine.blocked.setValue(true)
+        await store.send(.migrationSyncGateChanged(true))
+        await engine.preparationRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await continueHome(store)
+        await store.receive(Self.isObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(true) = $0 { return true }
+            return false
+        })
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.starts.value == 0)
+        #expect(store.state.giftCardSyncResumePending)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 1)
+        await drain(store)
+    }
+
+    @Test func migrationRefusalUnderWarningDischargesBeforeSync() async throws {
+        let engine = Engine()
+        engine.suspended = true
+        engine.migrationFailure = true
+        engine.blocked.setValue(true)
+        engine.heldAdvanceCall = 2
+        let store = makeStore(engine, clock: TestClock())
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.entered.wait()
+        let start = try #require(store.state.giftCardSyncStartId)
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await engine.release.open()
+        await store.receive(\.giftCardSyncMigrationRefused)
+        #expect(store.state.giftCardSyncStartId == start)
+        // Open without waiting for entry: the old implementation never reaches this advance.
+        await engine.beforeSyncRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == 2)
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncStartId == nil)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        await continueHome(store)
+        await store.receive(Self.isObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(true) = $0 { return true }
+            return false
+        })
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncResumePending)
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 2)
+        #expect(!store.state.giftCardSyncResumePending)
+        await drain(store)
+    }
+
+    @Test func sendPreparationUnderWarningRestoresGateObservation() async {
+        let engine = Engine()
+        engine.visit = .send
+        engine.failures = 0
+        engine.heldAdvanceCall = 1
+        engine.blocked.setValue(true)
+        let store = makeStore(engine, clock: TestClock())
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncVisitReady)
+        await engine.beforeSyncEntered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await engine.beforeSyncRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 0)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        await continueHome(store)
+        await store.receive(Self.isObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(true) = $0 { return true }
+            return false
+        })
+        let registrations = engine.gateObservations.value
+        #expect(registrations == 1)
+        for _ in 0..<2 {
+            await continueHome(store)
+            await store.send(.migrationSyncGateChanged(true))
+        }
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.gateObservations.value == registrations)
+        #expect(engine.starts.value == 0)
+        engine.visit = .sync
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 1)
+        #expect(!store.state.giftCardSyncResumePending)
+        await drain(store)
+    }
+
+    @Test func spentMigrationSeedSurvivesWarningNavigation() async {
+        let engine = Engine()
+        engine.visit = .send
+        engine.failures = 0
+        engine.heldAdvanceCall = 1
+        let store = makeStore(engine, clock: TestClock(), configure: { $0.giftCardSyncDidRecheckMigrationSeed = true })
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await store.receive(\.giftCardSyncVisitReady)
+        await engine.beforeSyncEntered.wait()
+        await store.send(.destination(.updateDestination(.deeplinkWarning)))
+        await engine.beforeSyncRelease.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await continueHome(store)
+        await store.receive(Self.isObservation)
+        await store.receive({
+            if case .migrationSyncGateChanged(false) = $0 { return true }
+            return false
+        })
+        for _ in 0..<2 { await continueHome(store) }
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.starts.value == 0)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == 1)
+        #expect(store.state.giftCardSyncDidRecheckMigrationSeed)
+        #expect(store.state.giftCardSyncRecovery == .migrationDeferred)
+        engine.visit = .sync
+        engine.blocked.setValue(true)
+        await store.send(.migrationSyncGateChanged(true))
+        engine.blocked.setValue(false)
+        await store.send(.migrationSyncGateChanged(false))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(engine.starts.value == 1)
+        #expect(!store.state.giftCardSyncResumePending)
+        await drain(store)
+    }
+
+    @Test(arguments: Retirement.allCases)
+    private func retiredMigrationRefusalDoesNotAdvance(boundary: Retirement) async throws {
+        let engine = Engine()
+        engine.suspended = true
+        engine.migrationFailure = true
+        engine.blocked.setValue(true)
+        let store = makeStore(engine, clock: TestClock())
+        await store.send(.giftCardResumeSync(store.state.giftCardSyncGeneration))
+        await engine.entered.wait()
+        try await retire(boundary, store: store)
+        let recovery = store.state.giftCardSyncRecovery
+        await engine.release.open()
+        await store.receive(\.giftCardSyncStartFinished)
+        await store.skipReceivedActions(strict: false)
+        #expect(engine.advances.value.filter { $0 == .beforeSync }.count == 1)
+        #expect(engine.starts.value == 1)
+        #expect(store.state.giftCardSyncStartId == nil)
+        #expect(store.state.giftCardSyncRecovery == recovery)
+        await drain(store)
+    }
+
+    @Test func currentMigrationRefusalInBackgroundTaskDoesNotAdvance() async throws {
+        let engine = Engine()
+        let start = UUID()
+        let store = makeStore(engine, clock: TestClock(), configure: {
+            $0.giftCardSyncStartId = start
+            $0.giftCardSyncStartGeneration = $0.giftCardSyncGeneration
+            $0.appStartState = .backgroundTask
+        })
+        let generation = store.state.giftCardSyncGeneration
+        await store.send(.giftCardSyncMigrationRefused(start))
+        await store.receive(\.giftCardSyncStartFinished)
+        #expect(store.state.giftCardSyncGeneration == generation)
+        #expect(engine.advances.value.isEmpty)
+        #expect(engine.starts.value == 0)
+        #expect(store.state.giftCardSyncStartId == nil)
+        #expect(store.state.giftCardSyncRecovery == .waitingForExternalTrigger)
+        await drain(store)
     }
 
     // A card rejected before opening never owns the sync pause. Its retirement must not
