@@ -316,6 +316,8 @@ struct Root {
         var giftCardSyncGeneration = UUID()
         var giftCardSyncResumePending = false
         var giftCardSyncRecovery = GiftCardSyncRecovery.none
+        /// A same-wallet navigation reset changes the native generation without restarting this timer.
+        var giftCardSyncRetryId: UUID?
         var giftCardSyncStartGeneration: UUID?
         var giftCardSyncObservationGeneration: UUID?
         var giftCardSyncGateClearedDuringStart = false
