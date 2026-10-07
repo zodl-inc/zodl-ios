@@ -536,4 +536,34 @@ import ComposableArchitecture
         #expect(store.state.path == nil)
         #expect(!store.state.isGiftCardRescanPending)
     }
+
+    /// The card on screen hears about the app going to the background and coming back, so its
+    /// periodic check pauses meanwhile.
+    @Test func appLifecycleReachesTheCardOnScreen() async {
+        var state = homeState()
+        state.path = .giftCardCoordFlow
+        state.giftCardCoordFlowState = GiftCardCoordFlow.State(link: Self.linkString.redacted)
+        let store = TestStore(initialState: state) {
+            Root().giftCardsReduce()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        await store.receive({ if case .giftCardCoordFlow(.redeem(.appDidEnterBackground)) = $0 { true } else { false } })
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.receive({ if case .giftCardCoordFlow(.redeem(.appWillEnterForeground)) = $0 { true } else { false } })
+    }
+
+    /// Without a card on screen, the app's lifecycle is not forwarded to the flow.
+    @Test func appLifecycleIsNotForwardedWithoutACard() async {
+        var state = homeState()
+        state.path = .giftCardCoordFlow
+        let store = TestStore(initialState: state) {
+            Root().giftCardsReduce()
+        }
+
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.finish()
+    }
 }

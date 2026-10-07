@@ -60,6 +60,19 @@ extension Root {
             case .giftCardCoordFlow(.redeem(.delegate(.redeemed))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
+            case .initialization(.appDelegate(.didEnterBackground)):
+                // The card on screen stops checking on its own while the app is in the background.
+                guard state.path == .giftCardCoordFlow, state.giftCardCoordFlowState.redeemState != nil else {
+                    return .none
+                }
+                return .send(.giftCardCoordFlow(.redeem(.appDidEnterBackground)))
+
+            case .initialization(.appDelegate(.willEnterForeground)):
+                guard state.path == .giftCardCoordFlow, state.giftCardCoordFlowState.redeemState != nil else {
+                    return .none
+                }
+                return .send(.giftCardCoordFlow(.redeem(.appWillEnterForeground)))
+
             default:
                 return .none
             }

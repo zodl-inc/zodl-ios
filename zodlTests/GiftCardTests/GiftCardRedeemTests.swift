@@ -288,6 +288,94 @@ import ComposableArchitecture
         await store.finish()
     }
 
+    /// The pending screen's periodic check pauses while the app is in the background and picks up
+    /// again, a full interval later, once it is back.
+    @Test func pendingRecheckPausesWhileTheAppIsInTheBackground() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        let pending = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await pending(handle)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 1)
+
+        await store.send(.appDidEnterBackground) {
+            $0.isInBackground = true
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 3))
+        #expect(checks.value == 1)
+
+        await store.send(.appWillEnterForeground) {
+            $0.isInBackground = false
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval - 1))
+        #expect(checks.value == 1)
+        await mainQueue.advance(by: .seconds(1))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 2)
+
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// A check that answers pending while the app is in the background does not schedule the next
+    /// one; coming back does.
+    @Test func pendingAnswerInTheBackgroundWaitsForTheForeground() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        let pending = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await pending(handle)
+        }
+
+        await store.send(.appDidEnterBackground) {
+            $0.isInBackground = true
+        }
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checks.value == 1)
+
+        await store.send(.appWillEnterForeground)
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 2)
+
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// Coming back to a screen that isn't pending schedules nothing.
+    @Test func foregroundOnAScreenThatIsNotPendingSchedulesNothing() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.ready), mainQueue: mainQueue.eraseToAnyScheduler())
+        let ready = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await ready(handle)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        await store.send(.appDidEnterBackground)
+        await store.send(.appWillEnterForeground)
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checks.value == 1)
+        await store.finish()
+    }
+
     /// Funds that become spendable while the pending screen waits take it to Ready on their own.
     @Test func pendingCardTurnsReadyOnItsOwn() async {
         let mainQueue = DispatchQueue.test

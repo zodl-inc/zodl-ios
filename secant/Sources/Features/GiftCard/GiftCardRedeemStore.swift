@@ -79,6 +79,9 @@ struct GiftCardRedeem {
         /// A check of a pending or empty card is running in the background (Check again, or the
         /// pending screen's own periodic check). Its failure keeps the screen as it is.
         var isQuietCheckInFlight = false
+        /// The app is in the background: the pending screen's periodic check waits for it to come
+        /// back, so a card is checked only while someone can see the answer.
+        var isInBackground = false
         /// The selected account's Orchard-only unified address, resolved in the background.
         var destinationAddress: RedactableString?
         var destinationAccountId: AccountUUID?
@@ -164,6 +167,8 @@ struct GiftCardRedeem {
     }
 
     enum Action: Equatable {
+        case appDidEnterBackground
+        case appWillEnterForeground
         case closeTapped
         case delegate(Delegate)
         case onAppear
@@ -226,10 +231,26 @@ struct GiftCardRedeem {
 
             case .response(_, .autoRetryFired):
                 // The pending screen checks again on its own, quietly.
-                guard state.retriesQuietly, !state.isRechecking else {
+                guard state.retriesQuietly, !state.isRechecking, !state.isInBackground else {
                     return .none
                 }
                 return quietCheck(&state)
+
+            case .appDidEnterBackground:
+                state.isInBackground = true
+                return .cancel(id: state.autoRetryCancelId)
+
+            case .appWillEnterForeground:
+                guard state.isInBackground else {
+                    return .none
+                }
+                state.isInBackground = false
+                // A pending card picks its periodic check up again; one already running reschedules
+                // it when it answers.
+                guard case .pending = state.step, state.handle != nil, !state.isQuietCheckInFlight else {
+                    return .none
+                }
+                return scheduleAutoRetry(state)
 
             case .retryTapped:
                 guard state.canRetry else {
@@ -383,7 +404,7 @@ struct GiftCardRedeem {
 
 extension GiftCardRedeem {
     /// Moves to the screen for `status`. A pending card checks again on its own after
-    /// `Constants.autoRetryInterval`.
+    /// `Constants.autoRetryInterval`, while the app is in the foreground.
     private func show(_ status: GiftCardStatus, state: inout State) -> Effect<Action> {
         switch status {
         case let .ready(spendable, redeemable):
@@ -406,7 +427,12 @@ extension GiftCardRedeem {
         }
     }
 
+    /// Schedules the pending screen's next check, unless the app is in the background (it is
+    /// scheduled again when the app comes back).
     private func scheduleAutoRetry(_ state: State) -> Effect<Action> {
+        guard !state.isInBackground else {
+            return .cancel(id: state.autoRetryCancelId)
+        }
         let visit = state.cancelId
         return .run { send in
             try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
