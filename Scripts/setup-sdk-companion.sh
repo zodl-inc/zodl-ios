@@ -185,7 +185,7 @@ fi
 mkdir -p "$abs_path"
 companion_git init -q "$abs_path" || cleanup_and_fail "git init failed at $abs_path"
 if ! sdk_git -C "$abs_path" fetch --depth 1 "$SDK_REPO_URL" "$pin"; then
-    cleanup_and_fail "could not fetch $pin from $SDK_REPO_URL — is the pinned commit pushed and still reachable?"
+    cleanup_and_fail "could not fetch $pin from $(printf '%s' "$SDK_REPO_URL" | sed -E 's#://[^/@]+@#://#') — is the pinned commit pushed and still reachable?"
 fi
 companion_git -C "$abs_path" checkout -q --detach FETCH_HEAD || cleanup_and_fail "checkout of $pin failed"
 note "SDK fetched to $abs_path @ $pin"
