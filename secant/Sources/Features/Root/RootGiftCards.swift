@@ -401,11 +401,15 @@ extension Root {
                 state.giftCardCoordFlowState = GiftCardCoordFlow.State()
             }
             if (exited || replaced), let previous {
-                state.giftCardSyncGeneration = UUID()
-                state.giftCardSyncRecovery = .none
-                state.giftCardSyncRetryId = nil
-                state.giftCardSyncDidRecheckMigrationSeed = false
-                effects.append(.cancel(id: previousRetryCancelId))
+                // A rejected or failed open never owned the sync pause. Retire its child work
+                // without changing recovery already waiting for its deadline or external trigger.
+                if previousPauseOwner == previous.cancelId {
+                    state.giftCardSyncGeneration = UUID()
+                    state.giftCardSyncRecovery = .none
+                    state.giftCardSyncRetryId = nil
+                    state.giftCardSyncDidRecheckMigrationSeed = false
+                    effects.append(.cancel(id: previousRetryCancelId))
+                }
                 state.giftCardSyncResumePending = state.giftCardSyncResumePending
                     || previousPauseOwner == previous.cancelId || previous.handle != nil
                 if previousPauseOwner == previous.cancelId { state.giftCardSyncPauseOwner = nil }
