@@ -222,6 +222,9 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-xcode-spm-
 
       - name: Resolve packages
+        # A cold resolve takes ~2 min. Fail fast if xcodebuild stalls instead of
+        # burning the whole job timeout; the retry loop only covers clean failures.
+        timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
             xcodebuild -project secant.xcodeproj \

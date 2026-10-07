@@ -141,8 +141,15 @@ fi
 
 mkdir -p "$abs_path"
 git init -q "$abs_path" || cleanup_and_fail "git init failed at $abs_path"
-if ! git -C "$abs_path" fetch --depth 1 "$SDK_REPO_URL" "$pin"; then
-    cleanup_and_fail "could not fetch $pin from $SDK_REPO_URL — is the pinned commit pushed and still reachable?"
+# Never hand the fetch credential to a git credential helper. SDK_REPO_URL may
+# carry a token (private SDK repo); on macOS runners git's osxkeychain helper
+# would store it in the login keychain, and xcodebuild's later package
+# resolution against github.com then waits on a keychain-access prompt that a
+# headless runner can never answer ("Resolve Package Graph" hangs until the job
+# timeout, xcodebuild idle with no child processes). An empty credential.helper
+# clears every configured helper for this one command.
+if ! GIT_TERMINAL_PROMPT=0 git -C "$abs_path" -c credential.helper= fetch --depth 1 "$SDK_REPO_URL" "$pin"; then
+    cleanup_and_fail "could not fetch $pin from $(printf '%s' "$SDK_REPO_URL" | sed -E 's#://[^/@]+@#://#') — is the pinned commit pushed and still reachable?"
 fi
 git -C "$abs_path" checkout -q --detach FETCH_HEAD || cleanup_and_fail "checkout of $pin failed"
 note "SDK fetched to $abs_path @ $pin"
