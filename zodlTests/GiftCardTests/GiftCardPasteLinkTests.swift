@@ -184,7 +184,8 @@ import ComposableArchitecture
     }
 }
 
-/// The redeem flow's copy, as the final designs word it, in both languages.
+/// The redeem flow's copy, as the final designs word it, in both languages. Screens the designs
+/// don't cover follow Android's wording; Spanish keeps "tarifa de red" for the network fee.
 @Suite struct GiftCardCopyTests {
     @Test(arguments: [
         ("en", "giftCard.moreTitle", "Redeem Gift Card"),
@@ -215,12 +216,46 @@ import ComposableArchitecture
         ("es", "giftCard.paste.invalid", "Este enlace no es una tarjeta de regalo válida. Revísalo e inténtalo de nuevo."),
         ("en", "giftCard.redeem.memo", "Gift Card"),
         ("en", "giftCard.success.descNoAmount", "Your gift is on its way to your wallet.\nIt will show up in your activity shortly."),
-        ("es", "giftCard.success.descNoAmount", "Tu regalo está en camino a tu billetera.\nAparecerá en tu actividad en breve.")
+        ("es", "giftCard.success.descNoAmount", "Tu regalo está en camino a tu billetera.\nAparecerá en tu actividad en breve."),
+        ("en", "giftCard.checkFailed.title", "Couldn't check your gift"),
+        ("es", "giftCard.checkFailed.title", "No pudimos verificar tu regalo"),
+        ("en", "giftCard.checkFailed.desc", "Something went wrong while checking the gift card. Check your connection and try again."),
+        ("es", "giftCard.checkFailed.desc", "Algo salió mal al verificar la tarjeta de regalo. Revisa tu conexión e inténtalo de nuevo."),
+        ("en", "giftCard.invalid.title", "Invalid gift card"),
+        ("es", "giftCard.invalid.title", "Tarjeta de regalo inválida"),
+        ("en", "giftCard.invalid.desc", "This link isn't a valid gift card. Check the link and try again."),
+        ("es", "giftCard.invalid.desc", "Este enlace no es una tarjeta de regalo válida. Revisa el enlace e inténtalo de nuevo."),
+        ("en", "giftCard.wrongNetwork.desc", "This gift card was made for a different Zcash network than this wallet."),
+        ("es", "giftCard.wrongNetwork.desc", "Esta tarjeta de regalo fue creada para una red de Zcash distinta a la de esta billetera."),
+        ("en", "giftCard.unavailable.title", "Not available yet"),
+        ("es", "giftCard.unavailable.title", "Todavía no disponible"),
+        ("en", "giftCard.unavailable.desc", "Redeeming gift cards isn't available in this version of the app."),
+        ("es", "giftCard.unavailable.desc", "Canjear tarjetas de regalo no está disponible en esta versión de la app."),
+        ("en", "giftCard.unsupported.title", "Not available yet"),
+        ("en", "giftCard.unsupported.desc", "Redeeming this gift card isn't available in this version of the app."),
+        ("en", "giftCard.redeeming.title", "Redeeming your gift…"),
+        ("es", "giftCard.redeeming.title", "Canjeando tu regalo…"),
+        ("en", "giftCard.redeeming.desc", "Sending the gift card's funds to your wallet."),
+        ("es", "giftCard.redeeming.desc", "Enviando los fondos de la tarjeta de regalo a tu billetera."),
+        ("es", "giftCard.checkAgain", "Verificar de nuevo"),
+        ("es", "giftCard.messageFromSender", "Mensaje de quien la envía"),
+        ("es", "giftCard.empty.title", "Nada para canjear")
     ])
     func copyMatchesTheDesign(language: String, key: String, value: String) throws {
         let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
         let bundle = try #require(Bundle(path: path))
         #expect(bundle.localizedString(forKey: key, value: nil, table: "Localizable") == value)
+    }
+
+    /// Spanish gift card copy says "tarifa de red" for the network fee, never "comisión de red".
+    @Test func spanishCopyCallsTheFeeTarifaDeRed() throws {
+        let path = try #require(Bundle.main.path(forResource: "es", ofType: "lproj"))
+        let bundle = try #require(Bundle(path: path))
+        for key in ["giftCard.ready.note", "giftCard.ready.noteNoWallet", "giftCard.dust.desc"] {
+            let text = bundle.localizedString(forKey: key, value: nil, table: "Localizable")
+            #expect(text.contains("tarifa de red"), "\(key)")
+            #expect(!text.contains("comisión"), "\(key)")
+        }
     }
 
     @Test(arguments: ["en", "es"])

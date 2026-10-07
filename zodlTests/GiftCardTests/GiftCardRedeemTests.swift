@@ -714,7 +714,7 @@ import ComposableArchitecture
 
     @Test(arguments: [
         ("en", "Redemption not confirmed", "We couldn't confirm redemption. Tap Try again to check the card's current status."),
-        ("es", "Canje no confirmado", "No pudimos confirmar el canje. Pulsa Intentar de nuevo para comprobar el estado actual de la tarjeta.")
+        ("es", "Canje no confirmado", "No pudimos confirmar el canje. Toca Intentar de nuevo para comprobar el estado actual de la tarjeta.")
     ])
     func failedRedemptionCopyDoesNotClaimTheFundsStayedOnTheCard(language: String, title: String, description: String) throws {
         let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))

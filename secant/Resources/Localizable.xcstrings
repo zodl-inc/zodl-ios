@@ -8487,7 +8487,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Revisar de nuevo"
+            "value" : "Verificar de nuevo"
           }
         }
       }
@@ -8498,13 +8498,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Check your connection and try again. Your gift is safe on the card."
+            "value" : "Something went wrong while checking the gift card. Check your connection and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Revisa tu conexión e inténtalo de nuevo. Tu regalo sigue seguro en la tarjeta."
+            "value" : "Algo salió mal al verificar la tarjeta de regalo. Revisa tu conexión e inténtalo de nuevo."
           }
         }
       }
@@ -8515,13 +8515,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "We couldn't check this gift card"
+            "value" : "Couldn't check your gift"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No pudimos revisar esta tarjeta de regalo"
+            "value" : "No pudimos verificar tu regalo"
           }
         }
       }
@@ -8538,7 +8538,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Revisando tu tarjeta de regalo. Esto puede tardar un momento."
+            "value" : "Verificando tu tarjeta de regalo. Esto puede tardar un momento."
           }
         }
       }
@@ -8589,7 +8589,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta tarjeta de regalo ya fue canjeada o todavía no tiene fondos. Inténtalo de nuevo en unos minutos."
+            "value" : "Esta tarjeta de regalo ya fue canjeada o aún no tiene fondos. Inténtalo de nuevo en unos minutos."
           }
         }
       }
@@ -8606,7 +8606,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nada que canjear"
+            "value" : "Nada para canjear"
           }
         }
       }
@@ -8623,7 +8623,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No pudimos confirmar el canje. Pulsa Intentar de nuevo para comprobar el estado actual de la tarjeta."
+            "value" : "No pudimos confirmar el canje. Toca Intentar de nuevo para comprobar el estado actual de la tarjeta."
           }
         }
       }
@@ -8855,13 +8855,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The gift card link is damaged or incomplete. Scan its QR code or paste its link again."
+            "value" : "This link isn't a valid gift card. Check the link and try again."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El enlace de la tarjeta de regalo está dañado o incompleto. Escanea su código QR o pega su enlace de nuevo."
+            "value" : "Este enlace no es una tarjeta de regalo válida. Revisa el enlace e inténtalo de nuevo."
           }
         }
       }
@@ -8872,13 +8872,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This link doesn't work"
+            "value" : "Invalid gift card"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Este enlace no funciona"
+            "value" : "Tarjeta de regalo inválida"
           }
         }
       }
@@ -8895,7 +8895,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mensaje del remitente"
+            "value" : "Mensaje de quien la envía"
           }
         }
       }
@@ -8912,7 +8912,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ necesita algunas confirmaciones más antes de poder canjearse. Seguiremos revisando mientras esta pantalla esté abierta."
+            "value" : "%@ necesita algunas confirmaciones más antes de poder canjearse. Seguiremos verificando mientras esta pantalla esté abierta."
           }
         }
       }
@@ -8974,13 +8974,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moving your gift into your wallet."
+            "value" : "Sending the gift card's funds to your wallet."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Moviendo tu regalo a tu billetera."
+            "value" : "Enviando los fondos de la tarjeta de regalo a tu billetera."
           }
         }
       }
@@ -8991,13 +8991,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Redeeming…"
+            "value" : "Redeeming your gift…"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Canjeando…"
+            "value" : "Canjeando tu regalo…"
           }
         }
       }
@@ -9144,13 +9144,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This version of Zodl can't redeem gift cards. Update the app and open the link again."
+            "value" : "Redeeming gift cards isn't available in this version of the app."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta versión de Zodl no puede canjear tarjetas de regalo. Actualiza la aplicación y abre el enlace de nuevo."
+            "value" : "Canjear tarjetas de regalo no está disponible en esta versión de la app."
           }
         }
       }
@@ -9161,13 +9161,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gift cards aren't available yet"
+            "value" : "Not available yet"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Las tarjetas de regalo aún no están disponibles"
+            "value" : "Todavía no disponible"
           }
         }
       }
@@ -9178,13 +9178,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This gift card uses a newer format than this version of Zodl can read."
+            "value" : "Redeeming this gift card isn't available in this version of the app."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta tarjeta de regalo usa un formato más nuevo del que esta versión de Zodl puede leer."
+            "value" : "Canjear esta tarjeta de regalo no está disponible en esta versión de la app."
           }
         }
       }
@@ -9195,13 +9195,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Update Zodl to redeem this gift"
+            "value" : "Not available yet"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Actualiza Zodl para canjear este regalo"
+            "value" : "Todavía no disponible"
           }
         }
       }
@@ -9212,13 +9212,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This gift card is for a different Zcash network than this wallet, so it can't be redeemed here."
+            "value" : "This gift card was made for a different Zcash network than this wallet."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Esta tarjeta de regalo es para una red de Zcash distinta a la de esta billetera, así que no se puede canjear aquí."
+            "value" : "Esta tarjeta de regalo fue creada para una red de Zcash distinta a la de esta billetera."
           }
         }
       }
