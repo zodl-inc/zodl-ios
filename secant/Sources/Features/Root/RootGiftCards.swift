@@ -319,6 +319,7 @@ extension Root {
                 }
             }
             let previous = state.giftCardCoordFlowState.redeemState
+            let previousPasteCandidates = state.giftCardCoordFlowState.pasteLinkState?.clipboardValuesToClear ?? []
             let previousPath = state.path
             let previousPauseOwner = state.giftCardSyncPauseOwner
             let previousStopId = state.giftCardSyncStopId
@@ -382,9 +383,22 @@ extension Root {
             }
             let exited = previousPath == .giftCardCoordFlow && state.path != .giftCardCoordFlow
             let replaced = previous?.cancelId != state.giftCardCoordFlowState.redeemState?.cancelId
+            let flowReplaced = previousScanId != state.giftCardCoordFlowState.scanState.cancelId
             effects.append(effect)
-            if exited || previousScanId != state.giftCardCoordFlowState.scanState.cancelId {
+            if exited || flowReplaced {
                 effects.append(.cancel(id: previousScanId))
+                // Parent resets may already have discarded the paste screen, even with no card
+                // open. Retire its captured values without touching a new replacement flow.
+                if case .giftCardCoordFlow(.cleanUp) = action {
+                    // The coordinator already cleared these values before rotating the scanner.
+                } else {
+                    for value in previousPasteCandidates {
+                        pasteboard.clearIfMatches(value)
+                    }
+                }
+            }
+            if exited {
+                state.giftCardCoordFlowState = GiftCardCoordFlow.State()
             }
             if (exited || replaced), let previous {
                 state.giftCardSyncGeneration = UUID()
@@ -392,9 +406,6 @@ extension Root {
                 state.giftCardSyncRetryId = nil
                 state.giftCardSyncDidRecheckMigrationSeed = false
                 effects.append(.cancel(id: previousRetryCancelId))
-                if exited {
-                    state.giftCardCoordFlowState = GiftCardCoordFlow.State()
-                }
                 state.giftCardSyncResumePending = state.giftCardSyncResumePending
                     || previousPauseOwner == previous.cancelId || previous.handle != nil
                 if previousPauseOwner == previous.cancelId { state.giftCardSyncPauseOwner = nil }

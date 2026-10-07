@@ -13,7 +13,7 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ### Fixed
 
-- [MOB-2157] Clear on the gift card paste screen now removes a pasted card link or key from the clipboard immediately when it still matches, including a keyboard or long-press paste. Other clipboard text is preserved.
+- [MOB-2157] Clear on the gift card paste screen removes a pasted card link or key from the clipboard immediately when it still matches, including a keyboard or long-press paste. The same protection applies when you leave or reopen the gift card flow, or continue past a payment-link warning. Other clipboard text is preserved.
 - [MOB-2142] Fixed a crash when opening the app on an iPhone.
 
 ## [3.15.0] - 2026-09-23
