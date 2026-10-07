@@ -471,7 +471,7 @@ extension ScanCoordFlow {
 
             case .path(.element(id: _, action: .sendForm(.scanTapped))):
                 var scanState = Scan.State.initial
-                scanState.checkers = [.zcashAddressScanChecker, .requestZecScanChecker]
+                scanState.checkers = [.giftCardScanChecker, .zcashAddressScanChecker, .requestZecScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
                 

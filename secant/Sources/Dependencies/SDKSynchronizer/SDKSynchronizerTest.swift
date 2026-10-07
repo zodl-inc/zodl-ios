@@ -32,6 +32,7 @@ extension SDKSynchronizerClient: TestDependencyKey {
         prepareWith: unimplemented("\(Self.self).prepareWith", placeholder: .success),
         start: unimplemented("\(Self.self).start"),
         stop: unimplemented("\(Self.self).stop", placeholder: {}()),
+        stopAndWait: unimplemented("\(Self.self).stopAndWait"),
         isSyncing: unimplemented("\(Self.self).isSyncing", placeholder: false),
         isInitialized: unimplemented("\(Self.self).isInitialized", placeholder: false),
         importAccount: unimplemented("\(Self.self).importAccount", placeholder: nil),
@@ -131,7 +132,10 @@ extension SDKSynchronizerClient: TestDependencyKey {
         fetchUTXOsByAddress: unimplemented("\(Self.self).fetchUTXOsByAddress", placeholder: .notFound),
         enhanceTransactionBy: unimplemented("\(Self.self).enhanceTransactionBy"),
         getTreeState: unimplemented("\(Self.self).getTreeState", placeholder: Data()),
-        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession")
+        makeVotingRoundSession: unimplemented("\(Self.self).makeVotingRoundSession"),
+        // Not `unimplemented`: `nil` is a real answer (no wallet to record a gift card claim in),
+        // and the gift card client asks for it on every sweep.
+        mainWalletSynchronizer: { nil }
     )
 }
 
@@ -144,6 +148,7 @@ extension SDKSynchronizerClient {
         prepareWith: { _, _, _, _ in .success },
         start: { _ in },
         stop: { },
+        stopAndWait: { },
         isSyncing: { false },
         isInitialized: { false },
         importAccount: { _, _, _, _, _, _, _ in nil },
@@ -238,7 +243,8 @@ extension SDKSynchronizerClient {
         // sidecar to do it. Refusing is what "no-op" means here.
         makeVotingRoundSession: { _, _, _, _, _ in
             throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
-        }
+        },
+        mainWalletSynchronizer: { nil }
     )
 
     static let mock = Self.mocked()
@@ -257,6 +263,7 @@ extension SDKSynchronizerClient {
         // existing call site passes a non-awaiting closure, which stays valid under this wider type.
         start: @escaping @Sendable (_ retry: Bool) async throws -> Void = { _ in },
         stop: @escaping @Sendable () -> Void = { },
+        stopAndWait: (@Sendable () async -> Void)? = nil,
         isSyncing: @escaping @Sendable () -> Bool = { false },
         isInitialized: @escaping @Sendable () -> Bool = { false },
     importAccount: @escaping @Sendable (String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID? = { _, _, _, _, _, _, _ in nil },
@@ -441,7 +448,8 @@ extension SDKSynchronizerClient {
             UInt64
         ) async throws -> VotingRoundSession = { _, _, _, _, _ in
             throw VotingError(kind: .internal, message: "no synchronizer to open a voting round session on")
-        }
+        },
+        mainWalletSynchronizer: @escaping @Sendable () -> (any Synchronizer)? = { nil }
     ) -> SDKSynchronizerClient {
         SDKSynchronizerClient(
             stateStream: stateStream,
@@ -451,6 +459,7 @@ extension SDKSynchronizerClient {
             prepareWith: prepareWith,
             start: start,
             stop: stop,
+            stopAndWait: stopAndWait ?? { stop() },
             isSyncing: isSyncing,
             isInitialized: isInitialized,
             importAccount: importAccount,
@@ -535,7 +544,8 @@ extension SDKSynchronizerClient {
             fetchUTXOsByAddress: fetchUTXOsByAddress,
             enhanceTransactionBy: enhanceTransactionBy,
             getTreeState: getTreeState,
-            makeVotingRoundSession: makeVotingRoundSession
+            makeVotingRoundSession: makeVotingRoundSession,
+            mainWalletSynchronizer: mainWalletSynchronizer
         )
     }
 }

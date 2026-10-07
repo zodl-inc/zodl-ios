@@ -119,7 +119,8 @@ struct RootAutoServerCandidateTests {
 
             let sensitivePaths: [Root.State.Path] = [
                 .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
-                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
+                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings,
+                .giftCardCoordFlow
             ]
             for path in sensitivePaths {
                 state.path = path

@@ -17,5 +17,6 @@ extension DependencyValues {
 @DependencyClient
 struct PasteboardClient {
     var setString: @Sendable (RedactableString) -> Void
+    var clearIfMatches: @Sendable (RedactableString) -> Void = { _ in }
     var getString: @Sendable () -> RedactableString?
 }

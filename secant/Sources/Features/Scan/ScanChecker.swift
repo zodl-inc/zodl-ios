@@ -145,6 +145,21 @@ struct KeystoneMigrationBatchScanChecker: ScanChecker, Equatable {
     }
 }
 
+/// Matches gift card links (`https://gift.zodl.com/#…`, Vizor payment links) by prefix only; the
+/// redeem flow does the real parsing. Must come FIRST in any checker list that also contains
+/// `SwapStringScanChecker`, which accepts anything. The link is a bearer secret, so it is only ever
+/// passed on redacted.
+struct GiftCardScanChecker: ScanChecker, Equatable {
+    let id = 7
+
+    func checkQRCode(_ qrCode: String) -> Scan.Action? {
+        @Dependency(\.giftCard) var giftCard
+
+        let link = qrCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        return giftCard.isGiftCardLink(link) ? .foundGiftCard(link.redacted) : nil
+    }
+}
+
 struct ScanCheckerWrapper: Equatable, Sendable {
     let checker: any ScanChecker
 
@@ -157,6 +172,7 @@ struct ScanCheckerWrapper: Equatable, Sendable {
     static let keystoneVotingDelegationPCZTScanChecker = ScanCheckerWrapper(KeystoneVotingDelegationPcztScanChecker())
     #endif
     static let keystoneMigrationBatchScanChecker = ScanCheckerWrapper(KeystoneMigrationBatchScanChecker())
+    static let giftCardScanChecker = ScanCheckerWrapper(GiftCardScanChecker())
 
     static func == (lhs: ScanCheckerWrapper, rhs: ScanCheckerWrapper) -> Bool {
         return lhs.checker.id == rhs.checker.id
