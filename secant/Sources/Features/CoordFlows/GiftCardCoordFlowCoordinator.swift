@@ -17,7 +17,28 @@ extension GiftCardCoordFlow {
                 state.redeemState = GiftCardRedeem.State(link: link)
                 return .none
 
+            case .scan(.pasteTapped):
+                guard state.redeemState == nil else {
+                    return .none
+                }
+                state.pasteLinkState = GiftCardPasteLink.State()
+                return .none
+
+            case .pasteLink(.delegate(.back)):
+                state.pasteLinkState = nil
+                return .none
+
+            case .pasteLink(.delegate(.open(let link))):
+                state.pasteLinkState = nil
+                state.redeemState = GiftCardRedeem.State(link: link)
+                return .none
+
             case .cleanUp:
+                // A card link pasted on the paste screen leaves the clipboard with it.
+                for value in state.pasteLinkState?.clipboardValuesToClear ?? [] {
+                    pasteboard.clearIfMatches(value)
+                }
+                state.pasteLinkState = nil
                 // Nothing open: the scanner is already fresh, and `.giftCardScanner` would mint a
                 // new cancel ID for no reason.
                 guard state.redeemState != nil else {
@@ -27,7 +48,7 @@ extension GiftCardCoordFlow {
                 state.scanState = .giftCardScanner
                 return .none
 
-            case .scan, .redeem:
+            case .scan, .pasteLink, .redeem:
                 // Exits (`.scan(.cancelTapped)`, `.redeem(.delegate(.dismiss))`) are handled by
                 // Root, whose outer lifecycle boundary owns parent exits.
                 return .none

@@ -30,7 +30,7 @@ import ComposableArchitecture
         stops: LockIsolated<Int> = LockIsolated(0),
         open: (@Sendable (String) async throws -> GiftCardHandle)? = nil,
         check: (@Sendable (GiftCardHandle) async throws -> zodl_internal.GiftCardStatus)? = nil,
-        redeem: (@Sendable (GiftCardHandle, String) async throws -> String)? = nil,
+        redeem: (@Sendable (GiftCardHandle, String) async throws -> GiftCardRedemption)? = nil,
         mainQueue: AnySchedulerOf<DispatchQueue> = .immediate
     ) -> TestStore<Root.State, Root.Action> {
         let store = TestStore(initialState: state) {
@@ -260,7 +260,7 @@ import ComposableArchitecture
     }
 
     @Test(arguments: [
-        GiftCardRedeem.Action.Response.statusLoaded(.empty), .progressUpdated(0.7), .redeemSucceeded("old-tx"),
+        GiftCardRedeem.Action.Response.statusLoaded(.empty), .redeemSucceeded(GiftCardRedemption(txId: "old-tx", received: nil)), .recheckLoaded(.empty), .recheckFailed(.checkFailed),
         .redeemFailed(.redeemFailed), .checkFailed(.checkFailed), .openFailed(.checkFailed), .autoRetryFired,
         .destinationResolved(AccountUUID(id: [UInt8](repeating: 0, count: 16)), "old-address".redacted)
     ]) func queuedOldResponseCannotMutateAReplacementVisit(response: GiftCardRedeem.Action.Response) async throws {
@@ -274,7 +274,6 @@ import ComposableArchitecture
         #expect(store.state.giftCardCoordFlowState.redeemState?.step == .checking)
         #expect(store.state.giftCardCoordFlowState.redeemState?.destinationAddress == nil)
         #expect(store.state.giftCardCoordFlowState.redeemState?.txId == nil)
-        #expect(store.state.giftCardCoordFlowState.redeemState?.syncProgress == nil)
     }
 
     @Test func staleOpenAfterStateRemovalClosesHandleWithoutStoppingSync() async {
@@ -305,7 +304,7 @@ import ComposableArchitecture
         state.path = .giftCardCoordFlow
         state.giftCardCoordFlowState = GiftCardCoordFlow.State(link: Self.linkString.redacted)
         state.giftCardCoordFlowState.redeemState?.handle = handle
-        state.giftCardCoordFlowState.redeemState?.step = redeeming ? .ready(spendable: Zatoshi(10_000_000)) : .checkFailed
+        state.giftCardCoordFlowState.redeemState?.step = redeeming ? .ready(redeemable: Zatoshi(10_000_000)) : .checkFailed
         state.giftCardCoordFlowState.redeemState?.destinationAddress = "utest1fixture".redacted
         state.giftCardCoordFlowState.redeemState?.destinationAccountId = account.id
         state.giftCardCoordFlowState.redeemState?.$selectedWalletAccount.withLock { $0 = account }
@@ -319,7 +318,7 @@ import ComposableArchitecture
             check: { _ in await suspend()
                 return .empty
             }, redeem: { _, _ in await suspend()
-                return "old-transaction"
+                return GiftCardRedemption(txId: "old-transaction", received: nil)
             })
         await store.send(.giftCardCoordFlow(.redeem(redeeming ? .redeemTapped : .retryTapped)))
         if redeeming {
@@ -536,5 +535,35 @@ import ComposableArchitecture
         await store.send(.destination(.deeplink(url)))
         #expect(store.state.path == nil)
         #expect(!store.state.isGiftCardRescanPending)
+    }
+
+    /// The card on screen hears about the app going to the background and coming back, so its
+    /// periodic check pauses meanwhile.
+    @Test func appLifecycleReachesTheCardOnScreen() async {
+        var state = homeState()
+        state.path = .giftCardCoordFlow
+        state.giftCardCoordFlowState = GiftCardCoordFlow.State(link: Self.linkString.redacted)
+        let store = TestStore(initialState: state) {
+            Root().giftCardsReduce()
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        await store.receive({ if case .giftCardCoordFlow(.redeem(.appDidEnterBackground)) = $0 { true } else { false } })
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.receive({ if case .giftCardCoordFlow(.redeem(.appWillEnterForeground)) = $0 { true } else { false } })
+    }
+
+    /// Without a card on screen, the app's lifecycle is not forwarded to the flow.
+    @Test func appLifecycleIsNotForwardedWithoutACard() async {
+        var state = homeState()
+        state.path = .giftCardCoordFlow
+        let store = TestStore(initialState: state) {
+            Root().giftCardsReduce()
+        }
+
+        await store.send(.initialization(.appDelegate(.didEnterBackground)))
+        await store.send(.initialization(.appDelegate(.willEnterForeground)))
+        await store.finish()
     }
 }

@@ -17,9 +17,13 @@ import Lottie
 struct GiftCardRedeemView: View {
     @Environment(\.colorScheme) var colorScheme
 
-    private enum Constants {
+    enum Constants {
         static let lottieNameLight = "sending"
         static let lottieNameDark = "sending-dark"
+        /// The closed gift (Paste link, Ready) is drawn on a smaller canvas than the status
+        /// illustrations (Pending, Success, Nothing to redeem), as in the design.
+        static let closedGiftSize: CGFloat = 108
+        static let statusIllustrationSize: CGFloat = 148
     }
 
     @Perception.Bindable var store: StoreOf<GiftCardRedeem>
@@ -43,29 +47,44 @@ struct GiftCardRedeemView: View {
     @ViewBuilder private func content() -> some View {
         switch store.step {
         case .checking:
+            // The design has no title bar here; the back arrow stays so that a slow check can be left.
             progressScreen(
                 title: String(localizable: .giftCardCheckingTitle),
-                desc: String(localizable: .giftCardCheckingDesc),
-                progress: store.syncProgress
+                desc: String(localizable: .giftCardCheckingDesc)
             )
-            .screenTitle(String(localizable: .giftCardTitle))
             .zashiBack { store.send(.closeTapped) }
             .applyScreenBackground()
 
-        case .ready(let spendable):
-            readyScreen(spendable)
+        case .ready:
+            readyScreen()
 
-        case let .pending(amount, _):
-            pendingScreen(amount)
+        case .pending:
+            statusScreen(
+                illustration: Asset.Assets.Illustrations.giftPreparing.image,
+                title: String(localizable: .giftCardPendingTitle),
+                desc: String(localizable: .giftCardPendingDesc(receivedFormatted())),
+                buttons: .checkAgainAndClose
+            )
+            .applyIndigoScreenBackground()
 
         case .empty:
-            resultScreen(
-                illustration: Asset.Assets.Illustrations.emptyState.image,
+            statusScreen(
+                illustration: Asset.Assets.Illustrations.giftEmpty.image,
                 title: String(localizable: .giftCardEmptyTitle),
                 desc: String(localizable: .giftCardEmptyDesc),
-                retryTitle: String(localizable: .giftCardCheckAgain)
+                buttons: .checkAgainAndClose
             )
-            .applyScreenBackground()
+            .applyFailureScreenBackground()
+
+        case .dust:
+            // Checking again cannot help a card whose funds would all go to the fee: Close only.
+            statusScreen(
+                illustration: Asset.Assets.Illustrations.giftEmpty.image,
+                title: String(localizable: .giftCardEmptyTitle),
+                desc: String(localizable: .giftCardDustDesc),
+                buttons: .close
+            )
+            .applyFailureScreenBackground()
 
         case .invalidLink:
             errorScreen(title: String(localizable: .giftCardInvalidTitle), desc: String(localizable: .giftCardInvalidDesc))
@@ -80,35 +99,26 @@ struct GiftCardRedeemView: View {
             errorScreen(title: String(localizable: .giftCardUnavailableTitle), desc: String(localizable: .giftCardUnavailableDesc))
 
         case .checkFailed:
-            errorScreen(
-                title: String(localizable: .giftCardCheckFailedTitle),
-                desc: String(localizable: .giftCardCheckFailedDesc),
-                retryTitle: String(localizable: .giftCardTryAgain)
-            )
+            errorScreen(title: String(localizable: .giftCardCheckFailedTitle), desc: String(localizable: .giftCardCheckFailedDesc))
 
         case .redeeming:
             progressScreen(
                 title: String(localizable: .giftCardRedeemingTitle),
-                desc: String(localizable: .giftCardRedeemingDesc),
-                progress: nil
+                desc: String(localizable: .giftCardRedeemingDesc)
             )
             .applyScreenBackground()
 
         case .success:
-            resultScreen(
-                illustration: Asset.Assets.Illustrations.success1.image,
+            statusScreen(
+                illustration: Asset.Assets.Illustrations.giftOpen.image,
                 title: String(localizable: .giftCardSuccessTitle),
-                desc: String(localizable: .giftCardSuccessDesc),
-                retryTitle: nil
+                desc: successDesc(),
+                buttons: .close
             )
             .applySuccessScreenBackground()
 
         case .failure:
-            errorScreen(
-                title: String(localizable: .giftCardFailureTitle),
-                desc: String(localizable: .giftCardFailureDesc),
-                retryTitle: String(localizable: .giftCardTryAgain)
-            )
+            errorScreen(title: String(localizable: .giftCardFailureTitle), desc: String(localizable: .giftCardFailureDesc))
         }
     }
 }
@@ -116,24 +126,34 @@ struct GiftCardRedeemView: View {
 // MARK: - Steps
 
 extension GiftCardRedeemView {
-    @ViewBuilder func readyScreen(_ spendable: Zatoshi) -> some View {
+    @ViewBuilder func readyScreen() -> some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 0) {
+                    Asset.Assets.Illustrations.giftClosed.image
+                        .zImage(width: Constants.closedGiftSize, height: Constants.closedGiftSize, style: Design.Text.primary)
+                        .accessibilityHidden(true)
+                        .padding(.top, 24)
+
                     Text(localizable: .giftCardReadyTitle)
                         .zFont(.semiBold, size: 20, style: Design.Text.primary)
                         .multilineTextAlignment(.center)
-                        .padding(.bottom, 12)
+                        .padding(.top, 16)
 
-                    BalanceWithIconView(balance: spendable)
-
-                    if let fiatAmount = store.fiatAmount {
-                        Text(fiatAmount)
-                            .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                            .padding(.top, 10)
+                    if let received = store.receivedAmount {
+                        Group {
+                            Text(received.atLeastThreeDecimalsZashiFormatted())
+                            + Text(" \(tokenName)")
+                                .foregroundColor(Design.Text.quaternary.color(colorScheme))
+                        }
+                        .zFont(.semiBold, size: 48, style: Design.Text.primary)
+                        .minimumScaleFactor(0.1)
+                        .lineLimit(1)
+                        .accessibilityIdentifier(AccessibilityID.GiftCard.redeemAmount)
+                        .padding(.top, 4)
                     }
                 }
-                .padding(.top, 40)
+                .frame(maxWidth: .infinity)
                 .padding(.bottom, 32)
 
                 if let message = store.message {
@@ -142,9 +162,11 @@ extension GiftCardRedeemView {
                             .zFont(.medium, size: 14, style: Design.Text.tertiary)
 
                         HStack {
-                            // Written by whoever made the card: shown verbatim, never as markup.
-                            Text(verbatim: message)
+                            // Written by whoever made the card: shown verbatim, never as markup, after
+                            // the same label the redemption's memo carries.
+                            Text(verbatim: "\(String(localizable: .giftCardRedeemMemo)) · \(message)")
                                 .zFont(.medium, size: 14, style: Design.Inputs.Filled.text)
+                                .accessibilityIdentifier(AccessibilityID.GiftCard.redeemMessage)
 
                             Spacer(minLength: 0)
                         }
@@ -157,24 +179,30 @@ extension GiftCardRedeemView {
                     }
                     .padding(.bottom, 24)
                 }
-
-                destinationRow()
-                    .padding(.bottom, 24)
-
-                ZashiInfoCallout(
-                    style: .plain,
-                    title: String(localizable: .giftCardFeeTitle),
-                    body: String(localizable: .giftCardFeeDesc)
-                )
             }
             .padding(.vertical, 1)
 
             Spacer()
 
+            HStack(alignment: .top, spacing: 0) {
+                Asset.Assets.infoOutline.image
+                    .zImage(size: 16, style: Design.Text.tertiary)
+                    .accessibilityHidden(true)
+                    .padding(.trailing, 8)
+
+                Text(readyNote())
+                    .zFont(size: 12, style: Design.Text.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(AccessibilityID.GiftCard.redeemDisclaimer)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 20)
+
             ZashiButton(String(localizable: .giftCardRedeem)) {
                 store.send(.redeemTapped)
             }
             .disabled(!store.isRedeemable)
+            .accessibilityIdentifier(AccessibilityID.GiftCard.redeemButton)
             .padding(.bottom, 24)
         }
         .screenHorizontalPadding()
@@ -183,75 +211,7 @@ extension GiftCardRedeemView {
         .applyScreenBackground()
     }
 
-    @ViewBuilder func destinationRow() -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(localizable: .giftCardDestination)
-                    .zFont(.medium, size: 14, style: Design.Text.tertiary)
-
-                if let account = store.selectedWalletAccount {
-                    HStack(spacing: 0) {
-                        account.vendor.icon()
-                            .resizable()
-                            .frame(width: 24, height: 24)
-                            .background {
-                                Circle()
-                                    .fill(Design.Surfaces.bgAlt.color(colorScheme))
-                                    .frame(width: 32, height: 32)
-                            }
-
-                        Text(account.vendor.name())
-                            .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                            .padding(.leading, 16)
-                    }
-                    .padding(.leading, 4)
-                }
-
-                if let address = store.destinationAddress?.data {
-                    Text(address.zip316)
-                        .zFont(fontFamily: .robotoMono, size: 12, style: Design.Text.primary)
-                }
-            }
-
-            Spacer()
-        }
-    }
-
-    @ViewBuilder func pendingScreen(_ amount: Zatoshi) -> some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            sendingAnimation()
-
-            Text(localizable: .giftCardPendingTitle)
-                .zFont(.semiBold, size: 28, style: Design.Text.primary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 16)
-
-            Text(localizable: .giftCardPendingDesc(formatted(amount)))
-                .zFont(size: 14, style: Design.Text.primary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(1.5)
-                .padding(.top, 8)
-
-            Spacer()
-
-            ZashiButton(String(localizable: .generalClose), type: .ghost) {
-                store.send(.closeTapped)
-            }
-            .padding(.bottom, 12)
-
-            ZashiButton(String(localizable: .giftCardCheckAgain)) {
-                store.send(.retryTapped)
-            }
-            .padding(.bottom, 24)
-        }
-        .padding(.vertical, 1)
-        .screenHorizontalPadding()
-        .applyIndigoScreenBackground()
-    }
-
-    @ViewBuilder func progressScreen(title: String, desc: String, progress: Double?) -> some View {
+    @ViewBuilder func progressScreen(title: String, desc: String) -> some View {
         VStack(spacing: 0) {
             Spacer()
 
@@ -268,36 +228,69 @@ extension GiftCardRedeemView {
                 .lineSpacing(1.5)
                 .padding(.top, 8)
 
-            if let progress {
-                ProgressView(value: progress, total: 1)
-                    .tint(Asset.Colors.ZDesign.Base.brand.color)
-                    .padding(.top, 24)
-                    .padding(.horizontal, 40)
-            }
-
             Spacer()
         }
         .padding(.vertical, 1)
         .screenHorizontalPadding()
     }
 
-    @ViewBuilder func errorScreen(title: String, desc: String, retryTitle: String? = nil) -> some View {
-        resultScreen(
-            illustration: Asset.Assets.Illustrations.failure1.image,
-            title: title,
-            desc: desc,
-            retryTitle: retryTitle
-        )
+    /// The buttons under a status screen's text, top to bottom.
+    enum StatusButtons {
+        /// Close only.
+        case close
+        /// Check again (quiet, with a busy state), then Close.
+        case checkAgainAndClose
+        /// Close, then Try again as the main action.
+        case closeAndTryAgain
+    }
+
+    /// An error, laid out as on Android: one Try again can help shows the skull with Close above
+    /// Try again; one it cannot shows the cloud with Close only. Both keep the back arrow.
+    @ViewBuilder func errorScreen(title: String, desc: String) -> some View {
+        Group {
+            switch store.errorKind {
+            case .retryable:
+                statusScreen(
+                    illustration: Asset.Assets.Illustrations.failure1.image,
+                    templated: false,
+                    title: title,
+                    desc: desc,
+                    buttons: .closeAndTryAgain
+                )
+            case .final, .none:
+                statusScreen(
+                    illustration: Asset.Assets.Illustrations.cloudEyes.image,
+                    title: title,
+                    desc: desc,
+                    buttons: .close
+                )
+            }
+        }
+        .zashiBack { store.send(.closeTapped) }
         .applyFailureScreenBackground()
     }
 
-    @ViewBuilder func resultScreen(illustration: Image, title: String, desc: String, retryTitle: String?) -> some View {
+    /// An outcome: illustration, title and description, then `buttons`.
+    @ViewBuilder func statusScreen(
+        illustration: Image,
+        templated: Bool = true,
+        title: String,
+        desc: String,
+        buttons: StatusButtons
+    ) -> some View {
         VStack(spacing: 0) {
             Spacer()
 
-            illustration
-                .resizable()
-                .frame(width: 148, height: 148)
+            if templated {
+                illustration
+                    .zImage(width: Constants.statusIllustrationSize, height: Constants.statusIllustrationSize, style: Design.Text.primary)
+                    .accessibilityHidden(true)
+            } else {
+                illustration
+                    .resizable()
+                    .frame(width: Constants.statusIllustrationSize, height: Constants.statusIllustrationSize)
+                    .accessibilityHidden(true)
+            }
 
             Text(title)
                 .zFont(.semiBold, size: 28, style: Design.Text.primary)
@@ -312,13 +305,43 @@ extension GiftCardRedeemView {
 
             Spacer()
 
-            ZashiButton(String(localizable: .generalClose), type: retryTitle == nil ? .primary : .ghost) {
-                store.send(.closeTapped)
-            }
-            .padding(.bottom, retryTitle == nil ? 24 : 12)
+            // The design's grey secondary button: dark text on a light grey fill in light mode, white
+            // on a mid grey in dark mode. Quaternary is the closest style in both modes (tertiary's
+            // dark-mode text barely shows on its fill); its light fill is a little darker.
+            switch buttons {
+            case .close:
+                ZashiButton(String(localizable: .generalClose)) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 24)
 
-            if let retryTitle {
-                ZashiButton(retryTitle) {
+            case .checkAgainAndClose:
+                if store.isRechecking {
+                    // Check again runs without leaving the screen; the button shows it is busy.
+                    ZashiButton(String(localizable: .giftCardCheckAgain), type: .quaternary, accessoryView: ProgressView()) {
+                        store.send(.retryTapped)
+                    }
+                    .disabled(true)
+                    .padding(.bottom, 12)
+                } else {
+                    ZashiButton(String(localizable: .giftCardCheckAgain), type: .quaternary) {
+                        store.send(.retryTapped)
+                    }
+                    .padding(.bottom, 12)
+                }
+
+                ZashiButton(String(localizable: .generalClose)) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 24)
+
+            case .closeAndTryAgain:
+                ZashiButton(String(localizable: .generalClose), type: .quaternary) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 12)
+
+                ZashiButton(String(localizable: .giftCardTryAgain)) {
                     store.send(.retryTapped)
                 }
                 .padding(.bottom, 24)
@@ -328,8 +351,30 @@ extension GiftCardRedeemView {
         .screenHorizontalPadding()
     }
 
-    func formatted(_ amount: Zatoshi) -> String {
-        "\(amount.decimalZashiFormatted()) \(tokenName)"
+    /// Where the funds go, named after the selected account's wallet, and that the amount shown is
+    /// already net of the network fee.
+    func readyNote() -> String {
+        guard let wallet = store.selectedWalletAccount?.vendor.name() else {
+            return String(localizable: .giftCardReadyNoteNoWallet)
+        }
+        return String(localizable: .giftCardReadyNote(wallet))
+    }
+
+    /// What the success screen says: the amount received, when the redemption reported it.
+    func successDesc() -> String {
+        guard store.receivedAmount != nil else {
+            return String(localizable: .giftCardSuccessDescNoAmount)
+        }
+        return String(localizable: .giftCardSuccessDesc(receivedFormatted()))
+    }
+
+    /// The amount the wallet receives, as the screens show it, e.g. "0.100 ZEC": at least three
+    /// decimals like the rest of the app, and never rounded, so a card is not shown as more than it gives.
+    func receivedFormatted() -> String {
+        guard let received = store.receivedAmount else {
+            return ""
+        }
+        return "\(received.atLeastThreeDecimalsZashiFormatted()) \(tokenName)"
     }
 
     @ViewBuilder func sendingAnimation() -> some View {
@@ -349,13 +394,13 @@ extension GiftCardRedeemView {
 
 #Preview("Checking") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.checking, progress: 0.4), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.checking), tokenName: "ZEC")
     }
 }
 
 #Preview("Ready") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.ready(spendable: Zatoshi(10_000_000))), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.ready(redeemable: Zatoshi(10_000_000))), tokenName: "ZEC")
     }
 }
 
@@ -371,6 +416,12 @@ extension GiftCardRedeemView {
     }
 }
 
+#Preview("Dust") {
+    NavigationView {
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.dust), tokenName: "ZEC")
+    }
+}
+
 #Preview("Wrong network") {
     NavigationView {
         GiftCardRedeemView(store: GiftCardRedeem.preview(.wrongNetwork), tokenName: "ZEC")
@@ -379,7 +430,7 @@ extension GiftCardRedeemView {
 
 #Preview("Success") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.success), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.success(received: Zatoshi(10_000_000))), tokenName: "ZEC")
     }
 }
 
@@ -418,7 +469,7 @@ extension GiftCardRedeem.State {
 }
 
 extension GiftCardRedeem {
-    @MainActor static func preview(_ step: State.Step, progress: Double? = nil) -> StoreOf<GiftCardRedeem> {
+    @MainActor static func preview(_ step: State.Step) -> StoreOf<GiftCardRedeem> {
         var state = State.initial
         state.summary = GiftCardSummary(
             origin: .zodl,
@@ -428,7 +479,6 @@ extension GiftCardRedeem {
             message: "Welcome to Zcash Summit"
         )
         state.step = step
-        state.syncProgress = progress
         state.destinationAddress = "u1previewdestinationaddressorchardonly".redacted
         return StoreOf<GiftCardRedeem>(initialState: state) {
             GiftCardRedeem()

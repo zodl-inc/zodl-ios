@@ -323,7 +323,10 @@ extension Near1Click {
             IdentifiedArrayOf(uniqueElements: try await Near1Click.fetchAllAssets())
         },
         quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
-            guard !GiftCardLink.isCandidate(refundTo), !GiftCardLink.isCandidate(destination) else {
+            // A gift card link carries the card's spending key: it must never reach the provider,
+            // wherever it hides in the text.
+            guard !GiftCardSecretDetector.mayContainGiftCardSecret(refundTo),
+                  !GiftCardSecretDetector.mayContainGiftCardSecret(destination) else {
                 throw SwapAndPayClient.EndpointError.message(String(localizable: .swapGiftCardAddressNotAllowed))
             }
 

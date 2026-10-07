@@ -13,7 +13,7 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-// Serialized: mutates the process-global selected-account and exchange-rate `@Shared` slots.
+// Serialized: mutates the process-global selected-account `@Shared` slot.
 @Suite(.serialized) @MainActor struct GiftCardRedeemTests {
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000&amount=0.1".redacted
     nonisolated(unsafe) private static let orchardUA = UnifiedAddress(validatedEncoding: "utest1orchardonlyfixture", networkType: .testnet)
@@ -88,8 +88,7 @@ import ComposableArchitecture
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
-            $0.syncProgress = nil
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         #expect(store.state.summary?.message == "Welcome to Zcash Summit")
         #expect(store.state.isRedeemable)
@@ -98,7 +97,7 @@ import ComposableArchitecture
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            $0.step = .success(received: Zatoshi(10_000_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -108,18 +107,16 @@ import ComposableArchitecture
         #expect(redeemedTo.value == [Self.orchardUA.stringEncoded])
     }
 
-    @Test func successfulRedeemKeepsTheTransactionIdWithoutReportingThePreFeeAmount() async {
+    @Test func successfulRedeemKeepsTheTransactionIdAndReportsTheReceivedAmount() async {
         var card = scenario(.ready)
         card.txId = "redeemed-tx"
         let store = makeStore(scenario: card)
-        store.state.$currencyConversion.withLock { $0 = CurrencyConversion(.usd, ratio: 30, timestamp: 0) }
-        defer { store.state.$currencyConversion.withLock { $0 = nil } }
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
-        #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
+        #expect(store.state.step == .ready(redeemable: Zatoshi(10_000_000)))
         #expect(store.state.amount == Zatoshi(10_000_000))
-        #expect(store.state.fiatAmount != nil)
+        #expect(store.state.receivedAmount == Zatoshi(10_000_000))
 
         await store.send(.redeemTapped)
         #expect(store.state.step == .redeeming(amount: Zatoshi(10_000_000)))
@@ -128,15 +125,141 @@ import ComposableArchitecture
         await store.receive(\.delegate.redeemed)
         await store.finish()
 
-        #expect(store.state.step == .success)
+        // The success screen shows the same received figure as the Ready screen, never the
+        // card's pre-fee balance.
+        #expect(store.state.step == .success(received: Zatoshi(10_000_000)))
         #expect(store.state.txId == "redeemed-tx")
         #expect(store.state.amount == nil)
-        #expect(store.state.fiatAmount == nil)
+        #expect(store.state.receivedAmount == Zatoshi(10_000_000))
     }
 
-    @Test func pendingCardChecksAgainOnItsOwn() async {
+    /// The Ready screen shows what the wallet SDK proposed the redemption sends, after the fee the
+    /// card's notes require: a card holding several notes pays more than the minimum fee.
+    @Test func readyShowsTheRedeemableAmountTheSDKComputed() async {
+        var card = scenario(.ready)
+        card.status = .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(9_995_000))
+        let store = makeStore(scenario: card)
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = .ready(redeemable: Zatoshi(9_995_000))
+        }
+        #expect(store.state.receivedAmount == Zatoshi(9_995_000))
+    }
+
+    /// Success shows what the redemption's own proposal sent, which can differ from the Ready
+    /// figure (more funds became spendable meanwhile). An amount the redemption did not report is
+    /// left unknown rather than replaced with the Ready figure.
+    @Test(arguments: [(Optional(Zatoshi(10_500_000)), Optional(Zatoshi(10_500_000))), (nil, nil)])
+    func successShowsWhatTheRedemptionSent(reported: Zatoshi?, shown: Zatoshi?) async {
+        var state = GiftCardRedeem.State(link: Self.link)
+        state.handle = GiftCardHandle()
+        state.step = .redeeming(amount: Zatoshi(10_000_000))
+        let store = TestStore(initialState: state) { GiftCardRedeem() }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+
+        await store.send(.response(state.cancelId, .redeemSucceeded(GiftCardRedemption(txId: "tx", received: reported)))) {
+            $0.step = .success(received: shown)
+            $0.txId = "tx"
+        }
+        await store.receive(\.delegate.redeemed)
+        #expect(store.state.receivedAmount == shown)
+    }
+
+    /// Success names the amount received when it is known, and says the gift is on its way
+    /// without an amount otherwise (Android's `redeemGift_success_subtitle_noAmount`).
+    @Test func successCopyFollowsWhetherTheAmountIsKnown() {
+        let known = GiftCardRedeemView(store: GiftCardRedeem.preview(.success(received: Zatoshi(10_000_000))), tokenName: "ZEC")
+        let amount = "\(Zatoshi(10_000_000).atLeastThreeDecimalsZashiFormatted()) ZEC"
+        #expect(known.successDesc() == String(localizable: .giftCardSuccessDesc(amount)))
+
+        let unknown = GiftCardRedeemView(store: GiftCardRedeem.preview(.success(received: nil)), tokenName: "ZEC")
+        #expect(unknown.successDesc() == String(localizable: .giftCardSuccessDescNoAmount))
+    }
+
+    @Test func receivedAmountFollowsEveryStepThatHasAnAmount() {
+        var state = GiftCardRedeem.State(link: Self.link)
+        let cases: [(GiftCardRedeem.State.Step, Zatoshi?)] = [
+            (.checking, nil),
+            (.ready(redeemable: Zatoshi(10_000_000)), Zatoshi(10_000_000)),
+            (.pending(amount: Zatoshi(10_010_000), confirmationsNeeded: nil), Zatoshi(10_010_000)),
+            (.redeeming(amount: Zatoshi(10_000_000)), Zatoshi(10_000_000)),
+            (.failure(amount: Zatoshi(10_000_000)), Zatoshi(10_000_000)),
+            (.success(received: Zatoshi(10_000_000)), Zatoshi(10_000_000)),
+            (.empty, nil),
+            (.dust, nil),
+            (.invalidLink, nil),
+            (.checkFailed, nil)
+        ]
+        for (step, expected) in cases {
+            state.step = step
+            #expect(state.receivedAmount == expected, "\(step)")
+        }
+    }
+
+    /// Errors are laid out as on Android: Try again (with Close) and the skull only where checking
+    /// again can help, Close only and the cloud where it cannot.
+    @Test func errorStepsOfferTryAgainOnlyWhenItCanHelp() {
+        var state = GiftCardRedeem.State(link: Self.link)
+        let cases: [(GiftCardRedeem.State.Step, GiftCardRedeem.State.ErrorKind?)] = [
+            (.checkFailed, .retryable),
+            (.failure(amount: Zatoshi(10_000_000)), .retryable),
+            (.invalidLink, .final),
+            (.unsupportedVersion, .final),
+            (.wrongNetwork, .final),
+            (.unavailable, .final),
+            (.checking, nil),
+            (.ready(redeemable: Zatoshi(10_000_000)), nil),
+            (.pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil), nil),
+            (.empty, nil),
+            (.dust, nil),
+            (.redeeming(amount: Zatoshi(10_000_000)), nil),
+            (.success(received: Zatoshi(10_000_000)), nil)
+        ]
+        for (step, kind) in cases {
+            state.step = step
+            #expect(state.errorKind == kind, "\(step)")
+            if let kind {
+                #expect(state.canRetry == (kind == .retryable), "\(step)")
+            }
+        }
+    }
+
+    /// Try again is ignored on an error it cannot help.
+    @Test(arguments: [
+        GiftCardRedeem.State.Step.invalidLink, .unsupportedVersion, .wrongNetwork, .unavailable
+    ])
+    func retryOnAFinalErrorDoesNothing(step: GiftCardRedeem.State.Step) async {
+        let openCalls = LockIsolated(0)
+        var state = GiftCardRedeem.State(link: Self.link)
+        state.step = step
+        let store = TestStore(initialState: state) {
+            GiftCardRedeem()
+        } withDependencies: {
+            var client = GiftCardClient.mock(scenario(.ready))
+            client.open = { _ in
+                openCalls.withValue { $0 += 1 }
+                return GiftCardHandle()
+            }
+            $0.giftCard = client
+        }
+
+        await store.send(.retryTapped)
+        await store.finish()
+        #expect(openCalls.value == 0)
+    }
+
+    /// The pending screen checks again on its own, without leaving the screen, and keeps doing so
+    /// while the card stays pending.
+    @Test func pendingCardChecksAgainOnItsOwnWithoutLeavingTheScreen() async {
         let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
         let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        let pending = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await pending(handle)
+        }
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
@@ -146,15 +269,284 @@ import ComposableArchitecture
 
         await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
         await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } }) {
-            $0.step = .checking
+            $0.isQuietCheckInFlight = true
         }
-        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
+        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3))
+        #expect(!store.state.isRechecking)
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } }) {
+            $0.isQuietCheckInFlight = false
         }
+
+        // Still pending: the next check is scheduled.
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 3)
 
         await store.send(.closeTapped)
         await store.receive(\.delegate.dismiss)
         await store.finish()
+    }
+
+    /// The pending screen's periodic check pauses while the app is in the background and picks up
+    /// again, a full interval later, once it is back.
+    @Test func pendingRecheckPausesWhileTheAppIsInTheBackground() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        let pending = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await pending(handle)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 1)
+
+        await store.send(.appDidEnterBackground) {
+            $0.isInBackground = true
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 3))
+        #expect(checks.value == 1)
+
+        await store.send(.appWillEnterForeground) {
+            $0.isInBackground = false
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval - 1))
+        #expect(checks.value == 1)
+        await mainQueue.advance(by: .seconds(1))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 2)
+
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// A check that answers pending while the app is in the background does not schedule the next
+    /// one; coming back does.
+    @Test func pendingAnswerInTheBackgroundWaitsForTheForeground() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        let pending = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await pending(handle)
+        }
+
+        await store.send(.appDidEnterBackground) {
+            $0.isInBackground = true
+        }
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: 3)
+        }
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checks.value == 1)
+
+        await store.send(.appWillEnterForeground)
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } })
+        #expect(checks.value == 2)
+
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// Coming back to a screen that isn't pending schedules nothing.
+    @Test func foregroundOnAScreenThatIsNotPendingSchedulesNothing() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.ready), mainQueue: mainQueue.eraseToAnyScheduler())
+        let ready = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await ready(handle)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        await store.send(.appDidEnterBackground)
+        await store.send(.appWillEnterForeground)
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checks.value == 1)
+        await store.finish()
+    }
+
+    /// Funds that become spendable while the pending screen waits take it to Ready on their own.
+    @Test func pendingCardTurnsReadyOnItsOwn() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        store.dependencies.giftCard.check = { _ in
+            checks.withValue { count in
+                count += 1
+                return count == 1
+                    ? .pending(amount: Zatoshi(10_010_000), confirmationsNeeded: nil)
+                    : .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000))
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } }) {
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
+        }
+        // Ready stops the periodic check.
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval * 2))
+        #expect(checks.value == 2)
+        await store.finish()
+    }
+
+    /// Check again on the pending screen keeps the screen, shows the button busy, and a failed
+    /// check leaves the screen as it was.
+    @Test func checkAgainOnPendingKeepsTheScreenEvenWhenTheCheckFails() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let release = GiftCardTestGate()
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        store.dependencies.giftCard.check = { _ in
+            let count = checks.withValue { count in
+                count += 1
+                return count
+            }
+            if count == 1 {
+                return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil)
+            }
+            // Held until the test lets it fail, so a second tap lands while it runs.
+            await release.wait()
+            throw GiftCardClientError.checkFailed
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+
+        await store.send(.retryTapped) {
+            $0.isRechecking = true
+            $0.isQuietCheckInFlight = true
+        }
+        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil))
+        // A second tap while it runs does not start another check.
+        await store.send(.retryTapped)
+        await release.open()
+        await mainQueue.advance(by: .milliseconds(GiftCardRedeem.Constants.recheckMinimumBusyTime))
+        await store.receive({ if case .response(_, .recheckFailed) = $0 { true } else { false } }) {
+            $0.isRechecking = false
+            $0.isQuietCheckInFlight = false
+        }
+        #expect(store.state.step == .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil))
+        #expect(checks.value == 2)
+
+        // The pending screen goes on checking on its own.
+        await mainQueue.advance(by: .seconds(GiftCardRedeem.Constants.autoRetryInterval))
+        await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .recheckFailed) = $0 { true } else { false } })
+        #expect(checks.value == 3)
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// A Check again the user taps keeps its button busy for a moment even when the card answers at
+    /// once, so the tap visibly does something (Android's QUIET_RECHECK_MIN_DURATION).
+    @Test func checkAgainStaysBusyForAMinimumTime() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        store.dependencies.giftCard.check = { _ in
+            checks.withValue { $0 += 1 }
+            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+
+        await store.send(.retryTapped) {
+            $0.isRechecking = true
+            $0.isQuietCheckInFlight = true
+        }
+        await mainQueue.advance(by: .milliseconds(GiftCardRedeem.Constants.recheckMinimumBusyTime - 1))
+        await Task.megaYield()
+        // The card has answered, but the button is still busy.
+        #expect(checks.value == 2)
+        #expect(store.state.isRechecking)
+
+        await mainQueue.advance(by: .milliseconds(1))
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } }) {
+            $0.isRechecking = false
+            $0.isQuietCheckInFlight = false
+        }
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// Check again on Nothing to redeem checks the open card quietly: the screen stays until funds
+    /// are found.
+    @Test func checkAgainOnAnEmptyCardKeepsTheScreenUntilFundsArrive() async {
+        let checks = LockIsolated(0)
+        let openCalls = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.empty), openCalls: openCalls)
+        store.dependencies.giftCard.check = { _ in
+            checks.withValue { count in
+                count += 1
+                return count == 1 ? .empty : .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000))
+            }
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = .empty
+        }
+        await store.send(.retryTapped) {
+            $0.isRechecking = true
+            $0.isQuietCheckInFlight = true
+        }
+        #expect(store.state.step == .empty)
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } }) {
+            $0.isRechecking = false
+            $0.isQuietCheckInFlight = false
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
+        }
+        #expect(openCalls.value == 1)
+    }
+
+    /// A quiet check that finds the card's wallet gone keeps the screen, and the next Check again
+    /// opens the card anew.
+    @Test func quietCheckOfAGoneCardMakesTheNextCheckAgainOpenItAgain() async {
+        let openCalls = LockIsolated(0)
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.empty), openCalls: openCalls)
+        store.dependencies.giftCard.check = { _ in
+            let count = checks.withValue { count in
+                count += 1
+                return count
+            }
+            if count == 2 {
+                throw GiftCardClientError.unknownHandle
+            }
+            return .empty
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        await store.send(.retryTapped)
+        await store.receive({ if case .response(_, .recheckFailed) = $0 { true } else { false } }) {
+            $0.isRechecking = false
+            $0.isQuietCheckInFlight = false
+            $0.handle = nil
+        }
+        #expect(store.state.step == .empty)
+
+        await store.send(.retryTapped) {
+            $0.step = .checking
+        }
+        await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+        #expect(openCalls.value == 2)
     }
 
     @Test func closeCancelsPendingCardRecheck() async {
@@ -201,13 +593,43 @@ import ComposableArchitecture
 
     @Test func zeroSpendableIsTreatedAsEmpty() async {
         var base = scenario(.ready)
-        base.status = .ready(spendable: .zero)
+        base.status = .ready(spendable: .zero, redeemable: .zero)
         let store = makeStore(scenario: base)
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
             $0.step = .empty
         }
+    }
+
+    /// A card holding no more than the network fee has nothing to redeem, and checking it again
+    /// cannot help: only Close is offered.
+    @Test(arguments: [
+        zodl_internal.GiftCardStatus.dust,
+        zodl_internal.GiftCardStatus.ready(spendable: Zatoshi(10_000), redeemable: .zero)
+    ])
+    func dustCardOffersOnlyClose(status: zodl_internal.GiftCardStatus) async {
+        var base = scenario(.dust)
+        base.status = status
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: base)
+        let check = store.dependencies.giftCard.check
+        store.dependencies.giftCard.check = { handle in
+            checks.withValue { $0 += 1 }
+            return try await check(handle)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = .dust
+        }
+        #expect(!store.state.isRedeemable)
+        #expect(!store.state.canRetry)
+
+        await store.send(.retryTapped)
+        await store.finish()
+        #expect(store.state.step == .dust)
+        #expect(checks.value == 1)
     }
 
     @Test func linkWithoutSecretIsInvalidAndNothingIsOpened() async {
@@ -347,28 +769,40 @@ import ComposableArchitecture
         }
     }
 
-    /// The card held too little to pay the fee (or was redeemed elsewhere) by the time it was
-    /// swept: nothing was sent, so the screen says there is nothing to redeem instead of offering
-    /// a Retry that would fail the same way.
-    @Test func nothingToRedeemOnRedeemShowsTheEmptyCard() async {
+    /// The card was redeemed elsewhere, or holds too little to pay the fee, by the time it was swept:
+    /// nothing was sent, so the card is checked again and the screen says which, instead of
+    /// offering a Retry that would fail the same way.
+    @Test(arguments: [zodl_internal.GiftCardStatus.empty, zodl_internal.GiftCardStatus.dust])
+    func nothingToRedeemOnRedeemChecksTheCardAgain(found: zodl_internal.GiftCardStatus) async {
+        let checks = LockIsolated(0)
         let store = makeStore(scenario: scenario(GiftCardClient.MockScenario(redeemError: .nothingToRedeem)))
+        store.dependencies.giftCard.check = { _ in
+            checks.withValue { count in
+                count += 1
+                return count == 1 ? .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)) : found
+            }
+        }
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } }) {
-            $0.step = .empty
+            $0.step = .checking
+        }
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
+            $0.step = found == .dust ? .dust : .empty
         }
         #expect(!store.state.isRedeemable)
+        #expect(checks.value == 2)
     }
 
     @Test(arguments: [
         ("en", "Redemption not confirmed", "We couldn't confirm redemption. Tap Try again to check the card's current status."),
-        ("es", "Canje no confirmado", "No pudimos confirmar el canje. Pulsa Intentar de nuevo para comprobar el estado actual de la tarjeta.")
+        ("es", "Canje no confirmado", "No pudimos confirmar el canje. Toca Intentar de nuevo para comprobar el estado actual de la tarjeta.")
     ])
     func failedRedemptionCopyDoesNotClaimTheFundsStayedOnTheCard(language: String, title: String, description: String) throws {
         let path = try #require(Bundle.main.path(forResource: language, ofType: "lproj"))
@@ -388,7 +822,7 @@ import ComposableArchitecture
         client.check = { _ in
             checks.withValue { count in
                 count += 1
-                return count == 1 ? .ready(spendable: Zatoshi(10_000_000)) : .empty
+                return count == 1 ? .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)) : .empty
             }
         }
         client.redeem = { _, address in
@@ -405,7 +839,7 @@ import ComposableArchitecture
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
-        #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
+        #expect(store.state.step == .ready(redeemable: Zatoshi(10_000_000)))
         await store.send(.redeemTapped)
         await store.receive({ if case .response(_, .redeemFailed) = $0 { true } else { false } })
         #expect(store.state.step == .failure(amount: Zatoshi(10_000_000)))
@@ -426,7 +860,7 @@ import ComposableArchitecture
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
 
         await store.send(.redeemTapped) {
@@ -441,7 +875,7 @@ import ComposableArchitecture
             $0.step = .checking
         }
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
     }
 
@@ -456,7 +890,7 @@ import ComposableArchitecture
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         let handle = store.state.handle
 
@@ -472,7 +906,7 @@ import ComposableArchitecture
             $0.step = .checking
         }
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         #expect(store.state.handle == handle)
         #expect(openCalls.value == 1)
@@ -485,7 +919,7 @@ import ComposableArchitecture
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            $0.step = .success(received: Zatoshi(10_000_000))
             $0.txId = GiftCardClient.MockScenario.ready.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -519,12 +953,12 @@ import ComposableArchitecture
 
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         #expect(!store.state.isRedeemable)
 
         await store.send(.redeemTapped)
-        #expect(store.state.step == .ready(spendable: Zatoshi(10_000_000)))
+        #expect(store.state.step == .ready(redeemable: Zatoshi(10_000_000)))
     }
 
     @Test func changingAccountBeforeRedeemDoesNotUseThePreviousCachedAddress() async {
@@ -580,13 +1014,13 @@ import ComposableArchitecture
         ))
         var state = GiftCardRedeem.State(link: Self.link)
         state.handle = GiftCardHandle()
-        state.step = .ready(spendable: Zatoshi(10_000_000))
+        state.step = .ready(redeemable: Zatoshi(10_000_000))
         state.$selectedWalletAccount.withLock { $0 = first }
         let store = TestStore(initialState: state) { GiftCardRedeem() } withDependencies: {
             var client = GiftCardClient.mock()
             client.redeem = { _, address in
                 redeemedTo.withValue { $0.append(address) }
-                return "current-tx"
+                return GiftCardRedemption(txId: "current-tx", received: nil)
             }
             $0.giftCard = client
             $0.sdkSynchronizer = .mocked(getCustomUnifiedAddress: { id, _ in
@@ -624,7 +1058,7 @@ import ComposableArchitecture
         let closed = LockIsolated(0)
         let reopened = LockIsolated(0)
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(10_000_000)),
+            held: .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)),
             submissionFails: true,
             closed: closed,
             reopened: reopened
@@ -644,14 +1078,14 @@ import ComposableArchitecture
         #expect(reopened.value == 1)
 
         let status = try await client.check(handle)
-        #expect(status == .ready(spendable: Zatoshi(10_000_000)))
+        #expect(status == .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)))
 
-        let txId = try await withDependencies {
+        let redemption = try await withDependencies {
             $0.transactionGuard = .testValue
         } operation: {
             try await client.redeem(handle, Self.orchardUA.stringEncoded)
         }
-        #expect(txId == FakeGiftCardSession.txId)
+        #expect(redemption == GiftCardRedemption(txId: FakeGiftCardSession.txId, received: FakeGiftCardSession.received))
         #expect(reopened.value == 1)
 
         await client.cleanup(handle)
@@ -665,7 +1099,7 @@ import ComposableArchitecture
         let closed = LockIsolated(0)
         let reopened = LockIsolated(0)
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(10_000_000)),
+            held: .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)),
             sendAllError: .networkMismatch,
             closed: closed,
             reopened: reopened
@@ -689,7 +1123,7 @@ import ComposableArchitecture
         let closed = LockIsolated(0)
         let reopened = LockIsolated(0)
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(5_000)),
+            held: .dust,
             sendAllError: .nothingToRedeem,
             closed: closed,
             reopened: reopened
@@ -790,13 +1224,14 @@ import ComposableArchitecture
         await store.send(.onAppear)
         await store.receive({ if case .response(_, .opened) = $0 { true } else { false } })
         await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } }) {
-            $0.step = .ready(spendable: Zatoshi(10_000_000))
+            $0.step = .ready(redeemable: Zatoshi(10_000_000))
         }
         await store.send(.redeemTapped) {
             $0.step = .redeeming(amount: Zatoshi(10_000_000))
         }
         await store.receive({ if case .response(_, .redeemSucceeded) = $0 { true } else { false } }) {
-            $0.step = .success
+            // What the sweep's proposal sent, not the Ready figure.
+            $0.step = .success(received: FakeGiftCardSession.received)
             $0.txId = FakeGiftCardSession.txId
         }
         await store.receive(\.delegate.redeemed)
@@ -806,7 +1241,7 @@ import ComposableArchitecture
         let mainWallet = Self.makeMainWallet()
         let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(10_000_000)),
+            held: .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)),
             closed: LockIsolated(0),
             reopened: LockIsolated(0),
             recordedIn: recordedIn
@@ -823,7 +1258,7 @@ import ComposableArchitecture
         let mainWallet = Self.makeMainWallet()
         let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(10_000_000)),
+            held: .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)),
             closed: LockIsolated(0),
             reopened: LockIsolated(0),
             recordsClaim: false,
@@ -836,14 +1271,14 @@ import ComposableArchitecture
         await redeemThroughTheLiveWiring(store)
 
         #expect(recordedIn.value == [ObjectIdentifier(mainWallet)])
-        #expect(store.state.step == .success)
+        #expect(store.state.step == .success(received: FakeGiftCardSession.received))
     }
 
     @Test func liveRedeemWithoutAMainWalletStillSucceeds() async throws {
         let registry = GiftCardSessionRegistry()
         let recordedIn = LockIsolated<[ObjectIdentifier?]>([])
         let session = FakeGiftCardSession(
-            held: .ready(spendable: Zatoshi(10_000_000)),
+            held: .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(10_000_000)),
             closed: LockIsolated(0),
             reopened: LockIsolated(0),
             recordedIn: recordedIn
@@ -851,14 +1286,14 @@ import ComposableArchitecture
         let handle = await registry.insert(session)
         let client = GiftCardClient.live(registry: registry)
 
-        let txId = try await withDependencies {
+        let redemption = try await withDependencies {
             $0.transactionGuard = .testValue
             $0.sdkSynchronizer = .mocked()
         } operation: {
             try await client.redeem(handle, Self.orchardUA.stringEncoded)
         }
 
-        #expect(txId == FakeGiftCardSession.txId)
+        #expect(redemption.txId == FakeGiftCardSession.txId)
         #expect(recordedIn.value == [nil])
     }
 }
@@ -869,6 +1304,7 @@ import ComposableArchitecture
 /// `recordsClaim` is off.
 private struct FakeGiftCardSession: GiftCardSession {
     static let txId = "fade00fade00fade00fade00fade00fade00fade00fade00fade00fade00fade"
+    static let received = Zatoshi(9_995_000)
 
     let held: zodl_internal.GiftCardStatus
     var submissionFails = false
@@ -877,10 +1313,6 @@ private struct FakeGiftCardSession: GiftCardSession {
     let reopened: LockIsolated<Int>
     var recordsClaim = true
     var recordedIn = LockIsolated<[ObjectIdentifier?]>([])
-
-    func progress() -> AsyncStream<Double> {
-        AsyncStream { $0.finish() }
-    }
 
     func status() async throws -> zodl_internal.GiftCardStatus {
         held
@@ -894,7 +1326,7 @@ private struct FakeGiftCardSession: GiftCardSession {
             throw GiftCardSubmissionFailed()
         }
         recordedIn.withValue { $0.append(mainWallet.map { ObjectIdentifier($0.synchronizer) }) }
-        return GiftCardSweep(txId: Self.txId, recordedInMainWallet: recordsClaim && mainWallet != nil)
+        return GiftCardSweep(txId: Self.txId, recordedInMainWallet: recordsClaim && mainWallet != nil, received: Self.received)
     }
 
     func reopen() async throws -> any GiftCardSession {
@@ -917,12 +1349,12 @@ private struct FakeGiftCardSession: GiftCardSession {
 @Suite struct GiftCardRedeemMemoTests {
     @Test func cardWithoutMessageGetsTheLabelOnly() throws {
         let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: nil))
-        #expect(memo == (try Memo(string: "Gift card")))
+        #expect(memo == (try Memo(string: "Gift Card")))
     }
 
     @Test func cardMessageFollowsTheLabel() throws {
         let memo = try #require(GiftCardRedeemerSession.redeemMemo(message: "  Welcome to Zcash Summit \n"))
-        #expect(memo == (try Memo(string: "Gift card · Welcome to Zcash Summit")))
+        #expect(memo == (try Memo(string: "Gift Card · Welcome to Zcash Summit")))
     }
 
     /// A card whose message hides a right-to-left override, a newline and a bell: the memo is
@@ -940,7 +1372,7 @@ private struct FakeGiftCardSession: GiftCardSession {
             return
         }
         let string = text.string
-        #expect(string.hasPrefix("Gift card · Happy"))
+        #expect(string.hasPrefix("Gift Card · Happy"))
         #expect(string.contains("birthday"))
         #expect(!string.unicodeScalars.contains { $0.properties.generalCategory == .control || $0.properties.generalCategory == .format })
     }
@@ -953,7 +1385,7 @@ private struct FakeGiftCardSession: GiftCardSession {
             return
         }
         let string = text.string
-        #expect(string.hasPrefix("Gift card · é"))
+        #expect(string.hasPrefix("Gift Card · é"))
         #expect(string.utf8.count <= MemoBytes.capacity)
         #expect(!string.hasSuffix("\u{FFFD}"))
     }
@@ -988,14 +1420,30 @@ private struct FakeGiftCardSession: GiftCardSession {
     @Test func dustCardHasNothingToRedeem() {
         let pool = PoolBalance(spendableValue: Zatoshi(5_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero)
         let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
-        let dust = ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: false)
+        let dust = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: nil)
 
         #expect(dust.state == .dust)
-        #expect(GiftCardRedeemerSession.appStatus(dust) == .empty)
-        #expect(
-            GiftCardRedeemerSession.appStatus(ZcashLightClientKit.GiftCardStatus(balance: balance, spendableCoversFee: true))
-                == .ready(spendable: Zatoshi(5_000))
-        )
+        #expect(GiftCardRedeemerSession.appStatus(dust) == .dust)
+    }
+
+    /// A ready card carries the SDK's own figures: the fee its notes require and what the
+    /// redemption sends after it, never an app-side estimate.
+    @Test func readyCardCarriesTheSDKsRedeemableAmount() {
+        let pool = PoolBalance(spendableValue: Zatoshi(10_010_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero)
+        let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
+        let sweep = ZcashLightClientKit.GiftCardStatus.Sweep(fee: Zatoshi(15_000), amount: Zatoshi(9_995_000))
+        let ready = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: sweep)
+
+        #expect(GiftCardRedeemerSession.appStatus(ready) == .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(9_995_000)))
+    }
+
+    /// A pending card shows what is still waiting for confirmations.
+    @Test func pendingCardReportsWhatIsWaiting() {
+        let pool = PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: Zatoshi(10_010_000))
+        let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
+        let pending = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: nil)
+
+        #expect(GiftCardRedeemerSession.appStatus(pending) == .pending(amount: Zatoshi(10_010_000), confirmationsNeeded: nil))
     }
 
     @Test func rejectedSubmissionIsLoggedWithoutTheServersText() throws {

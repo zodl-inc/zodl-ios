@@ -21,8 +21,6 @@ struct Scan {
         case noQRCodeFound
         case severalQRCodesFound
         case keystoneCheckOnly
-        case nothingToPaste
-        case unsupportedPaste
     }
     
     @ObservableState
@@ -33,13 +31,16 @@ struct Scan {
         var forceLibraryToHide = false
         var info = ""
         var instructions: String?
+        /// What a scanned code none of the `checkers` accepts is called, in place of the default
+        /// "not a valid Zcash address" (the gift card scanner names gift cards instead).
+        var invalidCodeInfo: String?
         var isAnythingFound = false
         var isCameraEnabled = true
         var isTorchAvailable = false
         var isTorchOn = false
         var isRPFound = false
-        /// Shows a "Paste link" button that runs the pasteboard's text through the same checkers
-        /// as a scanned code (used by the gift card flow).
+        /// Shows a "Paste link" button (used by the gift card flow, which opens its own paste screen
+        /// on `.pasteTapped`).
         var isPasteEnabled = false
         var progress: Int?
         var expectedParts = 0
@@ -86,7 +87,6 @@ struct Scan {
     @Dependency(\.captureDevice) var captureDevice
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.keystoneHandler) var keystoneHandler
-    @Dependency(\.pasteboard) var pasteboard
     @Dependency(\.qrImageDetector) var qrImageDetector
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.uriParser) var uriParser
@@ -245,24 +245,8 @@ struct Scan {
                 return .none
 
             case .pasteTapped:
-                guard !state.isAnythingFound else {
-                    return .none
-                }
-                guard let text = pasteboard.getString(), !text.data.isEmpty else {
-                    LoggerProxy.event("[Scan] paste: nothing to paste")
-                    return .send(.scanFailed(.nothingToPaste))
-                }
-                for checker in state.checkers {
-                    if let action = checker.checker.checkQRCode(text.data) {
-                        LoggerProxy.event("[Scan] paste: matched checker \(checker.checker.id), \(text.data.count) chars")
-                        if case .foundGiftCard = action {
-                            pasteboard.clearIfMatches(text)
-                        }
-                        return .send(action)
-                    }
-                }
-                LoggerProxy.event("[Scan] paste: unsupported, \(text.data.count) chars, \(state.checkers.count) checkers")
-                return .send(.scanFailed(.unsupportedPaste))
+                // The flow that enabled "Paste link" opens its own paste screen.
+                return .none
 
             case .cancelTapped:
                 return .none
@@ -303,17 +287,13 @@ struct Scan {
             case .scanFailed(let result):
                 switch result {
                 case .invalidQRCode:
-                    state.info = String(localizable: .scanInvalidQR)
+                    state.info = state.invalidCodeInfo ?? String(localizable: .scanInvalidQR)
                 case .noQRCodeFound:
                     state.info = String(localizable: .scanInvalidImage)
                 case .severalQRCodesFound:
                     state.info = String(localizable: .scanSeveralCodesFound)
                 case .keystoneCheckOnly:
                     state.info = ""
-                case .nothingToPaste:
-                    state.info = String(localizable: .scanPasteEmpty)
-                case .unsupportedPaste:
-                    state.info = String(localizable: .scanPasteUnsupported)
                 }
                 return .concatenate(
                     .cancel(id: state.cancelId),
@@ -336,6 +316,9 @@ struct Scan {
 
                 if state.checkers.count == 2 && state.checkers[0] == .keystoneScanChecker && state.checkers[1] == .keystonePCZTScanChecker {
                     return .none
+                }
+                if state.invalidCodeInfo != nil {
+                    return .send(.scanFailed(.invalidQRCode))
                 }
                 return .send(.scanFailed(.noQRCodeFound))
 

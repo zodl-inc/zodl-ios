@@ -23,7 +23,7 @@ extension DependencyValues {
 /// log it either: keep it in a `RedactableString` and pass it straight to `parse` and `open`.
 ///
 /// Lifecycle: `parse` (pure, cheap) → `open` (creates the card's own isolated wallet) →
-/// `progress` / `check` (syncs it and reports what it holds) → `redeem` (sends everything to an
+/// `check` (syncs it and reports what it holds) → `redeem` (sends everything to an
 /// address of the user's wallet) → `cleanup` (always, whenever the flow is left).
 @DependencyClient
 struct GiftCardClient {
@@ -35,14 +35,12 @@ struct GiftCardClient {
     /// Creates the card's isolated, temporary wallet and returns the handle used by every later
     /// call. Only one card is open at a time: opening another one closes the previous one.
     var open: @Sendable (_ link: String) async throws -> GiftCardHandle
-    /// Sync progress of the card's wallet in `0...1`. Finishes once `check` has an answer, or
-    /// immediately when the handle is unknown.
-    var progress: @Sendable (_ handle: GiftCardHandle) -> AsyncStream<Double> = { _ in AsyncStream { $0.finish() } }
     /// Syncs the card's wallet and reports what can be redeemed.
     var check: @Sendable (_ handle: GiftCardHandle) async throws -> GiftCardStatus
     /// Sends everything the card holds, minus the network fee, to `toAddress` and returns the
-    /// transaction id. This broadcasts, so the live implementation takes the transaction guard.
-    var redeem: @Sendable (_ handle: GiftCardHandle, _ toAddress: String) async throws -> String
+    /// transaction id and what the wallet receives. This broadcasts, so the live implementation
+    /// takes the transaction guard.
+    var redeem: @Sendable (_ handle: GiftCardHandle, _ toAddress: String) async throws -> GiftCardRedemption
     /// Stops the card's wallet and deletes everything stored for it. Safe to call more than once
     /// and with a handle that is already gone.
     var cleanup: @Sendable (_ handle: GiftCardHandle) async -> Void
@@ -81,14 +79,27 @@ struct GiftCardHandle: Hashable, Sendable {
 
 /// What a synced card holds.
 enum GiftCardStatus: Equatable, Sendable {
-    /// Funds that can be redeemed right now. `spendable` is the card's value; the network fee is
-    /// paid from it, so the user receives slightly less.
-    case ready(spendable: Zatoshi)
+    /// Funds that can be redeemed right now. `spendable` is the card's value; `redeemable` is what
+    /// the wallet receives: `spendable` minus the network fee, as the wallet SDK proposes the
+    /// redemption for the card's actual notes.
+    case ready(spendable: Zatoshi, redeemable: Zatoshi)
     /// The card has been funded but the funds need more confirmations before they can be spent.
+    /// `amount` is what is still waiting for them.
     case pending(amount: Zatoshi, confirmationsNeeded: Int?)
-    /// Nothing to redeem: the card was already redeemed, it has not been funded yet, or what it
-    /// holds would not even cover the network fee.
+    /// The card holds something, but no more than the network fee a redemption would pay: there is
+    /// nothing to redeem, and checking again cannot change that.
+    case dust
+    /// Nothing to redeem: the card was already redeemed, or it has not been funded yet.
     case empty
+}
+
+/// A redemption a server accepted.
+struct GiftCardRedemption: Equatable, Sendable {
+    /// The id of the transaction that sweeps the card.
+    let txId: String
+    /// What the wallet receives, after the network fee, as the redemption's proposal computed it;
+    /// `nil` when it is not known.
+    let received: Zatoshi?
 }
 
 /// Errors from `GiftCardClient`. They never carry any part of the link.
@@ -108,7 +119,8 @@ enum GiftCardClientError: Error, Equatable, Sendable {
     /// Redeeming failed; nothing is known to have been broadcast.
     case redeemFailed
     /// The card holds nothing worth redeeming: it was redeemed meanwhile, or the network fee would
-    /// take everything it holds. Nothing was created or broadcast.
+    /// take everything it holds. Nothing was created or broadcast; checking the card again tells
+    /// which.
     case nothingToRedeem
     /// This build cannot redeem gift cards (the wallet SDK does not provide it yet).
     case unavailable
@@ -126,6 +138,13 @@ enum GiftCardLink {
     static func isCandidate(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return hasPrefix(trimmed, zodlPrefix) || hasPrefix(trimmed, zodlBarePrefix) || hasPrefix(trimmed, vizorPrefix)
+    }
+
+    /// `true` while `text` could still grow into a gift card link: it is empty or the start of one
+    /// of the known prefixes. Lets an input field hold back its error while a link is being typed.
+    static func isCandidatePrefix(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return [zodlPrefix, zodlBarePrefix, vizorPrefix].contains { $0.lowercased().hasPrefix(trimmed) }
     }
 
     /// `true` for a URL the app was opened with that belongs to the gift card flow, whatever

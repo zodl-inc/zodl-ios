@@ -23,7 +23,6 @@ struct RegistryTestSession: GiftCardSession {
     let closed = LockIsolated(0)
     var closeStarted: GiftCardTestGate?
     var closeRelease: GiftCardTestGate?
-    func progress() -> AsyncStream<Double> { AsyncStream { $0.finish() } }
     func status() async throws -> zodl_internal.GiftCardStatus { .empty }
     func sendAll(to address: String, recordIn mainWallet: GiftCardClaimDestination?) async throws -> GiftCardSweep {
         throw GiftCardClientError.redeemFailed
