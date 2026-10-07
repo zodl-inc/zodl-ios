@@ -184,6 +184,58 @@ import ComposableArchitecture
         }
     }
 
+    /// Errors are laid out as on Android: Try again (with Close) and the skull only where checking
+    /// again can help, Close only and the cloud where it cannot.
+    @Test func errorStepsOfferTryAgainOnlyWhenItCanHelp() {
+        var state = GiftCardRedeem.State(link: Self.link)
+        let cases: [(GiftCardRedeem.State.Step, GiftCardRedeem.State.ErrorKind?)] = [
+            (.checkFailed, .retryable),
+            (.failure(amount: Zatoshi(10_000_000)), .retryable),
+            (.invalidLink, .final),
+            (.unsupportedVersion, .final),
+            (.wrongNetwork, .final),
+            (.unavailable, .final),
+            (.checking, nil),
+            (.ready(redeemable: Zatoshi(10_000_000)), nil),
+            (.pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil), nil),
+            (.empty, nil),
+            (.dust, nil),
+            (.redeeming(amount: Zatoshi(10_000_000)), nil),
+            (.success(received: Zatoshi(10_000_000)), nil)
+        ]
+        for (step, kind) in cases {
+            state.step = step
+            #expect(state.errorKind == kind, "\(step)")
+            if let kind {
+                #expect(state.canRetry == (kind == .retryable), "\(step)")
+            }
+        }
+    }
+
+    /// Try again is ignored on an error it cannot help.
+    @Test(arguments: [
+        GiftCardRedeem.State.Step.invalidLink, .unsupportedVersion, .wrongNetwork, .unavailable
+    ])
+    func retryOnAFinalErrorDoesNothing(step: GiftCardRedeem.State.Step) async {
+        let openCalls = LockIsolated(0)
+        var state = GiftCardRedeem.State(link: Self.link)
+        state.step = step
+        let store = TestStore(initialState: state) {
+            GiftCardRedeem()
+        } withDependencies: {
+            var client = GiftCardClient.mock(scenario(.ready))
+            client.open = { _ in
+                openCalls.withValue { $0 += 1 }
+                return GiftCardHandle()
+            }
+            $0.giftCard = client
+        }
+
+        await store.send(.retryTapped)
+        await store.finish()
+        #expect(openCalls.value == 0)
+    }
+
     /// The pending screen checks again on its own, without leaving the screen, and keeps doing so
     /// while the card stays pending.
     @Test func pendingCardChecksAgainOnItsOwnWithoutLeavingTheScreen() async {

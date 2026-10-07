@@ -53,6 +53,14 @@ struct GiftCardRedeem {
             case failure(amount: Zatoshi)
         }
 
+        /// How an error step is shown, as on Android.
+        enum ErrorKind: Equatable {
+            /// Try again can help: the skull, with Close and Try again.
+            case retryable
+            /// Nothing the user can do here changes it: the cloud, with Close only.
+            case final
+        }
+
         var cancelId = UUID()
         var autoRetryCancelId = UUID()
 
@@ -116,6 +124,18 @@ struct GiftCardRedeem {
                 return true
             default:
                 return false
+            }
+        }
+
+        /// The kind of error the step is, or `nil` when it is not an error.
+        var errorKind: ErrorKind? {
+            switch step {
+            case .checkFailed, .failure:
+                return .retryable
+            case .invalidLink, .unsupportedVersion, .wrongNetwork, .unavailable:
+                return .final
+            case .checking, .ready, .pending, .empty, .dust, .redeeming, .success:
+                return nil
             }
         }
 

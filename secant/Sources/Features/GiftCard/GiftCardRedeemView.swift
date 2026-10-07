@@ -63,7 +63,7 @@ struct GiftCardRedeemView: View {
                 illustration: Asset.Assets.Illustrations.giftPreparing.image,
                 title: String(localizable: .giftCardPendingTitle),
                 desc: String(localizable: .giftCardPendingDesc(receivedFormatted())),
-                retryTitle: String(localizable: .giftCardCheckAgain)
+                buttons: .checkAgainAndClose
             )
             .applyIndigoScreenBackground()
 
@@ -72,7 +72,7 @@ struct GiftCardRedeemView: View {
                 illustration: Asset.Assets.Illustrations.giftEmpty.image,
                 title: String(localizable: .giftCardEmptyTitle),
                 desc: String(localizable: .giftCardEmptyDesc),
-                retryTitle: String(localizable: .giftCardCheckAgain)
+                buttons: .checkAgainAndClose
             )
             .applyFailureScreenBackground()
 
@@ -82,7 +82,7 @@ struct GiftCardRedeemView: View {
                 illustration: Asset.Assets.Illustrations.giftEmpty.image,
                 title: String(localizable: .giftCardEmptyTitle),
                 desc: String(localizable: .giftCardDustDesc),
-                retryTitle: nil
+                buttons: .close
             )
             .applyFailureScreenBackground()
 
@@ -99,11 +99,7 @@ struct GiftCardRedeemView: View {
             errorScreen(title: String(localizable: .giftCardUnavailableTitle), desc: String(localizable: .giftCardUnavailableDesc))
 
         case .checkFailed:
-            errorScreen(
-                title: String(localizable: .giftCardCheckFailedTitle),
-                desc: String(localizable: .giftCardCheckFailedDesc),
-                retryTitle: String(localizable: .giftCardTryAgain)
-            )
+            errorScreen(title: String(localizable: .giftCardCheckFailedTitle), desc: String(localizable: .giftCardCheckFailedDesc))
 
         case .redeeming:
             progressScreen(
@@ -117,16 +113,12 @@ struct GiftCardRedeemView: View {
                 illustration: Asset.Assets.Illustrations.giftOpen.image,
                 title: String(localizable: .giftCardSuccessTitle),
                 desc: String(localizable: .giftCardSuccessDesc(receivedFormatted())),
-                retryTitle: nil
+                buttons: .close
             )
             .applySuccessScreenBackground()
 
         case .failure:
-            errorScreen(
-                title: String(localizable: .giftCardFailureTitle),
-                desc: String(localizable: .giftCardFailureDesc),
-                retryTitle: String(localizable: .giftCardTryAgain)
-            )
+            errorScreen(title: String(localizable: .giftCardFailureTitle), desc: String(localizable: .giftCardFailureDesc))
         }
     }
 }
@@ -242,25 +234,49 @@ extension GiftCardRedeemView {
         .screenHorizontalPadding()
     }
 
-    @ViewBuilder func errorScreen(title: String, desc: String, retryTitle: String? = nil) -> some View {
-        statusScreen(
-            illustration: Asset.Assets.Illustrations.failure1.image,
-            templated: false,
-            title: title,
-            desc: desc,
-            retryTitle: retryTitle
-        )
+    /// The buttons under a status screen's text, top to bottom.
+    enum StatusButtons {
+        /// Close only.
+        case close
+        /// Check again (quiet, with a busy state), then Close.
+        case checkAgainAndClose
+        /// Close, then Try again as the main action.
+        case closeAndTryAgain
+    }
+
+    /// An error, laid out as on Android: one Try again can help shows the skull with Close above
+    /// Try again; one it cannot shows the cloud with Close only. Both keep the back arrow.
+    @ViewBuilder func errorScreen(title: String, desc: String) -> some View {
+        Group {
+            switch store.errorKind {
+            case .retryable:
+                statusScreen(
+                    illustration: Asset.Assets.Illustrations.failure1.image,
+                    templated: false,
+                    title: title,
+                    desc: desc,
+                    buttons: .closeAndTryAgain
+                )
+            case .final, .none:
+                statusScreen(
+                    illustration: Asset.Assets.Illustrations.cloudEyes.image,
+                    title: title,
+                    desc: desc,
+                    buttons: .close
+                )
+            }
+        }
+        .zashiBack { store.send(.closeTapped) }
         .applyFailureScreenBackground()
     }
 
-    /// An outcome: illustration, title and description, then Check again / Try again (when the step
-    /// can be retried) above Close.
+    /// An outcome: illustration, title and description, then `buttons`.
     @ViewBuilder func statusScreen(
         illustration: Image,
         templated: Bool = true,
         title: String,
         desc: String,
-        retryTitle: String?
+        buttons: StatusButtons
     ) -> some View {
         VStack(spacing: 0) {
             Spacer()
@@ -289,29 +305,47 @@ extension GiftCardRedeemView {
 
             Spacer()
 
-            if let retryTitle {
-                // The design's grey button: dark text on a light grey fill in light mode, white on a
-                // mid grey in dark mode. Quaternary is the closest style in both modes (tertiary's
-                // dark-mode text barely shows on its fill); its light fill is a little darker.
+            // The design's grey secondary button: dark text on a light grey fill in light mode, white
+            // on a mid grey in dark mode. Quaternary is the closest style in both modes (tertiary's
+            // dark-mode text barely shows on its fill); its light fill is a little darker.
+            switch buttons {
+            case .close:
+                ZashiButton(String(localizable: .generalClose)) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 24)
+
+            case .checkAgainAndClose:
                 if store.isRechecking {
                     // Check again runs without leaving the screen; the button shows it is busy.
-                    ZashiButton(retryTitle, type: .quaternary, accessoryView: ProgressView()) {
+                    ZashiButton(String(localizable: .giftCardCheckAgain), type: .quaternary, accessoryView: ProgressView()) {
                         store.send(.retryTapped)
                     }
                     .disabled(true)
                     .padding(.bottom, 12)
                 } else {
-                    ZashiButton(retryTitle, type: .quaternary) {
+                    ZashiButton(String(localizable: .giftCardCheckAgain), type: .quaternary) {
                         store.send(.retryTapped)
                     }
                     .padding(.bottom, 12)
                 }
-            }
 
-            ZashiButton(String(localizable: .generalClose)) {
-                store.send(.closeTapped)
+                ZashiButton(String(localizable: .generalClose)) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 24)
+
+            case .closeAndTryAgain:
+                ZashiButton(String(localizable: .generalClose), type: .quaternary) {
+                    store.send(.closeTapped)
+                }
+                .padding(.bottom, 12)
+
+                ZashiButton(String(localizable: .giftCardTryAgain)) {
+                    store.send(.retryTapped)
+                }
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 24)
         }
         .padding(.vertical, 1)
         .screenHorizontalPadding()
