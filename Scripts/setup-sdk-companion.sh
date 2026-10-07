@@ -59,6 +59,14 @@ emit() {
     fi
 }
 
+# The action exports GITHUB_TOKEN to this script, so even local Git commands
+# must suppress inherited tracing that can record credential environment vars.
+companion_git() {
+    GIT_TRACE=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0 \
+        GIT_TRACE2=0 GIT_TRACE2_EVENT=0 GIT_TRACE2_PERF=0 \
+        git "$@"
+}
+
 # Network Git commands must never read, store, or erase runner credentials.
 # Supply auth only for this repository and process, without putting it in
 # argv, persistent config, FETCH_HEAD, or inherited trace output.
@@ -77,10 +85,8 @@ sdk_git() {
             ;;
     esac
     SDK_GIT_AUTH_HEADER="$header" GIT_TERMINAL_PROMPT=0 \
-        GIT_TRACE=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0 \
-        GIT_TRACE2=0 GIT_TRACE2_EVENT=0 GIT_TRACE2_PERF=0 \
         GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
-        git "${auth[@]}" "$@"
+        companion_git "${auth[@]}" "$@"
 }
 
 # Curl reads the Bearer header from stdin rather than process arguments or a
@@ -169,7 +175,7 @@ if [ "$VALIDATE_ONLY" = "1" ]; then
 fi
 
 if [ -e "$abs_path" ]; then
-    if head_now="$(git -C "$abs_path" rev-parse HEAD 2> /dev/null)" && [ "$head_now" = "$pin" ]; then
+    if head_now="$(companion_git -C "$abs_path" rev-parse HEAD 2> /dev/null)" && [ "$head_now" = "$pin" ]; then
         note "SDK already present at $abs_path @ $pin"
         exit 0
     fi
@@ -177,10 +183,10 @@ if [ -e "$abs_path" ]; then
 fi
 
 mkdir -p "$abs_path"
-git init -q "$abs_path" || cleanup_and_fail "git init failed at $abs_path"
+companion_git init -q "$abs_path" || cleanup_and_fail "git init failed at $abs_path"
 if ! sdk_git -C "$abs_path" fetch --depth 1 "$SDK_REPO_URL" "$pin"; then
     cleanup_and_fail "could not fetch $pin from $SDK_REPO_URL — is the pinned commit pushed and still reachable?"
 fi
-git -C "$abs_path" checkout -q --detach FETCH_HEAD || cleanup_and_fail "checkout of $pin failed"
+companion_git -C "$abs_path" checkout -q --detach FETCH_HEAD || cleanup_and_fail "checkout of $pin failed"
 note "SDK fetched to $abs_path @ $pin"
 exit 0

@@ -394,15 +394,16 @@ PYTHON
     assert_no_secret_artifacts
 }
 
-@test "inherited Git tracing cannot persist the process authentication header" {
+@test "inherited Git tracing cannot persist tokens during a fresh checkout" {
     write_local_pbxproj
     make_authenticated_origin
     export GIT_TRACE2_EVENT="$ROOT/git-trace"
-    export GIT_TRACE2_ENV_VARS=SDK_GIT_AUTH_HEADER
+    export GIT_TRACE2_ENV_VARS=GITHUB_TOKEN,SDK_GIT_AUTH_HEADER
     run "$SCRIPTS_DIR/setup-sdk-companion.sh"
     [ "$status" -eq 0 ]
-    if grep -q 'eC1hY2Nlc3MtdG9rZW46Zml4dHVyZS10b2tlbg==' "$ROOT/git-trace"; then
-        echo "Unexpected encoded credential in inherited Git trace"
+    if [ -e "$ROOT/git-trace" ] &&
+        grep -E -q 'fixture-token|eC1hY2Nlc3MtdG9rZW46Zml4dHVyZS10b2tlbg==' "$ROOT/git-trace"; then
+        echo "Unexpected raw or encoded credential in inherited Git trace"
         return 1
     fi
     assert_credentials_untouched
@@ -438,4 +439,24 @@ PYTHON
     assert_credentials_untouched
     assert_no_secret_artifacts
     [ ! -e "$HTTP_EVENTS" ]
+}
+
+
+@test "inherited Git tracing cannot persist tokens while reusing a checkout" {
+    write_local_pbxproj
+    make_authenticated_origin
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh"
+    [ "$status" -eq 0 ]
+    export GIT_TRACE2_EVENT="$ROOT/git-trace"
+    export GIT_TRACE2_ENV_VARS=GITHUB_TOKEN,SDK_GIT_AUTH_HEADER
+    run "$SCRIPTS_DIR/setup-sdk-companion.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already present"* ]]
+    if [ -e "$ROOT/git-trace" ] &&
+        grep -E -q 'fixture-token|eC1hY2Nlc3MtdG9rZW46Zml4dHVyZS10b2tlbg==' "$ROOT/git-trace"; then
+        echo "Unexpected raw or encoded credential in inherited Git trace"
+        return 1
+    fi
+    assert_credentials_untouched
+    assert_no_secret_artifacts
 }
