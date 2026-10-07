@@ -21,6 +21,10 @@ struct GiftCardRedeem {
     enum Constants {
         /// How long the pending screen waits before checking again on its own, in seconds.
         static let autoRetryInterval = 30
+        /// How long a Check again the user tapped keeps its button busy at least, in milliseconds.
+        /// The card's wallet is already synced, so a check answers almost at once and the button
+        /// would look like it did nothing.
+        static let recheckMinimumBusyTime = 700
     }
 
     @ObservableState
@@ -217,7 +221,7 @@ struct GiftCardRedeem {
             case .retryTapped where state.retriesQuietly:
                 // Pending and Nothing to redeem keep their screen while the card is checked again.
                 state.isRechecking = true
-                return quietCheck(&state)
+                return quietCheck(&state, keepsBusyAtLeast: Constants.recheckMinimumBusyTime)
 
             case .response(_, .autoRetryFired):
                 // The pending screen checks again on its own, quietly.
@@ -410,8 +414,10 @@ extension GiftCardRedeem {
     }
 
     /// Checks the card again without leaving the Pending or Nothing to redeem screen. A check
-    /// already running in the background is joined rather than repeated.
-    private func quietCheck(_ state: inout State) -> Effect<Action> {
+    /// already running in the background is joined rather than repeated. With `minimumBusyTime`
+    /// (milliseconds; a Check again the user tapped), the answer waits until that much time has
+    /// passed, counted alongside the check itself.
+    private func quietCheck(_ state: inout State, keepsBusyAtLeast minimumBusyTime: Int? = nil) -> Effect<Action> {
         guard let handle = state.handle else {
             return .none
         }
@@ -423,19 +429,29 @@ extension GiftCardRedeem {
         return .merge(
             .cancel(id: state.autoRetryCancelId),
             .run { send in
+                async let minimumBusyTimePassed: Void = waitFor(milliseconds: minimumBusyTime)
+                let response: Action.Response
                 do {
-                    let status = try await giftCard.check(handle)
-                    await send(.response(visit, .recheckLoaded(status)))
+                    response = .recheckLoaded(try await giftCard.check(handle))
                 } catch is CancellationError {
                     return
                 } catch let error as GiftCardClientError {
-                    await send(.response(visit, .recheckFailed(error)))
+                    response = .recheckFailed(error)
                 } catch {
-                    await send(.response(visit, .recheckFailed(.checkFailed)))
+                    response = .recheckFailed(.checkFailed)
                 }
+                await minimumBusyTimePassed
+                await send(.response(visit, response))
             }
             .cancellable(id: visit)
         )
+    }
+
+    private func waitFor(milliseconds: Int?) async {
+        guard let milliseconds, milliseconds > 0 else {
+            return
+        }
+        try? await mainQueue.sleep(for: .milliseconds(milliseconds))
     }
 
     /// Parses the link and, if it is a card for this wallet's network, opens it and resolves the

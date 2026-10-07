@@ -333,6 +333,7 @@ import ComposableArchitecture
         // A second tap while it runs does not start another check.
         await store.send(.retryTapped)
         await release.open()
+        await mainQueue.advance(by: .milliseconds(GiftCardRedeem.Constants.recheckMinimumBusyTime))
         await store.receive({ if case .response(_, .recheckFailed) = $0 { true } else { false } }) {
             $0.isRechecking = false
             $0.isQuietCheckInFlight = false
@@ -345,6 +346,39 @@ import ComposableArchitecture
         await store.receive({ if case .response(_, .autoRetryFired) = $0 { true } else { false } })
         await store.receive({ if case .response(_, .recheckFailed) = $0 { true } else { false } })
         #expect(checks.value == 3)
+        await store.send(.closeTapped)
+        await store.finish()
+    }
+
+    /// A Check again the user taps keeps its button busy for a moment even when the card answers at
+    /// once, so the tap visibly does something (Android's QUIET_RECHECK_MIN_DURATION).
+    @Test func checkAgainStaysBusyForAMinimumTime() async {
+        let mainQueue = DispatchQueue.test
+        let checks = LockIsolated(0)
+        let store = makeStore(scenario: scenario(.pending), mainQueue: mainQueue.eraseToAnyScheduler())
+        store.dependencies.giftCard.check = { _ in
+            checks.withValue { $0 += 1 }
+            return .pending(amount: Zatoshi(10_000_000), confirmationsNeeded: nil)
+        }
+
+        await store.send(.onAppear)
+        await store.receive({ if case .response(_, .statusLoaded) = $0 { true } else { false } })
+
+        await store.send(.retryTapped) {
+            $0.isRechecking = true
+            $0.isQuietCheckInFlight = true
+        }
+        await mainQueue.advance(by: .milliseconds(GiftCardRedeem.Constants.recheckMinimumBusyTime - 1))
+        await Task.megaYield()
+        // The card has answered, but the button is still busy.
+        #expect(checks.value == 2)
+        #expect(store.state.isRechecking)
+
+        await mainQueue.advance(by: .milliseconds(1))
+        await store.receive({ if case .response(_, .recheckLoaded) = $0 { true } else { false } }) {
+            $0.isRechecking = false
+            $0.isQuietCheckInFlight = false
+        }
         await store.send(.closeTapped)
         await store.finish()
     }
