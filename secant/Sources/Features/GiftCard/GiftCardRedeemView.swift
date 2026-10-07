@@ -94,11 +94,11 @@ struct GiftCardRedeemView: View {
             )
             .applyScreenBackground()
 
-        case .success(let amount):
+        case .success:
             resultScreen(
                 illustration: Asset.Assets.Illustrations.success1.image,
                 title: String(localizable: .giftCardSuccessTitle),
-                desc: String(localizable: .giftCardSuccessDesc(formatted(amount))),
+                desc: String(localizable: .giftCardSuccessDesc),
                 retryTitle: nil
             )
             .applySuccessScreenBackground()
@@ -379,7 +379,7 @@ extension GiftCardRedeemView {
 
 #Preview("Success") {
     NavigationView {
-        GiftCardRedeemView(store: GiftCardRedeem.preview(.success(amount: Zatoshi(10_000_000))), tokenName: "ZEC")
+        GiftCardRedeemView(store: GiftCardRedeem.preview(.success), tokenName: "ZEC")
     }
 }
 

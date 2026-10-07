@@ -283,7 +283,19 @@ extension Near1Click {
     static let liveValue = Self.live()
 
     static func live() -> Self {
-        Self(
+        Near1Click.live(
+            quoteTransport: { url, data in
+                try await Near1Click.postCall(urlString: url, jsonData: data)
+            },
+            feeAddress: { PartnerKeys.nearFeeDepositAddress }
+        )
+    }
+
+    static func live(
+        quoteTransport: @escaping @Sendable (String, Data) async throws -> (Data, URLResponse),
+        feeAddress: @escaping @Sendable () -> String?
+    ) -> Near1Click {
+        Near1Click(
             submitDepositTxId: { txId, depositAddress in
             let requestData = SwapSubmitHash(
                 txHash: txId,
@@ -311,6 +323,10 @@ extension Near1Click {
             IdentifiedArrayOf(uniqueElements: try await Near1Click.fetchAllAssets())
         },
         quote: { dry, isSwapToZec, exactInput, slippageTolerance, zecAsset, toAsset, refundTo, destination, amount in
+            guard !GiftCardLink.isCandidate(refundTo), !GiftCardLink.isCandidate(destination) else {
+                throw SwapAndPayClient.EndpointError.message(String(localizable: .swapGiftCardAddressNotAllowed))
+            }
+
             // Deadline in ISO 8601 UTC format
             let now = Date()
             let twoHoursLater = now.addingTimeInterval(120 * 60)
@@ -320,7 +336,7 @@ extension Near1Click {
             
             let deadline = isoFormatter.string(from: twoHoursLater)
             
-            guard let nearFeeDepositAddress = PartnerKeys.nearFeeDepositAddress else {
+            guard let nearFeeDepositAddress = feeAddress() else {
                 throw "nearFeeDepositAddress missing"
             }
             
@@ -351,7 +367,7 @@ extension Near1Click {
                 fatalError("Failed to encode JSON")
             }
             
-            let (data, response) = try await Near1Click.postCall(urlString: Constants.quoteUrl, jsonData: jsonData)
+            let (data, response) = try await quoteTransport(Constants.quoteUrl, jsonData)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw SwapAndPayClient.EndpointError.message("Quote: Invalid response")

@@ -12,8 +12,8 @@ import ComposableArchitecture
 /// The "Redeem gift card" flow. It starts either on the scanner (from Home, with a "Paste link"
 /// option) or directly on the card (a scanned or opened link), and ends when the user closes it.
 ///
-/// Whoever closes the flow must send `.cleanUp`, which closes the card's temporary wallet; Root
-/// does that on every exit (see `RootCoordinator`).
+/// Root owns cleanup when parent navigation leaves or replaces this flow. This reducer owns
+/// internal card replacement and explicit `.cleanUp`, including cancellation of child work.
 @Reducer
 struct GiftCardCoordFlow {
     @ObservableState
@@ -44,7 +44,7 @@ struct GiftCardCoordFlow {
     }
 
     enum Action: Equatable {
-        /// Closes the card's temporary wallet and resets the flow. Sent by Root on every exit.
+        /// Closes the card's temporary wallet and resets the flow.
         case cleanUp
         case redeem(GiftCardRedeem.Action)
         case scan(Scan.Action)
@@ -56,6 +56,29 @@ struct GiftCardCoordFlow {
     init() { }
 
     var body: some Reducer<State, Action> {
+        Reduce { state, action in
+            if case let .redeem(.response(visit, response)) = action, state.redeemState?.cancelId != visit {
+                if case .opened(let handle) = response {
+                    return .run { _ in await giftCard.cleanup(handle) }
+                }
+                return .none
+            }
+            let previous = state.redeemState
+            let effect = core._reduce(into: &state, action: action)
+            guard let previous, previous.cancelId != state.redeemState?.cancelId else { return effect }
+            return .merge(
+                effect,
+                .cancel(id: previous.cancelId),
+                .cancel(id: previous.autoRetryCancelId),
+                .run { _ in
+                    if let handle = previous.handle { await giftCard.cleanup(handle) }
+                }
+            )
+        }
+    }
+
+    @ReducerBuilder<State, Action>
+    private var core: some Reducer<State, Action> {
         Scope(state: \.scanState, action: \.scan) {
             Scan()
         }

@@ -46,6 +46,8 @@ struct SDKSynchronizerClient: Sendable {
     let prepareWith: @Sendable ([UInt8], BlockHeight?, String, String?) async throws -> Initializer.InitializationResult
     let start: @Sendable (_ retry: Bool) async throws -> Void
     let stop: @Sendable () -> Void
+    /// Completes the native stop operation; unlike stop(), this does not return after merely enqueueing it.
+    let stopAndWait: @Sendable () async -> Void
     let isSyncing: @Sendable () -> Bool
     let isInitialized: @Sendable () -> Bool
 

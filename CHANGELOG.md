@@ -11,6 +11,16 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 - [MOB-2142] Redeem Zcash gift cards. Choose Redeem gift card from the More menu on Home and scan the card's QR code or paste its link (Zodl gift links and the legacy payment-link format are supported), scan a gift card where you would scan an address, or open a gift.zodl.com link, which opens the scanner so you can scan the card with Zodl. Zodl checks the card, shows how much it holds and any message from the sender, and moves the funds to a shielded address of your selected account. A small network fee is paid from the card. A card whose funds still need confirmations is checked again automatically; a card that was already redeemed, isn't funded yet, holds less than the network fee, or is for another network says so, and a damaged card link is reported as invalid. The card is checked and redeemed through the server your wallet is currently using, over Tor when protected access is on. The card's temporary data is deleted when you leave the screen, or the next time Zodl starts if it was closed mid-redemption.
 
+### Fixed
+
+- [MOB-2142] Fixed a crash when opening the app on an iPhone.
+- [MOB-2142] An unconfirmed gift-card redemption now offers to check the card’s current status without claiming its funds are still available. If funds remain, tap Redeem again to continue.
+- [MOB-2142] Wallet syncing recovers from temporary restart failures after leaving a gift card. Continuing past a payment-link warning during a sync restart no longer leaves syncing paused, including when a migration pause must clear first. Leaving a card for another network or one that failed to open no longer makes syncing retry early. Syncing resumes when a migration pause clears or you return to the app. Returning to the app and leaving a gift card while syncing is still stopping no longer interrupts the resumed sync.
+
+- [MOB-2142] Scanning a gift card in Swap, Pay or the Settings address book opens redemption and keeps its secret out of contact addresses. Gift-card links are rejected as swap addresses. Pasting a recognized gift link clears it from the clipboard if the clipboard still contains that same link.
+- [MOB-2142] The gift-card success screen confirms redemption without showing the card's amount before the network fee as the amount received.
+- [MOB-2142] Leaving or replacing a gift card now closes its temporary wallet. Wallet syncing resumes correctly after gift-card errors or navigation and stays stopped while the app is in the background, including after reopening the app or when a link opens the scanner. Redeeming uses the currently selected account, including when you switch accounts while the card is loading.
+
 ## [3.15.0] - 2026-09-23
 
 ### Added

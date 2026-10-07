@@ -3,10 +3,11 @@
 //  zodlTests
 //
 //  The gift card flow's navigation and lifetime: a scanned card replaces the scanner, and
-//  `.cleanUp` (sent by Root on every exit) closes the card's temporary wallet and resets the flow.
+//  internal replacement and `.cleanUp` close the card's temporary wallet. Root owns parent exits.
 //
 
 import Foundation
+import os
 import Testing
 import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
@@ -16,18 +17,24 @@ import ComposableArchitecture
     private static let link = "https://gift.zodl.com/#v=1&key=zgifttest1fixture&height=3000000".redacted
 
     @Test func pastedLinkOpensTheRedeemScreen() async {
+        let cleared = OSAllocatedUnfairLock(initialState: [String]())
         let store = TestStore(initialState: GiftCardCoordFlow.State()) {
             GiftCardCoordFlow()
         } withDependencies: {
             $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
             $0.giftCard = .mock()
-            $0.pasteboard.getString = { Self.link }
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in Issue.record("Unexpected clipboard write") },
+                clearIfMatches: { value in cleared.withLock { $0.append(value.data) } },
+                getString: { Self.link }
+            )
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
         await store.send(.scan(.pasteTapped))
         await store.receive(\.scan.foundGiftCard)
         #expect(store.state.redeemState?.link == Self.link)
+        #expect(cleared.withLock { $0 } == [Self.link.data])
     }
 
     @Test func scannedCardOpensTheRedeemScreen() async {
@@ -69,6 +76,24 @@ import ComposableArchitecture
         #expect(cleaned.value == [handle])
         #expect(store.state.scanState.checkers == [.giftCardScanChecker])
         #expect(store.state.scanState.isPasteEnabled)
+    }
+
+    @Test func replacingTheCardClosesThePreviousHandle() async {
+        let handle = GiftCardHandle()
+        let cleaned = LockIsolated<[GiftCardHandle]>([])
+        var state = GiftCardCoordFlow.State(link: Self.link)
+        state.redeemState?.handle = handle
+        let store = TestStore(initialState: state) { GiftCardCoordFlow() } withDependencies: {
+            var client = GiftCardClient.mock()
+            client.cleanup = { handle in cleaned.withValue { $0.append(handle) } }
+            $0.giftCard = client
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        }
+        store.exhaustivity = .off(showSkippedAssertions: false)
+        await store.send(.scan(.foundGiftCard("https://gift.zodl.com/#replacement".redacted)))
+        await store.finish()
+        #expect(cleaned.value == [handle])
+        #expect(store.state.redeemState?.handle == nil)
     }
 
     @Test func cleanUpWithNothingOpenDoesNothing() async {

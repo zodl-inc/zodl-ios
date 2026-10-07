@@ -50,7 +50,7 @@ extension GiftCardClient: DependencyKey {
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    LoggerProxy.error("[GiftCard] check failed: \(error.localizedDescription)")
+                    LoggerProxy.error("[GiftCard] check failed: \(Self.logDescription(of: error))")
                     throw GiftCardClientError.checkFailed
                 }
             },
@@ -129,6 +129,9 @@ extension GiftCardClient {
     /// lightwalletd server the wallet is currently configured with, and the wallet's Tor choice,
     /// so a wallet on protected access syncs and redeems the card over Tor too.
     private static func open(_ link: String, registry: GiftCardSessionRegistry) async throws -> GiftCardHandle {
+        let ownership = await registry.reserve()
+        try Task.checkCancellation()
+        guard await registry.isCurrent(ownership) else { throw CancellationError() }
         guard GiftCardLink.isCandidate(link) else {
             throw GiftCardClientError.notAGiftCardLink
         }
@@ -139,7 +142,7 @@ extension GiftCardClient {
             throw GiftCardClientError.networkMismatch
         }
 
-        let redeemer = try await Self.makeRedeemer(card: card, settings: settings, registry: registry)
+        let redeemer = try await Self.makeRedeemer(card: card, settings: settings, registry: registry, ownership: ownership)
         let session = GiftCardRedeemerSession(redeemer: redeemer, card: card, settings: settings)
 
         // A screen that went away while the card was being opened must not leave the card's
@@ -149,7 +152,13 @@ extension GiftCardClient {
             throw CancellationError()
         }
         LoggerProxy.event("[GiftCard] opened the card wallet")
-        return await registry.insert(session)
+        let handle = await registry.insert(session, ownership: ownership)
+        if Task.isCancelled {
+            await registry.close(handle)
+            throw CancellationError()
+        }
+        guard await registry.session(for: handle) != nil else { throw CancellationError() }
+        return handle
     }
 
     /// Creates the card's redeemer. The SDK allows one redeemer per card in the process; if one is
@@ -158,13 +167,16 @@ extension GiftCardClient {
     private static func makeRedeemer(
         card: GiftCard,
         settings: GiftCardRedeemerSettings,
-        registry: GiftCardSessionRegistry
+        registry: GiftCardSessionRegistry,
+        ownership: UUID
     ) async throws -> GiftCardRedeemer {
         do {
             do {
                 return try settings.makeRedeemer(for: card)
             } catch ZcashError.giftCardRedeemerAlreadyActive {
-                await registry.closeAll()
+                await registry.closeAll(ownership: ownership)
+                try Task.checkCancellation()
+                guard await registry.isCurrent(ownership) else { throw CancellationError() }
                 return try settings.makeRedeemer(for: card)
             }
         } catch ZcashError.giftCardNetworkMismatch {
@@ -182,8 +194,8 @@ extension GiftCardClient {
     /// switch, exactly like the wallet's own sends (see AGENTS.md, "Transaction guard"). The guard
     /// is taken here, once, and never by callers.
     ///
-    /// The claim is recorded in the wallet's own synchronizer as a trusted transaction (ZIP 315):
-    /// it shows in the history at once and is spendable after 3 confirmations instead of 10. The
+    /// The claim is recorded in the wallet's own synchronizer as an untrusted incoming transaction:
+    /// it shows in history at once and follows the normal policy (10 confirmations by default). The
     /// SDK writes it straight to the wallet database, so this works while the main synchronizer is
     /// stopped for the card (see `RootGiftCards`). A claim that could not be recorded is only
     /// logged: the wallet then finds it on chain like any other receive.
@@ -270,7 +282,7 @@ protocol GiftCardSession: Sendable {
     /// Syncs (if needed) and reports what the card holds.
     func status() async throws -> GiftCardStatus
     /// Sends everything, minus the fee, to `address`, records the accepted claim in `mainWallet`
-    /// (the synchronizer of the wallet `address` belongs to) as a trusted transaction, and
+    /// (the synchronizer of the wallet `address` belongs to) as an untrusted incoming transaction, and
     /// returns what happened. Throws `GiftCardSubmissionFailed` when a transaction was created but
     /// no server accepted it: the session is then spent and must be replaced with `reopen()`
     /// before another attempt. Failing to record never throws.
@@ -285,7 +297,7 @@ protocol GiftCardSession: Sendable {
 /// The wallet's own synchronizer, carried to the card's redeemer so it can record the claim there.
 /// `Synchronizer` is not `Sendable`, but the SDK's synchronizers are made to be called from any
 /// task (the app's `SDKSynchronizerClient` closures share one the same way), and the redeemer only
-/// calls `recordTrustedTransaction` on it, which goes straight to the wallet database.
+/// calls `recordGiftCardClaim` on it, which goes straight to the wallet database.
 struct GiftCardClaimDestination: @unchecked Sendable {
     let synchronizer: any Synchronizer
 }
@@ -294,7 +306,7 @@ struct GiftCardClaimDestination: @unchecked Sendable {
 struct GiftCardSweep: Equatable, Sendable {
     /// The id of the first transaction a server accepted.
     let txId: String
-    /// Whether the wallet's own synchronizer stored the claim as a trusted transaction. When it
+    /// Whether the wallet's own synchronizer stored the claim with the normal incoming trust policy. When it
     /// did not, the wallet learns about the claim from the chain, as an ordinary receive.
     let recordedInMainWallet: Bool
 }
@@ -483,7 +495,7 @@ extension GiftCardRedeemer {
         /// One line per transaction that was not accepted; never contains the link, nor any text
         /// the server sent back.
         let failures: [String]
-        /// Whether the destination synchronizer stored the accepted claim as trusted.
+        /// Whether the destination synchronizer stored the accepted claim with the normal incoming trust policy.
         let recordedInDestination: Bool
     }
 
@@ -530,10 +542,32 @@ actor GiftCardSessionRegistry {
     static let shared = GiftCardSessionRegistry()
 
     private var sessions: [GiftCardHandle: any GiftCardSession] = [:]
+    private var ownership = UUID()
+
+    /// Reserve before creating a session: completion order must never choose the owner.
+    func reserve() async -> UUID {
+        let token = UUID()
+        guard !Task.isCancelled else { return token }
+        ownership = token
+        await closeRegisteredSessions()
+        return token
+    }
+
+    func isCurrent(_ token: UUID) -> Bool {
+        ownership == token
+    }
 
     func insert(_ session: any GiftCardSession) async -> GiftCardHandle {
-        await closeAll()
+        let token = await reserve()
+        return await insert(session, ownership: token)
+    }
+
+    func insert(_ session: any GiftCardSession, ownership token: UUID) async -> GiftCardHandle {
         let handle = GiftCardHandle()
+        guard isCurrent(token), !Task.isCancelled else {
+            await session.close()
+            return handle
+        }
         sessions[handle] = session
         return handle
     }
@@ -542,12 +576,9 @@ actor GiftCardSessionRegistry {
         sessions[handle]
     }
 
-    /// Swaps the session kept under `handle` for `session`. The previous session is not closed
-    /// here: the caller has closed it already. Returns `false`, after closing `session`, when
-    /// `handle` is no longer open, so a card closed while its replacement was being made cannot
-    /// come back to life.
+    /// The caller has already closed the previous session when reopening it.
     func replace(_ handle: GiftCardHandle, with session: any GiftCardSession) async -> Bool {
-        guard sessions[handle] != nil else {
+        guard sessions[handle] != nil, !Task.isCancelled else {
             await session.close()
             return false
         }
@@ -556,13 +587,21 @@ actor GiftCardSessionRegistry {
     }
 
     func close(_ handle: GiftCardHandle) async {
-        guard let session = sessions.removeValue(forKey: handle) else {
-            return
-        }
+        guard let session = sessions.removeValue(forKey: handle) else { return }
         await session.close()
     }
 
+    func closeAll(ownership token: UUID) async {
+        guard isCurrent(token), !Task.isCancelled else { return }
+        await closeRegisteredSessions()
+    }
+
     func closeAll() async {
+        ownership = UUID()
+        await closeRegisteredSessions()
+    }
+
+    private func closeRegisteredSessions() async {
         let previous = sessions
         sessions.removeAll()
         for (_, old) in previous {

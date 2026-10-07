@@ -14,8 +14,8 @@ import ComposableArchitecture
 /// account's shielded (Orchard-only) address, and reports the outcome.
 ///
 /// The link is a bearer secret: it lives only in `state.link` (redacted) and is handed to the
-/// client, never logged. Closing the card's wallet (`GiftCardClient.cleanup`) is owned by
-/// `GiftCardCoordFlow`, which is still alive when this screen goes away.
+/// client, never logged. Root closes wallets on parent navigation, while `GiftCardCoordFlow`
+/// handles internal replacement. A cancelled open closes its returned handle itself.
 @Reducer
 struct GiftCardRedeem {
     enum Constants {
@@ -41,7 +41,7 @@ struct GiftCardRedeem {
             /// This build cannot redeem gift cards yet.
             case unavailable
             case redeeming(amount: Zatoshi)
-            case success(amount: Zatoshi)
+            case success
             case failure(amount: Zatoshi)
         }
 
@@ -56,6 +56,7 @@ struct GiftCardRedeem {
         var syncProgress: Double?
         /// The selected account's Orchard-only unified address, resolved in the background.
         var destinationAddress: RedactableString?
+        var destinationAccountId: AccountUUID?
         var txId: String?
         @Shared(.inMemory(.exchangeRate)) var currencyConversion: CurrencyConversion? = nil
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -67,12 +68,12 @@ struct GiftCardRedeem {
             return message
         }
 
-        /// The amount the screen is about, whichever step it is on.
+        /// The card's pre-fee amount, available only before a successful redemption.
         var amount: Zatoshi? {
             switch step {
-            case .ready(let amount), .pending(let amount, _), .redeeming(let amount), .success(let amount), .failure(let amount):
+            case .ready(let amount), .pending(let amount, _), .redeeming(let amount), .failure(let amount):
                 return amount
-            case .checking, .empty, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable:
+            case .checking, .empty, .invalidLink, .unsupportedVersion, .wrongNetwork, .checkFailed, .unavailable, .success:
                 return nil
             }
         }
@@ -107,20 +108,25 @@ struct GiftCardRedeem {
     }
 
     enum Action: Equatable {
-        case autoRetryFired
-        case checkFailed(GiftCardClientError)
         case closeTapped
         case delegate(Delegate)
-        case destinationResolved(RedactableString?)
         case onAppear
-        case opened(GiftCardHandle)
-        case openFailed(GiftCardClientError)
-        case progressUpdated(Double)
-        case redeemFailed(GiftCardClientError)
-        case redeemSucceeded(String)
         case redeemTapped
         case retryTapped
-        case statusLoaded(GiftCardStatus)
+        case response(UUID, Response)
+
+        enum Response: Equatable {
+            case autoRetryFired
+            case checkFailed(GiftCardClientError)
+            case destinationResolved(AccountUUID, RedactableString?)
+            case redemptionDestinationResolved(AccountUUID, RedactableString?)
+            case opened(GiftCardHandle)
+            case openFailed(GiftCardClientError)
+            case progressUpdated(Double)
+            case redeemFailed(GiftCardClientError)
+            case redeemSucceeded(String)
+            case statusLoaded(GiftCardStatus)
+        }
 
         @CasePathable
         enum Delegate: Equatable {
@@ -140,6 +146,12 @@ struct GiftCardRedeem {
 
     var body: some Reducer<State, Action> {
         Reduce { state, action in
+            if case let .response(visit, response) = action, visit != state.cancelId {
+                if case .opened(let handle) = response {
+                    return .run { _ in await giftCard.cleanup(handle) }
+                }
+                return .none
+            }
             switch action {
             case .onAppear:
                 // Only the first appearance starts work; coming back to this screen keeps its state.
@@ -148,7 +160,7 @@ struct GiftCardRedeem {
                 }
                 return start(&state)
 
-            case .retryTapped, .autoRetryFired:
+            case .retryTapped, .response(_, .autoRetryFired):
                 guard state.canRetry else {
                     return .none
                 }
@@ -165,11 +177,11 @@ struct GiftCardRedeem {
                     start(&state)
                 )
 
-            case .opened(let handle):
+            case .response(_, .opened(let handle)):
                 state.handle = handle
                 return check(handle, state: state)
 
-            case .openFailed(let error), .checkFailed(let error):
+            case .response(_, .openFailed(let error)), .response(_, .checkFailed(let error)):
                 state.syncProgress = nil
                 state.step = step(for: error)
                 if error == .unknownHandle {
@@ -179,14 +191,14 @@ struct GiftCardRedeem {
                 }
                 return .cancel(id: state.cancelId)
 
-            case .progressUpdated(let progress):
+            case .response(_, .progressUpdated(let progress)):
                 guard state.step == .checking else {
                     return .none
                 }
                 state.syncProgress = min(max(progress, 0), 1)
                 return .none
 
-            case .statusLoaded(let status):
+            case .response(_, .statusLoaded(let status)):
                 state.syncProgress = nil
                 switch status {
                 case .ready(let spendable):
@@ -194,9 +206,10 @@ struct GiftCardRedeem {
                     return .none
                 case let .pending(amount, confirmationsNeeded):
                     state.step = .pending(amount: amount, confirmationsNeeded: confirmationsNeeded)
+                    let visit = state.cancelId
                     return .run { send in
                         try await mainQueue.sleep(for: .seconds(Constants.autoRetryInterval))
-                        await send(.autoRetryFired)
+                        await send(.response(visit, .autoRetryFired))
                     }
                     .cancellable(id: state.autoRetryCancelId, cancelInFlight: true)
                 case .empty:
@@ -204,46 +217,59 @@ struct GiftCardRedeem {
                     return .none
                 }
 
-            case .destinationResolved(let address):
+            case .response(_, .destinationResolved(let accountId, let address)):
+                guard state.selectedWalletAccount?.id == accountId else { return .none }
+                state.destinationAccountId = accountId
                 state.destinationAddress = address
                 return .none
 
             case .redeemTapped:
-                guard state.isRedeemable, case .ready(let spendable) = state.step, let handle = state.handle else {
+                guard state.isRedeemable, case .ready(let spendable) = state.step, state.handle != nil else {
                     return .none
                 }
                 state.step = .redeeming(amount: spendable)
-                let knownAddress = state.destinationAddress
-                let accountId = state.selectedWalletAccount?.id
+                return resolveRedemptionDestination(state)
+
+            case .response(_, .redemptionDestinationResolved(let accountId, let address)):
+                guard case .redeeming = state.step, let handle = state.handle else { return .none }
+                guard state.selectedWalletAccount?.id == accountId else {
+                    return resolveRedemptionDestination(state)
+                }
+                guard let address else {
+                    return .send(.response(state.cancelId, .redeemFailed(.redeemFailed)))
+                }
+                state.destinationAccountId = accountId
+                state.destinationAddress = address
+                let visit = state.cancelId
+                let selectedAccount = state.$selectedWalletAccount
                 return .run { send in
+                    guard !Task.isCancelled else { return }
+                    guard selectedAccount.wrappedValue?.id == accountId else {
+                        await send(.response(visit, .redemptionDestinationResolved(accountId, nil)))
+                        return
+                    }
                     do {
-                        var address = knownAddress?.data
-                        if address == nil, let accountId {
-                            address = try await sdkSynchronizer.getCustomUnifiedAddress(accountId, [.orchard])?.stringEncoded
-                        }
-                        guard let address else {
-                            await send(.redeemFailed(.redeemFailed))
-                            return
-                        }
-                        let txId = try await giftCard.redeem(handle, address)
-                        await send(.redeemSucceeded(txId))
+                        let txId = try await giftCard.redeem(handle, address.data)
+                        await send(.response(visit, .redeemSucceeded(txId)))
+                    } catch is CancellationError {
+                        return
                     } catch let error as GiftCardClientError {
-                        await send(.redeemFailed(error))
+                        await send(.response(visit, .redeemFailed(error)))
                     } catch {
-                        await send(.redeemFailed(.redeemFailed))
+                        await send(.response(visit, .redeemFailed(.redeemFailed)))
                     }
                 }
-                .cancellable(id: state.cancelId)
+                .cancellable(id: visit)
 
-            case .redeemSucceeded(let txId):
-                guard case .redeeming(let amount) = state.step else {
+            case .response(_, .redeemSucceeded(let txId)):
+                guard case .redeeming = state.step else {
                     return .none
                 }
                 state.txId = txId
-                state.step = .success(amount: amount)
+                state.step = .success
                 return .send(.delegate(.redeemed))
 
-            case .redeemFailed(let error):
+            case .response(_, .redeemFailed(let error)):
                 guard case .redeeming(let amount) = state.step else {
                     return .none
                 }
@@ -297,49 +323,79 @@ extension GiftCardRedeem {
         state.summary = summary
         state.step = .checking
         let link = state.link
+        let visit = state.cancelId
         let accountId = state.selectedWalletAccount?.id
         return .merge(
             .run { send in
                 do {
                     let handle = try await giftCard.open(link.data)
-                    await send(.opened(handle))
+                    guard !Task.isCancelled else {
+                        await giftCard.cleanup(handle)
+                        return
+                    }
+                    await send(.response(visit, .opened(handle)))
+                    // Cancellation may race with delivery and suppress the queued response.
+                    if Task.isCancelled { await giftCard.cleanup(handle) }
+                } catch is CancellationError {
+                    return
                 } catch let error as GiftCardClientError {
-                    await send(.openFailed(error))
+                    await send(.response(visit, .openFailed(error)))
                 } catch {
-                    await send(.openFailed(.checkFailed))
+                    await send(.response(visit, .openFailed(.checkFailed)))
                 }
             }
-            .cancellable(id: state.cancelId, cancelInFlight: true),
+            .cancellable(id: state.cancelId),
             .run { send in
                 guard let accountId else {
                     return
                 }
                 let address = try? await sdkSynchronizer.getCustomUnifiedAddress(accountId, [.orchard])
-                await send(.destinationResolved(address?.stringEncoded.redacted))
+                guard !Task.isCancelled else { return }
+                await send(.response(visit, .destinationResolved(accountId, address?.stringEncoded.redacted)))
             }
+            .cancellable(id: state.cancelId)
         )
     }
 
     /// Syncs the card and reports its status, streaming sync progress meanwhile.
     private func check(_ handle: GiftCardHandle, state: State) -> Effect<Action> {
-        .merge(
+        let visit = state.cancelId
+        return .merge(
             .run { send in
                 for await progress in giftCard.progress(handle) {
-                    await send(.progressUpdated(progress))
+                    await send(.response(visit, .progressUpdated(progress)))
                 }
             },
             .run { send in
                 do {
                     let status = try await giftCard.check(handle)
-                    await send(.statusLoaded(status))
+                    await send(.response(visit, .statusLoaded(status)))
+                } catch is CancellationError {
+                    return
                 } catch let error as GiftCardClientError {
-                    await send(.checkFailed(error))
+                    await send(.response(visit, .checkFailed(error)))
                 } catch {
-                    await send(.checkFailed(.checkFailed))
+                    await send(.response(visit, .checkFailed(.checkFailed)))
                 }
             }
         )
-        .cancellable(id: state.cancelId, cancelInFlight: true)
+        .cancellable(id: state.cancelId)
+    }
+
+    private func resolveRedemptionDestination(_ state: State) -> Effect<Action> {
+        let visit = state.cancelId
+        guard let accountId = state.selectedWalletAccount?.id else {
+            return .send(.response(visit, .redeemFailed(.redeemFailed)))
+        }
+        if state.destinationAccountId == accountId, let address = state.destinationAddress {
+            return .send(.response(visit, .redemptionDestinationResolved(accountId, address)))
+        }
+        return .run { send in
+            let address = try? await sdkSynchronizer.getCustomUnifiedAddress(accountId, [.orchard])
+            guard !Task.isCancelled else { return }
+            await send(.response(visit, .redemptionDestinationResolved(accountId, address?.stringEncoded.redacted)))
+        }
+        .cancellable(id: visit)
     }
 
     private func step(for error: GiftCardClientError) -> State.Step {

@@ -121,6 +121,143 @@ import ComposableArchitecture
         #expect(pushed?.first == .giftCardScanChecker)
     }
 
+    @Test(arguments: [false, true]) func swapCoordinatorRegistersGiftCardCheckerFirst(addressBook: Bool) {
+        var state = SwapAndPayCoordFlow.State()
+        if addressBook { state.path.append(.addressBook(AddressBook.State.initial)) }
+        let store = Store(initialState: state) { SwapAndPayCoordFlow() }
+        if addressBook {
+            guard let id = store.withState({ $0.path.ids.last }) else {
+                Issue.record("Address book entry missing")
+                return
+            }
+            store.send(.path(.element(id: id, action: .addressBook(.scanButtonTapped))))
+        } else {
+            store.send(.swapAndPay(.scanTapped))
+        }
+        let checkers = store.withState { state -> [ScanCheckerWrapper]? in
+            guard case .some(.scan(let scanState)) = state.path.last else { return nil }
+            return scanState.checkers
+        }
+        #expect(checkers?.first == .giftCardScanChecker)
+    }
+
+    @Test(arguments: RootGiftCardRoutingTests.SwapScannerEntry.allCases)
+    func swapCoordinatorKeepsOrdinaryAddressScanning(entry: RootGiftCardRoutingTests.SwapScannerEntry) async throws {
+        var state = SwapAndPayCoordFlow.State()
+        switch entry {
+        case .form: break
+        case .nestedForm: state.path.append(.swapAndPayForm(SwapAndPay.State.initial))
+        case .addressBook: state.path.append(.addressBook(AddressBook.State.initial))
+        }
+        let store = Store(initialState: state) { SwapAndPayCoordFlow() }
+        switch entry {
+        case .form: store.send(.swapAndPay(.scanTapped))
+        case .nestedForm:
+            let id = try #require(store.withState { $0.path.ids.last })
+            store.send(.path(.element(id: id, action: .swapAndPayForm(.scanTapped))))
+        case .addressBook:
+            let id = try #require(store.withState { $0.path.ids.last })
+            store.send(.path(.element(id: id, action: .addressBook(.scanButtonTapped))))
+        }
+        state = store.withState { $0 }
+        guard case .some(.scan(let scanState)) = state.path.last else {
+            Issue.record("Scanner missing")
+            return
+        }
+        let action = scanState.checkers.lazy.compactMap { $0.checker.checkQRCode("ordinary-address") }.first
+        #expect(action == .foundString("ordinary-address"))
+        let scanId = try #require(state.path.ids.last)
+        // Exercise the coordinator's address consumer directly: its existing direct-scan pop
+        // precedes the child reducer and produces a TCA missing-element warning in the full store.
+        withDependencies {
+            $0.audioServices = AudioServicesClient(systemSoundVibrate: { })
+        } operation: {
+            _ = SwapAndPayCoordFlow().coordinatorReduce().reduce(
+                into: &state, action: .path(.element(id: scanId, action: .scan(.foundString("ordinary-address"))))
+            )
+        }
+        if entry == .form {
+            #expect(state.swapAndPayState.address == "ordinary-address")
+        } else {
+            guard case .some(.addressBookContact(let contact)) = state.path.last else {
+                Issue.record("Ordinary address did not reach the contact form")
+                return
+            }
+            #expect(contact.address == "ordinary-address")
+        }
+    }
+
+    // Omitting clear, or passing the trimmed action payload, leaves the consumed secret behind.
+    @Test(arguments: [
+        "https://gift.zodl.com/#v=1&key=synthetic-clipboard-fixture",
+        "https://link.vizor.cash/payment-links/open#v3=synthetic-clipboard-fixture",
+        "https://gift.zodl.com/#damaged"
+    ])
+    func pastedGiftClearsTheOriginalUntrimmedValue(link: String) async {
+        let original = "  \(link)\n"
+        let cleared = LockIsolated<[RedactableString]>([])
+        let store = TestStore(initialState: Scan.State.giftCardScanner) { Scan() } withDependencies: {
+            $0.giftCard = GiftCardClient.mock()
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in },
+                clearIfMatches: { value in cleared.withValue { $0.append(value) } },
+                getString: { original.redacted }
+            )
+        }
+        await store.send(.pasteTapped)
+        await store.receive(.foundGiftCard(link.redacted)) { $0.isAnythingFound = true }
+        await store.finish()
+        #expect(cleared.value == [original.redacted])
+    }
+
+    @Test(arguments: ["ordinary-address", "unsupported", "", nil] as [String?])
+    func nonGiftPasteDoesNotClearTheClipboard(text: String?) async {
+        let cleared = LockIsolated<[RedactableString]>([])
+        var state = Scan.State.giftCardScanner
+        if text == "ordinary-address" { state.checkers.append(.swapStringScanChecker) }
+        let store = TestStore(initialState: state) { Scan() } withDependencies: {
+            $0.giftCard = GiftCardClient.mock()
+            $0.mainQueue = .immediate
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in },
+                clearIfMatches: { value in cleared.withValue { $0.append(value) } },
+                getString: { text?.redacted }
+            )
+        }
+        if text == "ordinary-address" {
+            await store.send(.pasteTapped)
+            await store.receive(.foundString("ordinary-address")) { $0.isAnythingFound = true }
+        } else {
+            let reason: Scan.ScanImageResult = (text == nil || text == "") ? .nothingToPaste : .unsupportedPaste
+            await store.send(.pasteTapped)
+            await store.receive(.scanFailed(reason)) {
+                $0.info = String(localizable: reason == .nothingToPaste ? .scanPasteEmpty : .scanPasteUnsupported)
+            }
+            await store.receive(.clearInfo) { $0.info = "" }
+        }
+        await store.finish()
+        #expect(cleared.value.isEmpty)
+    }
+
+    @Test func cameraGiftScanDoesNotReadOrClearTheClipboard() async {
+        let reads = LockIsolated(0)
+        let cleared = LockIsolated<[RedactableString]>([])
+        let store = TestStore(initialState: Scan.State.giftCardScanner) { Scan() } withDependencies: {
+            $0.giftCard = GiftCardClient.mock()
+            $0.pasteboard = PasteboardClient(
+                setString: { _ in },
+                clearIfMatches: { value in cleared.withValue { $0.append(value) } },
+                getString: { reads.withValue { $0 += 1 }
+                    return "replacement".redacted }
+            )
+        }
+        await store.send(.scan(Self.zodlLink.redacted))
+        await store.receive(.foundGiftCard(Self.zodlLink.redacted)) { $0.isAnythingFound = true }
+        await store.finish()
+        #expect(reads.value == 0)
+        #expect(cleared.value.isEmpty)
+    }
+
     @Test func pastedGiftCardLinkIsFound() async {
         var state = Scan.State.giftCardScanner
         state.instructions = nil
@@ -128,7 +265,7 @@ import ComposableArchitecture
             Scan()
         } withDependencies: {
             $0.giftCard = .mock()
-            $0.pasteboard = PasteboardClient(setString: { _ in }, getString: { Self.vizorLink.redacted })
+            $0.pasteboard = PasteboardClient(setString: { _ in }, clearIfMatches: { _ in }, getString: { Self.vizorLink.redacted })
         }
 
         await store.send(.pasteTapped)
@@ -143,7 +280,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.giftCard = .mock()
             $0.mainQueue = .immediate
-            $0.pasteboard = PasteboardClient(setString: { _ in }, getString: { "u1notagiftcard".redacted })
+            $0.pasteboard = PasteboardClient(setString: { _ in }, clearIfMatches: { _ in }, getString: { "u1notagiftcard".redacted })
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
@@ -160,7 +297,7 @@ import ComposableArchitecture
         } withDependencies: {
             $0.giftCard = .mock()
             $0.mainQueue = .immediate
-            $0.pasteboard = PasteboardClient(setString: { _ in }, getString: { nil })
+            $0.pasteboard = PasteboardClient(setString: { _ in }, clearIfMatches: { _ in }, getString: { nil })
         }
         store.exhaustivity = .off(showSkippedAssertions: false)
 
