@@ -290,15 +290,18 @@ extension GiftCardRedeemView {
             Spacer()
 
             if let retryTitle {
+                // The design's grey button: dark text on a light grey fill in light mode, white on a
+                // mid grey in dark mode. Quaternary is the closest style in both modes (tertiary's
+                // dark-mode text barely shows on its fill); its light fill is a little darker.
                 if store.isRechecking {
                     // Check again runs without leaving the screen; the button shows it is busy.
-                    ZashiButton(retryTitle, type: .tertiary, accessoryView: ProgressView()) {
+                    ZashiButton(retryTitle, type: .quaternary, accessoryView: ProgressView()) {
                         store.send(.retryTapped)
                     }
                     .disabled(true)
                     .padding(.bottom, 12)
                 } else {
-                    ZashiButton(retryTitle, type: .tertiary) {
+                    ZashiButton(retryTitle, type: .quaternary) {
                         store.send(.retryTapped)
                     }
                     .padding(.bottom, 12)
