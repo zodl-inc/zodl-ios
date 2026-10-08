@@ -16,15 +16,19 @@
 # Prints the relativePath of the local SDK package reference, or nothing when
 # the project references the SDK remotely. relativePath keys appear only in
 # XCLocalSwiftPackageReference entries of a pbxproj, so a whole-file scan is
-# safe; the basename filter keeps other local packages from matching.
+# safe; the basename filter keeps other local packages from matching. The SDK
+# checkout's directory is zodl-swift-wallet-sdk, or that name with a
+# -<suffix> when a clone of the SDK is kept under another name.
 sdk_local_relative_path() {
     local pbxproj="$1"
     sed -n 's/^[[:space:]]*relativePath = "\{0,1\}\([^";]*\)"\{0,1\};.*/\1/p' "$pbxproj" |
         while IFS= read -r p; do
-            if [ "$(basename "$p")" = "zodl-swift-wallet-sdk" ]; then
-                printf '%s\n' "$p"
-                return 0
-            fi
+            case "$(basename "$p")" in
+                zodl-swift-wallet-sdk | zodl-swift-wallet-sdk-*)
+                    printf '%s\n' "$p"
+                    return 0
+                    ;;
+            esac
         done
 }
 
