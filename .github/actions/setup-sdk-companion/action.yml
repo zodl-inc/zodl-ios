@@ -1,14 +1,29 @@
 name: 'Set up SDK companion (pin-validated)'
 description: >-
   Validates .sdk-pin against the committed Xcode project mode. In full mode
-  additionally fetches zodl-swift-wallet-sdk at the pinned commit into the
-  path the project's local package reference expects (a sibling of the
-  checkout). No-op fetch in remote mode.
+  additionally fetches the SDK at the pinned commit into the path the
+  project's local package reference expects (a sibling of the checkout).
+  No-op fetch in remote mode. The SDK repo defaults to the public
+  zodl-swift-wallet-sdk; a fork that pins commits living elsewhere names that
+  repo in `sdk-repo` and passes a token that can read it.
 inputs:
   validate-only:
     description: 'true = validate the pin and emit outputs without fetching'
     required: false
     default: 'false'
+  sdk-repo:
+    description: >-
+      owner/name of the repo to fetch the pinned SDK commit from (pass
+      vars.SDK_REPO). Empty means the public zodl-inc/zodl-swift-wallet-sdk.
+    required: false
+    default: ''
+  sdk-token:
+    description: >-
+      Token with contents:read on `sdk-repo` (pass secrets.SDK_COMPANION_TOKEN).
+      Composite actions cannot read secrets themselves, so the caller forwards
+      it. Empty falls back to github.token, which is enough for a public repo.
+    required: false
+    default: ''
 outputs:
   mode:
     description: "'local' or 'remote'"
@@ -29,8 +44,16 @@ runs:
       shell: bash
       env:
         SDK_PIN_DURABILITY_CHECK: ${{ inputs.validate-only == 'true' && '1' || '' }}
-        GITHUB_TOKEN: ${{ github.token }}
+        SDK_REPO: ${{ inputs.sdk-repo }}
+        GITHUB_TOKEN: ${{ inputs.sdk-token != '' && inputs.sdk-token || github.token }}
       run: |
+        if [ -n "$SDK_REPO" ]; then
+          # Fetch and durability-check against the configured repo with the
+          # forwarded token. Authentication is scoped to each Git process
+          # by the script, so URLs and checkout metadata stay credential-free.
+          export SDK_REPO_URL="https://github.com/${SDK_REPO}.git"
+          export SDK_API_URL="https://api.github.com/repos/${SDK_REPO}"
+        fi
         if [ "${{ inputs.validate-only }}" = "true" ]; then
           ./Scripts/setup-sdk-companion.sh --validate-only
         else
