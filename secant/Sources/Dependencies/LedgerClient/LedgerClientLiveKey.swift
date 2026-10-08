@@ -447,7 +447,7 @@ actor LedgerSession {
             return false
         }
         switch zcashError {
-        case .ledgerBluetoothDisconnected, .ledgerTimeout, .ledgerTransportClosed, .ledgerTransportFailed:
+        case .ledgerBluetoothDisconnected, .ledgerTimeout, .ledgerTransportClosed, .ledgerTransportFailed, .ledgerTransportReplaced:
             return true
         default:
             return false

@@ -222,6 +222,28 @@ import ComposableArchitecture
         }
     }
 
+    @Test func aReplacedTransportIsDroppedAfterTheFailure() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .failure(ZcashError.ledgerTransportReplaced))
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device) { }
+
+        await #expect(throws: ZcashError.ledgerTransportReplaced) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+    }
+
     @Test func cancellingTheStreamCancelsTheSignerAndDropsTheTransport() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])
