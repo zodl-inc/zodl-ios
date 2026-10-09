@@ -15,8 +15,9 @@ import ComposableArchitecture
 @testable import zodl_internal
 
 // `.timeLimit` is SignalledClock's own backstop (TestSupport/SignalledClock.swift): a wait that
-// genuinely never fires is recorded as a failure here instead of hanging the run.
-@Suite(.timeLimit(.minutes(1))) struct LedgerSigningTests {
+// genuinely never fires is recorded as a failure here instead of hanging the run. It allows 5
+// minutes because these tests take about 2 s alone but up to about 100 s on a loaded CI runner.
+@Suite(.timeLimit(.minutes(5))) struct LedgerSigningTests {
     @MainActor @Test func onAppearStartsScanning() async throws {
         let request = try Self.signRequest()
         var state = LedgerSigning.State()

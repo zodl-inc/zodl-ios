@@ -70,7 +70,7 @@ ln -s /opt/homebrew/bin/swiftlint /usr/local/bin
 The `.sdk-pin` file at the repo root records which commit of the Zcash Swift SDK the app currently builds against. Its value is maintained automatically and derives from your Xcode project configuration:
 
 - **Remote SDK reference** — if your project points to the SDK at a remote URL (GitHub), the `.sdk-pin` file remains empty.
-- **Local SDK reference** — if your project points to a local SDK checkout (`../zodl-swift-wallet-sdk` sibling directory), the file holds the full 40-character commit SHA of that checkout.
+- **Local SDK reference** — if your project points to a local SDK checkout (a `../zodl-swift-wallet-sdk` sibling directory, or one named `../zodl-swift-wallet-sdk-<suffix>`), the file holds the full 40-character commit SHA of that checkout.
 
 The `Update SDK Pin` build phase runs on every build of the app targets and refreshes the file as needed. When the pin appears modified in `git status`, commit it together with your app changes.
 
