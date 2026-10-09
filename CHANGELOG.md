@@ -7,6 +7,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.17.0] - 2026-10-09
+
 ### Added
 
 - [MOB-2020] Connect a Ledger hardware wallet over Bluetooth to receive ZEC and to send it with approval on the device. Choose Connect Hardware Wallet from the More menu or the account list on Home. You can choose which Ledger account to connect; one account can be connected at a time.
