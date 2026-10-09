@@ -238,6 +238,7 @@ import ComposableArchitecture
         await #expect(throws: ZcashError.ledgerTransportReplaced) {
             for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
         }
+        #expect(transport.closeCount == 1)
 
         await #expect(throws: LedgerClientError.notConnected) {
             for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
@@ -356,6 +357,8 @@ import ComposableArchitecture
         // ceremony itself used, never a newer one a later connect() opened underneath it.
         for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
         #expect((secondReceivedTransport.value as? FakeLedgerAPDUTransport) === transportB)
+        #expect(transportA.closeCount == 1)
+        #expect(transportB.closeCount == 0)
     }
 
     // MARK: - openZcashApp
