@@ -56,10 +56,10 @@ struct Home {
             return false
         }
 
-        /// True unless a Keystone AND a Ledger account are already connected — the entry points
-        /// into `ChooseHWWallet` (MOB-2020) gate on this instead of the old
-        /// `walletAccounts.count == 1` check, since a wallet can now hold up to one of each
-        /// hardware vendor.
+        /// True unless a Keystone AND a Ledger account are already connected — the Wallets &
+        /// Hardware sheet's entry point into `ChooseHWWallet` (MOB-2020) gates on this instead of
+        /// the old `walletAccounts.count == 1` check, since a wallet can now hold up to one of
+        /// each hardware vendor.
         var canConnectHWWallet: Bool {
             !(isKeystoneConnected && isLedgerConnected)
         }
@@ -426,11 +426,9 @@ struct Home {
                 return .none
 
             case .connectHWWalletTapped:
-                // Root consumes this to open `ChooseHWWallet`; this arm dismisses whichever
-                // sheet sent it (the Wallets & Hardware sheet or the More sheet) so the chooser
-                // is not presented under it.
+                // Root consumes this to open `ChooseHWWallet`; this arm dismisses the Wallets &
+                // Hardware sheet that sent it so the chooser is not presented under it.
                 state.accountSwitchRequest = false
-                state.moreRequest = false
                 return .none
 
             case .walletAccountTapped:

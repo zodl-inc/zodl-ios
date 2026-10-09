@@ -2,9 +2,9 @@
 //  ChooseHWWalletStore.swift
 //  Zashi
 //
-//  MOB-2020: which hardware wallet to connect. Home's single "Connect Keystone"/"Connect
-//  Hardware Wallet" entry points now open this chooser instead of jumping straight into the
-//  Keystone flow, since a wallet can hold up to one Keystone AND one Ledger account.
+//  MOB-2020: which hardware wallet to connect. Home's Connect Hardware Wallet button, in the
+//  Wallets & Hardware sheet, opens this chooser instead of jumping straight into the Keystone
+//  flow, since a wallet can hold up to one Keystone AND one Ledger account.
 //
 
 import SwiftUI
