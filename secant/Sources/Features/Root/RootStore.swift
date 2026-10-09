@@ -685,6 +685,15 @@ struct Root {
 
     init() { }
     
+    /// `core` is built from four `Reduce` groups on purpose (MOB-2020). One `@ReducerBuilder`
+    /// with 35+ statements nested the builder's `_Sequence` types so deep that the Swift
+    /// runtime's demangler overflowed the 1 MB main-thread stack of a physical iPhone while
+    /// instantiating the reducer's metadata on the first `send` — a Debug build crashed at
+    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator
+    /// survived on its 8 MB stack. Each group is a concrete `Reduce`, which ends that nesting,
+    /// so a new scope goes into whichever group is smallest, keeping them about the same size,
+    /// rather than adding a statement here. `RootReducerConstructionTests` checks this on a
+    /// 512 KB-stack thread; a device launch is still the real check.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
         BindingReducer()

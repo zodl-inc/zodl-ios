@@ -77,6 +77,11 @@ struct LedgerClient {
     /// order, then `.signed` once, then finishes. Fails with `LedgerClientError/notConnected` when
     /// nothing is connected, otherwise with the SDK's error. Cancelling the consumer cancels the
     /// ceremony (the SDK then closes the transport).
+    ///
+    /// At most one call may be in flight per connection: a connection-level failure or a
+    /// cancellation closes the connection it used, when that's still the session's, so a second
+    /// call queued behind a running one and then cancelled would close the transport under the
+    /// running ceremony. `LedgerSigningStore` guarantees one call at a time.
     var signPCZT: @Sendable (Pczt, AccountUUID, LedgerAccountBinding) -> AsyncThrowingStream<LedgerSigningEvent, Error> = { _, _, _ in
         AsyncThrowingStream { $0.finish(throwing: LedgerClientError.notConnected) }
     }
