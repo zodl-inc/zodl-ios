@@ -38,7 +38,7 @@
 import Foundation
 import Testing
 @testable import zodl_internal
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct MigrationArrivedWindowCaptionTests {
     /// A tip well above every scheduled height below, so "passed" is unambiguous and `isTipKnown`

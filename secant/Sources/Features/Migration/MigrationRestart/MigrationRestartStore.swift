@@ -29,7 +29,7 @@
 
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct MigrationRestart {

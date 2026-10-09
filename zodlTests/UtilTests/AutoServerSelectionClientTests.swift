@@ -1,7 +1,7 @@
 import Testing
 import XCTest
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 final class AutoServerSelectionClientTests: XCTestCase {

@@ -3,7 +3,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 /// The fixtures, doubles and waiting helpers the voting suites share.
 ///
@@ -796,7 +796,7 @@ actor TestGate {
 /// the duration recorded here is the one that was asked for, to the attosecond.
 struct RecordingImmediateClock: Clock {
     typealias Instant = ContinuousClock.Instant
-    // Spelled out because `ZcashLightClientKit` exports a `Duration` of its own,
+    // Spelled out because `ZODLSwiftWalletSDK` exports a `Duration` of its own,
     // and an unqualified one in this file resolves to that instead.
     typealias Duration = Swift.Duration
 
@@ -831,7 +831,7 @@ struct RecordingImmediateClock: Clock {
 /// test advances are the same clock.
 struct RecordingTestClock: Clock {
     typealias Instant = TestClock<Swift.Duration>.Instant
-    // Spelled out because `ZcashLightClientKit` exports a `Duration` of its own,
+    // Spelled out because `ZODLSwiftWalletSDK` exports a `Duration` of its own,
     // and an unqualified one in this file resolves to that instead.
     typealias Duration = Swift.Duration
 

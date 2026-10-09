@@ -8,7 +8,7 @@
 import Testing
 import Foundation
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct BalanceFormatterTests {
     // MARK: - roundToAvoidDustSpend (pure integer math, rounds to nearest 5_000)

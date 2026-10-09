@@ -39,7 +39,7 @@
 
 import Foundation
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum MigrationTrace {
     /// Why this app-open happened. The distinction the field asked for first: an open that the app

@@ -12,7 +12,7 @@
 
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 import ComposableArchitecture
 @testable import zodl_internal
 

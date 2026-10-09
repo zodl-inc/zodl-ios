@@ -5,7 +5,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// How far a round's submission has got, measured the way the Android app
 /// measures it, so both platforms show a voter the same count and bar.

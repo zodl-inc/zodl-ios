@@ -24,7 +24,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `.serialized`: every test here writes the shared in-memory `selectedWalletAccount`, so parallel

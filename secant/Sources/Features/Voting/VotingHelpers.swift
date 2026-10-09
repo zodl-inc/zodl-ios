@@ -11,7 +11,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: - Voting namespace (helpers only — no reducer)
 
