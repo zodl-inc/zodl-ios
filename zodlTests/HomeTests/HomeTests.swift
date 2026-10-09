@@ -53,9 +53,9 @@ import ComposableArchitecture
 
     // MARK: - canConnectHWWallet
 
-    /// MOB-2020: the `ChooseHWWallet` entry points gate on this instead of the old
-    /// `walletAccounts.count == 1` check — true with zero or one hardware account connected,
-    /// false only once both a Keystone and a Ledger account are connected.
+    /// MOB-2020: the Wallets & Hardware sheet's entry point into `ChooseHWWallet` gates on this
+    /// instead of the old `walletAccounts.count == 1` check — true with zero or one hardware
+    /// account connected, false only once both a Keystone and a Ledger account are connected.
     @Test func canConnectHWWalletIsTrueWithZeroOrOneHardwareAccountAndFalseWithBoth() {
         var state = Home.State.initial
 
@@ -127,10 +127,9 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @MainActor @Test func connectHWWalletTappedDismissesBothSheets() async {
+    @MainActor @Test func connectHWWalletTappedDismissesTheAccountSwitchSheet() async {
         var initialState = Home.State.initial
         initialState.accountSwitchRequest = true
-        initialState.moreRequest = true
 
         let store = TestStore(
             initialState: initialState
@@ -140,7 +139,6 @@ import ComposableArchitecture
 
         await store.send(.connectHWWalletTapped) {
             $0.accountSwitchRequest = false
-            $0.moreRequest = false
         }
 
         await store.finish()

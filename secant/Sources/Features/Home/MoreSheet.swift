@@ -27,18 +27,6 @@ extension HomeView {
                     .disabled(walletStatus.isNotReadyForFullySyncedOperation)
                 }
 
-                if store.canConnectHWWallet {
-                    ActionRow(
-                        icon: Asset.Assets.Partners.keystone.image,
-                        title: String(localizable: .keystoneConnect),
-                        desc: String(localizable: .settingsKeystoneDesc),
-                        customIcon: true,
-                        divider: true
-                    ) {
-                        store.send(.connectHWWalletTapped)
-                    }
-                }
-
                 ActionRow(
                     icon: Asset.Assets.Icons.gift.image,
                     title: String(localizable: .giftCardMoreTitle),

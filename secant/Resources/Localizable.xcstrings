@@ -21272,40 +21272,6 @@
         }
       }
     },
-    "settings.keystone" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connect Keystone"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conectar Keystone"
-          }
-        }
-      }
-    },
-    "settings.keystoneDesc" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connect airgapped hardware wallet to store shielded ZEC."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conecta una billetera de hardware aislada (air-gapped) para almacenar ZEC protegidos."
-          }
-        }
-      }
-    },
     "settings.private" : {
       "extractionState" : "manual",
       "localizations" : {
