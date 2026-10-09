@@ -103,6 +103,7 @@ struct Home {
         case rateTooltipTapped
         case receiveScreenRequested
         case receiveTapped
+        case redeemGiftCardTapped
         case resolveReviewRequest
         case retrySync
         case reviewRequestFinished
@@ -280,6 +281,10 @@ struct Home {
                 return .none
 
             case .scanTapped:
+                return .none
+
+            case .redeemGiftCardTapped:
+                state.moreRequest = false
                 return .none
 
             case .moreTapped:

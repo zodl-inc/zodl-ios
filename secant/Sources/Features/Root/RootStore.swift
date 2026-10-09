@@ -16,6 +16,7 @@ struct Root {
         enum Path {
             case connectHWWalletCoordFlow
             case currencyConversionSetup
+            case giftCardCoordFlow
             case migrationCoordFlow
             case receive
             case requestZecCoordFlow
@@ -275,6 +276,11 @@ struct Root {
         var onboardingState: RestoreWalletCoordFlow.State
         var osStatusErrorState: OSStatusError.State
         var path: Path? = nil
+        /// The app was opened with a gift card link while the flow could not be shown yet (no
+        /// wallet on screen, the splash/authentication still up, or a payment flow in progress).
+        /// The scanner asking for an in-app scan opens as soon as `canOpenGiftCardFlow` turns
+        /// true. The link itself is discarded: only a card scanned in the app is redeemed.
+        var isGiftCardRescanPending = false
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -315,6 +321,24 @@ struct Root {
         /// shape.
         var isLedgerRepairAwaitingSheetDismissal = false
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
+        var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
+        var giftCardSyncGeneration = UUID()
+        var giftCardSyncResumePending = false
+        var giftCardSyncRecovery = GiftCardSyncRecovery.none
+        /// A same-wallet navigation reset changes the native generation without restarting this timer.
+        var giftCardSyncRetryId: UUID?
+        var giftCardSyncStartGeneration: UUID?
+        var giftCardSyncObservationGeneration: UUID?
+        var giftCardSyncGateClearedDuringStart = false
+        /// One seed recheck bridges a gate that cleared before feeds were restored. Refusal and
+        /// re-registration do not replenish it; genuine gate edges and external triggers do.
+        var giftCardSyncDidRecheckMigrationSeed = false
+        var ordinarySyncOperations: Set<UUID> = []
+        /// The accepted visit owns the pause even if retry discovers that its card handle is gone.
+        var giftCardSyncPauseOwner: UUID?
+        var giftCardSyncStopId: UUID?
+        var giftCardSyncStartId: UUID?
+        var giftCardSyncIsPaused = false
         var ironwoodAnnouncementState = IronwoodAnnouncement.State.initial
         var receiveState = Receive.State.initial
         var requestZecCoordFlowState = RequestZecCoordFlow.State.initial
@@ -356,10 +380,23 @@ struct Root {
             case .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
                  .swapAndPayCoordFlow, .transactionsCoordFlow:
                 return true
+            case .giftCardCoordFlow:
+                // Redeeming broadcasts a transaction (under the transaction guard).
+                return true
             case .connectHWWalletCoordFlow, .currencyConversionSetup,
                  .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
+        }
+
+        /// Whether a gift card link the app was opened with can take over the screen now: the
+        /// wallet is on Home with nothing that could lose a payment in progress on top of it.
+        var canOpenGiftCardFlow: Bool {
+            destinationState.destination == .home
+                && splashAppeared
+                && !isSensitiveFlowActive
+                && !isServerSetupVisible
+                && bgTask == nil
         }
 
         /// True once the synchronizer has told us enough to believe an automatic switch (which
@@ -505,6 +542,17 @@ struct Root {
 
         case connectHWWalletCoordFlow(ConnectHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
+        case giftCardCoordFlow(GiftCardCoordFlow.Action)
+        case giftCardResumeSync(UUID)
+        case giftCardSyncStartFinished(UUID, GiftCardSyncStartOutcome)
+        case giftCardRetrySync(UUID)
+        case giftCardSyncVisitReady(UUID, MigrationVisit)
+        case giftCardSyncStartReady(UUID)
+        case giftCardSyncMigrationRefused(UUID)
+        case giftCardSyncObserve(UUID)
+        case giftCardSyncRestoreMigrationObservation(UUID)
+        case ordinarySyncFinished(UUID)
+        case giftCardSyncStopped(UUID)
         case ironwoodAnnouncement(IronwoodAnnouncement.Action)
         case receive(Receive.Action)
         case requestZecCoordFlow(RequestZecCoordFlow.Action)
@@ -611,6 +659,7 @@ struct Root {
     @Dependency(\.diskSpaceChecker) var diskSpaceChecker
     @Dependency(\.exchangeRate) var exchangeRate
     @Dependency(\.flexaHandler) var flexaHandler
+    @Dependency(\.giftCard) var giftCard
     @Dependency(\.localAuthentication) var localAuthentication
     @Dependency(\.mainQueue) var mainQueue
     @Dependency(\.migrationTickInterval) var migrationTickInterval
@@ -636,125 +685,16 @@ struct Root {
 
     init() { }
     
-    /// `core` is split into three opaque `some Reducer` chunks on purpose (MOB-2020). One
-    /// `@ReducerBuilder` with 35+ statements nests the builder's `_Sequence` types so deep that the
-    /// Swift runtime's type demangler overflows the 1 MB main-thread stack of a physical iPhone
-    /// while it instantiates the reducer's metadata on the first `send` — a Debug build crashed at
-    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator survived on
-    /// its 8 MB stack. Every opaque property is a metadata boundary (the outer name refers to the
-    /// opaque type, not its expansion), so keep each chunk well under 20 statements and put a new
-    /// scope into the smallest one rather than appending here.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
-        screenScopes
-
-        flowScopes
-
-        reducers
-    }
-
-    @ReducerBuilder<State, Action>
-    private var screenScopes: some Reducer<State, Action> {
         BindingReducer()
         
-        Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
-            DeeplinkWarning()
-        }
+        // Concrete group boundaries keep nested reducer construction off oversized stack frames.
+        coreInitialScreens
+        coreAccountScreens
+        coreWalletFlows
+        coreAdditionalFlows
 
-        Scope(state: \.serverSetupState, action: \.serverSetup) {
-            ServerSetup()
-        }
-
-        Scope(state: \.homeState, action: \.home) {
-            Home()
-        }
-
-        Scope(state: \.exportLogsState, action: \.exportLogs) {
-            ExportLogs()
-        }
-
-        Scope(state: \.notEnoughFreeSpaceState, action: \.notEnoughFreeSpace) {
-            NotEnoughFreeSpace()
-        }
-
-        Scope(state: \.onboardingState, action: \.onboarding) {
-            RestoreWalletCoordFlow()
-        }
-
-        Scope(state: \.welcomeState, action: \.welcome) {
-            Welcome()
-        }
-
-        Scope(state: \.phraseDisplayState, action: \.phraseDisplay) {
-            RecoveryPhraseDisplay()
-        }
-
-        Scope(state: \.osStatusErrorState, action: \.osStatusError) {
-            OSStatusError()
-        }
-
-        Scope(state: \.settingsState, action: \.settings) {
-            Settings()
-        }
-
-        Scope(state: \.receiveState, action: \.receive) {
-            Receive()
-        }
-        
-        Scope(state: \.requestZecCoordFlowState, action: \.requestZecCoordFlow) {
-            RequestZecCoordFlow()
-        }
-        
-        Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
-            MigrationCoordFlow()
-        }
-
-        Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
-            SendCoordFlow()
-        }
-        
-        Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
-            ScanCoordFlow()
-        }
-    }
-
-    @ReducerBuilder<State, Action>
-    private var flowScopes: some Reducer<State, Action> {
-        Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
-            ConnectHWWalletCoordFlow()
-        }
-
-        Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
-            TransactionsCoordFlow()
-        }
-        
-        Scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow) {
-            WalletBackupCoordFlow()
-        }
-
-        Scope(state: \.currencyConversionSetupState, action: \.currencyConversionSetup) {
-            CurrencyConversionSetup()
-        }
-
-        Scope(state: \.signWithKeystoneCoordFlowState, action: \.signWithKeystoneCoordFlow) {
-            SignWithKeystoneCoordFlow()
-        }
-
-        Scope(state: \.torSetupState, action: \.torSetup) {
-            TorSetup()
-        }
-
-        Scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow) {
-            SwapAndPayCoordFlow()
-        }
-
-        Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
-            IronwoodAnnouncement()
-        }
-    }
-
-    @ReducerBuilder<State, Action>
-    private var reducers: some Reducer<State, Action> {
         initializationReduce()
 
         destinationReduce()
@@ -774,13 +714,139 @@ struct Root {
         swapsReduce()
         
         checkFundsReduce()
+
+        giftCardsReduce()
     }
     
+    private var coreInitialScreens: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.deeplinkWarningState, action: \.deeplinkWarning) {
+                    DeeplinkWarning()
+                }
+
+                Scope(state: \.serverSetupState, action: \.serverSetup) {
+                    ServerSetup()
+                }
+
+                Scope(state: \.homeState, action: \.home) {
+                    Home()
+                }
+
+                Scope(state: \.exportLogsState, action: \.exportLogs) {
+                    ExportLogs()
+                }
+
+                Scope(state: \.notEnoughFreeSpaceState, action: \.notEnoughFreeSpace) {
+                    NotEnoughFreeSpace()
+                }
+
+                Scope(state: \.onboardingState, action: \.onboarding) {
+                    RestoreWalletCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreAccountScreens: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.welcomeState, action: \.welcome) {
+                    Welcome()
+                }
+
+                Scope(state: \.phraseDisplayState, action: \.phraseDisplay) {
+                    RecoveryPhraseDisplay()
+                }
+
+                Scope(state: \.osStatusErrorState, action: \.osStatusError) {
+                    OSStatusError()
+                }
+
+                Scope(state: \.settingsState, action: \.settings) {
+                    Settings()
+                }
+
+                Scope(state: \.receiveState, action: \.receive) {
+                    Receive()
+                }
+
+                Scope(state: \.requestZecCoordFlowState, action: \.requestZecCoordFlow) {
+                    RequestZecCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreWalletFlows: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.migrationCoordFlowState, action: \.migrationCoordFlow) {
+                    MigrationCoordFlow()
+                }
+
+                Scope(state: \.sendCoordFlowState, action: \.sendCoordFlow) {
+                    SendCoordFlow()
+                }
+
+                Scope(state: \.scanCoordFlowState, action: \.scanCoordFlow) {
+                    ScanCoordFlow()
+                }
+
+                Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
+                    ConnectHWWalletCoordFlow()
+                }
+
+                Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {
+                    TransactionsCoordFlow()
+                }
+
+                Scope(state: \.walletBackupCoordFlowState, action: \.walletBackupCoordFlow) {
+                    WalletBackupCoordFlow()
+                }
+            }
+        )
+    }
+
+    private var coreAdditionalFlows: Reduce<State, Action> {
+        Reduce<State, Action>(
+            CombineReducers {
+                Scope(state: \.currencyConversionSetupState, action: \.currencyConversionSetup) {
+                    CurrencyConversionSetup()
+                }
+
+                Scope(state: \.giftCardCoordFlowState, action: \.giftCardCoordFlow) {
+                    GiftCardCoordFlow()
+                }
+
+                Scope(state: \.signWithKeystoneCoordFlowState, action: \.signWithKeystoneCoordFlow) {
+                    SignWithKeystoneCoordFlow()
+                }
+
+                Scope(state: \.torSetupState, action: \.torSetup) {
+                    TorSetup()
+                }
+
+                Scope(state: \.swapAndPayCoordFlowState, action: \.swapAndPayCoordFlow) {
+                    SwapAndPayCoordFlow()
+                }
+
+                Scope(state: \.ironwoodAnnouncementState, action: \.ironwoodAnnouncement) {
+                    IronwoodAnnouncement()
+                }
+            }
+        )
+    }
+
     /// The `onChange` wrapper must observe every reducer that can mutate an input of
     /// `canApplyAutoServerSwitch` (path, bindings, bgTask, settings path, and — via
     /// `isSynchronizerIdleForSwitch` — `lastKnownSyncStatus` / `isSyncStalledSinceLastProgress`)
     /// — keep ALL composed reducers inside `combinedCore`; never add a sibling reducer here in `body`.
     var body: some Reducer<State, Action> {
+        giftCardLifecycle(routedCore)
+    }
+
+    private var routedCore: some Reducer<State, Action> {
         combinedCore
             .onChange(of: \.canApplyAutoServerSwitch) { _, state in
                 guard state.canApplyAutoServerSwitch, let pending = state.pendingServerCandidate else { return .none }
@@ -791,6 +857,10 @@ struct Root {
                 }
                 LoggerProxy.event("[AutoServerSelection] Applying deferred candidate after flow exit")
                 return .send(.autoServerCandidateReady(pending.endpoint, pending.benchmarkedAt))
+            }
+            .onChange(of: \.canOpenGiftCardFlow) { _, state in
+                guard state.canOpenGiftCardFlow, state.isGiftCardRescanPending else { return .none }
+                return openGiftCardFlow(.rescanRequested, state: &state)
             }
     }
 

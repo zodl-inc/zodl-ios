@@ -30,7 +30,7 @@ extension SwapAndPayCoordFlow {
 
             case .path(.element(id: _, action: .addressBook(.scanButtonTapped))):
                 var scanState = Scan.State.initial
-                scanState.checkers = [.swapStringScanChecker]
+                scanState.checkers = [.giftCardScanChecker, .swapStringScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
 
@@ -395,7 +395,7 @@ extension SwapAndPayCoordFlow {
             case .swapAndPay(.scanTapped),
                     .path(.element(id: _, action: .swapAndPayForm(.scanTapped))):
                 var scanState = Scan.State.initial
-                scanState.checkers = [.swapStringScanChecker]
+                scanState.checkers = [.giftCardScanChecker, .swapStringScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
 

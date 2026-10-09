@@ -49,8 +49,9 @@ runs:
       run: |
         if [ -n "$SDK_REPO" ]; then
           # Fetch and durability-check against the configured repo with the
-          # forwarded token. The token stays masked in the logs.
-          export SDK_REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${SDK_REPO}.git"
+          # forwarded token. Authentication is scoped to each Git process
+          # by the script, so URLs and checkout metadata stay credential-free.
+          export SDK_REPO_URL="https://github.com/${SDK_REPO}.git"
           export SDK_API_URL="https://api.github.com/repos/${SDK_REPO}"
         fi
         if [ "${{ inputs.validate-only }}" = "true" ]; then

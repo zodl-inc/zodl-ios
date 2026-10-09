@@ -31,7 +31,8 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(2))) @MainActor struct RootTransactionsFailedFetchRetryTests {
+// The suite's first test ran 136 s on a loaded CI runner, so `.timeLimit` allows 5 minutes.
+@Suite(.serialized, .timeLimit(.minutes(5))) @MainActor struct RootTransactionsFailedFetchRetryTests {
     private struct FetchStubError: Error { }
     /// One scripted answer of the mocked `getAllTransactions`.
     private typealias Outcome = Result<IdentifiedArrayOf<TransactionState>, FetchStubError>

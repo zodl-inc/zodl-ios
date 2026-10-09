@@ -12,14 +12,17 @@ setup() {
 teardown() {
     rm -rf "$ROOT"
     rm -rf "${ROOT%/*}/zodl-swift-wallet-sdk"
+    rm -rf "${ROOT%/*}/zodl-swift-wallet-sdk-fork"
 }
 
+# $1: the SDK checkout's directory name (default: zodl-swift-wallet-sdk).
 write_local_pbxproj() {
-    cat > "$SDK_PIN_PBXPROJ" <<'EOF'
+    local name="${1:-zodl-swift-wallet-sdk}"
+    cat > "$SDK_PIN_PBXPROJ" <<EOF
 /* Begin XCLocalSwiftPackageReference section */
-		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../zodl-swift-wallet-sdk" */ = {
+		3464A8FA303C3A54005A09AD /* XCLocalSwiftPackageReference "../${name}" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../zodl-swift-wallet-sdk";
+			relativePath = "../${name}";
 		};
 /* End XCLocalSwiftPackageReference section */
 EOF
@@ -29,9 +32,10 @@ write_remote_pbxproj() {
     printf '/* no local SDK reference */\n' > "$SDK_PIN_PBXPROJ"
 }
 
+# $1: the SDK checkout's directory name (default: zodl-swift-wallet-sdk).
 make_sdk_checkout() {
     # The pbxproj points one level above the repo root, mirror that layout.
-    SDK_DIR="$ROOT/../zodl-swift-wallet-sdk"
+    SDK_DIR="$ROOT/../${1:-zodl-swift-wallet-sdk}"
     rm -rf "$SDK_DIR"
     git init -q "$SDK_DIR"
     git -C "$SDK_DIR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -50,6 +54,14 @@ tag_sdk_checkout() {
 @test "local mode, clean checkout: writes HEAD sha" {
     write_local_pbxproj
     make_sdk_checkout
+    run "$SCRIPTS_DIR/update-sdk-pin.sh"
+    [ "$status" -eq 0 ]
+    [ "$(tr -d '[:space:]' < "$SDK_PIN_FILE")" = "$SDK_SHA" ]
+}
+
+@test "local mode, checkout directory named with a suffix: writes HEAD sha" {
+    write_local_pbxproj zodl-swift-wallet-sdk-fork
+    make_sdk_checkout zodl-swift-wallet-sdk-fork
     run "$SCRIPTS_DIR/update-sdk-pin.sh"
     [ "$status" -eq 0 ]
     [ "$(tr -d '[:space:]' < "$SDK_PIN_FILE")" = "$SDK_SHA" ]

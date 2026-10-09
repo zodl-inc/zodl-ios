@@ -25,6 +25,8 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
     // accessibility node and the icon buttons stop being findable
     // by their own ids.
     var inputAccessibilityIdentifier: String?
+    /// Accessibility id of the error hint under the field (e2e affordance).
+    var errorAccessibilityIdentifier: String?
 
     @ViewBuilder let accessoryView: AccessoryContent?
     @ViewBuilder let inputReplacementView: InputReplacementContent?
@@ -38,6 +40,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
         error: String? = nil,
         eraseAction: (() -> Void)? = nil,
         inputAccessibilityIdentifier: String? = nil,
+        errorAccessibilityIdentifier: String? = nil,
         accessoryView: AccessoryContent? = EmptyView(),
         inputReplacementView: InputReplacementContent? = EmptyView(),
         prefixView: PrefixContent? = EmptyView()
@@ -49,6 +52,7 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
         self.error = error
         self.eraseAction = eraseAction
         self.inputAccessibilityIdentifier = inputAccessibilityIdentifier
+        self.errorAccessibilityIdentifier = errorAccessibilityIdentifier
         self.accessoryView = accessoryView
         self.inputReplacementView = inputReplacementView
         self.prefixView = prefixView
@@ -128,10 +132,15 @@ struct ZashiTextField<PrefixContent, InputReplacementContent, AccessoryContent>:
             )
 
             if let error {
-                Text(error)
+                let hint = Text(error)
                     .zForegroundColor(Design.Inputs.ErrorFilled.hint)
                     .font(.custom(FontFamily.Inter.regular.name, size: 14))
                     .padding(.top, 6)
+                if let errorAccessibilityIdentifier {
+                    hint.accessibilityIdentifier(errorAccessibilityIdentifier)
+                } else {
+                    hint
+                }
             }
         }
     }

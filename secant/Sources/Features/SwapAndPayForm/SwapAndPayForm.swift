@@ -78,6 +78,7 @@ struct SwapAndPayForm: View {
                 addressFont: true,
                 text: $store.address,
                 placeholder: String(localizable: .swapToZecAddress(store.selectedAsset?.chainName ?? "")),
+                error: store.isGiftCardAddress ? String(localizable: .swapGiftCardAddressNotAllowed) : nil,
                 accessoryView:
                     HStack(spacing: 4) {
                         WithPerceptionTracking {

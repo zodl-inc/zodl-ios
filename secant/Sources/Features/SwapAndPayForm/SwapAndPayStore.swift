@@ -182,9 +182,17 @@ struct SwapAndPay {
             return deposit < Constants.refundThresholdUsd
         }
 
+        /// Whether the address (typed, pasted, scanned or from a contact) is, or may contain, a gift
+        /// card link or key. Such a link carries the card's spending key, so it is never a valid
+        /// swap or pay address: the field shows an error and the form cannot be submitted.
+        var isGiftCardAddress: Bool {
+            GiftCardSecretDetector.mayContainGiftCardSecret(selectedContact?.address ?? address)
+        }
+
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
+            && !isGiftCardAddress
             && amount > 0
             && !isInsufficientFunds
             && (isSwapToZecExperienceEnabled || !isSpendabilityBeingDetermined)
@@ -1254,6 +1262,12 @@ struct SwapAndPay {
                 return .none
 
             case .addressBookUpdated:
+                // A gift card link is never offered as a new contact.
+                if state.isGiftCardAddress {
+                    state.isNotAddressInAddressBook = false
+                    state.isAddressBookHintVisible = false
+                    return .cancel(id: state.ABCancelId)
+                }
                 guard state.address.count >= 3 else {
                     state.isNotAddressInAddressBook = false
                     return .none
