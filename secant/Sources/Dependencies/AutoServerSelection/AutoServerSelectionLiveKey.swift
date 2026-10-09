@@ -4,7 +4,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension AutoServerSelectionClient: DependencyKey {
     static let liveValue = AutoServerSelectionClient(

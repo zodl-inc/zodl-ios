@@ -1,5 +1,5 @@
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: - Ballot Constants
 

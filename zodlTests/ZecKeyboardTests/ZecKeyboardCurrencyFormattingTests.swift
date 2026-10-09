@@ -7,7 +7,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized)
 struct ZecKeyboardCurrencyFormattingTests {

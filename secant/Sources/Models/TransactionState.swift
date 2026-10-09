@@ -8,7 +8,7 @@
 import Foundation
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Representation of the transaction on the SDK side, used as a bridge to the TCA wallet side. 
 struct TransactionState: Equatable, Identifiable {

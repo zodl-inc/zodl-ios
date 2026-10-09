@@ -8,7 +8,7 @@
 @preconcurrency import Combine
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import URKit
 
 extension HTTPURLResponse {

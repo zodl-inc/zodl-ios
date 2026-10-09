@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Live implementation of the `UserPreferences` using User Defaults
 /// according to https://developer.apple.com/documentation/foundation/userdefaults

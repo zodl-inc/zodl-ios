@@ -5,7 +5,7 @@
 
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum ViewingKeyTab: Equatable, CaseIterable, Sendable {
     case qrCode

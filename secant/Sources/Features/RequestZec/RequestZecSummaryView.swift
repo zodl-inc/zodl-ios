@@ -7,7 +7,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct RequestZecSummaryView: View {
     @Environment(\.colorScheme) var colorScheme

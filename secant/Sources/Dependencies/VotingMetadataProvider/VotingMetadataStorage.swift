@@ -7,7 +7,7 @@
 import Foundation
 import CryptoKit
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import os
 
 /// Encrypted, per-account, local-only storage for the voting flow's drafts,

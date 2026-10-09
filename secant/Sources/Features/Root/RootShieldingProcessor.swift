@@ -10,7 +10,7 @@ import ComposableArchitecture
 import Foundation
 import MessageUI
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Root {
     func shieldingProcessorReduce() -> Reduce<Root.State, Root.Action> {

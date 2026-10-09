@@ -3,7 +3,7 @@
 import ComposableArchitecture
 import Foundation
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: - Live key
 

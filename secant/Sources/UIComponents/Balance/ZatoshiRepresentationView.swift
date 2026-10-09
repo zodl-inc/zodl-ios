@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import ComposableArchitecture
 import XCTestDynamicOverlay
 @preconcurrency import Combine

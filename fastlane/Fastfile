@@ -147,7 +147,7 @@ lane :release do |options|
 
     # The worktree is a sibling of the repo, NOT under $TMPDIR: the project may
     # reference local Swift packages by relative path (XCLocalSwiftPackageReference,
-    # e.g. ../ZcashLightClientKit), and only a sibling worktree resolves those to
+    # e.g. ../zodl-swift-wallet-sdk), and only a sibling worktree resolves those to
     # the same directories the primary checkout uses in Xcode.
     worktree = File.join(File.dirname(repo_root), "zodl-release-#{sha[0, 8]}")
     begin

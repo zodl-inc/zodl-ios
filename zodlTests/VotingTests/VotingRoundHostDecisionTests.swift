@@ -1,7 +1,7 @@
 #if VOTING_ENABLED
 import Foundation
 import Testing
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// The pure mapping from one run's report to the host's next move.

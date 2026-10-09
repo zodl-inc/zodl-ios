@@ -19,7 +19,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @MainActor

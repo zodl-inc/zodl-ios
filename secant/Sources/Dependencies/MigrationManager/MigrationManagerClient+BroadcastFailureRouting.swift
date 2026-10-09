@@ -17,7 +17,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension MigrationManagerClient {
     /// Classifies a broadcast call's RETURNED `MigrationTransferResult` and routes it — `nil` in

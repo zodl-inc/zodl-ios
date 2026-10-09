@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum RecoveryPhraseError: Error {
     /// This error is thrown then the Recovery Phrase can't be generated

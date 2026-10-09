@@ -11,7 +11,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @preconcurrency import KeystoneSDK
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite(.serialized) struct AddKeystoneHWWalletTests {

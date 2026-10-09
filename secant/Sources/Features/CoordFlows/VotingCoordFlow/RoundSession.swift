@@ -5,7 +5,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Cached per-round state that survives navigation within the voting flow.
 ///

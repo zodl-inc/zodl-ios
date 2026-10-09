@@ -13,7 +13,7 @@
 //
 
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension WalletAccount {
     /// Copies each account's pre-generated rotation stash (`nextPrivateUA`) from `current` into

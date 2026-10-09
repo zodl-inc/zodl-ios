@@ -11,7 +11,7 @@
 
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct ZcashErrorInsufficientBalanceTests {
     @Test func typedInsufficientFundsCaseIsDetected() {

@@ -7,7 +7,7 @@ import Foundation
 import Testing
 import ComposableArchitecture
 @preconcurrency import Combine
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: mutates the process-global `selectedWalletAccount` @Shared state.
