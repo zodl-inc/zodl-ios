@@ -3,7 +3,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 extension VotingSharedStateSuites {
     /// The outcomes the abandoned 3.1 optimization stack delivered, asserted

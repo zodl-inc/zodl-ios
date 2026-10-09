@@ -1,6 +1,6 @@
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Settings {
     enum ViewingKeyCancelID {

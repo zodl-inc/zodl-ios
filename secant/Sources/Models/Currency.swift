@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct CurrencyISO4217: RawRepresentable, Hashable, Codable, Sendable {
     static let usd = CurrencyISO4217(knownCode: "USD")

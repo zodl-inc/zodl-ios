@@ -1,7 +1,7 @@
 #if VOTING_ENABLED
 import Foundation
 import Testing
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// How a run's narration folds into the per-run snapshot: the crate's tally,

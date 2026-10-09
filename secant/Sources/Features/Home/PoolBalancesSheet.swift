@@ -7,7 +7,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension HomeView {
     @ViewBuilder func poolBalancesContent() -> some View {

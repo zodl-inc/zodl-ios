@@ -10,7 +10,7 @@ import Testing
 import Foundation
 import CryptoKit
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct EncryptionKeysTests {
     // MARK: - AddressBookKey

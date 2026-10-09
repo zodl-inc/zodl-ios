@@ -8,7 +8,7 @@
 import ComposableArchitecture
 import Foundation
 @preconcurrency import MnemonicSwift
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DependencyValues {
     var walletStorage: WalletStorageClient {

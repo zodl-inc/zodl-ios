@@ -7,7 +7,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension LightWalletEndpoint: @retroactive Equatable {
     public static func == (lhs: LightWalletEndpoint, rhs: LightWalletEndpoint) -> Bool {

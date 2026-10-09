@@ -8,7 +8,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized)
 @MainActor

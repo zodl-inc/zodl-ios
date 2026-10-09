@@ -7,7 +7,7 @@
 
 import Testing
 import OSLog
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Logs are written to and read back from the process-global OSLog store, so the

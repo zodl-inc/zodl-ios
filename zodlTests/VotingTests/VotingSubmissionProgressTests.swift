@@ -1,7 +1,7 @@
 #if VOTING_ENABLED
 import Foundation
 import Testing
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// How a run's drive events reach the tracker. Events and plans are decoded

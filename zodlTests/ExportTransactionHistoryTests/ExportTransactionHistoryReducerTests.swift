@@ -11,7 +11,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite(.serialized) struct ExportTransactionHistoryReducerTests {

@@ -1,7 +1,7 @@
 #if VOTING_ENABLED
 import Foundation
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// A session these tests own.

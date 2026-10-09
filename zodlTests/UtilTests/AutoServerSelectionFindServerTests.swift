@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `findBestServer` after the SDK-side decision move: the app only checks the Automatic flag,

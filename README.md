@@ -1,7 +1,7 @@
 # Zodl iOS Wallet
 
 This is the official home of the Zodl Zcash wallet, a no-frills
-Zcash mobile wallet leveraging the [Zcash Swift SDK](https://github.com/zcash/zcash-swift-wallet-sdk).
+Zcash mobile wallet leveraging the [Zcash Swift SDK](https://github.com/zodl-inc/zodl-swift-wallet-sdk).
 
 # Production
 

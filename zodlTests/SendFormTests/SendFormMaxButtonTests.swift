@@ -12,7 +12,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 private enum MaxButtonTestError: Error {
     case sendMaxAmountFailed

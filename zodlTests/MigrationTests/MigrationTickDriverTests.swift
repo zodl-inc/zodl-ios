@@ -24,7 +24,7 @@
 
 import Foundation
 import Testing
-@_spi(Testing) @testable @preconcurrency import ZcashLightClientKit
+@_spi(Testing) @testable @preconcurrency import ZODLSwiftWalletSDK
 import ComposableArchitecture
 @testable import zodl_internal
 

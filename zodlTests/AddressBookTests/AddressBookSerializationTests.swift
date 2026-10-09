@@ -11,7 +11,7 @@ import Foundation
 import CryptoKit
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct AddressBookSerializationTests {
     private let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)

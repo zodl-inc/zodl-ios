@@ -7,7 +7,7 @@
 
 import ComposableArchitecture
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct TransactionsManager {

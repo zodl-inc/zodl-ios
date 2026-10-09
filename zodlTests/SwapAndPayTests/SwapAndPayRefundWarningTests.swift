@@ -14,7 +14,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 // Mutates process-global `@Shared` slots: the in-memory selected account and the three
 // appStorage suppression flags.
