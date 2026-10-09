@@ -54,6 +54,9 @@ import Foundation
             ("timeout", ZcashError.ledgerTimeout, .pairingFailed, .disconnected, .disconnected),
             every("transportClosed", ZcashError.ledgerTransportClosed, .disconnected),
             every("transportFailed", ZcashError.ledgerTransportFailed(UnrelatedError()), .disconnected),
+            // A later connect() to the same device displaced this one; not restartable, so it
+            // reads the same as any other lost connection.
+            every("transportReplaced", ZcashError.ledgerTransportReplaced, .disconnected),
             ("bluetoothConnectionFailed", ZcashError.ledgerBluetoothConnectionFailed(nil), .pairingFailed, .disconnected, .disconnected),
             every("notConnected", LedgerClientError.notConnected, .disconnected),
             every("appTooOld", ZcashError.ledgerAppTooOld("3.5.0"), .appTooOld),

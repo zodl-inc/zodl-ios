@@ -222,6 +222,61 @@ import ComposableArchitecture
         }
     }
 
+    @Test func aReplacedTransportIsDroppedAfterTheFailure() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .failure(ZcashError.ledgerTransportReplaced))
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device) { }
+
+        await #expect(throws: ZcashError.ledgerTransportReplaced) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+    }
+
+    // MOB-2020: a signing call cancelled while still queued behind another exchange or ceremony
+    // on the same transport throws CancellationError without the SDK ever closing the transport --
+    // it never reached the device, so there is nothing on it to abandon. The session must close it
+    // itself rather than just forget it, since the fake here (standing in for a transport the SDK
+    // left open) never calls close() on its own.
+    @Test func aCancelledSigningFailureClosesTheStillOpenTransport() async throws {
+        let transport = FakeLedgerAPDUTransport()
+        let scanner = FakeLedgerScanning(transportsToReturn: [transport])
+        let signer = FakeLedgerSigner(outcome: .failure(CancellationError()))
+        let session = makeSession(
+            makeScanner: { scanner },
+            sign: { transport, pczt, accountUUID, binding, progress in
+                try await signer.sign(transport, pczt, accountUUID, binding, progress)
+            }
+        )
+        let device = try await firstDevice(from: scanner)
+        try await session.connect(device) { }
+
+        do {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+            Issue.record("expected signPCZT to throw")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+
+        #expect(transport.closeCount == 1)
+        await #expect(throws: LedgerClientError.notConnected) {
+            for try await _ in session.signPCZT(Pczt(), accountUUID: makeAccountUUID(), binding: try makeBinding()) {}
+        }
+    }
+
     @Test func cancellingTheStreamCancelsTheSignerAndDropsTheTransport() async throws {
         let transport = FakeLedgerAPDUTransport()
         let scanner = FakeLedgerScanning(transportsToReturn: [transport])

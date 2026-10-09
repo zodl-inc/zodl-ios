@@ -40,11 +40,14 @@ extension LedgerBluetoothScanner: LedgerScanning {
 /// before returning. Kept for `signPCZT` alone since MOB-2020 (Android aac01e65): enrollment
 /// pairs with `pairDevice` now, never `connect`.
 ///
-/// `signPCZT` throws ``LedgerClientError/notConnected`` when nothing is open. A signing failure leaves the transport
-/// open too, UNLESS the SDK has already closed it: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
-/// `ledgerTransportClosed`, `ledgerTransportFailed` and cancellation all mean the transport is
-/// already gone (see docs/LEDGER.md's "transport closed" rule), so the session drops its reference
-/// rather than keep a dead one around for a retry that would only fail again.
+/// `signPCZT` throws ``LedgerClientError/notConnected`` when nothing is open. A signing failure
+/// drops the session's reference to the transport, and closes it, when the connection itself can
+/// no longer be trusted for a retry: `ledgerBluetoothDisconnected`, `ledgerTimeout`,
+/// `ledgerTransportClosed`, `ledgerTransportFailed`, `ledgerTransportReplaced` and cancellation (see
+/// docs/LEDGER.md's "transport closed" rule). The SDK has usually already closed it by then, but not
+/// always -- a signing call cancelled before it ever reached the device leaves it open -- so the
+/// session closes it itself either way; closing is idempotent, so doing it again when the SDK got
+/// there first costs nothing.
 ///
 /// `bond`, `openZcashApp(_:)` and `pairDevice(_:_:)` (MOB-2020) are enrollment's own operations:
 /// each opens a connection of its own on the same scanner and closes it before returning, never
@@ -379,18 +382,21 @@ actor LedgerSession {
         }
     }
 
-    /// Forgets the open transport after a signing failure the SDK already closed it for — but only
-    /// when the session is still holding the very transport the ceremony used. A `connect()` that
-    /// opened a different transport while this ceremony's failure was still unwinding must not lose
-    /// that newer, live transport to a stale ceremony's cleanup. Compared by reference
-    /// (`LedgerAPDUTransport` is not class-bound, but both the live and fake conformances are
-    /// reference types — `LedgerBluetoothTransport` is an actor), since the protocol does not
-    /// require `Equatable`. Never calls `close()` again on it — the SDK already did.
-    private func dropTransport(ifStillOpen usedTransport: any LedgerAPDUTransport) {
+    /// Forgets and closes the transport after a signing failure — but only when the session is
+    /// still holding the very transport the ceremony used. A `connect()` that opened a different
+    /// transport while this ceremony's failure was still unwinding must not lose that newer, live
+    /// transport to a stale ceremony's cleanup. Compared by reference (`LedgerAPDUTransport` is
+    /// class-bound, so every conformance is a reference type), since the protocol does not require
+    /// `Equatable`.
+    /// Always closes it, whether or not the SDK already did: closing is idempotent, so a transport
+    /// the SDK left open — a signing call cancelled before it ever reached the device — is closed
+    /// here, and one the SDK already closed is closed again harmlessly.
+    private func dropTransport(ifStillOpen usedTransport: any LedgerAPDUTransport) async {
         guard let current = transport, current as AnyObject === usedTransport as AnyObject else {
             return
         }
         transport = nil
+        await usedTransport.close()
     }
 
     /// Closes every transport in `transports`, each at most once even if the same reference
@@ -433,12 +439,13 @@ actor LedgerSession {
         }
     }
 
-    /// Whether a signing failure means the SDK already closed the transport, so the session should
-    /// drop its reference to it rather than leave a dead one open for a retry that would only fail
-    /// again. `CancellationError` counts too: cancelling a ceremony closes the transport the same
-    /// way a transport-level failure does (docs/LEDGER.md). Every other error — a refusal, a rule
-    /// violation, a mismatch — is a function of the transaction or the device, not the connection,
-    /// so the same transport can retry.
+    /// Whether a signing failure means the connection itself can no longer be trusted for another
+    /// attempt, so the session should drop its reference to the transport and close it, rather than
+    /// leave it for a retry that would only fail again. `CancellationError` counts too: cancelling a
+    /// ceremony usually closes the transport the same way a transport-level failure does
+    /// (docs/LEDGER.md) — though not always, see ``dropTransport(ifStillOpen:)``. Every other error
+    /// — a refusal, a rule violation, a mismatch — is a function of the transaction or the device,
+    /// not the connection, so the same transport can retry.
     private static func shouldDropTransport(after error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -447,7 +454,7 @@ actor LedgerSession {
             return false
         }
         switch zcashError {
-        case .ledgerBluetoothDisconnected, .ledgerTimeout, .ledgerTransportClosed, .ledgerTransportFailed:
+        case .ledgerBluetoothDisconnected, .ledgerTimeout, .ledgerTransportClosed, .ledgerTransportFailed, .ledgerTransportReplaced:
             return true
         default:
             return false

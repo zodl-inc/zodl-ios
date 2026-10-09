@@ -183,6 +183,11 @@ enum LedgerIssue: Equatable, Sendable, CaseIterable {
         case ZcashError.ledgerBluetoothDisconnected,
             ZcashError.ledgerTransportClosed,
             ZcashError.ledgerTransportFailed,
+            // A later connect() to the same device displaced this one. Not restartable on its
+            // own -- reconnecting automatically would just displace whichever connection
+            // replaced it in turn -- so it reads the same as any other lost connection: a
+            // user-tapped retry scans and connects fresh.
+            ZcashError.ledgerTransportReplaced,
             LedgerClientError.notConnected:
             self = .disconnected
         case ZcashError.ledgerAppTooOld:
