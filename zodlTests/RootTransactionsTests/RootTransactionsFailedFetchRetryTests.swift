@@ -31,7 +31,8 @@ import ComposableArchitecture
 @testable @preconcurrency import ZcashLightClientKit
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(2))) @MainActor struct RootTransactionsFailedFetchRetryTests {
+// The suite's first test ran 136 s on a loaded CI runner, so `.timeLimit` allows 5 minutes.
+@Suite(.serialized, .timeLimit(.minutes(5))) @MainActor struct RootTransactionsFailedFetchRetryTests {
     private struct FetchStubError: Error { }
     /// One scripted answer of the mocked `getAllTransactions`.
     private typealias Outcome = Result<IdentifiedArrayOf<TransactionState>, FetchStubError>
@@ -397,6 +398,74 @@ import ComposableArchitecture
         #expect(harness.fetchCount == settledCount + 1 + delays.count, "the budget is spent: no further retry")
         #expect(!harness.store.state.isTransactionsFetchInFlight)
         #expect(!harness.store.state.isTransactionsFetchDirty)
+    }
+
+    // MARK: - (5) MOB-2020: the loading placeholder stays up while a retry is still pending
+
+    /// Every `.transactionsFetchFailed` for the selected account used to clear both lists' loading
+    /// flag unconditionally, including the FIRST failure while the delayed retry ladder (2, 4, 8,
+    /// 16, 32 s) is still pending -- so after a switch, Home showed "Nothing here" for up to about
+    /// a minute of silent retrying. A single failure, with its first retry still scheduled, must
+    /// leave both lists' `isInvalidated` untouched.
+    @Test func aFailureWithARetryPendingKeepsBothListsLoading() async throws {
+        let accountA = Self.walletAccount(idByte: 82)
+        let accountB = Self.walletAccount(idByte: 83)
+        let harness = Harness(selected: accountA, accounts: [accountA, accountB])
+        try await harness.startObservingAndSettleAtUpToDate()
+        let settledCount = harness.fetchCount
+
+        harness.script(accountB, [Outcome.failure(FetchStubError())])
+        harness.switchTo(accountB)
+        try await harness.settled(expectingFetches: settledCount + 1)
+        #expect(harness.store.state.transactionsFetchRetryAttempt == 1, "the failure must have scheduled its first retry")
+
+        // Negative-only: give a wrongly-sent `.loadingFinished` time to land before checking it didn't.
+        try await harness.giveAWrongFetchTimeToLand()
+        #expect(harness.store.state.homeState.transactionListState.isInvalidated, "a retry is still pending -- Home must keep loading")
+        #expect(
+            harness.store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "a retry is still pending -- See All must keep loading"
+        )
+    }
+
+    // MARK: - (6) MOB-2020: the loading placeholder clears once the retry budget is spent
+
+    /// The other half of the same fix: once the retry ladder is fully spent (and nothing coalesced
+    /// behind it), the selected account's fetch has genuinely nothing further pending, and both
+    /// lists' loading flag must clear -- exactly like every other completed-fetch path.
+    @Test func aFailureAfterTheRetryBudgetIsSpentClearsBothListsLoadingFlag() async throws {
+        let accountA = Self.walletAccount(idByte: 86)
+        let accountB = Self.walletAccount(idByte: 87)
+        let harness = Harness(selected: accountA, accounts: [accountA, accountB])
+        try await harness.startObservingAndSettleAtUpToDate()
+        let settledCount = harness.fetchCount
+
+        let delays = Root.State.transactionsFetchRetryDelaysInSeconds
+        harness.script(accountB, Array(repeating: Outcome.failure(FetchStubError()), count: delays.count + 1))
+        harness.switchTo(accountB)
+        try await harness.settled(expectingFetches: settledCount + 1)
+        #expect(harness.store.state.homeState.transactionListState.isInvalidated, "the first failure alone must not clear it")
+
+        for (index, delay) in delays.enumerated() {
+            // Each retry's sleep must be parked on the scheduler before advancing past it -- see
+            // `retryArmed(count:)`.
+            try await harness.retryArmed(count: index + 1)
+            await harness.scheduler.advance(by: .seconds(delay))
+            try await harness.settled(expectingFetches: settledCount + 2 + index)
+        }
+        #expect(harness.store.state.transactionsFetchRetryAttempt == delays.count, "the whole ladder must have run")
+
+        // `.loadingFinished` is a `.send` off the last failure's own reduce -- it lands a turn
+        // after `isTransactionsFetchInFlight` clears (what `settled` waits for above), so wait for
+        // its own effect (the flag actually clearing) rather than assuming it is immediate.
+        while harness.store.state.homeState.transactionListState.isInvalidated {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(!harness.store.state.homeState.transactionListState.isInvalidated, "the budget is spent -- Home must stop loading")
+        #expect(
+            !harness.store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "the budget is spent -- See All must stop loading"
+        )
     }
 }
 

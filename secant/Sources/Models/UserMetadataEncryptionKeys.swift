@@ -21,10 +21,8 @@ struct UserMetadataEncryptionKeys: Codable, Equatable {
     var keys: [Int: UserMetadataKeys]
 
     mutating func cacheFor(seed: [UInt8], account: Account, network: NetworkType) throws {
-        guard let zip32AccountIndex = account.hdAccountIndex else {
-            return
-        }
-        
+        let zip32AccountIndex = account.encryptionKeyIndex
+
         guard let info = "metadata".data(using: .utf8) else {
             fatalError("Unable to prepare `info` info")
         }
@@ -48,11 +46,7 @@ struct UserMetadataEncryptionKeys: Codable, Equatable {
     }
 
     func getCached(account: Account) -> UserMetadataKeys? {
-        guard let zip32AccountIndex = account.hdAccountIndex else {
-            return nil
-        }
-
-        return keys[Int(zip32AccountIndex.index)]
+        keys[Int(account.encryptionKeyIndex.index)]
     }
 }
 

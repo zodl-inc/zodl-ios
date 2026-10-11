@@ -16,13 +16,24 @@ struct DisconnectHWWallet {
         var isProcessing = false
         var isFailureSheetUp = false
         var isSheetUp = false
-        @Shared(.inMemory(.walletAccounts)) var walletAccounts: [WalletAccount] = []
+        @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
 
         // support
         var canSendMail = false
         var errMsg = ""
         var messageToBeShared: String?
         var supportData: SupportData?
+
+        /// MOB-2020: this screen follows the SELECTED account, not "whichever hardware wallet is
+        /// connected" — a Keystone account's `vendor` is `.keystone`, a Ledger account's is
+        /// `.ledger`, and a Zodl account (or no selection) is `nil`, even when both a Keystone and
+        /// a Ledger are connected elsewhere in the wallet.
+        var vendor: WalletAccount.Vendor? {
+            guard let selectedWalletAccount, selectedWalletAccount.vendor.isHWWallet() else {
+                return nil
+            }
+            return selectedWalletAccount.vendor
+        }
 
         init(isProcessing: Bool = false) {
             self.isProcessing = isProcessing
@@ -43,6 +54,7 @@ struct DisconnectHWWallet {
         case tryAgain
     }
 
+    @Dependency(\.ledgerClient) var ledgerClient
     @Dependency(\.sdkSynchronizer) var sdkSynchronizer
     @Dependency(\.walletStorage) var walletStorage
 
@@ -62,30 +74,37 @@ struct DisconnectHWWallet {
                 return .none
 
             case .disconnectTapped:
+                guard state.vendor != nil else {
+                    return .none
+                }
                 state.isSheetUp = true
                 state.isProcessing = true
                 return .none
 
             case .disconnectConfirmed:
                 state.isSheetUp = false
-                var keystoneAccount: AccountUUID? = nil
-                state.walletAccounts.forEach { account in
-                    if account.vendor == .keystone {
-                        keystoneAccount = account.id
-                    }
-                }
-                guard let keystoneAccount else {
+                guard let account = state.selectedWalletAccount, account.vendor.isHWWallet() else {
                     return .none
                 }
                 return .run { send in
                     do {
-                        try await sdkSynchronizer.deleteAccount(keystoneAccount)
+                        try await sdkSynchronizer.deleteAccount(account.id)
+                        // Ledger carries state Keystone doesn't: the keychain binding (device
+                        // identity + ZIP 32 index) and per-account encryption keys, and an open
+                        // Bluetooth link. Only unwind those once the account delete itself has
+                        // actually gone through -- a failed delete must leave the binding in place
+                        // so `tryAgain` still has something to retry against.
+                        if account.vendor == .ledger {
+                            try? walletStorage.deleteLedgerBinding(account.id)
+                            try? walletStorage.clearEncryptionKeys(account.account)
+                            await ledgerClient.disconnect()
+                        }
                         await send(.disconnectFinished)
                     } catch {
                         await send(.disconnectFailed(error.localizedDescription))
                     }
                 }
-                
+
             case .disconnectFailed(let errMsg):
                 state.isProcessing = false
                 state.isFailureSheetUp = true

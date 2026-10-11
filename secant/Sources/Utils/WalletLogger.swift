@@ -13,6 +13,7 @@ enum LoggerConstants {
     static let sdkLogs = "sdkLogs_default"
     static let tcaLogs = "tcaLogs"
     static let walletLogs = "walletLogs"
+    static let ledgerLogs = "ledgerLogs"
 }
 
 private let walletLoggerLock = OSAllocatedUnfairLock<ZcashLightClientKit.Logger?>(initialState: nil)

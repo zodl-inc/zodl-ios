@@ -1,6 +1,25 @@
 {
     "releases": [
         {
+            "version": "3.17.0",
+            "date": "09-10-2026",
+            "timestamp": 1791544427,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos compatibilidad con billeteras de hardware Ledger. Conecta tu Ledger para recibir ZEC y enviarlo con aprobación en tu dispositivo. Puedes elegir qué cuenta de tu Ledger conectar; se puede conectar una cuenta a la vez."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos nuestra biblioteca criptográfica para un mejor rendimiento."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.16.0",
             "date": "07-10-2026",
             "timestamp": 1791348607,

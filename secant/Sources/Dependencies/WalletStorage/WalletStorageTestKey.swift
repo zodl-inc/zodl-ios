@@ -40,6 +40,9 @@ extension WalletStorageClient {
         importIronwoodAnnouncementFlag: { _ in },
         exportIronwoodAnnouncementFlag: { true },
         importVotingHotkey: { _, _ in },
-        exportVotingHotkey: { _ in .init(storedSecret: .init(Data()), version: 0) }
+        exportVotingHotkey: { _ in .init(storedSecret: .init(Data()), version: 0) },
+        importLedgerBinding: { _, _ in },
+        exportLedgerBinding: { _ in throw WalletStorage.WalletStorageError.uninitializedLedgerBinding },
+        deleteLedgerBinding: { _ in }
     )
 }

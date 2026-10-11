@@ -11,7 +11,7 @@ import ComposableArchitecture
 extension HomeView {
     func settingsButton() -> some View {
         Button {
-            if store.selectedWalletAccount?.vendor == .keystone {
+            if store.selectedWalletAccount?.vendor.isHWWallet() == true {
                 store.send(.settingsTapped)
             } else {
                 store.send(.moreTapped)

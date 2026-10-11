@@ -20,7 +20,7 @@ struct DisconnectHWWalletView: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
-                Text(localizable: .deleteKeystoneTitle)
+                headingText()
                     .zFont(.semiBold, size: 24, style: Design.Text.primary)
                     .padding(.top, 40)
 
@@ -41,8 +41,8 @@ struct DisconnectHWWalletView: View {
                     .padding(.top, 4)
 
                 Spacer()
-                
-                keystoneBadge()
+
+                connectedHWWalletCard()
                     .padding(.bottom, Design.Spacing._3xl)
 
                 if store.isProcessing {
@@ -60,6 +60,7 @@ struct DisconnectHWWalletView: View {
                     ) {
                         store.send(.disconnectTapped)
                     }
+                    .disabled(store.vendor == nil)
                     .padding(.bottom, 24)
                 }
 
@@ -92,34 +93,65 @@ struct DisconnectHWWalletView: View {
         .screenTitle(String(localizable: .disconnectHWWalletTitle))
     }
 
-    @ViewBuilder func keystoneBadge() -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 0) {
-                Asset.Assets.Partners.keystoneSeekLogo.image
-                    .resizable()
-                    .frame(width: 44, height: 44)
-                    .overlay {
-                        Circle()
-                            .fill(Design.Avatars.status.color(colorScheme))
-                            .frame(width: 14, height: 14)
-                            .offset(x: 18, y: 18)
-                            .background {
-                                Circle()
-                                    .fill(Design.Surfaces.fgPrimary.color(colorScheme))
-                                    .frame(width: 18, height: 18)
-                                    .offset(x: 18, y: 18)
-                            }
+    /// "Disconnect Keystone" / "Disconnect Ledger" for the selected account's vendor, the
+    /// vendor-agnostic "Disconnect Hardware" for a Zodl account or no selection — this screen is
+    /// reached only from the selected account's Advanced Settings, so `nil` is not expected in
+    /// practice.
+    @ViewBuilder private func headingText() -> some View {
+        switch store.vendor {
+        case .keystone:
+            Text(localizable: .deleteKeystoneTitle)
+        case .ledger:
+            Text(localizable: .deleteLedgerTitle)
+        case .zcash, nil:
+            Text(localizable: .disconnectHWWalletCta)
+        }
+    }
+
+    /// A single card for the selected account's hardware vendor (MOB-2020: this screen follows
+    /// the selection, never "whichever hardware wallet is connected"), same visual as the badge
+    /// this replaces. Not tappable -- there is nothing to choose, only the selected account's
+    /// vendor to disconnect. The info line mirrors it and is hidden when there is none.
+    @ViewBuilder func connectedHWWalletCard() -> some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 0) {
+                if let vendor = store.vendor {
+                    hwWalletCard(vendor)
+
+                    HStack(alignment: .top, spacing: 0) {
+                        Asset.Assets.infoOutline.image
+                            .zImage(size: 16, style: Design.Text.tertiary)
+                            .padding(.trailing, 12)
+
+                        connectedHWInfoText()
+                            .zFont(size: 12, style: Design.Text.tertiary)
                     }
+                    .padding(Design.Spacing._md)
+                }
+            }
+            .padding(Design.Spacing._md)
+            .background {
+                RoundedRectangle(cornerRadius: Design.Radius._xl)
+                    .fill(Design.Surfaces.bgSecondary.color(colorScheme))
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder private func hwWalletCard(_ vendor: WalletAccount.Vendor) -> some View {
+        WithPerceptionTracking {
+            HStack(spacing: 0) {
+                vendorMark(vendor)
                     .padding(.trailing, Design.Spacing._xl)
-                
+
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(localizable: .keystoneHW)
+                    vendorNameText(vendor)
                         .zFont(.semiBold, size: 16, style: Design.Text.primary)
-                    
+
                     Text(localizable: .currentlyConnected)
                         .zFont(size: 14, style: Design.Text.primary)
                 }
-                
+
                 Spacer()
             }
             .frame(maxWidth: .infinity)
@@ -133,25 +165,49 @@ struct DisconnectHWWalletView: View {
                             .stroke(Design.Surfaces.strokeSecondary.color(colorScheme))
                     }
             }
-
-            HStack(alignment: .top, spacing: 0) {
-                Asset.Assets.infoOutline.image
-                    .zImage(size: 16, style: Design.Text.tertiary)
-                    .padding(.trailing, 12)
-                
-                Text(localizable: .connectedHWInfo)
-                    .zFont(size: 12, style: Design.Text.tertiary)
-            }
-            .padding(Design.Spacing._md)
         }
-        .padding(Design.Spacing._md)
-        .background {
-            RoundedRectangle(cornerRadius: Design.Radius._xl)
-                .fill(Design.Surfaces.bgSecondary.color(colorScheme))
-        }
-        .frame(maxWidth: .infinity)
     }
-    
+
+    @ViewBuilder private func vendorMark(_ vendor: WalletAccount.Vendor) -> some View {
+        let mark = vendor == .ledger
+        ? Asset.Assets.Partners.ledgerLogo.image
+        : Asset.Assets.Partners.keystoneSeekLogo.image
+
+        mark
+            .resizable()
+            .frame(width: 44, height: 44)
+            .overlay {
+                Circle()
+                    .fill(Design.Avatars.status.color(colorScheme))
+                    .frame(width: 14, height: 14)
+                    .offset(x: 18, y: 18)
+                    .background {
+                        Circle()
+                            .fill(Design.Surfaces.fgPrimary.color(colorScheme))
+                            .frame(width: 18, height: 18)
+                            .offset(x: 18, y: 18)
+                    }
+            }
+    }
+
+    @ViewBuilder private func vendorNameText(_ vendor: WalletAccount.Vendor) -> some View {
+        switch vendor {
+        case .ledger:
+            Text(localizable: .ledgerHW)
+        case .keystone, .zcash:
+            Text(localizable: .keystoneHW)
+        }
+    }
+
+    @ViewBuilder private func connectedHWInfoText() -> some View {
+        switch store.vendor {
+        case .ledger:
+            Text(localizable: .connectedHWInfoLedger)
+        case .keystone, .zcash, nil:
+            Text(localizable: .connectedHWInfo)
+        }
+    }
+
     @ViewBuilder func bulletPointText(_ text: String) -> some View {
         HStack {
             Circle()
