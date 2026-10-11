@@ -49,12 +49,15 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
     func shieldFunds() {
         subject.send(.requested)
 
-        guard let account = selectedWalletAccount, let zip32AccountIndex = account.zip32AccountIndex else {
+        guard let account = selectedWalletAccount else {
             subject.sendTerminal(.failed("shieldFunds failed, no account available".toZcashError()))
             return
         }
 
-        if account.vendor == .keystone {
+        // Ledger shields the same way Keystone does: propose, hand the proposal to the signing
+        // popover, and never touch key material here. No export, no derivation — the hardware
+        // device (or the QR-based Keystone flow) is the only thing that ever sees a spending key.
+        if account.vendor.isHWWallet() {
             Task { [subject, sdkSynchronizer, zcashSDKEnvironment] in
                 do {
                     let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)
@@ -69,6 +72,11 @@ private final class ShieldingProcessorImpl: @unchecked Sendable {
                 }
             }
         } else {
+            guard let zip32AccountIndex = account.zip32AccountIndex else {
+                subject.sendTerminal(.failed("shieldFunds failed, no account available".toZcashError()))
+                return
+            }
+
             Task { [subject, derivationTool, mnemonic, sdkSynchronizer, walletStorage, zcashSDKEnvironment] in
                 do {
                     let proposal = try await sdkSynchronizer.proposeShielding(account.id, zcashSDKEnvironment.shieldingThreshold(), .empty, nil)

@@ -102,4 +102,8 @@ enum AccessibilityID {
     enum RecoveryPhrase {
         static let confirmButton = "recoveryPhrase.confirmButton"
     }
+
+    enum AddLedgerHWWallet {
+        static let accountIndexField = "addLedgerHWWallet.accountIndexField"
+    }
 }

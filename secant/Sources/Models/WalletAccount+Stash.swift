@@ -49,12 +49,13 @@ extension WalletAccount {
 /// keeps its own concretely-typed `.run { send in … }.cancellable(id:)`, which is where that
 /// wrapping already lived, and only the generation loop and the receiver rule are shared.
 enum PrivateUAStash {
-    /// The receiver set a stash address is generated with. A Keystone hardware account can only
-    /// receive shielded funds through an orchard-only address; every other account uses the full
-    /// sapling+orchard receiver set. The single source of truth for this rule — previously
-    /// inlined at each call site, including the one that used to run inside `walletAccounts()`.
+    /// The receiver set a stash address is generated with. A hardware account (Keystone, Ledger)
+    /// can only receive shielded funds through an orchard-only address; every other account uses
+    /// the full sapling+orchard receiver set. The single source of truth for this rule —
+    /// previously inlined at each call site, including the one that used to run inside
+    /// `walletAccounts()`.
     static func receivers(for account: WalletAccount) -> Set<ReceiverType> {
-        account.vendor == .keystone ? [.orchard] : [.sapling, .orchard]
+        account.vendor.isHWWallet() ? [.orchard] : [.sapling, .orchard]
     }
 
     /// Generates a fresh stash address for each of `accounts`, in order, awaiting each in turn,

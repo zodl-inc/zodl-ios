@@ -97,6 +97,15 @@ extension WalletStorageClient: DependencyKey {
             },
             exportVotingHotkey: { accountId in
                 try walletStorage.exportVotingHotkey(accountId: accountId)
+            },
+            importLedgerBinding: { binding, accountId in
+                try walletStorage.importLedgerBinding(binding, accountId: accountId)
+            },
+            exportLedgerBinding: { accountId in
+                try walletStorage.exportLedgerBinding(accountId: accountId)
+            },
+            deleteLedgerBinding: { accountId in
+                try walletStorage.deleteLedgerBinding(accountId: accountId)
             }
         )
     }

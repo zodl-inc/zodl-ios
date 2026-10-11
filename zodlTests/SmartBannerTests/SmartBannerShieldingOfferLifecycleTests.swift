@@ -28,6 +28,21 @@ import ComposableArchitecture
         )
     }
 
+    /// MOB-2020: a Ledger account has no ZIP 32 index in reality; `nil` here matches that.
+    private static func ledgerAccount() -> WalletAccount {
+        WalletAccount(
+            Account(
+                id: AccountUUID(id: [UInt8](repeating: 8, count: 16)),
+                name: "Ledger",
+                keySource: "ledger",
+                seedFingerprint: nil,
+                hdAccountIndex: nil,
+                ufvk: nil,
+                uivk: nil
+            )
+        )
+    }
+
     private static func syncState(
         account: WalletAccount,
         unshielded: Zatoshi,
@@ -361,6 +376,25 @@ import ComposableArchitecture
             await store.skipReceivedActions(strict: false)
 
             #expect(store.state.priorityContent == .priority75)
+        }
+    }
+
+    /// MOB-2020 Phase 3.3: a Ledger account now shields through the same signing screen as
+    /// Keystone, so `shieldingOfferDecision`'s vendor guard is gone — a fresh Ledger account (no
+    /// stored reminder) seats priority7 on the very first ladder pass, exactly as any other vendor
+    /// would.
+    @Test func ledgerAccountSeatsTheShieldingOfferLikeKeystone() async {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let account = Self.ledgerAccount()
+            let store = makeStore(account: account, transparentBalance: Self.shieldableBalance)
+
+            await store.send(.shieldingBalanceFetched(account.id, Self.shieldableBalance))
+            await store.finish()
+            await store.skipReceivedActions(strict: false)
+
+            #expect(store.state.priorityContent == .priority7)
         }
     }
 

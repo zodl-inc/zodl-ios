@@ -50,12 +50,36 @@ import ComposableArchitecture
         await store.finish()
     }
 
-    @Test func isKeystoneConnectedReflectsWalletAccounts() {
+    /// MOB-2020: Advanced Settings follows the SELECTED account, not "is any hardware wallet
+    /// connected" -- the row (and the gate it feeds) stays hidden for a Zodl account even while a
+    /// Keystone and a Ledger are both connected elsewhere in the wallet.
+    @Test func theDisconnectRowFollowsTheSelectedAccount() {
         var state = AdvancedSettings.State()
-        state.$walletAccounts.withLock { $0 = [] }
-        #expect(!state.isKeystoneConnected)
-        state.$walletAccounts.withLock { $0 = [keystoneAccount()] }
-        #expect(state.isKeystoneConnected)
+        state.$walletAccounts.withLock { $0 = [keystoneAccount(), ledgerAccount()] }
+
+        state.$selectedWalletAccount.withLock { $0 = nil }
+        #expect(!state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = zodlAccount() }
+        #expect(!state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = keystoneAccount() }
+        #expect(state.isHWWalletAccountSelected)
+
+        state.$selectedWalletAccount.withLock { $0 = ledgerAccount() }
+        #expect(state.isHWWalletAccountSelected)
+    }
+
+    private func zodlAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x00, count: 16)),
+            name: "Zodl",
+            keySource: nil,
+            seedFingerprint: [UInt8](repeating: 0x00, count: 32),
+            hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
     }
 
     private func keystoneAccount() -> WalletAccount {
@@ -65,6 +89,18 @@ import ComposableArchitecture
             keySource: String(localizable: .accountsKeystone).lowercased(),
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
             hdAccountIndex: Zip32AccountIndex(0),
+            ufvk: nil,
+            uivk: nil
+        ))
+    }
+
+    private func ledgerAccount() -> WalletAccount {
+        WalletAccount(Account(
+            id: AccountUUID(id: [UInt8](repeating: 0x03, count: 16)),
+            name: "Ledger",
+            keySource: "ledger",
+            seedFingerprint: nil,
+            hdAccountIndex: nil,
             ufvk: nil,
             uivk: nil
         ))

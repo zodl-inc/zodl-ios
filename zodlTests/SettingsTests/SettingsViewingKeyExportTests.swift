@@ -521,10 +521,10 @@ struct SettingsViewingKeyExportTests {
 
     @Test(arguments: ["delete", "disconnect-start", "disconnect-finished"])
     func destructiveSettingsActionsClearRetainedExport(action: String) async throws {
-        let store = try await makeStoreWithPreparedShare()
+        // A disconnect removes the selected hardware account, so the retained export is that Keystone account's.
+        let store = try await makeStoreWithPreparedShare(vendor: .keystone)
         let ownership = try #require(store.state.path.last?.viewingKeyDetail?.detail.shareOwnership)
-        let keystone = try await ViewingKeyExportFixtures.account(vendor: .keystone)
-        store.state.$walletAccounts.withLock { $0.append(keystone) }
+        let keystone = try #require(store.state.selectedWalletAccount)
         store.dependencies.sdkSynchronizer.deleteAccount = { accountID in
             #expect(accountID == keystone.id)
             #expect(ownership.wasCancelledBeforeHandoff)
@@ -636,11 +636,12 @@ struct SettingsViewingKeyExportTests {
     }
 
     private func makeStoreWithPreparedShare(
+        vendor: WalletAccount.Vendor = .zcash,
         network: LockIsolated<NetworkType> = LockIsolated(.mainnet),
         png pngProducer: (@Sendable (ViewingKeyMaterial) async throws -> ViewingKeyPNG)? = nil,
         authenticate: (@Sendable () async -> Bool)? = nil
     ) async throws -> TestStoreOf<Settings> {
-        let account = try await ViewingKeyExportFixtures.account(vendor: .zcash)
+        let account = try await ViewingKeyExportFixtures.account(vendor: vendor)
         var state = Settings.State()
         state.$selectedWalletAccount.withLock { $0 = account }
         state.$walletAccounts.withLock { $0 = [account] }

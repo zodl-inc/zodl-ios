@@ -342,6 +342,7 @@ struct SwapAndPay {
         case closeSlippageSheetTapped
         case confirmButtonTapped
         case confirmWithKeystoneTapped
+        case confirmWithLedgerTapped
         case customBackRequired
         case dismissRequired
         case dontCancelTapped
@@ -360,6 +361,11 @@ struct SwapAndPay {
         case onAppear
         case onDisappear
         case proposal(Proposal)
+        /// MOB-2020: fires from the quote sheet's `onDismiss` -- the coordinator observes this to
+        /// present the Ledger sign sheet once the quote sheet has finished animating out, when
+        /// `.confirmWithLedgerTapped` closed it. A dismissal for any other reason (the user
+        /// swiping it away, `.confirmButtonTapped`, `.confirmWithKeystoneTapped`) is a no-op.
+        case quoteSheetDismissed
         case quoteUnavailable(String)
         case refreshSwapAssets
         case scanTapped
@@ -1309,7 +1315,14 @@ struct SwapAndPay {
             case .confirmWithKeystoneTapped:
                 state.isQuotePresented = false
                 return .none
-                
+
+            case .confirmWithLedgerTapped:
+                state.isQuotePresented = false
+                return .none
+
+            case .quoteSheetDismissed:
+                return .none
+
                 // MARK: - CrossPay
 
             case .binding(\.amountAssetText):

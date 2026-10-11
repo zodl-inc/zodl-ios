@@ -21,6 +21,9 @@ struct WalletBirthday {
     struct State: Equatable {
         var birthday = ""
         var estimatedHeight = BlockHeight(0)
+        /// The hardware wallet this `isKeystoneFlow` flow is connecting, which picks the title
+        /// logo drawn above; read only when `isKeystoneFlow`.
+        var hardwareWalletVendor: WalletAccount.Vendor = .keystone
         var isKeystoneFlow = false
         var isResyncFlow = false
         var isValidBirthday = false

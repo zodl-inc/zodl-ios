@@ -14,7 +14,7 @@ struct Root {
     @ObservableState
     struct State {
         enum Path {
-            case addKeystoneHWWalletCoordFlow
+            case connectHWWalletCoordFlow
             case currencyConversionSetup
             case giftCardCoordFlow
             case migrationCoordFlow
@@ -310,7 +310,16 @@ struct Root {
         // enriching swap metadata in the background; not the curated offering.
         @Shared(.inMemory(.swapAssetsCatalog)) var swapAssets: IdentifiedArrayOf<SwapAsset> = []
 
-        var addKeystoneHWWalletCoordFlowState = AddKeystoneHWWalletCoordFlow.State.initial
+        var connectHWWalletCoordFlowState = ConnectHWWalletCoordFlow.State.initial
+        /// MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): set while a `.pairLedgerTapped` from
+        /// any host of `LedgerSignSheetView` has staged `connectHWWalletCoordFlowState` for a
+        /// repair and is waiting for that sheet to actually finish closing -- iOS drops a
+        /// presentation requested while another is still animating out (see
+        /// `.ledgerShieldingSheetDismissed`), so `path` only switches to
+        /// `.connectHWWalletCoordFlow` once `.ledgerSignSheetDismissed` confirms it. Mirrors
+        /// `SwapAndPayCoordFlow.State.isLedgerConfirmationAwaitingQuoteDismissal`'s stage-then-flag
+        /// shape.
+        var isLedgerRepairAwaitingSheetDismissal = false
         var currencyConversionSetupState = CurrencyConversionSetup.State.initial
         var giftCardCoordFlowState = GiftCardCoordFlow.State.initial
         var giftCardSyncGeneration = UUID()
@@ -352,11 +361,17 @@ struct Root {
                 || settingsState.path.contains { if case .chooseServerSetup = $0 { return true } else { return false } }
         }
 
-        /// True while the user is inside a flow that can contain a payment or vote.
-        /// This is computed from live navigation state so a deferred candidate is
+        /// True while `LedgerSignSheetView` is up over Home for a Ledger shield.
+        var isLedgerShieldingSheetPresented: Bool {
+            signWithKeystoneCoordFlowState.sendConfirmationState.isLedgerSignSheetPresented
+        }
+
+        /// True while the user is inside a flow that can contain a payment or vote, or either the
+        /// Keystone signing popover or the Ledger shielding sheet is up over Home with no `path`
+        /// of its own. This is computed from live navigation state so a deferred candidate is
         /// reconsidered as soon as the user leaves the flow.
         var isSensitiveFlowActive: Bool {
-            if signWithKeystoneCoordFlowBinding { return true }
+            if signWithKeystoneCoordFlowBinding || isLedgerShieldingSheetPresented { return true }
             guard let path else { return false }
             switch path {
             case .settings:
@@ -368,8 +383,8 @@ struct Root {
             case .giftCardCoordFlow:
                 // Redeeming broadcasts a transaction (under the transaction guard).
                 return true
-            case .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
-                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
+            case .connectHWWalletCoordFlow, .currencyConversionSetup,
+                 .receive, .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup:
                 return false
             }
         }
@@ -414,8 +429,8 @@ struct Root {
         /// transactions, receive, request-ZEC, currency conversion, Tor setup, server switch,
         /// wallet backup, and the Keystone add flow — so the remaining terms only need to cover
         /// the presentation states that are NOT `Path` cases: the Keystone signing popover, the
-        /// Server Setup full-screen cover, a background task in flight, and any alert already
-        /// on screen.
+        /// Ledger shielding sheet, the Server Setup full-screen cover, a background task in
+        /// flight, and any alert already on screen.
         ///
         /// Home's own informational sheets (e.g. the smart banner) are deliberately NOT gated
         /// here: enumerating `Home.State`'s bindings would be brittle, and the cost of losing
@@ -426,6 +441,7 @@ struct Root {
             destinationState.destination == .home
                 && path == nil
                 && !signWithKeystoneCoordFlowBinding
+                && !isLedgerShieldingSheetPresented
                 && !serverSetupViewBinding
                 && bgTask == nil
                 && alert == nil
@@ -524,7 +540,7 @@ struct Root {
         case walletConfigLoaded(WalletConfig)
         case welcome(Welcome.Action)
 
-        case addKeystoneHWWalletCoordFlow(AddKeystoneHWWalletCoordFlow.Action)
+        case connectHWWalletCoordFlow(ConnectHWWalletCoordFlow.Action)
         case currencyConversionSetup(CurrencyConversionSetup.Action)
         case giftCardCoordFlow(GiftCardCoordFlow.Action)
         case giftCardResumeSync(UUID)
@@ -547,6 +563,9 @@ struct Root {
         case settings(Settings.Action)
         case signWithKeystoneCoordFlow(SignWithKeystoneCoordFlow.Action)
         case signWithKeystoneRequested
+        /// MOB-2020 UI round 2: `LedgerSignSheetView`'s `onDismiss`, sent from `RootView`'s
+        /// `.ledgerSignSheet` next to the Keystone popover -- see `RootCoordinator`'s arm.
+        case ledgerShieldingSheetDismissed
         case swapAndPayCoordFlow(SwapAndPayCoordFlow.Action)
         case transactionsCoordFlow(TransactionsCoordFlow.Action)
         case walletBackupCoordFlow(WalletBackupCoordFlow.Action)
@@ -579,8 +598,11 @@ struct Root {
         /// NEWLY selected account's `isInvalidated` flags and re-arm the poller using the PREVIOUS
         /// account's leftover `state.transactions`, marking the new account "loaded" while the old
         /// rows are still what is on screen. For the current account, the list keeps its previous
-        /// contents either way, but a failed fetch must still clear any list still showing its
-        /// loading placeholder and re-arm the reconciliation poller from the KEPT rows -- see
+        /// contents either way, and a failed fetch always re-arms the reconciliation poller from the
+        /// KEPT rows -- but MOB-2020: it clears any list still showing its loading placeholder only
+        /// once nothing further is pending for it (the retry budget spent, no coalesced follow-up);
+        /// while a delayed retry is still scheduled, the loading placeholder stays up rather than
+        /// flashing the empty state for however long the retry ladder takes -- see
         /// `RootTransactions.swift`.
         case transactionsFetchFailed(accountUUID: AccountUUID)
         /// MOB-1954 (review follow-up): sent by the delayed retry effect a failed history read
@@ -663,6 +685,15 @@ struct Root {
 
     init() { }
     
+    /// `core` is built from four `Reduce` groups on purpose (MOB-2020). One `@ReducerBuilder`
+    /// with 35+ statements nested the builder's `_Sequence` types so deep that the Swift
+    /// runtime's demangler overflowed the 1 MB main-thread stack of a physical iPhone while
+    /// instantiating the reducer's metadata on the first `send` — a Debug build crashed at
+    /// launch with `EXC_BAD_ACCESS` in `swift::Demangle` on device, while the simulator
+    /// survived on its 8 MB stack. Each group is a concrete `Reduce`, which ends that nesting,
+    /// so a new scope goes into whichever group is smallest, keeping them about the same size,
+    /// rather than adding a statement here. `RootReducerConstructionTests` checks this on a
+    /// 512 KB-stack thread; a device launch is still the real check.
     @ReducerBuilder<State, Action>
     var core: some Reducer<State, Action> {
         BindingReducer()
@@ -771,8 +802,8 @@ struct Root {
                     ScanCoordFlow()
                 }
 
-                Scope(state: \.addKeystoneHWWalletCoordFlowState, action: \.addKeystoneHWWalletCoordFlow) {
-                    AddKeystoneHWWalletCoordFlow()
+                Scope(state: \.connectHWWalletCoordFlowState, action: \.connectHWWalletCoordFlow) {
+                    ConnectHWWalletCoordFlow()
                 }
 
                 Scope(state: \.transactionsCoordFlowState, action: \.transactionsCoordFlow) {

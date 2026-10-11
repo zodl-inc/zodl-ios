@@ -12,7 +12,7 @@ extension HomeView {
     @ViewBuilder func moreContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                if !store.isKeystoneAccountActive {
+                if !store.isHWWalletAccountActive {
                     ActionRow(
                         icon: walletStatus.isNotReadyForFullySyncedOperation
                         ? Asset.Assets.Partners.flexaDisabled.image
@@ -25,18 +25,6 @@ extension HomeView {
                         store.send(.flexaTapped)
                     }
                     .disabled(walletStatus.isNotReadyForFullySyncedOperation)
-                }
-
-                if !store.isKeystoneConnected {
-                    ActionRow(
-                        icon: Asset.Assets.Partners.keystone.image,
-                        title: String(localizable: .settingsKeystone),
-                        desc: String(localizable: .settingsKeystoneDesc),
-                        customIcon: true,
-                        divider: true
-                    ) {
-                        store.send(.addKeystoneHWWalletTapped)
-                    }
                 }
 
                 ActionRow(
@@ -87,7 +75,7 @@ extension HomeView {
                 title: String(localizable: .sendSelectPayWithNear),
                 desc: String(localizable: .sendSelectPayWithNearDesc),
                 customIcon: true,
-                divider: !store.isKeystoneAccountActive
+                divider: !store.isHWWalletAccountActive
             ) {
                 store.send(.payWithNearTapped)
             }
@@ -95,7 +83,7 @@ extension HomeView {
             .padding(.top, 32)
             .padding(.bottom, 8)
 
-            if !store.isKeystoneAccountActive {
+            if !store.isHWWalletAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
                     ? Asset.Assets.Partners.flexaDisabled.image

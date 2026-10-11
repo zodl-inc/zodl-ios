@@ -46,11 +46,11 @@ extension Root {
                     .cancel(id: state.CancelFlexaId)
                 )
 
-                // MARK: - Add Keystone HW Wallet Coord Flow
+                // MARK: - Connect HW Wallet Coord Flow
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .restoreInfo(.gotItTapped)))):
                 var leavesScreenOpenMutable = false
-                for element in state.addKeystoneHWWalletCoordFlowState.path {
+                for element in state.connectHWWalletCoordFlowState.path {
                     if case .restoreInfo(let restoreInfoState) = element {
                         leavesScreenOpenMutable = restoreInfoState.isAcknowledged
                     }
@@ -59,27 +59,32 @@ extension Root {
                 userDefaults.setValue(leavesScreenOpen, Constants.udLeavesScreenOpen)
                 return .run { _ in await autolockHandler.value(leavesScreenOpen) }
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.forgetThisDeviceTapped)))),
-                .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.forgetThisDeviceTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDevicePicker(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerAccount(.forgetThisDeviceTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDeviceReady(.forgetThisDeviceTapped)))):
                 state.path = nil
                 return .none
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded)))):
-                // `AddHWWalletStore`'s `.loadedWalletAccounts` handler (fired immediately before
-                // this action, within the SAME `.run` effect as `.accountImported`) writes
-                // `state.selectedWalletAccount` directly with no Root-visible "switch" action of
-                // its own -- this is the earliest point Root can react to that write, so the
-                // transaction/balance reactions fire here rather than waiting for the user to
-                // dismiss the "Keystone Connected" confirmation screen (`.keystoneConnected(.closeTapped)`
-                // below still runs its own refetch afterward too -- redundant but harmless once the
-                // provenance guard on `.fetchedTransactions` is in place). Navigation (pushing
-                // `.keystoneConnected`) is owned by `AddKeystoneHWWalletCoordFlowCoordinator`, so this
-                // arm leaves `state.path` untouched. The metadata reload merged in below matters here
-                // just as much as the transaction/balance reactions: the fetched list gets decorated
-                // from `userMetadataProvider`, which holds a single in-memory state for whichever
-                // account was loaded last, and a freshly imported Keystone account has no metadata
-                // encryption keys yet -- `.resolveMetadataEncryptionKeys` provisions them for every
-                // account in `state.walletAccounts`, which `.loadedWalletAccounts` has just
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerDeviceReady(.accountImportSucceeded)))):
+                // `AddHWWalletStore`/`AddLedgerHWWalletStore`'s `.loadedWalletAccounts` handler
+                // (fired immediately before this action, within the SAME `.run` effect as
+                // `.accountImported`) writes `state.selectedWalletAccount` directly with no
+                // Root-visible "switch" action of its own -- this is the earliest point Root can
+                // react to that write, so the transaction/balance reactions fire here rather than
+                // waiting for the user to dismiss the "Connected" confirmation screen (the
+                // `.closeTapped` arm below still runs its own refetch afterward too -- redundant
+                // but harmless once the provenance guard on `.fetchedTransactions` is in place).
+                // Navigation (pushing `.keystoneConnected`/`.ledgerConnected`) is owned by
+                // `ConnectHWWalletCoordFlowCoordinator`, so this arm leaves `state.path` untouched.
+                // The metadata reload merged in below matters here just as much as the
+                // transaction/balance reactions: the fetched list gets decorated from
+                // `userMetadataProvider`, which holds a single in-memory state for whichever
+                // account was loaded last, and a freshly imported account has no metadata
+                // encryption keys yet -- `.resolveMetadataEncryptionKeys` provisions them for
+                // every account in `state.walletAccounts`, which `.loadedWalletAccounts` has just
                 // repopulated, before `.loadUserMetadata` reloads the in-memory state for the new
                 // account.
                 let switchedEffect = accountSwitchedEffect(state: &state)
@@ -92,7 +97,7 @@ extension Root {
                     )
                 )
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .accountHWWalletSelection(.accountImportSucceeded)))):
                 state.path = nil
                 let switchedEffect = accountSwitchedEffect(state: &state)
                 return .merge(
@@ -104,7 +109,8 @@ extension Root {
                     )
                 )
 
-            case .addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneConnected(.closeTapped)))):
+            case .connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneConnected(.closeTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .ledgerConnected(.closeTapped)))):
                 state.path = nil
                 state.autoUpdateSwapCandidates.removeAll()
                 return .merge(
@@ -115,9 +121,71 @@ extension Root {
                     ),
                     .send(.fetchTransactionsForTheSelectedAccount)
                 )
-                
-            case .addKeystoneHWWalletCoordFlow(.addKeystoneHWWallet(.backToHomeTapped)):
+
+            case .connectHWWalletCoordFlow(.chooseHWWallet(.closeTapped)),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .addKeystoneHWWallet(.backToHomeTapped)))),
+                .connectHWWalletCoordFlow(.path(.element(id: _, action: .addLedgerHWWallet(.backToHomeTapped)))):
                 state.path = nil
+                return .none
+
+            case .connectHWWalletCoordFlow(.goToExistingAccountTapped):
+                // The flow itself closes through the `.addLedgerHWWallet(.backToHomeTapped)` arm above.
+                guard let account = state.connectHWWalletCoordFlowState.alreadyAddedAccount else {
+                    return .none
+                }
+                return .send(.home(.walletAccountTapped(account)))
+
+            case let .connectHWWalletCoordFlow(.ledgerPairingRebound(account)):
+                // MOB-2020 (Android b013b7c2, Rebound): switches to the account right away, while
+                // the Store's own arm pushes the Connected screen (same as a fresh import) --
+                // closing it is a separate step, through the `.ledgerConnected(.closeTapped)` arm
+                // above, once the user taps Close.
+                return .send(.home(.walletAccountTapped(account)))
+
+            case .home(.connectHWWalletTapped):
+                state.connectHWWalletCoordFlowState = .initial
+                state.path = .connectHWWalletCoordFlow
+                return .none
+
+                // MARK: - Ledger: Pair Ledger from the sign sheet
+
+            // MOB-2020 (Android e36fedb2/ebc98b38, d1506d0d): every host of `LedgerSignSheetView`
+            // routes "Pair Ledger" here the same way. The sheet's own reducer has already ended
+            // the session, exactly as Cancel Transaction does (`SendConfirmation.pairLedgerTapped`)
+            // -- this only stages the connect flow for the selected account, to be entered in
+            // repair mode, and waits for the sheet to actually finish closing
+            // (`.ledgerSignSheetDismissed` below) before switching `path`: iOS drops a presentation
+            // requested while another is still animating out, the same reasoning
+            // `.ledgerShieldingSheetDismissed` documents below.
+            case .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.pairLedgerTapped)))),
+                .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.pairLedgerTapped)))),
+                .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.pairLedgerTapped)))),
+                .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.pairLedgerTapped)))),
+                .swapAndPayCoordFlow(.ledgerConfirmation(.pairLedgerTapped)),
+                .signWithKeystoneCoordFlow(.sendConfirmation(.pairLedgerTapped)):
+                guard let accountId = state.selectedWalletAccount?.id else { return .none }
+                state.connectHWWalletCoordFlowState = .initial
+                state.connectHWWalletCoordFlowState.ledgerRepairTarget = accountId
+                // Starts at the Ledger instructions screen, skipping the chooser -- the account
+                // being paired again is always a Ledger.
+                state.connectHWWalletCoordFlowState.path.append(.addLedgerHWWallet(AddLedgerHWWallet.State.initial))
+                state.isLedgerRepairAwaitingSheetDismissal = true
+                return .none
+
+            case .sendCoordFlow(.path(.element(id: _, action: .sendConfirmation(.ledgerSignSheetDismissed)))),
+                .sendCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.ledgerSignSheetDismissed)))),
+                .scanCoordFlow(.path(.element(id: _, action: .sendConfirmation(.ledgerSignSheetDismissed)))),
+                .scanCoordFlow(.path(.element(id: _, action: .requestZecConfirmation(.ledgerSignSheetDismissed)))),
+                .swapAndPayCoordFlow(.ledgerConfirmation(.ledgerSignSheetDismissed)),
+                .signWithKeystoneCoordFlow(.sendConfirmation(.ledgerSignSheetDismissed)):
+                // Fires for every dismissal of this sheet, not only a repair's -- an ordinary
+                // Cancel Transaction or a completed signature must leave `path` untouched.
+                guard state.isLedgerRepairAwaitingSheetDismissal else { return .none }
+                state.isLedgerRepairAwaitingSheetDismissal = false
+                // One assignment is both "close that host" and "open the connect flow": `path` is
+                // a single value, whether it held a coord flow (send/scan/swap) or `nil` (the
+                // shielding sheet, up over Home with no `path` of its own).
+                state.path = .connectHWWalletCoordFlow
                 return .none
 
                 // MARK: - Add Keystone HW Wallet from Settings
@@ -223,8 +291,9 @@ extension Root {
                 return .send(.flexaOpenRequest)
                 
             case .home(.addKeystoneHWWalletTapped):
-                state.addKeystoneHWWalletCoordFlowState = .initial
-                state.path = .addKeystoneHWWalletCoordFlow
+                state.connectHWWalletCoordFlowState = .initial
+                state.connectHWWalletCoordFlowState.path.append(.addKeystoneHWWallet(AddKeystoneHWWallet.State.initial))
+                state.path = .connectHWWalletCoordFlow
                 return .none
                 
             case .home(.swapWithNearTapped):
@@ -244,6 +313,11 @@ extension Root {
 
             case .home(.transactionList(.transactionTapped(let txId))):
                 state.transactionsCoordFlowState = .initial
+                // MOB-2020: `.initial` starts See All loading, and only Root's `.loadingFinished`
+                // ends that now, once per answered fetch (`RootTransactions.swift`) -- so See All
+                // opens in the state Home's list is in rather than waiting for the next answer.
+                state.transactionsCoordFlowState.transactionsManagerState.isInvalidated =
+                    state.homeState.transactionListState.isInvalidated
                 state.transactionsCoordFlowState.transactionToOpen = txId
                 if let index = state.transactions.index(id: txId) {
                     state.transactionsCoordFlowState.transactionDetailsState.transaction = state.transactions[index]
@@ -253,6 +327,9 @@ extension Root {
 
             case .home(.seeAllTransactionsTapped):
                 state.transactionsCoordFlowState = .initial
+                // MOB-2020: same as `.transactionTapped` above.
+                state.transactionsCoordFlowState.transactionsManagerState.isInvalidated =
+                    state.homeState.transactionListState.isInvalidated
                 state.path = .transactionsCoordFlow
                 return .none
                 
@@ -442,9 +519,30 @@ extension Root {
                 return .none
 
             case .signWithKeystoneRequested:
+                // MOB-2020 UI round 2: a Ledger shield never opens this popover -- its root,
+                // `SignWithKeystoneCoordFlowView`, presents `LedgerSignSheetView` as a sheet over
+                // whichever screen the user tapped Shield from instead (see `RootView`).
+                // `.confirmWithLedgerTapped` puts the sheet up, resolves the PCZT and starts the
+                // Ledger ceremony (see `SendConfirmationStore.swift`). The popover only opens once
+                // that ceremony has pushed `.sending` or `.preSendingFailure` onto the coord flow's
+                // own path -- see `.ledgerShieldingSheetDismissed` below.
+                if state.selectedWalletAccount?.vendor == .ledger {
+                    return .send(.signWithKeystoneCoordFlow(.sendConfirmation(.confirmWithLedgerTapped)))
+                }
                 state.signWithKeystoneCoordFlowBinding = true
                 return .send(.signWithKeystoneCoordFlow(.sendConfirmation(.resolvePCZT)))
-                
+
+            // MOB-2020 UI round 2: `LedgerSignSheetView`'s `onDismiss` -- fired only after the
+            // sheet has actually finished animating away. The popover can only be presented AFTER
+            // that finishes: iOS silently drops a presentation requested while another is still
+            // animating out, which a same-tick `signWithKeystoneCoordFlowBinding = true` (from
+            // whatever pushed the coord flow's path below) would risk racing.
+            case .ledgerShieldingSheetDismissed:
+                if !state.signWithKeystoneCoordFlowState.path.isEmpty {
+                    state.signWithKeystoneCoordFlowBinding = true
+                }
+                return .none
+
                 // MARK: - Request Zec
 
             case .requestZecCoordFlow(.path(.element(id: _, action: .requestZecSummary(.cancelRequestTapped)))):
@@ -596,6 +694,16 @@ extension Root {
                 state.signWithKeystoneCoordFlowBinding = false
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
+            // MOB-2020 UI round 2: Close on the shielding popover's pre-signing-failure screen
+            // previously did nothing, for either vendor -- the popover stayed up over a dead
+            // screen. There is no path element here to pop back to (this coordinator's root IS
+            // that failure state once `.ledgerShieldingSheetDismissed` has presented the popover,
+            // or Keystone's own confirmation screen), so this closes the popover itself instead.
+            // No refetch: a pre-signing failure never reached the point of storing a transaction.
+            case .signWithKeystoneCoordFlow(.path(.element(id: _, action: .preSendingFailure(.backFromPCZTFailureTapped)))):
+                state.signWithKeystoneCoordFlowBinding = false
+                return .none
+
                 // MARK: - Tor Setup
                 
             case .torSetup(.disableTapped), .torSetup(.enableTapped):
@@ -613,7 +721,10 @@ extension Root {
                     .swapAndPayCoordFlow(.sendFailed(_, true)),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendDone)))),
                     .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendPartial)))),
-                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))):
+                    .swapAndPayCoordFlow(.path(.element(id: _, action: .confirmWithKeystone(.sendFailed(_, true))))),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendDone)),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendPartial)),
+                    .swapAndPayCoordFlow(.ledgerConfirmation(.sendFailed(_, true))):
                 return .send(.fetchTransactionsForTheSelectedAccount)
 
             case .swapAndPayCoordFlow(.path(.element(id: _, action: .swapToZecSummary(.sentTheFundsButtonTapped)))):

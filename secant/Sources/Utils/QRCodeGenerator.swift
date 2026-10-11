@@ -16,6 +16,7 @@ enum QRCodeGenerator {
 
     enum Vendor: Equatable, Sendable {
         case keystone
+        case ledger
         case zashi
     }
 
@@ -92,8 +93,23 @@ enum QRCodeGenerator {
             return context.createCGImage(baseImage, from: baseImage.extent)
         }
 
-        let maxPrivacyPostfix = vendor == .zashi ? maxPrivacy ? "Max" : "Low" : ""
-        let vendorPrefix = vendor == .zashi ? "" : "KS_"
+        // Keystone is the only vendor whose overlay asset ships without a Max/Low suffix (its
+        // `KS_`-prefixed assets are suffix-less); the un-prefixed "plain" assets `.zashi` uses
+        // are ALWAYS suffixed — there is no bare, un-suffixed plain asset. `.ledger` has no
+        // overlay asset of its own yet and falls back to that same plain, un-prefixed asset
+        // (see `vendorPrefix` below), so it must take the Max/Low suffix too, or the filename it
+        // builds names an asset nothing ships.
+        let maxPrivacyPostfix = vendor == .keystone ? "" : maxPrivacy ? "Max" : "Low"
+        let vendorPrefix: String
+        switch vendor {
+        case .zashi:
+            vendorPrefix = ""
+        case .keystone:
+            vendorPrefix = "KS_"
+        case .ledger:
+            // No Ledger-specific overlay asset exists yet, so the plain overlay is used.
+            vendorPrefix = ""
+        }
         let filename = export ? "QROverlay" : "QRDynamicOverlay"
         let overlayImageName = "\(vendorPrefix)\(filename)\(maxPrivacyPostfix)"
         

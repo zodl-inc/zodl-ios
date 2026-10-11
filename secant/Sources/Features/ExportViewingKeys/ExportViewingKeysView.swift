@@ -170,6 +170,12 @@ private struct ViewingKeyHeaderIcons: View {
                 .scaledToFit()
                 .frame(width: 48, height: 48)
                 .clipShape(Circle())
+        case .ledger:
+            Asset.Assets.Partners.ledgerLogo.image
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .clipShape(Circle())
         case .zcash:
             Asset.Assets.zashiLogo.image
                 .resizable()

@@ -36,11 +36,14 @@ struct SettingsView: View {
                             }
                             
                             #if VOTING_ENABLED
-                            ActionRow(
-                                icon: Asset.Assets.Icons.checkVerified.image,
-                                title: String(localizable: .settingsCoinholderPolling)
-                            ) {
-                                store.send(.coinholderPollingTapped)
+                            // MOB-2020: a Ledger account has no signing path yet (Phase 3).
+                            if !store.isLedgerAccount {
+                                ActionRow(
+                                    icon: Asset.Assets.Icons.checkVerified.image,
+                                    title: String(localizable: .settingsCoinholderPolling)
+                                ) {
+                                    store.send(.coinholderPollingTapped)
+                                }
                             }
                             #endif
 

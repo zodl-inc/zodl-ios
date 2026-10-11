@@ -41,9 +41,77 @@ import Foundation
         #expect(zashi.vendor == .zcash)
     }
 
-    private func account(keySource: String) -> Account {
+    // MARK: - Ledger vendor
+
+    @Test func ledgerVendorFlags() {
+        #expect(!WalletAccount.Vendor.ledger.isDefault())
+        #expect(WalletAccount.Vendor.ledger.isHWWallet())
+    }
+
+    @Test func vendorRawValuesStayKeystoneZcashLedger() {
+        #expect(WalletAccount.Vendor.keystone.rawValue == 0)
+        #expect(WalletAccount.Vendor.zcash.rawValue == 1)
+        #expect(WalletAccount.Vendor.ledger.rawValue == 2)
+    }
+
+    @Test func ledgerVendorName() {
+        #expect(WalletAccount.Vendor.ledger.name() == "Ledger")
+    }
+
+    @Test func initDerivesLedgerVendorFromKeySource() {
+        let lowercased = WalletAccount(account(keySource: "ledger"))
+        #expect(lowercased.vendor == .ledger)
+
+        let uppercased = WalletAccount(account(keySource: "LEDGER"))
+        #expect(uppercased.vendor == .ledger)
+    }
+
+    @Test func initDerivesKeystoneVendorFromKeySourceConstant() {
+        let keystone = WalletAccount(account(keySource: "keystone"))
+        #expect(keystone.vendor == .keystone)
+    }
+
+    @Test func initDerivesZcashVendorForNilOrUnrecognizedKeySource() {
+        let nilKeySource = WalletAccount(account(keySource: nil))
+        #expect(nilKeySource.vendor == .zcash)
+
+        let unrecognized = WalletAccount(account(keySource: "not-a-real-vendor"))
+        #expect(unrecognized.vendor == .zcash)
+    }
+
+    @Test func sortedByVendorOrdersZodlThenKeystoneThenLedger() {
+        let ledger = WalletAccount(account(keySource: "ledger", idByte: 0x03))
+        let keystone = WalletAccount(account(keySource: "keystone", idByte: 0x02))
+        let zodl = WalletAccount(account(keySource: nil, idByte: 0x01))
+
+        let sorted = WalletAccount.sortedByVendor([ledger, keystone, zodl])
+
+        #expect(sorted.map(\.vendor) == [.zcash, .keystone, .ledger])
+    }
+
+    // MARK: - addressBlockIcon
+
+    /// `Vendor` is not `CaseIterable`, so the three cases are named explicitly rather than via
+    /// `Vendor.allCases`.
+    @Test(arguments: [WalletAccount.Vendor.keystone, .zcash, .ledger])
+    func addressBlockIconIsCallableForEveryVendor(_ vendor: WalletAccount.Vendor) {
+        _ = vendor.addressBlockIcon()
+    }
+
+    @Test func sortedByVendorIsStableForAccountsSharingAVendor() {
+        let firstZodl = WalletAccount(account(keySource: nil, idByte: 0x01))
+        let secondZodl = WalletAccount(account(keySource: nil, idByte: 0x02))
+        let keystone = WalletAccount(account(keySource: "keystone", idByte: 0x03))
+
+        // Deliberately not already sorted, so a non-stable sort could still coincidentally pass.
+        let sorted = WalletAccount.sortedByVendor([secondZodl, keystone, firstZodl])
+
+        #expect(sorted.map(\.id) == [secondZodl.id, firstZodl.id, keystone.id])
+    }
+
+    private func account(keySource: String?, idByte: UInt8 = 0x01) -> Account {
         Account(
-            id: AccountUUID(id: [UInt8](repeating: 0x01, count: 16)),
+            id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
             name: "name",
             keySource: keySource,
             seedFingerprint: [UInt8](repeating: 0x02, count: 32),
