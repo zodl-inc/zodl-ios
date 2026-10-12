@@ -13,24 +13,17 @@ extension SwapAndPayForm {
         WithPerceptionTracking {
             ScrollView {
                 VStack(spacing: 0) {
+                    amountInputSection(colorScheme)
+                        .padding(.top, 36)
+
+                    refundAddressSlot()
+
+                    dividerView(colorScheme)
+
+                    quoteOutputSection(colorScheme)
+
                     if store.isSwapExperienceEnabled {
-                        fromView(colorScheme)
-                            .padding(.top, 36)
-                        
-                        dividerView(colorScheme)
-                        
-                        toView(colorScheme)
-                        
                         addressView()
-                    } else {
-                        toView(colorScheme)
-                            .padding(.top, 36)
-
-                        addressView()
-
-                        dividerView(colorScheme)
-                        
-                        fromView(colorScheme)
                     }
                     
                     slippageView()
@@ -243,21 +236,17 @@ extension SwapAndPayForm {
         }
     }
     
-    @ViewBuilder private func fromView(_ colorScheme: ColorScheme) -> some View {
+    @ViewBuilder private func amountInputSection(_ colorScheme: ColorScheme) -> some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 0) {
-                    Text(
-                        store.isSwapToZecExperienceEnabled
-                        ? String(localizable: .swapAndPayTo)
-                        : String(localizable: .swapAndPayFrom)
-                    )
-                    .zFont(.medium, size: 14, style: Design.Text.primary)
-                    .padding(.bottom, 4)
-                    
+                    Text(localizable: .swapAndPayFrom)
+                        .zFont(.medium, size: 14, style: Design.Text.primary)
+                        .padding(.bottom, 4)
+
                     Spacer()
-                    
-                    if !store.isSwapToZecExperienceEnabled {
+
+                    if store.isSwapExperienceEnabled {
                         HStack(spacing: 0) {
                             Text(
                                 (store.isSensitiveContentHidden && store.spendability != .nothing)
@@ -273,7 +262,7 @@ extension SwapAndPayForm {
                                 ? Design.Text.error
                                 : Design.Text.tertiary
                             )
-                            
+
                             if store.spendability == .nothing {
                                 ProgressView()
                                     .scaleEffect(0.7)
@@ -282,175 +271,17 @@ extension SwapAndPayForm {
                         }
                     }
                 }
-                
-                HStack(spacing: 0) {
-                    zecTicker(colorScheme)
-                        .frame(maxWidth: .infinity)
-
-                    if store.isSwapExperienceEnabled {
-                        HStack(spacing: 0) {
-                            if store.isInputInUsd {
-                                Asset.Assets.Icons.currencyDollar.image
-                                    .zImage(
-                                        size: 20,
-                                        style: store.amountText.isEmpty
-                                        ? Design.Text.tertiary
-                                        : Design.Text.primary
-                                    )
-                            } else {
-                                Asset.Assets.Icons.currencyZec.image
-                                    .zImage(
-                                        size: 20,
-                                        style: store.amountText.isEmpty
-                                        ? Design.Text.tertiary
-                                        : Design.Text.primary
-                                    )
-                            }
-                            
-                            Spacer()
-                            
-                            TextField(
-                                "",
-                                text: $store.amountText,
-                                prompt:
-                                    Text(isAmountFocused ? "" : store.localePlaceholder)
-                                    .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
-                                    .foregroundColor(Design.Text.tertiary.color(colorScheme))
-                            )
-                            .disabled(store.isQuoteRequestInFlight)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 32)
-                            .autocapitalization(.none)
-                            .autocorrectionDisabled()
-                            .keyboardType(.decimalPad)
-                            .zFont(.semiBold, size: 24, style: Design.Text.primary)
-                            .lineLimit(1)
-                            .multilineTextAlignment(.trailing)
-                            .accentColor(Design.Text.primary.color(colorScheme))
-                            .focused($isAmountFocused)
-                            .onAppear {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    isAmountFocused = true
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: Design.Radius._lg)
-                                .fill(Design.Inputs.Default.bg.color(colorScheme))
-                                .background(
-                                    RoundedRectangle(cornerRadius: Design.Radius._lg)
-                                        .stroke(
-                                            store.isInsufficientFunds
-                                            ? Design.Inputs.ErrorFilled.stroke.color(colorScheme)
-                                            : Design.Inputs.Default.bg.color(colorScheme)
-                                        )
-                                )
-                        )
-                    } else {
-                        HStack(spacing: 0) {
-                            Spacer()
-                            
-                            Text(store.primaryLabelFrom)
-                                .zFont(.semiBold, size: 24, style: Design.Text.tertiary)
-                                .multilineTextAlignment(.trailing)
-                                .minimumScaleFactor(0.1)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 32)
-                    }
-                }
-                .padding(.vertical, 8)
 
                 HStack(spacing: 0) {
-                    // Swapping INTO ZEC spends no ZEC from this wallet, so no max applies there.
-                    if store.isSwapExperienceEnabled {
-                        ZashiMaxChip(
-                            title: String(localizable: .generalMax),
-                            style: .swap,
-                            isEnabled: store.isSwapMaxButtonEnabled,
-                            isInFlight: store.isMaxRequestInFlight || store.isSpendabilityBeingDetermined
-                        ) {
-                            store.send(.maxTapped)
+                    Group {
+                        if store.isSwapExperienceEnabled {
+                            zecTicker(colorScheme)
+                        } else {
+                            assetSelectButton(colorScheme)
                         }
-                        .accessibilityIdentifier(AccessibilityID.SwapForm.maxButton)
-                    }
-
-                    Spacer()
-
-                    Text(store.secondaryLabelFrom)
-                        .zFont(.medium, size: 14, style: Design.Text.tertiary)
-                        .padding(.trailing, 4)
-                    
-                    if store.isSwapExperienceEnabled {
-                        Button {
-                            store.send(.switchInputTapped)
-                        } label: {
-                            Asset.Assets.Icons.switchHorizontal.image
-                                .zImage(size: 14, style: Design.Btns.Tertiary.fg)
-                                .padding(5)
-                                .background {
-                                    RoundedRectangle(cornerRadius: Design.Radius._md)
-                                        .fill(Design.Btns.Tertiary.bg.color(colorScheme))
-                                }
-                                .rotationEffect(Angle(degrees: 90))
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if store.isInsufficientFunds && store.isSwapExperienceEnabled {
-                HStack {
-                    Spacer()
-                    
-                    Text(localizable: .sendErrorInsufficientFunds)
-                        .zFont(size: 14, style: Design.Inputs.ErrorFilled.hint)
-                }
-                .padding(.top, 6)
-            }
-        }
-    }
-    
-    @ViewBuilder private func toView(_ colorScheme: ColorScheme) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(
-                store.isSwapToZecExperienceEnabled
-                ? String(localizable: .swapAndPayFrom)
-                : String(localizable: .swapAndPayTo)
-            )
-            .zFont(.medium, size: 14, style: Design.Text.primary)
-            .padding(.bottom, 4)
-            
-            HStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    Button {
-                        store.send(.assetSelectRequested)
-                    } label: {
-                        ticker(asset: store.selectedAsset, crosspay: false, colorScheme)
-                    }
-                    .accessibilityIdentifier(AccessibilityID.SwapForm.assetSelectButton)
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-                .disabled(store.isQuoteRequestInFlight)
-
-                if store.isSwapExperienceEnabled {
-                    HStack(spacing: 0) {
-                        Spacer()
-                        
-                        Text(store.primaryLabelTo)
-                            .zFont(.semiBold, size: 24, style: Design.Text.tertiary)
-                            .multilineTextAlignment(.trailing)
-                            .minimumScaleFactor(0.1)
-                            .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                } else {
+
                     HStack(spacing: 0) {
                         if store.isInputInUsd {
                             Asset.Assets.Icons.currencyDollar.image
@@ -460,17 +291,25 @@ extension SwapAndPayForm {
                                     ? Design.Text.tertiary
                                     : Design.Text.primary
                                 )
+                        } else if store.isSwapExperienceEnabled {
+                            Asset.Assets.Icons.currencyZec.image
+                                .zImage(
+                                    size: 20,
+                                    style: store.amountText.isEmpty
+                                    ? Design.Text.tertiary
+                                    : Design.Text.primary
+                                )
                         }
-                        
+
                         Spacer()
-                        
+
                         TextField(
                             "",
                             text: $store.amountText,
                             prompt:
                                 Text(isAmountFocused ? "" : store.localePlaceholder)
-                                    .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
-                                    .foregroundColor(Design.Text.tertiary.color(colorScheme))
+                                .font(.custom(FontFamily.Inter.semiBold.name, size: 24))
+                                .foregroundColor(Design.Text.tertiary.color(colorScheme))
                         )
                         .disabled(store.isQuoteRequestInFlight)
                         .frame(maxWidth: .infinity)
@@ -483,6 +322,11 @@ extension SwapAndPayForm {
                         .multilineTextAlignment(.trailing)
                         .accentColor(Design.Text.primary.color(colorScheme))
                         .focused($isAmountFocused)
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                isAmountFocused = true
+                            }
+                        }
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -498,49 +342,124 @@ extension SwapAndPayForm {
                                     )
                             )
                     )
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            isAmountFocused = true
-                        }
-                    }
                 }
-            }
-            .padding(.vertical, 8)
+                .padding(.vertical, 8)
 
-            HStack(spacing: 0) {
-                Spacer()
-                
-                Text(store.secondaryLabelTo)
-                    .zFont(.medium, size: 14, style: Design.Text.tertiary)
-                
-                if !store.isSwapExperienceEnabled {
+                HStack(spacing: 0) {
+                    // Swapping INTO ZEC spends no ZEC from this wallet, so no max applies there.
+                    // The chip stays laid out (invisible) so the row height is the same in both directions.
+                    ZashiMaxChip(
+                        title: String(localizable: .generalMax),
+                        style: .swap,
+                        isEnabled: store.isSwapMaxButtonEnabled,
+                        isInFlight: store.isMaxRequestInFlight || store.isSpendabilityBeingDetermined
+                    ) {
+                        store.send(.maxTapped)
+                    }
+                    .accessibilityIdentifier(AccessibilityID.SwapForm.maxButton)
+                    .opacity(store.isSwapExperienceEnabled ? 1 : 0)
+                    .disabled(!store.isSwapExperienceEnabled)
+                    .accessibilityHidden(!store.isSwapExperienceEnabled)
+
+                    Spacer()
+
+                    Text(store.isSwapExperienceEnabled ? store.secondaryLabelFrom : store.secondaryLabelTo)
+                        .zFont(.medium, size: 14, style: Design.Text.tertiary)
+                        .padding(.trailing, 4)
+
                     Button {
                         store.send(.switchInputTapped)
                     } label: {
                         Asset.Assets.Icons.switchHorizontal.image
                             .zImage(size: 14, style: Design.Btns.Tertiary.fg)
-                            .padding(8)
+                            .padding(5)
                             .background {
                                 RoundedRectangle(cornerRadius: Design.Radius._md)
                                     .fill(Design.Btns.Tertiary.bg.color(colorScheme))
                             }
                             .rotationEffect(Angle(degrees: 90))
                     }
-                    .padding(.leading, 4)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            if store.isInsufficientFunds && !store.isSwapExperienceEnabled {
+            if store.isInsufficientFunds {
                 HStack {
                     Spacer()
-                    
+
                     Text(localizable: .sendErrorInsufficientFunds)
                         .zFont(size: 14, style: Design.Inputs.ErrorFilled.hint)
                 }
                 .padding(.top, 6)
             }
         }
+    }
+
+    /// Reserves the refund address height in both directions so the switch button never moves.
+    @ViewBuilder private func refundAddressSlot() -> some View {
+        ZStack(alignment: .top) {
+            addressView(interactive: false)
+                .hidden()
+
+            if store.isSwapToZecExperienceEnabled {
+                addressView()
+            }
+        }
+        .padding(.bottom, 16)
+    }
+
+    @ViewBuilder private func quoteOutputSection(_ colorScheme: ColorScheme) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(localizable: .swapAndPayTo)
+                .zFont(.medium, size: 14, style: Design.Text.primary)
+                .padding(.bottom, 4)
+
+            HStack(spacing: 0) {
+                Group {
+                    if store.isSwapExperienceEnabled {
+                        assetSelectButton(colorScheme)
+                    } else {
+                        zecTicker(colorScheme)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                HStack(spacing: 0) {
+                    Spacer()
+
+                    Text(store.isSwapExperienceEnabled ? store.primaryLabelTo : store.primaryLabelFrom)
+                        .zFont(.semiBold, size: 24, style: Design.Text.tertiary)
+                        .multilineTextAlignment(.trailing)
+                        .minimumScaleFactor(0.1)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+            }
+            .padding(.vertical, 8)
+
+            HStack(spacing: 0) {
+                Spacer()
+
+                Text(store.isSwapExperienceEnabled ? store.secondaryLabelTo : store.secondaryLabelFrom)
+                    .zFont(.medium, size: 14, style: Design.Text.tertiary)
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func assetSelectButton(_ colorScheme: ColorScheme) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                store.send(.assetSelectRequested)
+            } label: {
+                ticker(asset: store.selectedAsset, crosspay: false, colorScheme)
+            }
+            .accessibilityIdentifier(AccessibilityID.SwapForm.assetSelectButton)
+
+            Spacer()
+        }
+        .disabled(store.isQuoteRequestInFlight)
     }
 
     @ViewBuilder private func dividerView(_ colorScheme: ColorScheme) -> some View {

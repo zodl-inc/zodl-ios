@@ -48,13 +48,15 @@ struct SwapAndPayForm: View {
         }
     }
 
-    @ViewBuilder func addressView() -> some View {
+    @ViewBuilder func addressView(interactive: Bool = true) -> some View {
+        let isRefundAddress = !interactive || store.isSwapToZecExperienceEnabled
+
         VStack(spacing: 0) {
             Button {
                 store.send(.refundAddressTapped)
             } label: {
                 HStack(spacing: 0) {
-                    Text(store.isSwapToZecExperienceEnabled
+                    Text(isRefundAddress
                          ? String(localizable: .swapToZecRefundAddress)
                          : store.isSwapExperienceEnabled ? String(localizable: .swapAndPayAddress) : ""
                     )
@@ -63,7 +65,7 @@ struct SwapAndPayForm: View {
                     .font(.custom(FontFamily.Inter.medium.name, size: 14))
                     .zForegroundColor(Design.Inputs.Filled.label)
 
-                    if store.isSwapToZecExperienceEnabled {
+                    if isRefundAddress {
                         Asset.Assets.infoCircle.image
                             .zImage(size: 13, style: Design.Text.primary)
                             .padding(8)
@@ -72,82 +74,28 @@ struct SwapAndPayForm: View {
                     Spacer()
                 }
             }
-            .disabled(!store.isSwapToZecExperienceEnabled)
+            .disabled(!interactive || !store.isSwapToZecExperienceEnabled)
 
-            ZashiTextField(
-                addressFont: true,
-                text: $store.address,
-                placeholder: String(localizable: .swapToZecAddress(store.selectedAsset?.chainName ?? "")),
-                accessoryView:
-                    HStack(spacing: 4) {
-                        WithPerceptionTracking {
-                            fieldButton(
-                                icon: store.isNotAddressInAddressBook
-                                ? Asset.Assets.Icons.userPlus.image
-                                : Asset.Assets.Icons.user.image,
-                                identifier: AccessibilityID.SwapAndPayForm.addToContactsButton
-                            ) {
-                                if store.isNotAddressInAddressBook {
-                                    store.send(.notInAddressBookButtonTapped(store.address))
-                                } else {
-                                    store.send(.addressBookRequested)
-                                }
-                            }
-
-                            fieldButton(
-                                icon: Asset.Assets.Icons.qr.image,
-                                identifier: AccessibilityID.SwapAndPayForm.scanButton
-                            ) {
-                                store.send(.scanTapped)
-                            }
-                        }
-                    }
-                    .frame(height: 20)
-                    .offset(x: 8),
-                inputReplacementView:
-                    store.selectedContact != nil
-                ? HStack(spacing: 0) {
-                    Text(store.selectedContact?.name ?? "")
-                        .zFont(.medium, size: 14, style: Design.Text.primary)
-                        .padding(.trailing, 3)
-                    
-                    Button {
-                        store.send(.selectedContactClearTapped)
-                    } label: {
-                        Asset.Assets.buttonCloseX.image
-                            .zImage(size: 14, style: Design.Tags.tcHoverFg)
-                            .padding(3)
-                            .background {
-                                Circle()
-                                    .fill(Design.Tags.tcHoverBg.color(colorScheme))
-                            }
-                    }
-                }
-                    .padding(4)
-                    .background {
-                        RoundedRectangle(cornerRadius: Design.Radius._sm)
-                            .fill(Design.Tags.surfacePrimary.color(colorScheme))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: Design.Radius._sm)
-                                    .stroke(Design.Tags.surfaceStroke.color(colorScheme))
-                                
-                            }
-                    }
-                : nil
-            )
-            .frame(minHeight: 44)
-            .disabled(store.isQuoteRequestInFlight)
-            .id(InputID.addressBookHint)
-            .keyboardType(.alphabet)
-            .focused($isAddressFocused)
-            .padding(.top, 8)
-            .anchorPreference(
-                key: UnknownAddressPreferenceKey.self,
-                value: .bounds
-            ) { $0 }
+            if interactive {
+                addressField(text: $store.address)
+                    .disabled(store.isQuoteRequestInFlight)
+                    .id(InputID.addressBookHint)
+                    .keyboardType(.alphabet)
+                    .focused($isAddressFocused)
+                    .padding(.top, 8)
+                    .anchorPreference(
+                        key: UnknownAddressPreferenceKey.self,
+                        value: .bounds
+                    ) { $0 }
+            } else {
+                addressField(text: .constant(""))
+                    .disabled(true)
+                    .padding(.top, 8)
+            }
         }
+        .accessibilityHidden(!interactive)
     }
-    
+
     @ViewBuilder func slippageView() -> some View {
         HStack(spacing: 0) {
             Text(localizable: .swapAndPaySlippageTolerance)
@@ -412,5 +360,72 @@ extension SwapAndPay {
         initialState: .initial
     ) {
         SwapAndPay()
+    }
+}
+
+extension SwapAndPayForm {
+    @ViewBuilder private func addressField(text: Binding<String>) -> some View {
+        ZashiTextField(
+            addressFont: true,
+            text: text,
+            placeholder: String(localizable: .swapToZecAddress(store.selectedAsset?.chainName ?? "")),
+            accessoryView:
+                HStack(spacing: 4) {
+                    WithPerceptionTracking {
+                        fieldButton(
+                            icon: store.isNotAddressInAddressBook
+                            ? Asset.Assets.Icons.userPlus.image
+                            : Asset.Assets.Icons.user.image,
+                            identifier: AccessibilityID.SwapAndPayForm.addToContactsButton
+                        ) {
+                            if store.isNotAddressInAddressBook {
+                                store.send(.notInAddressBookButtonTapped(store.address))
+                            } else {
+                                store.send(.addressBookRequested)
+                            }
+                        }
+
+                        fieldButton(
+                            icon: Asset.Assets.Icons.qr.image,
+                            identifier: AccessibilityID.SwapAndPayForm.scanButton
+                        ) {
+                            store.send(.scanTapped)
+                        }
+                    }
+                }
+                .frame(height: 20)
+                .offset(x: 8),
+            inputReplacementView:
+                store.selectedContact != nil
+            ? HStack(spacing: 0) {
+                Text(store.selectedContact?.name ?? "")
+                    .zFont(.medium, size: 14, style: Design.Text.primary)
+                    .padding(.trailing, 3)
+                
+                Button {
+                    store.send(.selectedContactClearTapped)
+                } label: {
+                    Asset.Assets.buttonCloseX.image
+                        .zImage(size: 14, style: Design.Tags.tcHoverFg)
+                        .padding(3)
+                        .background {
+                            Circle()
+                                .fill(Design.Tags.tcHoverBg.color(colorScheme))
+                        }
+                }
+            }
+                .padding(4)
+                .background {
+                    RoundedRectangle(cornerRadius: Design.Radius._sm)
+                        .fill(Design.Tags.surfacePrimary.color(colorScheme))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Design.Radius._sm)
+                                .stroke(Design.Tags.surfaceStroke.color(colorScheme))
+                            
+                        }
+                }
+            : nil
+        )
+        .frame(minHeight: 44)
     }
 }
