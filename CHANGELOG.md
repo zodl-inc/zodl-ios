@@ -7,6 +7,14 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Changed
+
+- In Swap, the button that switches the swap direction now stays in the same place in both directions. The screen keeps space for the refund address in both directions, and there is more space between the refund address field and the switch button.
+
+### Fixed
+
+- In Swap, the number keyboard no longer closes and opens again when you switch the swap direction.
+
 ## [3.15.0] - 2026-09-23
 
 ### Added
