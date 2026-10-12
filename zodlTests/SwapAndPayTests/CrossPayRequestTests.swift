@@ -261,6 +261,39 @@ import Testing
         #expect(CrossPayRequestParser.classify("solana:https://example.com/pay") == .refusedPaymentRequest)
     }
 
+    @Test func solanaTransactionMetadataTheProviderCannotSendIsRejected() {
+        let recipient = "mvines9iiHiQTysrwkJjGf2gb9Ex9jXJX8ns3qwf2kN"
+        let referenceRequest = "solana:\(recipient)?amount=0.01&reference=\(recipient)"
+        let memoRequest = "solana:\(recipient)?amount=0.01&memo=Order123"
+
+        #expect(CrossPayRequestParser.classify(referenceRequest) == .refusedPaymentRequest)
+        #expect(CrossPayRequestParser.classify(memoRequest) == .refusedPaymentRequest)
+    }
+
+    @Test func suppliedAmountThatCannotBecomeDecimalIsRejected() {
+        let tooPrecise = "0." + String(repeating: "0", count: 129) + "1"
+        let request = "solana:mvines9iiHiQTysrwkJjGf2gb9Ex9jXJX8ns3qwf2kN" +
+            "?amount=\(tooPrecise)&spl-token=\(solanaMint)"
+
+        #expect(CrossPayRequestParser.classify(request) == .refusedPaymentRequest)
+    }
+
+    @Test func prefixedMainnetCashAddressRemainsARawAddress() {
+        let address = "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        #expect(CrossPayRequestParser.classify(address) == .notPaymentRequest)
+        #expect(CrossPayRequestParser.classify(address.uppercased()) == .notPaymentRequest)
+    }
+
+    @Test func malformedAndNonMainnetCashAddressesRemainRejected() {
+        let badChecksum = "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6q"
+        let mixedCase = "bitcoincash:Qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        let testnet = "bchtest:pr6m7j9njldwwzlg9v7v53unlr4jkmx6eyvwc0uz5t"
+
+        #expect(CrossPayRequestParser.classify(badChecksum) == .refusedPaymentRequest)
+        #expect(CrossPayRequestParser.classify(mixedCase) == .refusedPaymentRequest)
+        #expect(CrossPayRequestParser.classify(testnet) == .refusedPaymentRequest)
+    }
+
     @Test func unrecognisedEip681MethodIsRejected() {
         #expect(CrossPayRequestParser.parse("ethereum:\(usdcContract)/approve?address=\(recipient)") == nil)
     }

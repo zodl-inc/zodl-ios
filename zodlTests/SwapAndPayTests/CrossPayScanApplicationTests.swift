@@ -194,6 +194,43 @@ import Testing
         #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayAmountUnsupported)))
     }
 
+    @Test func aSuppliedAmountThatCannotResolveChangesNothing() {
+        let invalidAsset = asset(
+            token: "USDC",
+            chain: "base",
+            decimals: -1,
+            contractAddress: Const.usdcContract
+        )
+        let request = CrossPayRequest(
+            address: Const.recipient,
+            amount: .tokenAtomic(25),
+            assetReference: .contract(
+                chain: "base",
+                chainID: nil,
+                address: Const.usdcContract
+            )
+        )
+        var state = payState()
+        let existingContact = Contact(address: "savedRecipient", name: "Saved recipient", chainId: "base")
+        state.$swapAssets.withLock { $0 = [invalidAsset] }
+        state.address = "typedByHand"
+        state.selectedContact = existingContact
+        state.selectedAsset = invalidAsset
+        state.amountAssetText = "25"
+        state.amountUsdText = "25"
+        state.amountText = "25"
+
+        state.applyScannedRequest(.paymentRequest(request), rawValue: "unused")
+
+        #expect(state.address == "typedByHand")
+        #expect(state.selectedContact == existingContact)
+        #expect(state.selectedAsset == invalidAsset)
+        #expect(state.amountAssetText == "25")
+        #expect(state.amountUsdText == "25")
+        #expect(state.amountText == "25")
+        #expect(state.toast == .top(String(localizable: .swapAndPayCrossPayAmountUnsupported)))
+    }
+
     // MARK: - Fixtures
 
     private var btcAsset: SwapAsset {

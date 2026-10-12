@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Added
+
+- [MOB-1751] [Internal] In internal and testnet builds, the Pay screen's scanner now reads Bitcoin, Litecoin, Ethereum (including ERC-20) and Solana payment request QR codes, not just plain addresses — the recipient, the coin or token being asked for, and the requested amount are filled in for you. A request is only filled in as a whole: if it names an asset you cannot pay with, carries transaction metadata the payment path cannot preserve, or contains an amount the form cannot express, nothing on the form changes and a toast explains why. Requests carrying more decimal places than the amount field accepts are rounded down, never up, and you are told when that happens. Test-network requests, Solana links that ask the wallet to sign a prepared transaction, and requests naming an Ethereum name (.eth) instead of an address are refused. Scanning a payment request into the address book saves just the address instead of the whole URI. This remains excluded from App Store builds.
+
 ## [3.15.0] - 2026-09-23
 
 ### Added
@@ -86,7 +90,6 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 ## [3.11.0] - 2026-09-03
 
 ### Added
-- [MOB-1751] The Pay screen's scanner now reads Bitcoin, Litecoin, Ethereum (including ERC-20) and Solana payment request QR codes, not just plain addresses — the recipient, the coin or token being asked for, and the requested amount are filled in for you. A request is only filled in as a whole: if it names an asset you cannot pay with, or an amount too small for the form to express, nothing on the form changes and a toast explains why. Requests carrying more decimal places than the amount field accepts are rounded down, never up, and you are told when that happens. Test-network requests, Solana links that ask the wallet to sign a prepared transaction, and requests naming an Ethereum name (.eth) instead of an address are refused. Scanning a payment request into the address book now saves just the address instead of the whole URI.
 - [MOB-1501] Swap and Pay now offer DASH, Bitcoin Cash, and ZEC on Solana and NEAR as assets you can swap to or pay with, and Dash and Bitcoin Cash can be chosen as the chain when saving a swap address in the Address Book.
 
 ### Changed

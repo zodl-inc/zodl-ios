@@ -160,6 +160,14 @@ enum CrossPayRequestParser {
     /// three outcomes so a rejected URI cannot fall through to the legacy raw-address behavior.
     static func classify(_ value: String) -> CrossPayScanResult {
         #if ZODL_INTERNAL || SECANT_TESTNET
+        // CashAddr includes its network prefix before a colon, but that prefix is part of the
+        // address rather than a payment-URI scheme. Preserve the legacy raw-address path only for
+        // fully validated mainnet P2PKH/P2SH addresses; malformed, testnet and unknown schemes
+        // still fail closed below.
+        if isMainnetCashAddress(value) {
+            return .notPaymentRequest
+        }
+
         guard let request = try? PaymentURIParser.parse(value) else {
             return URLComponents(string: value)?.scheme == nil
                 ? .notPaymentRequest
@@ -175,14 +183,7 @@ enum CrossPayRequestParser {
         case let .litecoin(request):
             parsedRequest = utxoRequest(request, chain: "ltc")
         case let .solanaTransfer(request):
-            let asset = request.splToken.map {
-                CrossPayRequest.AssetReference.contract(chain: "sol", chainID: nil, address: $0.value)
-            } ?? .native(chain: "sol")
-            parsedRequest = CrossPayRequest(
-                address: request.recipient.value,
-                amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
-                assetReference: asset
-            )
+            parsedRequest = solanaRequest(request)
         case .solanaTransaction:
             parsedRequest = nil
         }
@@ -204,10 +205,43 @@ enum CrossPayRequestParser {
     /// testnet address would otherwise resolve to the curated mainnet asset and prefill an amount.
     private static func utxoRequest(_ request: UTXOPaymentURIRequest, chain: String) -> CrossPayRequest? {
         guard request.network == .mainnet else { return nil }
+
+        let amount: CrossPayRequest.Amount?
+        if let encodedAmount = request.amount {
+            guard let value = decimal(encodedAmount) else { return nil }
+            amount = .display(value)
+        } else {
+            amount = nil
+        }
+
         return CrossPayRequest(
             address: request.address.value,
-            amount: decimal(request.amount).map(CrossPayRequest.Amount.display),
+            amount: amount,
             assetReference: .native(chain: chain)
+        )
+    }
+
+    /// References and memo are transaction instructions under Solana Pay. The current swap
+    /// provider request carries only a destination address and amount, so accepting either would
+    /// pay the merchant while silently dropping the metadata it needs to identify the invoice.
+    private static func solanaRequest(_ request: SolanaPayTransferRequest) -> CrossPayRequest? {
+        guard request.references.isEmpty, request.memo == nil else { return nil }
+
+        let amount: CrossPayRequest.Amount?
+        if let encodedAmount = request.amount {
+            guard let value = decimal(encodedAmount) else { return nil }
+            amount = .display(value)
+        } else {
+            amount = nil
+        }
+
+        let asset = request.splToken.map {
+            CrossPayRequest.AssetReference.contract(chain: "sol", chainID: nil, address: $0.value)
+        } ?? .native(chain: "sol")
+        return CrossPayRequest(
+            address: request.recipient.value,
+            amount: amount,
+            assetReference: asset
         )
     }
 
@@ -215,17 +249,27 @@ enum CrossPayRequestParser {
         switch request {
         case let .native(request):
             guard let recipient = evmAddress(request.recipientAddress) else { return nil }
+
+            let amount: CrossPayRequest.Amount?
+            if let encodedAmount = request.valueHex {
+                guard let value = decimal(hex: encodedAmount) else { return nil }
+                amount = .wei(value)
+            } else {
+                amount = nil
+            }
+
             return CrossPayRequest(
                 address: recipient,
-                amount: decimal(hex: request.valueHex).map(CrossPayRequest.Amount.wei),
+                amount: amount,
                 assetReference: .evmNative(chainID: request.chainId.map(String.init))
             )
         case let .erc20(request):
             guard let recipient = evmAddress(request.recipientAddress),
-                  let contract = evmAddress(request.tokenContractAddress) else { return nil }
+                  let contract = evmAddress(request.tokenContractAddress),
+                  let value = decimal(hex: request.valueHex) else { return nil }
             return CrossPayRequest(
                 address: recipient,
-                amount: decimal(hex: request.valueHex).map(CrossPayRequest.Amount.tokenAtomic),
+                amount: .tokenAtomic(value),
                 assetReference: .contract(
                     chain: nil,
                     chainID: request.chainId.map(String.init),
@@ -265,6 +309,78 @@ enum CrossPayRequestParser {
             guard let digit = character.hexDigitValue else { return nil }
             value = value * 16 + Decimal(digit)
         }
-        return value
+        return value.isNaN ? nil : value
+    }
+
+    /// Validates the ordinary mainnet CashAddr forms the app's BCH asset accepts as raw addresses.
+    /// This is intentionally narrower than a `bitcoincash:` prefix allowlist: Pay has no later
+    /// per-chain address validation, so checksum, canonical padding, type and payload size are all
+    /// checked here before a colon-bearing scan bypasses payment-URI rejection.
+    private static func isMainnetCashAddress(_ value: String) -> Bool {
+        let bytes = Array(value.utf8)
+        let hasLowercase = bytes.contains { (97...122).contains($0) }
+        let hasUppercase = bytes.contains { (65...90).contains($0) }
+        guard !(hasLowercase && hasUppercase) else { return false }
+
+        let components = value.lowercased().split(separator: ":", omittingEmptySubsequences: false)
+        guard components.count == 2, components[0] == "bitcoincash" else { return false }
+
+        let payloadBytes = Array(components[1].utf8)
+        guard payloadBytes.count > 8 else { return false }
+        let alphabet = Array("qpzry9x8gf2tvdw0s3jn54khce6mua7l".utf8)
+        let alphabetValues = Dictionary(uniqueKeysWithValues: alphabet.enumerated().map { ($1, UInt8($0)) })
+        let payload = payloadBytes.compactMap { alphabetValues[$0] }
+        guard payload.count == payloadBytes.count else { return false }
+
+        let prefix = Array("bitcoincash".utf8).map { $0 & 0x1f }
+        guard cashAddressPolymod(prefix + [0] + payload) == 0 else { return false }
+
+        let data = Array(payload.dropLast(8))
+        guard let decoded = convertCashAddressBits(data), let version = decoded.first else { return false }
+        guard version & 0x80 == 0 else { return false }
+
+        let type = version >> 3
+        guard type == 0 || type == 1 else { return false }
+        let hashSizes = [20, 24, 28, 32, 40, 48, 56, 64]
+        return decoded.count - 1 == hashSizes[Int(version & 0x07)]
+    }
+
+    private static func cashAddressPolymod(_ values: [UInt8]) -> UInt64 {
+        let generators: [UInt64] = [
+            0x98f2_bc8e_61,
+            0x79b7_6d99_e2,
+            0xf33e_5fb3_c4,
+            0xae2e_abe2_a8,
+            0x1e4f_43e4_70
+        ]
+        var checksum: UInt64 = 1
+        for value in values {
+            let top = checksum >> 35
+            checksum = ((checksum & 0x07ff_ffff_ff) << 5) ^ UInt64(value)
+            for index in generators.indices where (top >> index) & 1 != 0 {
+                checksum ^= generators[index]
+            }
+        }
+        return checksum ^ 1
+    }
+
+    /// Strict, canonical 5-to-8 conversion for the version byte plus address hash.
+    private static func convertCashAddressBits(_ values: [UInt8]) -> [UInt8]? {
+        var accumulator = 0
+        var bitCount = 0
+        var result: [UInt8] = []
+        for value in values {
+            guard value < 32 else { return nil }
+            accumulator = ((accumulator << 5) | Int(value)) & 0x0fff
+            bitCount += 5
+            while bitCount >= 8 {
+                bitCount -= 8
+                result.append(UInt8((accumulator >> bitCount) & 0xff))
+            }
+        }
+
+        guard bitCount < 5 else { return nil }
+        guard bitCount == 0 || ((accumulator << (8 - bitCount)) & 0xff) == 0 else { return nil }
+        return result
     }
 }

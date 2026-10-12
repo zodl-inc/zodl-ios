@@ -1921,7 +1921,7 @@ extension SwapAndPay.State {
 
         let assetChanged = selectedAsset != asset
 
-        guard let requestedAmount = request.resolvedAmount(for: asset) else {
+        if request.amount == nil {
             address = request.address
             selectedContact = nil
             selectedAsset = asset
@@ -1931,6 +1931,14 @@ extension SwapAndPay.State {
             if assetChanged {
                 clearAmountFields()
             }
+            return
+        }
+
+        // A supplied amount that cannot be resolved (for example, token metadata with an invalid
+        // decimal count) is not the same thing as an amount-less static QR. Applying the address
+        // while retaining the user's old amount would silently pay the wrong value.
+        guard let requestedAmount = request.resolvedAmount(for: asset) else {
+            $toast.withLock { $0 = .top(String(localizable: .swapAndPayCrossPayAmountUnsupported)) }
             return
         }
 
