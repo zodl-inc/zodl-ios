@@ -125,6 +125,82 @@ import ComposableArchitecture
         #expect(store.state.selectedAsset?.usdPrice == 42_000)
     }
 
+    @MainActor @Test func refreshHydratesNewFormFromPricedSharedCatalogBeforeNetworkFailure() async {
+        let liveRequests = LockIsolated(0)
+        let assets: IdentifiedArrayOf<SwapAsset> = [
+            swapAsset(chain: "zec", token: "ZEC", price: 50),
+            swapAsset(chain: "btc", token: "BTC", price: 42_000)
+        ]
+        var state = SwapAndPay.State.initial
+        state.$swapAssets.withLock { $0 = assets }
+        let store = TestStore(initialState: state) {
+            SwapAndPay()
+        } withDependencies: {
+            $0.userMetadataProvider.lastUsedAssetHistory = { [] }
+            $0.swapAndPay.swapAssets = {
+                liveRequests.withValue { $0 += 1 }
+                throw URLError(.notConnectedToInternet)
+            }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.refreshSwapAssets)
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.zecAsset?.idWithoutProvider == "zec.zec")
+        #expect(store.state.selectedAsset?.idWithoutProvider == "btc.btc")
+        #expect(store.state.hasLivePrices)
+        #expect(store.state.swapAssetFailedWithRetry == nil)
+        #expect(!store.state.isSwapAssetsRefreshInFlight)
+        #expect(liveRequests.value == 1)
+    }
+
+    @MainActor @Test func livePricePreservesAssetInputAndRebuildsCrossPayAmounts() async {
+        let cached = swapAsset(chain: "btc", token: "BTC", price: 0)
+        let live = swapAsset(chain: "btc", token: "BTC", price: 10)
+        var state = SwapAndPay.State.initial
+        state.isSwapExperienceEnabled = false
+        state.selectedAsset = cached
+        state.crossPayAmountInput = .asset
+        state.amountAssetText = "2"
+        state.amountUsdText = "0"
+        state.amountText = "0"
+        let store = TestStore(initialState: state) { SwapAndPay() } withDependencies: {
+            $0.userMetadataProvider.lastUsedAssetHistory = { [] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.swapAssetsLoaded([live], source: .live))
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.amountAssetText == "2")
+        #expect(store.state.amountUsdText == "20")
+        #expect(store.state.amountText == "2")
+    }
+
+    @MainActor @Test func repricingPreservesUsdInputAndRebuildsCrossPayTokenAmount() async {
+        let old = swapAsset(chain: "btc", token: "BTC", price: 10)
+        let refreshed = swapAsset(chain: "btc", token: "BTC", price: 5)
+        var state = SwapAndPay.State.initial
+        state.isSwapExperienceEnabled = false
+        state.selectedAsset = old
+        state.crossPayAmountInput = .usd
+        state.amountAssetText = "2"
+        state.amountUsdText = "20"
+        state.amountText = "2"
+        let store = TestStore(initialState: state) { SwapAndPay() } withDependencies: {
+            $0.userMetadataProvider.lastUsedAssetHistory = { [] }
+        }
+        store.exhaustivity = .off
+
+        await store.send(.swapAssetsLoaded([refreshed], source: .live))
+        await store.skipReceivedActions(strict: false)
+
+        #expect(store.state.amountUsdText == "20")
+        #expect(store.state.amountAssetText == "4")
+        #expect(store.state.amountText == "4")
+    }
+
     @MainActor @Test func cachedMetadataKeepsNonCuratedSupportedAssetsVisible() async {
         let store = makeLoadStore(lastUsed: [])
         store.exhaustivity = .off

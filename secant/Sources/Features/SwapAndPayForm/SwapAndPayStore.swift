@@ -37,6 +37,11 @@ struct SwapAndPay {
         case cache
         case live
     }
+
+    enum CrossPayAmountInput: Equatable {
+        case asset
+        case usd
+    }
     
     @ObservableState
     struct State: Equatable {
@@ -57,6 +62,7 @@ struct SwapAndPay {
         var balancesState = Balances.State.initial
         var chain: String?
         var customSlippage = ""
+        var crossPayAmountInput: CrossPayAmountInput?
         var isAddressBookHintVisible = false
         var isCancelSheetVisible = false
         var isDepositHelpSheetVisible = false
@@ -655,6 +661,7 @@ struct SwapAndPay {
                     state.amountAssetText = tokenValue
                     state.amountUsdText = usdValue
                     state.amountText = tokenValue
+                    state.crossPayAmountInput = .asset
                 }
                 return .none
 
@@ -689,8 +696,9 @@ struct SwapAndPay {
             case .refreshSwapAssets:
                 guard !state.isSwapAssetsRefreshInFlight else { return .none }
                 state.isSwapAssetsRefreshInFlight = true
-                let shouldLoadCache = state.swapAssets.isEmpty
-                return .run { send in
+                let inMemoryAssets = state.swapAssets
+                let shouldLoadCache = inMemoryAssets.isEmpty
+                let refreshEffect = Effect<Action>.run { send in
                     if shouldLoadCache {
                         let cachedAssets = swapAndPay.cachedSwapAssets()
                         if !cachedAssets.isEmpty {
@@ -707,7 +715,19 @@ struct SwapAndPay {
                         await send(.swapAssetsFailedWithRetry(false))
                     }
                 }
-                .cancellable(id: state.SwapAssetsCancelId, cancelInFlight: true)
+
+                let hydrationEffect: Effect<Action>
+                if inMemoryAssets.isEmpty {
+                    hydrationEffect = .none
+                } else {
+                    let source: SwapAssetsSource = inMemoryAssets.contains { $0.usdPrice > 0 }
+                        ? .live
+                        : .cache
+                    hydrationEffect = .send(.swapAssetsLoaded(inMemoryAssets, source: source))
+                }
+
+                return .concatenate(hydrationEffect, refreshEffect)
+                    .cancellable(id: state.SwapAssetsCancelId, cancelInFlight: true)
 
             case .swapAssetsRefreshFinished:
                 state.isSwapAssetsRefreshInFlight = false
@@ -834,15 +854,7 @@ struct SwapAndPay {
             case .assetTapped(let asset):
                 state.selectedAsset = asset
                 state.assetSelectBinding = false
-                if !state.isSwapExperienceEnabled && state.hasLivePrices && !state.amountAssetText.isEmpty {
-                    // when the asset changes, the values must recompute, triggering the recompute
-                    let helper = state.amountAssetText
-                    state.amountAssetText = ""
-                    state.amountAssetText = helper
-                    state.amountUsdText = state.payUsdLabel
-                    state.amountText = state.payAssetLabel
-                    state.amountAssetText = state.payAssetLabel
-                }
+                state.reconcileCrossPayAmounts()
                 return .none
 
             case .switchInputTapped:
@@ -1158,9 +1170,11 @@ struct SwapAndPay {
                 state.swapAssetFailedWithRetry = nil
                 state.swapAssetFailedCounter = 0
                 state.zecAsset = swapAssets.first { $0.idWithoutProvider == Constants.zecAsset } ?? state.zecAsset
+                var didRefreshSelectedAsset = false
                 if let selectedAssetId = state.selectedAsset?.id,
                     let refreshedAsset = swapAssets[id: selectedAssetId] {
                     state.selectedAsset = refreshedAsset
+                    didRefreshSelectedAsset = true
                 }
                 if state.selectedAsset == nil && state.selectedContact == nil {
                     if let lastUsedAssetId = userMetadataProvider.lastUsedAssetHistory().first {
@@ -1170,6 +1184,10 @@ struct SwapAndPay {
                     if state.selectedAsset == nil {
                         state.selectedAsset = swapAssets.first { $0.token.lowercased() == "btc" && $0.chain.lowercased() == "btc" }
                     }
+                }
+
+                if source == .live && didRefreshSelectedAsset {
+                    state.reconcileCrossPayAmounts()
                 }
 
                 // Cached entries intentionally have no price yet, but their metadata is still
@@ -1345,6 +1363,7 @@ struct SwapAndPay {
                 // MARK: - CrossPay
 
             case .binding(\.amountAssetText):
+                state.crossPayAmountInput = .asset
                 if !state.amountAssetText.isEmpty {
                     state.amountUsdText = state.payUsdLabel
                     state.amountText = state.payAssetLabel
@@ -1352,6 +1371,7 @@ struct SwapAndPay {
                 return .none
 
             case .binding(\.amountUsdText):
+                state.crossPayAmountInput = .usd
                 if !state.amountUsdText.isEmpty {
                     state.amountAssetText = state.payAssetLabel
                     state.amountText = state.payAssetLabel
@@ -1944,6 +1964,49 @@ extension SwapAndPay.State {
 // MARK: - CrossPay
 
 extension SwapAndPay.State {
+    /// Keeps the field the user edited unchanged while rebuilding CrossPay's dependent values
+    /// after the selected asset or its live price changes.
+    mutating func reconcileCrossPayAmounts() {
+        guard
+            !isSwapExperienceEnabled,
+            !isSwapToZecExperienceEnabled,
+            let selectedAsset,
+            selectedAsset.usdPrice > 0,
+            let crossPayAmountInput
+        else {
+            return
+        }
+
+        let formatter = conversionCrossPayFormatter
+        switch crossPayAmountInput {
+        case .asset:
+            guard
+                !amountAssetText.isEmpty,
+                let assetAmount = formatter.number(from: amountAssetText)?.decimalValue,
+                let usdText = formatter.string(
+                    from: NSDecimalNumber(decimal: assetAmount * selectedAsset.usdPrice)
+                )
+            else {
+                return
+            }
+            amountUsdText = usdText
+            amountText = amountAssetText
+
+        case .usd:
+            guard
+                !amountUsdText.isEmpty,
+                let usdAmount = formatter.number(from: amountUsdText)?.decimalValue,
+                let assetText = formatter.string(
+                    from: NSDecimalNumber(decimal: (usdAmount / selectedAsset.usdPrice).simplified)
+                )
+            else {
+                return
+            }
+            amountAssetText = assetText
+            amountText = assetText
+        }
+    }
+
     var payZecLabel: String {
         guard let zecAsset else {
             return conversionCrossPayFormatter.string(from: NSNumber(value: 0.0)) ?? "0"
