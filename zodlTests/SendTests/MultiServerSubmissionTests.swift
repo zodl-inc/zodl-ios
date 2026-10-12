@@ -154,6 +154,37 @@ import ComposableArchitecture
         #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
     }
 
+    @Test func timeoutBeforeDependentRejectionRemainsPending() {
+        let result = map(
+            txIds: [txIdA, txIdB],
+            outcomes: [.timedOut, .rejected(code: -25, message: "bad-txns-inputs-missingorspent")]
+        )
+
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB], reason: .timeout))
+    }
+
+    @Test func unreachableBeforeDependentRejectionRemainsPending() {
+        let result = map(
+            txIds: [txIdA, txIdB],
+            outcomes: [.unreachable, .rejected(code: -25, message: "bad-txns-inputs-missingorspent")]
+        )
+
+        #expect(result == .grpcFailure(txIds: [txIdA, txIdB]))
+    }
+
+    @Test func rejectionBeforeTimeoutRemainsFailure() {
+        let result = map(
+            txIds: [txIdA, txIdB],
+            outcomes: [.rejected(code: -25, message: "bad-txns-inputs-missingorspent"), .timedOut]
+        )
+
+        #expect(result == .failure(
+            txIds: [txIdA, txIdB],
+            code: -25,
+            description: "bad-txns-inputs-missingorspent"
+        ))
+    }
+
     @Test func acceptanceAfterTransportFailureMapsToPending() {
         // With per-transaction submission a later transaction can be accepted after an
         // earlier one failed, so acceptances are counted across the whole batch, not
@@ -359,18 +390,19 @@ import ComposableArchitecture
             zcashSDKEnvironment: environment(endpoint: endpoint),
             submit: { transactions, _ in
                 // Reports deliberately returned out of order: pairing must use the report's
-                // txId, not its position.
+                // txId, not its position. Correct pairing yields timeout then rejection (pending);
+                // positional pairing would yield rejection then timeout (failure).
                 [
-                    (txId: transactions[1].txId, outcome: .accepted(by: endpoint)),
-                    (txId: transactions[0].txId, outcome: .rejected(code: -25, message: "low fee"))
+                    (txId: transactions[1].txId, outcome: .rejected(code: -25, message: "low fee")),
+                    (txId: transactions[0].txId, outcome: .timedOut)
                 ]
             }
         )
 
         #expect(
-            result == .partial(
+            result == .grpcFailure(
                 txIds: [Data([0xAA]).toHexStringTxId(), Data([0xBB]).toHexStringTxId()],
-                statuses: ["rejected code: -25", "accepted by endpoint 1"]
+                reason: .timeout
             )
         )
     }

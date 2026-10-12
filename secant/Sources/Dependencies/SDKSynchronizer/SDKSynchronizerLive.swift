@@ -772,10 +772,12 @@ extension SDKSynchronizerClient {
     /// Pure mapping of per-transaction SDK submission outcomes onto the app-side result contract.
     /// `outcomes[i]` belongs to `txIds[i]`.
     ///
-    /// A rejection is terminal only when no transaction was accepted. Once any transaction in the
-    /// batch was accepted, every remaining non-accepted transaction maps to `.grpcFailure`, which
-    /// routes to "pending": each transaction was submitted individually, so its retry plan remains
-    /// active and the SDK keeps rebroadcasting it in the background.
+    /// A rejection is terminal only when no transaction was accepted and it is the first
+    /// non-accepted outcome. An earlier unresolved hop keeps the batch pending because a later
+    /// dependent hop can reject while its parent is still propagating. Once any transaction in the
+    /// batch was accepted, every remaining non-accepted transaction also maps to `.grpcFailure`,
+    /// which routes to "pending": each transaction was submitted individually, so its retry plan
+    /// remains active and the SDK keeps rebroadcasting it in the background.
     ///
     /// `.cancelled` deliberately maps like `.unreachable`: the previous app-side implementation
     /// resumed a nil winner on cancellation and routed it through the same branch as a transport
@@ -805,16 +807,14 @@ extension SDKSynchronizerClient {
             return .success(txIds: txIds)
         }
 
-        let firstRejection = outcomes.compactMap { outcome -> (code: Int, message: String)? in
-            guard case let .rejected(code, message) = outcome else { return nil }
-            return (code, message)
+        let firstNotAccepted = outcomes.first { outcome in
+            if case .accepted = outcome { return false }
+            return true
         }
-        .first
-
-        if let firstRejection {
-            return acceptedCount == 0
-                ? .failure(txIds: txIds, code: firstRejection.code, description: firstRejection.message)
-                : .grpcFailure(txIds: txIds)
+        if acceptedCount == 0,
+            let firstNotAccepted,
+            case let .rejected(code, message) = firstNotAccepted {
+            return .failure(txIds: txIds, code: code, description: message)
         }
 
         let timedOut = outcomes.contains { outcome in
