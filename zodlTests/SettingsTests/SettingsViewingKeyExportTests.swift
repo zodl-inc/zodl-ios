@@ -2,7 +2,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 // Settings has non-Equatable destinations. This test-only comparison covers the export
 // boundary; assertions below explicitly inspect route contents and captured provenance.

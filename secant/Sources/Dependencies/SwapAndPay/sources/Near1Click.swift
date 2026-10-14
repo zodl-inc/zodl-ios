@@ -7,7 +7,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct Near1Click {
     enum Constants {

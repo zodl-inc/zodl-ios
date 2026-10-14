@@ -8,7 +8,7 @@
 import SwiftUI
 import ComposableArchitecture
 @preconcurrency import KeystoneSDK
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct AddKeystoneHWWallet {

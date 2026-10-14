@@ -3,7 +3,7 @@ import ComposableArchitecture
 import Foundation
 import Testing
 @testable import zodl_internal
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 @MainActor

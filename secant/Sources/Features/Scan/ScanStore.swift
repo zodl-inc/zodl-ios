@@ -10,7 +10,7 @@ import CoreImage
 import ComposableArchitecture
 import Foundation
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import ZcashPaymentURI
 @preconcurrency import KeystoneSDK
 
@@ -112,7 +112,7 @@ struct Scan {
         /// response to apply (`applyKeystoneBatchSignatures`), `firmwareVersion` is the signing
         /// device's reported firmware (`nil` when the envelope carried none). Additive to this
         /// shared Scan feature; whichever coordinator requested the scan consumes it.
-        case foundKeystoneBatchSignatures(data: Data, firmwareVersion: ZcashLightClientKit.KeystoneFirmwareVersion?)
+        case foundKeystoneBatchSignatures(data: Data, firmwareVersion: ZODLSwiftWalletSDK.KeystoneFirmwareVersion?)
         /// PHASE 7: `decodeKeystoneSignBatchPart` threw on a frame (including a request-id mismatch
         /// at completion) — treated like a rejected scan: the coordinator abandons the ceremony.
         case keystoneBatchDecodeFailed

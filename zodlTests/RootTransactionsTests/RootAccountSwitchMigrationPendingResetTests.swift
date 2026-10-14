@@ -26,7 +26,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `.timeLimit` is sized for the shared CI runner, like its sibling suites in this directory.

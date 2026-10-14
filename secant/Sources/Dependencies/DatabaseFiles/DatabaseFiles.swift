@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Resolves the on-disk locations of the SDK wallet database files — `data.db` (with its
 /// SQLite sidecars), `cache.db`, `pending.db`, the sapling params and `to-dir` — all kept

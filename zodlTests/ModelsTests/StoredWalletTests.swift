@@ -8,7 +8,7 @@
 import Testing
 import Foundation
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct StoredWalletTests {
     @Test func placeholderCodableRoundTrip() throws {

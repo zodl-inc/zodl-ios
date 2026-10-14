@@ -1,5 +1,5 @@
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import Foundation
 import BackgroundTasks
 import Flexa
