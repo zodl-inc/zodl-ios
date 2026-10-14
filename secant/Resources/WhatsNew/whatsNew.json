@@ -1,6 +1,19 @@
 {
     "releases": [
         {
+            "version": "3.17.1",
+            "date": "14-10-2026",
+            "timestamp": 1791971841,
+            "sections": [
+                {
+                    "title": "Changed:",
+                    "bulletpoints": [
+                        "We sped up the cryptography behind shielded transactions and syncing."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.17.0",
             "date": "09-10-2026",
             "timestamp": 1791544427,
