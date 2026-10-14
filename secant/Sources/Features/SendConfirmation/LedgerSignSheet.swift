@@ -19,7 +19,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct LedgerSignSheetView: View {
     @Perception.Bindable var store: StoreOf<SendConfirmation>

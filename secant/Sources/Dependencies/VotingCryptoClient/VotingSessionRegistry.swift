@@ -1,6 +1,6 @@
 #if VOTING_ENABLED
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Why a round-scoped call could not find its session.
 enum VotingSessionError: Error, Equatable {

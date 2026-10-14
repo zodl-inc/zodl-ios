@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
     enum Vendor: Int, Equatable, Codable, Hashable {

@@ -4,7 +4,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 enum ViewingKeyKind: CaseIterable, Equatable, Sendable {
     case incoming

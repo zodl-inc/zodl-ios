@@ -5,7 +5,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// What one run has told the flow about itself, folded from its event stream:
 /// the crate's own work tally, which the failure states quote, and the last

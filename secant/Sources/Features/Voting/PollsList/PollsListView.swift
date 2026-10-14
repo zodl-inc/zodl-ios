@@ -6,7 +6,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Renders the list of voting rounds returned by the voting service.
 ///

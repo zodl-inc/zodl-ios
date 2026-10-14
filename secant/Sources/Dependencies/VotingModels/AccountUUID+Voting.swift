@@ -5,7 +5,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension AccountUUID {
     /// The account id in the hyphenated form `zcash_voting` parses.

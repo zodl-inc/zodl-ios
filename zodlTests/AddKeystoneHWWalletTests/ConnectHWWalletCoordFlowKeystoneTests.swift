@@ -23,7 +23,7 @@ import Foundation
 import ComposableArchitecture
 @preconcurrency import KeystoneSDK
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized) @MainActor struct ConnectHWWalletCoordFlowKeystoneTests {
 

@@ -15,7 +15,7 @@
 
 import Testing
 import Foundation
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite struct TransactionStateTests {

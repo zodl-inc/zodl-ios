@@ -3,7 +3,7 @@ import ComposableArchitecture
 import MessageUI
 // `WalletAccount` comes from the pinned SDK, which does not declare it `Sendable`; every other
 // store that holds one imports it this way.
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct AdvancedSettings {

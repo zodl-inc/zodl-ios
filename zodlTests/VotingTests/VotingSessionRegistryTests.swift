@@ -2,7 +2,7 @@
 import Foundation
 import os
 import Testing
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// The registry's bookkeeping, and what it does while a session is closing.

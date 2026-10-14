@@ -33,7 +33,7 @@
 //
 
 import Foundation
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 
 /// One coherent answer to "what does this migration look like", produced by a single derivation.
 ///

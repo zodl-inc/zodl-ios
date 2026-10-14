@@ -12,7 +12,7 @@
 import Testing
 import Foundation
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct AddressBookEncryptionKeysTests {
     // Public BIP-39 test vector, copied verbatim from MnemonicClientTests.swift -- not a wallet seed.
