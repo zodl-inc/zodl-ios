@@ -7,6 +7,8 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.17.1] - 2026-10-14
+
 ### Changed
 
 - Sending, shielding, syncing and coinholder voting are faster on iPhone and iPad, because the cryptography behind them now runs on code optimized for the device's processor. Nothing else changes, and there is nothing you need to do.
