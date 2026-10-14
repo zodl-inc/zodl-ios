@@ -7,7 +7,7 @@
 
 import Foundation
 import os
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension OSLogger {
     static let live = OSLogger(logLevel: .debug, category: LoggerConstants.tcaLogs)

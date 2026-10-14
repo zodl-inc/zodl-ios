@@ -12,7 +12,7 @@ import Foundation
 import Testing
 import ComposableArchitecture
 import ZcashPaymentURI
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: drives a TCA coordinator that touches the process-global `selectedWalletAccount`

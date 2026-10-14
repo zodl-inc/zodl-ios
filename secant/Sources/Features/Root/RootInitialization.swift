@@ -8,7 +8,7 @@
 import Combine
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// In this file is a collection of helpers that control all state and action related operations
 /// for the `Root` with a connection to the app/wallet initialization and erasure of the wallet.
@@ -43,7 +43,7 @@ extension Root {
         static let udLeavesScreenOpen = "udLeaves_screen_open"
         static let noAuthenticationWithinXMinutes = 15
         /// MOB-1466: the foreground migration tick loop's wake-up period — see
-        /// `migrationTickLoopEffect(state:)`. `Swift.Duration`, not `ZcashLightClientKit`'s
+        /// `migrationTickLoopEffect(state:)`. `Swift.Duration`, not `ZODLSwiftWalletSDK`'s
         /// generated protobuf `Duration`, which shadows it once that module is imported
         /// unqualified. ZERO IS THE OFF SWITCH: at `.zero` the loop never spawns at all (the
         /// effect's leading guard), while the app-open pokes are a separate lane and keep working.

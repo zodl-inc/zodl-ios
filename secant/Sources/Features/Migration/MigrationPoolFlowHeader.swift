@@ -14,7 +14,7 @@
 //  progress signal; wallet pool accounting can advance at broadcast before a row becomes Done.
 //
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 import SwiftUI
 
 struct MigrationPoolFlowHeader: View {

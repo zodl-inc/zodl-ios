@@ -29,7 +29,7 @@
 //
 
 import Testing
-import ZcashLightClientKit
+import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite struct MigrationTransferTimelineBadgeStyleTests {

@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Zatoshi {
     func decimalZashiFormatted() -> String {

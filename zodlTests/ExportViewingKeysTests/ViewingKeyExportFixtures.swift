@@ -6,7 +6,7 @@
 import Foundation
 import Testing
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 enum ViewingKeyExportFixtures {
     private static let cache = ViewingKeyAccountCache()
@@ -103,7 +103,7 @@ private actor ViewingKeyAccountCache {
         }
 
         // Public ZIP-0325 vector seed from zcash-hackworks/zcash-test-vectors, also used by
-        // ZcashLightClientKit's Zip325Tests. It is test material and carries no real funds.
+        // ZODLSwiftWalletSDK's Zip325Tests. It is test material and carries no real funds.
         let seed = Array(UInt8(0x00)...UInt8(0x1f))
         let accountIndex = Zip32AccountIndex(0)
         let derivationTool = DerivationTool(networkType: network)

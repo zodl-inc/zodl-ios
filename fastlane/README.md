@@ -66,7 +66,7 @@ the wrong Xcode, or no distribution signing identity. Run with `--dry-run` to se
 it without building.
 
 If the project at the built ref references local Swift packages (e.g. a local
-`../ZcashLightClientKit` checkout), preflight fails when that directory is
+`../zodl-swift-wallet-sdk` checkout), preflight fails when that directory is
 missing and otherwise warns with the package's git state — the build consumes
 that checkout as-is (HEAD plus any uncommitted changes), so it is not
 reproducible from this repo alone. The throwaway build worktree is created

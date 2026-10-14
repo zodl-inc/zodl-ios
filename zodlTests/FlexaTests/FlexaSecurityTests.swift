@@ -11,7 +11,7 @@ import Foundation
 @preconcurrency import Combine
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: drives a Root store sharing the process-global `selectedWalletAccount` @Shared state.

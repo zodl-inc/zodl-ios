@@ -28,7 +28,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // The suite's first test ran 136 s on a loaded CI runner, so `.timeLimit` allows 5 minutes.

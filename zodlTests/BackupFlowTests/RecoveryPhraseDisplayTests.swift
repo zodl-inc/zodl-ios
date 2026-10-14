@@ -7,7 +7,7 @@
 
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 /// Covers MOB-1363: seed words may be loaded into `RecoveryPhraseDisplay` state only

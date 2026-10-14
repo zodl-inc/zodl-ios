@@ -21,7 +21,7 @@ import ComposableArchitecture
 import ConcurrencyExtras
 import Foundation
 import Testing
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite(.serialized) @MainActor struct MigrationBannerSyncGateRepollTests {

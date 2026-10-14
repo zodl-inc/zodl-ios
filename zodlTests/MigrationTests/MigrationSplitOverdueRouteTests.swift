@@ -24,7 +24,7 @@
 //
 
 import Testing
-@_spi(Testing) import ZcashLightClientKit
+@_spi(Testing) import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 @Suite struct MigrationSplitOverdueRouteTests {
