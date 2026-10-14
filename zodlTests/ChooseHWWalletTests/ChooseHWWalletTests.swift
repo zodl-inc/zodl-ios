@@ -9,7 +9,7 @@
 
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `ChooseHWWallet.State` carries `@Shared(.inMemory(.walletAccounts))` process-global storage,

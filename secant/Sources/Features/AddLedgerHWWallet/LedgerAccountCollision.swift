@@ -21,7 +21,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Recognizes librustzcash's "account already in the wallet" import refusal and finds the
 /// existing account it names.

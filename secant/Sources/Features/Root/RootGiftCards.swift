@@ -7,7 +7,7 @@
 
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Routing for the "Redeem gift card" flow: Home's entry point, gift card links found by the
 /// scanners of the Scan, Send, Swap/Pay and Settings flows, and gift card links the app was opened with.

@@ -5,7 +5,7 @@
 
 import ComposableArchitecture
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Finds Ledger devices and opens connections to them.
 ///

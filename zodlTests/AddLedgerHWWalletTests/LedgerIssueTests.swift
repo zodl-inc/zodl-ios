@@ -8,7 +8,7 @@
 
 import Testing
 import Foundation
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `.timeLimit` is SignalledClock's own backstop (TestSupport/SignalledClock.swift): a wait that

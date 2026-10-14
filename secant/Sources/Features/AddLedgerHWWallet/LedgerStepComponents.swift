@@ -21,7 +21,7 @@
 //
 
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 // MARK: - Nav title
 
