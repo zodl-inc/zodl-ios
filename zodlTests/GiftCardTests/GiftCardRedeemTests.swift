@@ -10,7 +10,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // Serialized: mutates the process-global selected-account `@Shared` slot.
@@ -1420,7 +1420,7 @@ private struct FakeGiftCardSession: GiftCardSession {
     @Test func dustCardHasNothingToRedeem() {
         let pool = PoolBalance(spendableValue: Zatoshi(5_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero)
         let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
-        let dust = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: nil)
+        let dust = ZODLSwiftWalletSDK.GiftCardStatus(balance: balance, sweep: nil)
 
         #expect(dust.state == .dust)
         #expect(GiftCardRedeemerSession.appStatus(dust) == .dust)
@@ -1431,8 +1431,8 @@ private struct FakeGiftCardSession: GiftCardSession {
     @Test func readyCardCarriesTheSDKsRedeemableAmount() {
         let pool = PoolBalance(spendableValue: Zatoshi(10_010_000), changePendingConfirmation: .zero, valuePendingSpendability: .zero)
         let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
-        let sweep = ZcashLightClientKit.GiftCardStatus.Sweep(fee: Zatoshi(15_000), amount: Zatoshi(9_995_000))
-        let ready = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: sweep)
+        let sweep = ZODLSwiftWalletSDK.GiftCardStatus.Sweep(fee: Zatoshi(15_000), amount: Zatoshi(9_995_000))
+        let ready = ZODLSwiftWalletSDK.GiftCardStatus(balance: balance, sweep: sweep)
 
         #expect(GiftCardRedeemerSession.appStatus(ready) == .ready(spendable: Zatoshi(10_010_000), redeemable: Zatoshi(9_995_000)))
     }
@@ -1441,7 +1441,7 @@ private struct FakeGiftCardSession: GiftCardSession {
     @Test func pendingCardReportsWhatIsWaiting() {
         let pool = PoolBalance(spendableValue: .zero, changePendingConfirmation: .zero, valuePendingSpendability: Zatoshi(10_010_000))
         let balance = AccountBalance(saplingBalance: .zero, orchardBalance: pool, unshielded: .zero)
-        let pending = ZcashLightClientKit.GiftCardStatus(balance: balance, sweep: nil)
+        let pending = ZODLSwiftWalletSDK.GiftCardStatus(balance: balance, sweep: nil)
 
         #expect(GiftCardRedeemerSession.appStatus(pending) == .pending(amount: Zatoshi(10_010_000), confirmationsNeeded: nil))
     }

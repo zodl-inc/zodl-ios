@@ -15,7 +15,7 @@ import Testing
 import Foundation
 import ComposableArchitecture
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite(.serialized) struct SendFormLedgerAddressTests {
     private static func ledgerAccount() -> WalletAccount {
