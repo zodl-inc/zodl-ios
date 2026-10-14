@@ -12,7 +12,7 @@
 import Foundation
 import Testing
 import ComposableArchitecture
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 @testable import zodl_internal
 
 // `Root.State: Equatable` is provided test-target-wide by RootInitializeSDKHealTests.swift.

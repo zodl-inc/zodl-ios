@@ -9,7 +9,7 @@ import Testing
 import Foundation
 import os
 @testable import zodl_internal
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// Serializes access to the process-global `NumberFormatter` singletons
 /// (`NumberFormatter.zashiBalanceFormatter`, `.zcashNumberFormatter8FractionDigits`) across the

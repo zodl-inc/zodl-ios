@@ -8,7 +8,7 @@
 //  a stand-in to be cached and derived at all.
 //
 
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension Account {
     /// The index an account's encryption keys are cached and derived under.

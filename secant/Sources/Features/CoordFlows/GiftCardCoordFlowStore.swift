@@ -7,7 +7,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// The "Redeem gift card" flow. It starts either on the scanner (from Home, whose "Paste link"
 /// opens the paste screen) or directly on the card (a scanned or opened link), and ends when the

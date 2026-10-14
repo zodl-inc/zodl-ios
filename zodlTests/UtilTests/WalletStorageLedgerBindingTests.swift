@@ -12,7 +12,7 @@ import Foundation
 import Security
 import os
 @testable import zodl_internal
-@testable @preconcurrency import ZcashLightClientKit
+@testable @preconcurrency import ZODLSwiftWalletSDK
 
 @Suite struct WalletStorageLedgerBindingTests {
     @Test func importLedgerBindingWritesUnderTheAccountKey() throws {

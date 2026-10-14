@@ -5,7 +5,7 @@
 
 import ComposableArchitecture
 import XCTestDynamicOverlay
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension LedgerClient {
     static let noOp = Self(

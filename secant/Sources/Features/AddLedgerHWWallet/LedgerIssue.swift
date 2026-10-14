@@ -11,7 +11,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// One of the states the Ledger error sheets show, plus the copy and primary action that go with
 /// it in each `Context`.

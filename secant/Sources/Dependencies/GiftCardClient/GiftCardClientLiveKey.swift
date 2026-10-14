@@ -7,7 +7,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension GiftCardClient: DependencyKey {
     static let liveValue = Self.live()
@@ -377,7 +377,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
     }
 
     func status() async throws -> GiftCardStatus {
-        let status: ZcashLightClientKit.GiftCardStatus
+        let status: ZODLSwiftWalletSDK.GiftCardStatus
         do {
             status = try await redeemer.check()
         } catch ZcashError.giftCardRedeemerCleanedUp {
@@ -388,7 +388,7 @@ struct GiftCardRedeemerSession: GiftCardSession {
 
     /// The SDK's view of a card, as the redeem screen shows it. A ready card's `redeemable` is what
     /// the SDK's own proposal of the redemption sends, after the fee its notes require.
-    static func appStatus(_ status: ZcashLightClientKit.GiftCardStatus) -> GiftCardStatus {
+    static func appStatus(_ status: ZODLSwiftWalletSDK.GiftCardStatus) -> GiftCardStatus {
         switch status.state {
         case .ready:
             return .ready(spendable: status.spendable, redeemable: status.redeemable)

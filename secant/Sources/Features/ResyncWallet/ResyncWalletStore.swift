@@ -8,7 +8,7 @@
 import Foundation
 import ComposableArchitecture
 import MessageUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 @Reducer
 struct ResyncWallet {

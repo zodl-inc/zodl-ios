@@ -7,7 +7,7 @@
 
 import Foundation
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// One gift card, from "looking for your gift" to "redeemed". Opens the card's isolated wallet
 /// through `GiftCardClient`, waits for its sync, offers to redeem what it holds into the selected

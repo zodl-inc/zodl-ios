@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct BalanceWithIconView: View {
     let balance: Zatoshi

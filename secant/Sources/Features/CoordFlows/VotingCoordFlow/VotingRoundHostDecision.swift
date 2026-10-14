@@ -5,7 +5,7 @@
 //
 
 import Foundation
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 /// What the host owes a round once one run of the driver has stopped.
 ///

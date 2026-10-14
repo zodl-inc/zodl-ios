@@ -7,7 +7,7 @@
 
 import ComposableArchitecture
 import XCTestDynamicOverlay
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 extension DerivationToolClient {
     static let noOp = Self(

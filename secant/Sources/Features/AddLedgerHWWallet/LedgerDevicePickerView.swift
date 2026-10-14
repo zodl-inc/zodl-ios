@@ -18,7 +18,7 @@
 
 import SwiftUI
 import ComposableArchitecture
-@preconcurrency import ZcashLightClientKit
+@preconcurrency import ZODLSwiftWalletSDK
 
 struct LedgerDevicePickerView: View {
     @Perception.Bindable var store: StoreOf<AddLedgerHWWallet>
