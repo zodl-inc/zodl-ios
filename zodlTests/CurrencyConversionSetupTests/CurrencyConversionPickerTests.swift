@@ -7,7 +7,9 @@ import ComposableArchitecture
 import Testing
 @testable import zodl_internal
 
-@Suite(.serialized, .timeLimit(.minutes(1)))
+// `.timeLimit` is a backstop against a wait that never fires, not a target duration; it allows
+// 5 minutes because these tests have taken up to about 100 s on a loaded CI runner.
+@Suite(.serialized, .timeLimit(.minutes(5)))
 @MainActor
 struct CurrencyConversionPickerTests {
     @Test

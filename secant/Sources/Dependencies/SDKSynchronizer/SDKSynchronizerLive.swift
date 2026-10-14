@@ -75,7 +75,7 @@ extension SDKSynchronizerClient: DependencyKey {
         // WalletConfigProvider.load() can't be awaited here; the cache is the early-construction shortcut).
         let useSlipstream = UserDefaultsWalletConfigStorage.cachedFlag(.useSlipstreamSynchronizer)
 
-        let synchronizer: any Synchronizer
+        let synchronizer: any AwaitableStopSynchronizer
         if useSlipstream {
             slipstreamLogger.info("[#1755] SlipstreamSynchronizer CONSTRUCTED (useSlipstreamSynchronizer=true)")
             synchronizer = SlipstreamSynchronizer(initializer: initializer)
@@ -99,6 +99,7 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             start: { retry in try await synchronizer.start(retry: retry) },
             stop: { synchronizer.stop() },
+            stopAndWait: { await synchronizer.stopAndWait() },
             isSyncing: { synchronizer.latestState.syncStatus.isSyncing },
             isInitialized: { synchronizer.latestState.syncStatus != SyncStatus.unprepared },
             importAccount: { ufvk, seedFingerprint, zip32AccountIndex, purpose, name, keySource, birthday in
@@ -426,8 +427,8 @@ extension SDKSynchronizerClient: DependencyKey {
                     walletAccounts[i].defaultUA = try? await synchronizer.getUnifiedAddress(accountUUID: walletAccounts[i].id)
                 }
 
-                // Put the Zashi account to the top
-                let sortedWalletAccounts = walletAccounts.sorted { $0.vendor.rawValue > $1.vendor.rawValue }
+                // Put the Zashi account to the top, then Keystone, then Ledger.
+                let sortedWalletAccounts = WalletAccount.sortedByVendor(walletAccounts)
 
                 return sortedWalletAccounts
             },
@@ -486,6 +487,15 @@ extension SDKSynchronizerClient: DependencyKey {
             },
             redactPCZTForSigner: { pczt in
                 try await synchronizer.redactPCZTForSigner(pczt: pczt)
+            },
+            signPCZTWithLedger: { pczt, accountUUID, binding, transport, progress in
+                try await synchronizer.signPCZTWithLedger(
+                    pczt: pczt,
+                    accountUUID: accountUUID,
+                    binding: binding,
+                    transport: transport,
+                    progress: progress
+                )
             },
             fetchTxidsWithMemoContaining: { searchTerm in
                 try await synchronizer.fetchTxidsWithMemoContaining(searchTerm: searchTerm)
@@ -565,7 +575,8 @@ extension SDKSynchronizerClient: DependencyKey {
                     route: route,
                     epoch: epoch
                 )
-            }
+            },
+            mainWalletSynchronizer: { synchronizer }
         )
     }
 }

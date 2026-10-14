@@ -65,6 +65,7 @@ struct TransactionsManager {
         case dismissRequired
         case eraseSearchTermTapped
         case filterTapped
+        case loadingFinished
         case onAppear
         case resetFiltersTapped
         case toggleFilter(Filter)
@@ -147,9 +148,13 @@ struct TransactionsManager {
                 }
                 return .none
 
+            // See `TransactionList.Action.loadingFinished`.
             case .transactionsUpdated:
-                state.isInvalidated = false
                 return .send(.updateTransactionsAccordingToSearchTerm)
+
+            case .loadingFinished:
+                state.isInvalidated = false
+                return .none
 
             case .updateTransactionsAccordingToSearchTerm:
                 if !state.searchTerm.isEmpty && state.searchTerm.count >= 2 {

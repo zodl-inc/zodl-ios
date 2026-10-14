@@ -167,10 +167,12 @@ extension Root {
                             // rendered as an EMPTY transaction list with no trace anywhere, reading as
                             // data loss. The list keeps its previous contents; the error goes to the
                             // log where the next investigation can find it. No user-facing alert:
-                            // `.transactionsFetchFailed` (below) still clears any list left showing its
-                            // loading placeholder and re-arms the reconciliation poller from the KEPT
-                            // rows, so together with the pending-transactions poller, the delayed retry
-                            // it schedules and the next synchronizer event, this fetch gets retried.
+                            // `.transactionsFetchFailed` (below) re-arms the reconciliation poller from
+                            // the KEPT rows, so together with the pending-transactions poller, the
+                            // delayed retry it schedules and the next synchronizer event, this fetch
+                            // gets retried. MOB-2020: it clears any list still showing its loading
+                            // placeholder only once nothing further is pending for it -- see that
+                            // action's own handling below.
                             LoggerProxy.event("[RootTransactions] getAllTransactions FAILED — \(error.toZcashError())")
                             await send(.transactionsFetchFailed(accountUUID: accountUUID))
                         }
@@ -273,9 +275,9 @@ extension Root {
                 // unconditionally appends one synthetic row per in-flight swap-to-ZEC, so a
                 // genuinely empty on-chain fetch would otherwise still produce a non-empty
                 // `identifiedArray` and defeat this guard for any user with such a swap pending.
-                // Both lists still get `transactionsUpdated` so one that WAS mid-load can clear its
-                // placeholder, and the poller is armed from the KEPT `state.transactions`, never
-                // from this fetch's result, so a still-pending kept row keeps its 30 s reconciler.
+                // Both lists still get `transactionsUpdated`, and the poller is armed from the KEPT
+                // `state.transactions`, never from this fetch's result, so a still-pending kept row
+                // keeps its 30 s reconciler.
                 //
                 // MOB-1855: `state.transactionsAccountId == accountUUID` on top of the pre-existing
                 // conditions -- the array being "kept" here must actually belong to the account THIS
@@ -336,26 +338,33 @@ extension Root {
                     // reflect `accountUUID`'s fetch, so this is where provenance is recorded too --
                     // see `transactionsAccountId`'s doc comment (`RootStore.swift`).
                     state.transactionsAccountId = accountUUID
+                    // MOB-2020: the selected account's fetch has answered, whether or not either
+                    // list happens to be subscribed right now -- explicit, rather than left to each
+                    // list's own `$transactions` publisher subscription, which only exists once
+                    // `.onAppear` has run (never, on a cold launch that hasn't shown Home yet).
+                    // See `TransactionList.Action.loadingFinished`.
                     return .merge(
                         pendingTransactionsPoller,
                         .send(.home(.smartBanner(.evaluatePriority6))),
+                        .send(.home(.transactionList(.loadingFinished))),
+                        .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                         coalescedFollowUp
                     )
                 }
                 // The fetch still completed even though its result is identical to what's already in
                 // `state.transactions` -- most commonly when switching between two accounts that both
                 // have no transactions. The write above is skipped in that case, so nothing downstream
-                // of the shared `$transactions` publisher fires. Both transaction lists' own
-                // `transactionsUpdated` is what clears their `isInvalidated` flag (set by
-                // `accountSwitchedEffect` in `RootCoordinator.swift` on every switch), so without
-                // sending it here directly, an unchanged-but-completed fetch would leave them stuck
-                // showing their loading placeholder forever.
+                // of the shared `$transactions` publisher fires, and neither list's `.loadingFinished`
+                // gets sent by the write branch above either. `.transactionsUpdated` is sent alongside
+                // it, unchanged from before MOB-2020, purely so derived state (e.g. See All's search
+                // results) still recomputes on this path exactly as it always has.
+                // See `TransactionList.Action.loadingFinished`.
                 //
                 // Only worth sending while a list is actually still showing that placeholder. A
                 // steady sync re-dispatches this fetch every 0.2s and usually yields an unchanged
                 // list, and `transactionsUpdated` re-runs each store's derived-state recomputation
                 // -- which on the See All screen, with a search term active, includes an SDK memo
-                // query. Nothing is waiting on the signal once both flags are already clear.
+                // query. Nothing is waiting on either signal once both flags are already clear.
                 guard state.homeState.transactionListState.isInvalidated
                     || state.transactionsCoordFlowState.transactionsManagerState.isInvalidated else {
                     return .merge(pendingTransactionsPoller, coalescedFollowUp)
@@ -364,6 +373,8 @@ extension Root {
                     pendingTransactionsPoller,
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
+                    .send(.home(.transactionList(.loadingFinished))),
+                    .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished))),
                     coalescedFollowUp
                 )
 
@@ -424,6 +435,13 @@ extension Root {
                 // and its action re-checks the account so a late one can never fetch for an
                 // account the user has since left.
                 var delayedRetry: Effect<Root.Action> = .none
+                // MOB-2020: only true once this failure leaves NOTHING further pending for the
+                // selected account -- the retry budget spent, with no coalesced follow-up either.
+                // While a delayed retry is still scheduled, or a coalesced follow-up is about to
+                // run, the selected account's fetch has not actually answered yet, and sending
+                // `.loadingFinished` here would flash the empty state for however long the retry
+                // ladder (2, 4, 8, 16, 32 s) takes to exhaust: exactly the bug this guards against.
+                var loadingFinished: Effect<Root.Action> = .none
                 if !hadCoalescedRequest {
                     let attempt = state.transactionsFetchRetryAttempt + 1
                     let budget = Root.State.transactionsFetchRetryDelaysInSeconds.count
@@ -443,18 +461,24 @@ extension Root {
                             edge, transaction event or foreground refreshes the list
                             """
                         )
+                        loadingFinished = .merge(
+                            .send(.home(.transactionList(.loadingFinished))),
+                            .send(.transactionsCoordFlow(.transactionsManager(.loadingFinished)))
+                        )
                     }
                 }
-                // The list keeps its previous contents (nothing to overwrite here at all), but
-                // either list may already be showing its loading placeholder -- clear it exactly
-                // like every other completed-fetch path, and keep the reconciliation poller alive
-                // for whatever `state.transactions` still holds.
+                // The list keeps its previous contents (nothing to overwrite here at all).
+                // `.transactionsUpdated` still recomputes derived rows on every failure, unchanged
+                // from before MOB-2020; `.loadingFinished` (above) only joins it once nothing
+                // further is pending, and keep the reconciliation poller alive for whatever
+                // `state.transactions` still holds either way.
                 return .merge(
                     reconciliationPoller(for: state.transactions, state: state),
                     .send(.home(.transactionList(.transactionsUpdated))),
                     .send(.transactionsCoordFlow(.transactionsManager(.transactionsUpdated))),
                     coalescedFollowUp,
-                    delayedRetry
+                    delayedRetry,
+                    loadingFinished
                 )
 
             case .retryFailedTransactionsFetch(let accountUUID):

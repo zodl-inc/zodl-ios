@@ -176,6 +176,11 @@ struct CrossPayConfirmationView: View {
                         store.send(.confirmWithKeystoneTapped)
                     }
                     .padding(.bottom, 24)
+                } else if store.selectedWalletAccount?.vendor == .ledger {
+                    ZashiButton(String(localizable: .ledgerConfirmPay)) {
+                        store.send(.confirmWithLedgerTapped)
+                    }
+                    .padding(.bottom, 24)
                 } else {
                     ZashiButton(String(localizable: .crosspayPay)) {
                         store.send(.confirmButtonTapped)
@@ -187,7 +192,7 @@ struct CrossPayConfirmationView: View {
                 store.send(.backFromConfirmationTapped)
             }
             .screenTitle(
-                store.selectedWalletAccount?.vendor == .keystone
+                store.selectedWalletAccount?.vendor.isHWWallet() ?? false
                 ? String(localizable: .sendReview)
                 : String(localizable: .sendConfirmationTitle)
             )

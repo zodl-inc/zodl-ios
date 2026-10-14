@@ -21,20 +21,12 @@ struct AddressBookEncryptionKeys: Codable, Equatable {
     var keys: [Int: AddressBookKey]
 
     mutating func cacheFor(seed: [UInt8], account: Account, network: NetworkType) throws{
-        guard let zip32AccountIndex = account.hdAccountIndex else {
-            return
-        }
-        
         // FIXME: index is not enough - possible security issue - override of the keys
-        keys[Int(zip32AccountIndex.index)] = try AddressBookKey(seed: seed, account: account, network: network)
+        keys[Int(account.encryptionKeyIndex.index)] = try AddressBookKey(seed: seed, account: account, network: network)
     }
 
     func getCached(account: Account) -> AddressBookKey? {
-        guard let zip32AccountIndex = account.hdAccountIndex else {
-            return nil
-        }
-
-        return keys[Int(zip32AccountIndex.index)]
+        keys[Int(account.encryptionKeyIndex.index)]
     }
 }
 
@@ -69,18 +61,10 @@ struct AddressBookKey: Codable, Equatable, Redactable {
      * should be cached in the app's keystore.
      */
     init(seed: [UInt8], account: Account, network: NetworkType) throws {
-        let zip32AccountIndex: Zip32AccountIndex
-        
-        if let zip32AccountIndexUnwrapped = account.hdAccountIndex {
-            zip32AccountIndex = zip32AccountIndexUnwrapped
-        } else {
-            zip32AccountIndex = Zip32AccountIndex(0)
-        }
-
         self.key = try SymmetricKey(data: DerivationToolClient.live().deriveArbitraryAccountKey(
             [UInt8]("ZashiAddressBookEncryptionV1".utf8),
             seed,
-            zip32AccountIndex,
+            account.encryptionKeyIndex,
             network
         ))
     }

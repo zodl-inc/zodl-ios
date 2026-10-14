@@ -40,6 +40,9 @@ struct SendForm {
         var isNotAddressInAddressBook = false
         var isSheetTexAddressVisible = false
         var isValidAddress = false
+        /// A Ledger device refuses to sign a Sapling output, so a Ledger account cannot send to a
+        /// Sapling address — set alongside `isValidAddress` in both address-validation arms.
+        var isLedgerUnsupportedAddress = false
         var isValidTransparentAddress = false
         var isValidTexAddress = false
         var memoState: MessageEditor.State
@@ -149,6 +152,7 @@ struct SendForm {
 
         var isValidForm: Bool {
             isValidAddress
+            && !isLedgerUnsupportedAddress
             && !isInsufficientFunds
             && !isSpendabilityBeingDetermined
             && memoState.isValid
@@ -184,7 +188,9 @@ struct SendForm {
         }
         
         var invalidAddressErrorText: String? {
-            isInvalidAddressFormat
+            isLedgerUnsupportedAddress
+            ? String(localizable: .ledgerSendUnsupportedAddress)
+            : isInvalidAddressFormat
             ? String(localizable: .sendErrorInvalidAddress)
             : nil
         }
@@ -588,6 +594,8 @@ struct SendForm {
                 let network = zcashSDKEnvironment.network().networkType
                 state.address = newValue
                 state.isValidAddress = derivationTool.isZcashAddress(state.address.data, network)
+                state.isLedgerUnsupportedAddress = state.selectedWalletAccount?.vendor == .ledger
+                    && derivationTool.isSaplingAddress(state.address.data, network)
                 state.isValidTransparentAddress = derivationTool.isTransparentAddress(state.address.data, network)
                 state.isValidTexAddress = derivationTool.isTexAddress(state.address.data, network)
                 if !state.isMemoInputEnabled {
@@ -604,8 +612,8 @@ struct SendForm {
                         }
                     }
                 }
-                
-                if state.selectedWalletAccount?.vendor == .keystone {
+
+                if state.selectedWalletAccount?.vendor.isHWWallet() == true {
                     state.isSheetTexAddressVisible = state.isValidTexAddress
                 }
                 
@@ -633,9 +641,11 @@ struct SendForm {
             case .validateAddress:
                 let network = zcashSDKEnvironment.network().networkType
                 state.isValidAddress = derivationTool.isZcashAddress(state.address.data, network)
+                state.isLedgerUnsupportedAddress = state.selectedWalletAccount?.vendor == .ledger
+                    && derivationTool.isSaplingAddress(state.address.data, network)
                 state.isValidTransparentAddress = derivationTool.isTransparentAddress(state.address.data, network)
                 state.isValidTexAddress = derivationTool.isTexAddress(state.address.data, network)
-                if state.selectedWalletAccount?.vendor == .keystone {
+                if state.selectedWalletAccount?.vendor.isHWWallet() == true {
                     state.isSheetTexAddressVisible = state.isValidTexAddress
                 }
                 return .none

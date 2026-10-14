@@ -7,6 +7,28 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+## [3.17.0] - 2026-10-09
+
+### Added
+
+- [MOB-2020] Connect a Ledger hardware wallet over Bluetooth to receive ZEC and to send it with approval on the device. Choose Connect Hardware Wallet from the account list on Home. You can choose which Ledger account to connect; one account can be connected at a time.
+
+### Changed
+
+- Updated the cryptography library (pasta_curves 0.6.1) for faster performance.
+- [MOB-2237] Connect Keystone is no longer in the More menu on Home. To connect a Keystone or a Ledger, open the account list at the top of Home and choose Connect Hardware Wallet.
+
+## [3.16.0] - 2026-10-07
+
+### Added
+
+- [MOB-2142] Redeem Zcash gift cards. Choose Redeem Gift Card from the More menu on Home and scan the card's QR code, or tap Paste link to paste or type the card's link on its own screen, which tells you right away if the link isn't a gift card (Zodl gift links and the legacy payment-link format are supported). Scanning a gift card where you would scan an address, in Send, Swap, Pay or the address book, opens redemption instead, and opening a gift.zodl.com link from another app opens the scanner and asks you to scan the card with Zodl. Zodl checks the card, shows the exact amount you will receive after the network fee for that card and any message from the sender, and moves the funds to a shielded address of your selected account; the success screen says the gift is on its way, with the amount you received when it is known. A card whose funds still need confirmations is checked again every 30 seconds while the screen is open and Zodl is in the foreground, and Check again on that screen or on Nothing to redeem checks without leaving it. A card that was already redeemed, isn't funded yet, holds too little to cover the network fee, is for another network or has a damaged link says so. If a card can't be checked or a redemption isn't confirmed, Try again checks the card's current status; if funds remain, tap Redeem again. The card is checked and redeemed through the server your wallet is currently using, over Tor when protected access is on. Gift card links and keys are refused as swap or pay addresses and as contacts, even inside other text, and a gift card link or key you pasted is cleared from the clipboard when you tap Clear or leave the paste screen, if the clipboard still holds it. The card's temporary data is deleted when you leave the screen, or the next time Zodl starts if it was closed mid-redemption, and wallet syncing resumes afterwards, including when you continue past a payment-link warning. Wallet syncing recovers from temporary restart failures and resumes when a migration pause clears or you return to the app. Continuing past a payment-link warning during a sync restart no longer leaves syncing paused, including when a migration pause must clear first. Leaving a card for another network or one that failed to open no longer makes syncing retry early.
+
+### Fixed
+
+- [MOB-2157] Clear on the gift card paste screen removes a pasted card link or key from the clipboard immediately when it still matches, including a keyboard or long-press paste, even after you edit or delete the pasted text. The same protection applies when you leave or reopen the gift card flow, or continue past a payment-link warning. Other clipboard text is preserved.
+- [MOB-2142] Fixed a crash when opening the app on an iPhone.
+
 ## [3.15.0] - 2026-09-23
 
 ### Added

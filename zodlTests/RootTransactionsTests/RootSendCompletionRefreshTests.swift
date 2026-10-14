@@ -305,6 +305,35 @@ import ComposableArchitecture
         #expect(fetchedAccounts.value.contains(account.id))
     }
 
+    /// MOB-2020 UI round 2: the Ledger twin of `swapFlowKeystoneSendDoneRefetchesTransactions` --
+    /// unlike Keystone, a Ledger swap confirmation is a scoped child (`ledgerConfirmationState`),
+    /// not a path element, so this dispatches the coordinator action directly.
+    @Test func swapFlowLedgerSendDoneRefetchesTransactions() async {
+        let account = Self.walletAccount(idByte: 95)
+        let fetchedAccounts = LockIsolated<[AccountUUID?]>([])
+        let refetchSignal = AsyncStream.makeStream(of: Void.self)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
+                fetchedAccounts.withValue { $0.append(accountUUID) }
+                refetchSignal.continuation.yield(())
+                return []
+            }
+        }
+
+        store.send(.swapAndPayCoordFlow(.ledgerConfirmation(.sendDone)))
+
+        await waitForRefetch(refetchSignal.stream) { fetchedAccounts.value.contains(account.id) }
+
+        #expect(fetchedAccounts.value.contains(account.id))
+    }
+
     // MARK: - Transaction-detail close arms
     //
     // MOB-1581's second gap: closing the transaction detail screen reached via View Transaction

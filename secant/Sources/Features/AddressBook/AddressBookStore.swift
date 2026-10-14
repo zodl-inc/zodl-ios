@@ -67,12 +67,20 @@ struct AddressBook {
             && (isValidForm || (context != .send && selectedChain != nil && !isValidZcashAddress))
         }
         
+        /// Whether the address is, or may contain, a gift card link or key. Such a link carries the
+        /// card's spending key, so it is never saved as a contact: from there it would be sent to a
+        /// swap provider, or leave the device with the address book's backup.
+        var isGiftCardAddress: Bool {
+            GiftCardSecretDetector.mayContainGiftCardSecret(address)
+        }
+
         var isNameOverMaxLength: Bool {
             name.count > Constants.maxNameLength
         }
 
         var isSaveButtonDisabled: Bool {
             !isEditChange
+            || isGiftCardAddress
             || isNameOverMaxLength
             || nameAlreadyExists
             || addressAlreadyExists
@@ -82,7 +90,9 @@ struct AddressBook {
         }
         
         var invalidAddressErrorText: String? {
-            addressAlreadyExists
+            isGiftCardAddress
+            ? String(localizable: .addressBookErrorGiftCardLink)
+            : addressAlreadyExists
             ? String(localizable: .addressBookErrorAddressExists)
             : context == .swap
             ? (isValidZcashAddress ? String(localizable: .swapAndPayAddressBookZcash) : nil)
@@ -297,7 +307,8 @@ struct AddressBook {
                 return .none
 
             case .saveButtonTapped:
-                guard let account = state.zashiWalletAccount else {
+                // Refused before anything is deleted or stored, whatever the button's state.
+                guard let account = state.zashiWalletAccount, !state.isGiftCardAddress else {
                     return .none
                 }
                 do {

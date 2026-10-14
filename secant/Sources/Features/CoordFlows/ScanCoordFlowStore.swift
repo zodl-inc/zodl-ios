@@ -83,7 +83,7 @@ struct ScanCoordFlow {
                 switch action {
                 case .onAppear:
                     // __LD TESTED
-                    state.scanState.checkers = [.zcashAddressScanChecker, .requestZecScanChecker]
+                    state.scanState.checkers = [.giftCardScanChecker, .zcashAddressScanChecker, .requestZecScanChecker]
                     return .none
 
                 default: return .none

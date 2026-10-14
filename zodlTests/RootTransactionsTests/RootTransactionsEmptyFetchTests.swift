@@ -15,8 +15,14 @@
 //
 //  Covers both: an empty fetch is now trusted only once the synchronizer itself reports
 //  `.upToDate`, or once a list is already invalidated and therefore has nothing correct left to
-//  lose; a failed fetch still notifies both lists and re-arms the reconciliation poller from the
-//  rows that were kept, exactly as an ignored empty fetch does.
+//  lose; a failed fetch always re-arms the reconciliation poller from the rows that were kept,
+//  exactly as an ignored empty fetch does, and still recomputes both lists' derived rows.
+//
+//  MOB-2020: a failed fetch clears a list's loading placeholder only once nothing further is
+//  pending for the selected account -- the delayed retry ladder spent, with no coalesced
+//  follow-up either (`RootTransactionsFailedFetchRetryTests.swift` covers that conditionality
+//  directly). Test (4) below now pins the READ side of that: while a retry is still pending, the
+//  placeholder must stay up rather than clearing on the first failure alone.
 //
 //  Mirrors `RootPendingTransactionRefreshTests.swift`'s established pattern: a plain `Store` (not
 //  `TestStore`) driven with `LockIsolated` spies, with time-dependent behavior (the 30 s
@@ -192,13 +198,24 @@ import ComposableArchitecture
         #expect(store.state.transactions.isEmpty, "an empty fetch for an already-invalidated list has nothing correct to lose, and must apply")
     }
 
-    // MARK: - (4) A failed fetch must still notify both lists and re-arm the poller
+    // MARK: - (4) A failed fetch keeps the placeholder up while a retry is pending, but still re-arms the poller
 
-    /// A thrown `getAllTransactions` must never leave a list stranded on its loading placeholder:
-    /// both lists still receive `transactionsUpdated` (clearing `isInvalidated`), and the
-    /// reconciliation poller is armed from whatever `state.transactions` still holds, so a pending
-    /// row that was kept through the failure keeps its 30 s reconciler.
-    @Test func fetchFailureClearsInvalidationAndReArmsThePollerFromTheKeptList() async {
+    /// MOB-2020: a THROWN `getAllTransactions` must never leave a list stranded on its loading
+    /// placeholder forever -- but nor may it clear that placeholder while a delayed retry is still
+    /// pending, or Home would flash "Nothing here" for however long the retry ladder takes. This
+    /// single failure schedules the first of five retries (2, 4, 8, 16, 32 s); with that retry
+    /// still pending, `isInvalidated` must stay exactly as the caller left it. `.transactionsUpdated`
+    /// still fires either way (unaffected by MOB-2020), and the reconciliation poller is armed from
+    /// whatever `state.transactions` still holds, so a pending row that was kept through the
+    /// failure keeps its 30 s reconciler regardless.
+    ///
+    /// Before MOB-2020 this test asserted the opposite -- that the placeholder cleared on this same
+    /// single failure -- which was itself the bug `RootTransactionsFailedFetchRetryTests.swift`'s
+    /// `aFailureWithARetryPendingKeepsBothListsLoading`/`aFailureAfterTheRetryBudgetIsSpentClearsBothListsLoadingFlag`
+    /// now pin end to end (first-failure-keeps-loading, and budget-spent-clears-it). This test keeps
+    /// its own, narrower job: proving the KEPT rows and the poller re-arm are unaffected by that
+    /// change.
+    @Test func fetchFailureKeepsBothListsLoadingWhileARetryIsPendingButStillReArmsThePollerFromTheKeptList() async {
         let account = Self.walletAccount(idByte: 103)
         let scheduler = DispatchQueue.test
         let fetchCalls = LockIsolated<Int>(0)
@@ -228,24 +245,28 @@ import ComposableArchitecture
         }
 
         store.send(.fetchTransactionsForTheSelectedAccount)
-        while fetchCalls.value < 1 {
+        // `transactionsFetchRetryAttempt` is bumped synchronously in the SAME reduce that decides
+        // whether to send `.loadingFinished` -- waiting for it confirms the whole failure-handling
+        // reduce (not just the mocked call) has run, without assuming a fixed-time sleep is enough.
+        while store.state.transactionsFetchRetryAttempt == 0 {
             try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        // The failure's own completion signal reaches both lists via returned `.send` effects --
-        // wait on the store's own state-change publisher rather than a fixed sleep, so this resumes
-        // the moment both flags actually clear, at whatever speed the machine runs.
-        await waitForRootState(store) {
-            !$0.homeState.transactionListState.isInvalidated
-                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
         }
 
         #expect(store.state.transactions == keptTransactions, "a failed fetch must never clear the kept list")
-        #expect(!store.state.homeState.transactionListState.isInvalidated, "a failed fetch must still clear Home's invalidation")
         #expect(
-            !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
-            "a failed fetch must still clear See All's invalidation"
+            store.state.homeState.transactionListState.isInvalidated,
+            "a retry is still pending -- Home must keep loading, not clear its placeholder"
+        )
+        #expect(
+            store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "a retry is still pending -- See All must keep loading, not clear its placeholder"
         )
 
+        // The reconciliation poller is still armed from the kept pending row, unaffected by
+        // MOB-2020. NOTE: on this scheduler the loop below actually exits on the pre-existing
+        // MOB-1954 retry firing at the 2 s mark (Commit B leaves the retry-scheduling logic itself
+        // unchanged), not the 30 s poller -- a pre-existing imprecision in this test's own timing
+        // budget that predates this change, not something introduced by it.
         let fetchesBeforePoll = fetchCalls.value
         while fetchCalls.value < fetchesBeforePoll + 1 {
             await scheduler.advance(by: .seconds(1))

@@ -1,6 +1,39 @@
 {
     "releases": [
         {
+            "version": "3.17.0",
+            "date": "09-10-2026",
+            "timestamp": 1791544427,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos compatibilidad con billeteras de hardware Ledger. Conecta tu Ledger para recibir ZEC y enviarlo con aprobación en tu dispositivo. Puedes elegir qué cuenta de tu Ledger conectar; se puede conectar una cuenta a la vez."
+                    ]
+                },
+                {
+                    "title": "Cambiado:",
+                    "bulletpoints": [
+                        "Actualizamos nuestra biblioteca criptográfica para un mejor rendimiento."
+                    ]
+                }
+            ]
+        },
+        {
+            "version": "3.16.0",
+            "date": "07-10-2026",
+            "timestamp": 1791348607,
+            "sections": [
+                {
+                    "title": "Añadido:",
+                    "bulletpoints": [
+                        "Añadimos las tarjetas de regalo. Ve a Más → Canjear tarjeta de regalo, escanea el código QR o pega el enlace, y el ZEC llega directo a tu billetera.",
+                        "También puedes canjear tarjetas de regalo creadas en otras billeteras."
+                    ]
+                }
+            ]
+        },
+        {
             "version": "3.15.0",
             "date": "24-09-2026",
             "timestamp": 1790243803,

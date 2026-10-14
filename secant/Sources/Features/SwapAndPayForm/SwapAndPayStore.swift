@@ -182,9 +182,17 @@ struct SwapAndPay {
             return deposit < Constants.refundThresholdUsd
         }
 
+        /// Whether the address (typed, pasted, scanned or from a contact) is, or may contain, a gift
+        /// card link or key. Such a link carries the card's spending key, so it is never a valid
+        /// swap or pay address: the field shows an error and the form cannot be submitted.
+        var isGiftCardAddress: Bool {
+            GiftCardSecretDetector.mayContainGiftCardSecret(selectedContact?.address ?? address)
+        }
+
         var isValidForm: Bool {
             selectedAsset != nil
             && !address.isEmpty
+            && !isGiftCardAddress
             && amount > 0
             && !isInsufficientFunds
             && (isSwapToZecExperienceEnabled || !isSpendabilityBeingDetermined)
@@ -334,6 +342,7 @@ struct SwapAndPay {
         case closeSlippageSheetTapped
         case confirmButtonTapped
         case confirmWithKeystoneTapped
+        case confirmWithLedgerTapped
         case customBackRequired
         case dismissRequired
         case dontCancelTapped
@@ -352,6 +361,11 @@ struct SwapAndPay {
         case onAppear
         case onDisappear
         case proposal(Proposal)
+        /// MOB-2020: fires from the quote sheet's `onDismiss` -- the coordinator observes this to
+        /// present the Ledger sign sheet once the quote sheet has finished animating out, when
+        /// `.confirmWithLedgerTapped` closed it. A dismissal for any other reason (the user
+        /// swiping it away, `.confirmButtonTapped`, `.confirmWithKeystoneTapped`) is a no-op.
+        case quoteSheetDismissed
         case quoteUnavailable(String)
         case refreshSwapAssets
         case scanTapped
@@ -1248,6 +1262,12 @@ struct SwapAndPay {
                 return .none
 
             case .addressBookUpdated:
+                // A gift card link is never offered as a new contact.
+                if state.isGiftCardAddress {
+                    state.isNotAddressInAddressBook = false
+                    state.isAddressBookHintVisible = false
+                    return .cancel(id: state.ABCancelId)
+                }
                 guard state.address.count >= 3 else {
                     state.isNotAddressInAddressBook = false
                     return .none
@@ -1295,7 +1315,14 @@ struct SwapAndPay {
             case .confirmWithKeystoneTapped:
                 state.isQuotePresented = false
                 return .none
-                
+
+            case .confirmWithLedgerTapped:
+                state.isQuotePresented = false
+                return .none
+
+            case .quoteSheetDismissed:
+                return .none
+
                 // MARK: - CrossPay
 
             case .binding(\.amountAssetText):

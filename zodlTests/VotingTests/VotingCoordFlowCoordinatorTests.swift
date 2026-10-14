@@ -4325,10 +4325,10 @@ extension VotingSharedStateSuites {
             let nothingToTrack = try shareTrackingReport(kind: "nothing_to_track")
             let pending = try pendingShareRound(walletId: Self.pendingWalletId, roundId: activeRoundId)
             // A second round carried along in every refresh, whose own open
-            // answers at once. It is the barrier: its work landing proves the
-            // refresh that carried it was reduced and its effects run, so "the
-            // first round was not opened again" is a fact about a sweep that
-            // finished rather than one that may not have started.
+            // answers at once. Wait for its tracking entry and terminal state:
+            // entry alone precedes the finished action, and a refresh while it
+            // still tracks is correctly suppressed. Completion proves the
+            // refresh's work finished before the next one is sent.
             let carried = try pendingShareRound(walletId: Self.pendingWalletId, roundId: otherRoundId)
             var initialState = pendingShareSweepState()
             initialState.allRounds.append(
@@ -4369,13 +4369,19 @@ extension VotingSharedStateSuites {
             store.send(.pendingShareRoundsLoaded([pending, carried]))
             await waitForStore { recorder.events().contains("openRoundSession:\(self.activeRoundId)") }
             #expect(store.state.roundCache[self.activeRoundId]?.liveSession == .opening)
-            await waitForStore { recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 1 }
+            await waitForStore {
+                recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 1
+                    && store.state.roundCache[self.otherRoundId]?.isTrackingShares == false
+            }
 
             // A refresh while the first open is still in flight. The carried
             // round is already open, so it is asked to track again -- a second
             // pass is this refresh saying it got all the way through.
             store.send(.pendingShareRoundsLoaded([pending, carried]))
-            await waitForStore { recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 2 }
+            await waitForStore {
+                recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 2
+                    && store.state.roundCache[self.otherRoundId]?.isTrackingShares == false
+            }
             #expect(
                 recorder.events().filter { $0 == "openRoundSession:\(self.activeRoundId)" }.count == 1,
                 "a round whose session is being opened must not be opened again"
@@ -4388,7 +4394,10 @@ extension VotingSharedStateSuites {
 
             // And a refresh while it is waiting out the backoff.
             store.send(.pendingShareRoundsLoaded([pending, carried]))
-            await waitForStore { recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 3 }
+            await waitForStore {
+                recorder.events().filter { $0 == "trackShares:\(self.otherRoundId)" }.count == 3
+                    && store.state.roundCache[self.otherRoundId]?.isTrackingShares == false
+            }
             #expect(
                 recorder.events().filter { $0 == "openRoundSession:\(self.activeRoundId)" }.count == 1,
                 "a round waiting out a backoff must not be opened again"

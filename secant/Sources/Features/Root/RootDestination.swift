@@ -68,6 +68,12 @@ extension Root {
                 return .none
 
             case .destination(.deeplink(let url)):
+                // A gift card link handed in from outside could have been altered on its way, so,
+                // like a ZIP 321 link below, it is never used: the user is asked to scan the card
+                // with the app. It is a bearer secret, so it is not logged either.
+                if GiftCardLink.isGiftCardURL(url) {
+                    return receiveExternalGiftCardLink(state: &state)
+                }
                 if let _ = uriParser.checkRP(url.absoluteString, zcashSDKEnvironment.network().networkType) {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
                     return .send(.destination(.updateDestination(.deeplinkWarning)))

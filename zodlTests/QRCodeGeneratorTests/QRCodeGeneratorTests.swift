@@ -145,6 +145,22 @@ import CoreImage
         )
     }
 
+    /// MOB-2020: no Ledger-specific overlay asset exists yet, so `.ledger` reuses the plain,
+    /// unprefixed overlay — the same asset the `.zashi` vendor test above resolves, so this must
+    /// succeed exactly like it does.
+    @Test func generateCodeLedgerVendor() {
+        let image = QRCodeGenerator.generateCode(
+            from: "ledger-data",
+            vendor: .ledger,
+            overlayedWithZcashLogo: false
+        )
+
+        #expect(
+            image != nil,
+            "QRCodeGenerator tests: `testGenerateCodeLedgerVendor` is expected to produce a non-nil image"
+        )
+    }
+
     @Test func generateCodeMaxPrivacyTrue() {
         let image = QRCodeGenerator.generateCode(
             from: "privacy-test",

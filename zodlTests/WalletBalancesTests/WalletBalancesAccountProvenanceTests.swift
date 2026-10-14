@@ -310,4 +310,46 @@ import ComposableArchitecture
             )
         }
     }
+
+    // MARK: - (6) hasConcreteBalance clears on switch and becomes true again for the new account's own balance
+
+    /// MOB-2020: `WalletBalancesView` shows a shimmer placeholder in place of the number while
+    /// `!hasConcreteBalance` -- this is the exact state transition that placeholder depends on,
+    /// end to end, in one test. Neither sibling test above drives both halves together:
+    /// `aDelayedBalanceForThePreviousAccountIsRejectedAfterASwitch` stops at "nothing published
+    /// for B yet" (it only proves A's STALE answer is rejected), and `theNewAccountsOwnResultBecomesConcrete`
+    /// never exercises an actual switch mid-test (B is selected from the initial state).
+    @MainActor @Test func hasConcreteBalanceClearsOnSwitchAndBecomesTrueAgainForTheNewAccountsOwnBalance() async throws {
+        await withDependencies {
+            $0.defaultInMemoryStorage = InMemoryStorage()
+        } operation: {
+            let accountA = Self.walletAccount(idByte: 48)
+            let accountB = Self.walletAccount(idByte: 49)
+            let balanceA = Self.fullyOwnedBalance(Zatoshi(300))
+            let balanceB = Self.fullyOwnedBalance(Zatoshi(650))
+
+            var state = WalletBalances.State()
+            state.$selectedWalletAccount.withLock { $0 = accountA }
+            let store = TestStore(initialState: state) {
+                WalletBalances()
+            } withDependencies: {
+                $0.zcashSDKEnvironment.shieldingThreshold = { Zatoshi(1_000_000) }
+            }
+            store.exhaustivity = .off
+
+            await store.send(.balanceUpdated(balanceA, accountA.id, 0))
+            #expect(store.state.hasConcreteBalance)
+
+            // The switch itself -- nothing tells this reducer the selection changed, so the record
+            // must stop vouching for the new account the instant it flips, before any read for B
+            // has even been dispatched.
+            store.state.$selectedWalletAccount.withLock { $0 = accountB }
+            #expect(!store.state.hasConcreteBalance, "the old account's published balance must not vouch for the new one")
+
+            // B's own balance lands -- hasConcreteBalance must become true again.
+            await store.send(.balanceUpdated(balanceB, accountB.id, 0))
+            #expect(store.state.hasConcreteBalance)
+            #expect(store.state.shieldedBalance == balanceB.shieldedSpendableValue)
+        }
+    }
 }

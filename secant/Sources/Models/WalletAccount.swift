@@ -12,30 +12,67 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
     enum Vendor: Int, Equatable, Codable, Hashable {
         case keystone = 0
         case zcash
-        
+        case ledger = 2
+
+        /// A vendor's mark, meant to be drawn by the caller on its own `Design.Surfaces.bgAlt`
+        /// circle — the same construction the Zodl and Keystone marks already use. This is not the
+        /// full circular logo; `Partners.ledgerLogo` is the disc-plus-mark asset for places that draw
+        /// the Ledger logo on its own.
         func icon() -> Image {
             switch self {
             case .keystone:
                 return Asset.Assets.Partners.keystoneLogo.image
             case .zcash:
                 return Asset.Assets.Icons.zashiLogoSq.image
+            case .ledger:
+                return Asset.Assets.Partners.ledgerMark.image
             }
         }
 
         func isDefault() -> Bool {
             self == .zcash
         }
-        
+
         func isHWWallet() -> Bool {
             self != .zcash
         }
-        
+
+        /// The leading brandmark `ReceiveView`'s address blocks show for a hardware account —
+        /// `keystoneSeekLogo` for Keystone, the Ledger partner logo for Ledger, and the Zashi
+        /// square mark as the non-hardware fallback (mirrors `icon()`'s `.zcash` case).
+        func addressBlockIcon() -> Image {
+            switch self {
+            case .keystone:
+                return Asset.Assets.Partners.keystoneSeekLogo.image
+            case .ledger:
+                return Asset.Assets.Partners.ledgerLogo.image
+            case .zcash:
+                return Asset.Assets.Icons.zashiLogoSq.image
+            }
+        }
+
         func name() -> String {
             switch self {
             case .keystone:
                 return String(localizable: .accountsKeystone)
             case .zcash:
                 return String(localizable: .accountsZashi)
+            case .ledger:
+                return String(localizable: .accountsLedger)
+            }
+        }
+
+        /// Display order for account lists: Zodl first, then Keystone, then Ledger.
+        /// This is deliberately not `rawValue` — `rawValue` is a stable Codable identity for the
+        /// vendor, not an ordering, and must not be repurposed as one.
+        var sortOrder: Int {
+            switch self {
+            case .zcash:
+                return 0
+            case .keystone:
+                return 1
+            case .ledger:
+                return 2
             }
         }
     }
@@ -70,9 +107,22 @@ struct WalletAccount: Equatable, Hashable, Codable, Identifiable {
 
     init(_ account: Account) {
         self.id = account.id
-        self.vendor = account.keySource == String(localizable: .accountsKeystone).lowercased() ? .keystone : .zcash
+        switch account.keySource?.lowercased() {
+        case Account.ledgerKeySource:
+            self.vendor = .ledger
+        case Account.keystoneKeySource:
+            self.vendor = .keystone
+        default:
+            self.vendor = .zcash
+        }
         self.seedFingerprint = account.seedFingerprint
         self.zip32AccountIndex = account.hdAccountIndex
         self.account = account
+    }
+
+    /// Stable sort of `accounts` by `Vendor.sortOrder` (Zodl, Keystone, Ledger), preserving the
+    /// relative order of accounts that share a vendor.
+    static func sortedByVendor(_ accounts: [WalletAccount]) -> [WalletAccount] {
+        accounts.sorted { $0.vendor.sortOrder < $1.vendor.sortOrder }
     }
 }

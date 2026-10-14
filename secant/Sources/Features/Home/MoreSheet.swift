@@ -11,36 +11,35 @@ import ComposableArchitecture
 extension HomeView {
     @ViewBuilder func moreContent() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !store.isKeystoneAccountActive {
-                ActionRow(
-                    icon: walletStatus.isNotReadyForFullySyncedOperation
-                    ? Asset.Assets.Partners.flexaDisabled.image
-                    : Asset.Assets.Partners.flexa.image,
-                    title: String(localizable: .settingsFlexa),
-                    desc: String(localizable: .settingsFlexaDesc),
-                    customIcon: true,
-                    divider: store.featureFlags.flexa && !store.isKeystoneAccountActive
-                ) {
-                    store.send(.flexaTapped)
+            VStack(alignment: .leading, spacing: 0) {
+                if !store.isHWWalletAccountActive {
+                    ActionRow(
+                        icon: walletStatus.isNotReadyForFullySyncedOperation
+                        ? Asset.Assets.Partners.flexaDisabled.image
+                        : Asset.Assets.Partners.flexa.image,
+                        title: String(localizable: .settingsFlexa),
+                        desc: String(localizable: .settingsFlexaDesc),
+                        customIcon: true,
+                        divider: true
+                    ) {
+                        store.send(.flexaTapped)
+                    }
+                    .disabled(walletStatus.isNotReadyForFullySyncedOperation)
                 }
-                .disabled(walletStatus.isNotReadyForFullySyncedOperation)
-                .padding(.top, 32)
-                .padding(.bottom, store.isKeystoneAccountActive ? 24 : 0)
-            }
 
-            if !store.isKeystoneConnected {
                 ActionRow(
-                    icon: Asset.Assets.Partners.keystone.image,
-                    title: String(localizable: .settingsKeystone),
-                    desc: String(localizable: .settingsKeystoneDesc),
-                    customIcon: true,
+                    icon: Asset.Assets.Icons.gift.image,
+                    title: String(localizable: .giftCardMoreTitle),
+                    desc: String(localizable: .giftCardHomeDesc),
                     divider: true
                 ) {
-                    store.send(.addKeystoneHWWalletTapped)
+                    store.send(.redeemGiftCardTapped)
                 }
-                .padding(.bottom, 12)
+                .accessibilityIdentifier(AccessibilityID.MoreSheet.redeemGiftCard)
             }
-            
+            .padding(.top, 32)
+            .padding(.bottom, 12)
+
             ActionRow(
                 icon: Asset.Assets.Icons.settings.image,
                 title: String(localizable: .homeScreenMoreDotted),
@@ -76,7 +75,7 @@ extension HomeView {
                 title: String(localizable: .sendSelectPayWithNear),
                 desc: String(localizable: .sendSelectPayWithNearDesc),
                 customIcon: true,
-                divider: !store.isKeystoneAccountActive
+                divider: !store.isHWWalletAccountActive
             ) {
                 store.send(.payWithNearTapped)
             }
@@ -84,7 +83,7 @@ extension HomeView {
             .padding(.top, 32)
             .padding(.bottom, 8)
 
-            if !store.isKeystoneAccountActive {
+            if !store.isHWWalletAccountActive {
                 ActionRow(
                     icon: walletStatus.isNotReadyForFullySyncedOperation
                     ? Asset.Assets.Partners.flexaDisabled.image

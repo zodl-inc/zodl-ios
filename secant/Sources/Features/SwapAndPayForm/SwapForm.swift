@@ -215,7 +215,10 @@ extension SwapAndPayForm {
                         }
                     )
             }
-            .zashiSheet(isPresented: $store.isQuotePresented) {
+            .zashiSheet(
+                isPresented: $store.isQuotePresented,
+                onDismiss: { store.send(.quoteSheetDismissed) }
+            ) {
                 quoteContent(colorScheme)
             }
             .zashiSheet(isPresented: $store.isQuoteToZecPresented) {

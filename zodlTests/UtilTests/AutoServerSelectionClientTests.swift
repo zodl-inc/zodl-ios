@@ -119,7 +119,8 @@ struct RootAutoServerCandidateTests {
 
             let sensitivePaths: [Root.State.Path] = [
                 .migrationCoordFlow, .sendCoordFlow, .scanCoordFlow,
-                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings
+                .swapAndPayCoordFlow, .transactionsCoordFlow, .settings,
+                .giftCardCoordFlow
             ]
             for path in sensitivePaths {
                 state.path = path
@@ -141,7 +142,7 @@ struct RootAutoServerCandidateTests {
         } operation: {
             var state = Root.State.initial
             let nonSensitivePaths: [Root.State.Path] = [
-                .addKeystoneHWWalletCoordFlow, .currencyConversionSetup, .receive,
+                .connectHWWalletCoordFlow, .currencyConversionSetup, .receive,
                 .requestZecCoordFlow, .serverSwitch, .torSetup, .walletBackup
             ]
             for path in nonSensitivePaths {

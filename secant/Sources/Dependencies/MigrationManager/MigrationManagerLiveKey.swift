@@ -3602,14 +3602,20 @@ enum MigrationDerivations {
     /// `MigrationBGSchedulerImpl.arm(margin:)` so both fan out over the identical account list
     /// `MigrationManagerImpl.activeNetworkSnapshots()` already uses as its own "every account with a
     /// currently-active migration run" source.
+    ///
+    /// MOB-2020: every Ledger account is excluded, including the selected one — Ledger signing
+    /// does not exist yet (Phase 3), so a migration run proposed for one could never be submitted.
     static func candidateAccountUUIDs(selectedAccountUUID: AccountUUID?, walletAccounts: [WalletAccount]) -> [AccountUUID] {
         var seenAccountUUIDs = Set<AccountUUID>()
         var accountUUIDs: [AccountUUID] = []
 
-        if let selectedAccountUUID, seenAccountUUIDs.insert(selectedAccountUUID).inserted {
-            accountUUIDs.append(selectedAccountUUID)
+        if let selectedAccountUUID {
+            let selectedVendor = walletAccounts.first { $0.id == selectedAccountUUID }?.vendor
+            if selectedVendor != .ledger, seenAccountUUIDs.insert(selectedAccountUUID).inserted {
+                accountUUIDs.append(selectedAccountUUID)
+            }
         }
-        for account in walletAccounts where seenAccountUUIDs.insert(account.id).inserted {
+        for account in walletAccounts where account.vendor != .ledger && seenAccountUUIDs.insert(account.id).inserted {
             accountUUIDs.append(account.id)
         }
 

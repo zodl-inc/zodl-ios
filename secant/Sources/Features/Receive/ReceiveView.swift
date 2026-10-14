@@ -30,9 +30,9 @@ struct ReceiveView: View {
                 VStack(spacing: 0) {
                     ScrollView {
                         WithPerceptionTracking {
-                            if store.selectedWalletAccount?.vendor == .keystone {
+                            if let vendor = store.selectedWalletAccount?.vendor, vendor.isHWWallet() {
                                 addressBlock(
-                                    prefixIcon: Asset.Assets.Partners.keystoneSeekLogo.image,
+                                    prefixIcon: vendor.addressBlockIcon(),
                                     title: String(localizable: .accountsKeystoneShieldedAddress),
                                     address: store.unifiedAddress,
                                     iconFg: Design.Utility.Indigo._800,
@@ -55,7 +55,7 @@ struct ReceiveView: View {
                                 
                                 if let transparentAddress = store.selectedWalletAccount?.transparentAddress {
                                     addressBlock(
-                                        prefixIcon: Asset.Assets.Partners.keystoneSeekLogo.image,
+                                        prefixIcon: vendor.addressBlockIcon(),
                                         title: String(localizable: .accountsKeystoneTransparentAddress),
                                         address: transparentAddress,
                                         iconFg: Design.Text.primary,

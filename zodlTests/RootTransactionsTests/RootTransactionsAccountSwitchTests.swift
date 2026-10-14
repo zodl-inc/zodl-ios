@@ -55,9 +55,9 @@
 //  reason (it also drives a Root store touching this process-global state).
 //
 //  The only live Keystone-connect completion signal is
-//  `.addKeystoneHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))))`
+//  `.connectHWWalletCoordFlow(.path(.element(id: _, action: .keystoneDeviceReady(.accountImportSucceeded))))`
 //  -- see `keystoneAutoSelectImmediatelyRefreshesTransactionsAndBalance` below. Both
-//  `.accountHWWalletSelection(.accountImportSucceeded)` arms (`AddKeystoneHWWalletCoordFlow`'s own
+//  `.accountHWWalletSelection(.accountImportSucceeded)` arms (`ConnectHWWalletCoordFlow`'s own
 //  and `Settings`'s) are defensive/dead wiring, not reachable UI paths -- see
 //  `settingsAccountHWWalletSelectionAppliesSwitchReactionsAsDefensiveWiring`'s doc comment for why.
 //
@@ -222,12 +222,12 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = zashiAccount }
         initialState.$walletAccounts.withLock { $0 = [zashiAccount] }
-        initialState.path = Root.State.Path.addKeystoneHWWalletCoordFlow
-        initialState.addKeystoneHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        guard let keystoneDeviceReadyId = initialState.addKeystoneHWWalletCoordFlowState.path.ids.last else {
+        guard let keystoneDeviceReadyId = initialState.connectHWWalletCoordFlowState.path.ids.last else {
             Issue.record("expected a keystoneDeviceReady element id on the Add Keystone HW Wallet path")
             return
         }
@@ -264,7 +264,7 @@ import ComposableArchitecture
         }
 
         store.send(
-            .addKeystoneHWWalletCoordFlow(
+            .connectHWWalletCoordFlow(
                 .path(.element(id: keystoneDeviceReadyId, action: .keystoneDeviceReady(.accountImportSucceeded)))
             )
         )
@@ -275,13 +275,23 @@ import ComposableArchitecture
         // `.home(.walletBalances(.updateBalances))` specifically fired -- wait for its OWN
         // observable effect (the balance actually landing in `walletBalancesState`) too.
         await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        // MOB-2020: the transaction fetch's own completion (above) and the balance update run as
+        // two SEPARATE effect chains off the same switch -- waiting on the balance alone races
+        // whichever `.loadingFinished` send the fetch's completion made. Wait on it explicitly.
+        await waitForRootState(store) {
+            !$0.homeState.transactionListState.isInvalidated
+                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(!requestedAccounts.value.contains(zashiAccount.id))
         #expect(balanceRequests.value > 0)
         #expect(store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue)
-        #expect(store.state.homeState.transactionListState.isInvalidated)
-        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+        // MOB-2020: the auto-select's own fetch answered for the newly-selected account (its
+        // transaction landed, confirmed above) -- Root's `.loadingFinished` clears both lists'
+        // loading flag the same way a manual switch's own fetch does.
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+        #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
     }
 
     // MARK: - Keystone-connect auto-select must reload user metadata before decorating transactions
@@ -303,12 +313,12 @@ import ComposableArchitecture
         var initialState = Root.State.initial
         initialState.$selectedWalletAccount.withLock { $0 = zashiAccount }
         initialState.$walletAccounts.withLock { $0 = [zashiAccount] }
-        initialState.path = Root.State.Path.addKeystoneHWWalletCoordFlow
-        initialState.addKeystoneHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.path.append(.keystoneDeviceReady(AddKeystoneHWWallet.State()))
         initialState.homeState.transactionListState.isInvalidated = false
         initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
 
-        guard let keystoneDeviceReadyId = initialState.addKeystoneHWWalletCoordFlowState.path.ids.last else {
+        guard let keystoneDeviceReadyId = initialState.connectHWWalletCoordFlowState.path.ids.last else {
             Issue.record("expected a keystoneDeviceReady element id on the Add Keystone HW Wallet path")
             return
         }
@@ -361,7 +371,7 @@ import ComposableArchitecture
         }
 
         store.send(
-            .addKeystoneHWWalletCoordFlow(
+            .connectHWWalletCoordFlow(
                 .path(.element(id: keystoneDeviceReadyId, action: .keystoneDeviceReady(.accountImportSucceeded)))
             )
         )
@@ -389,7 +399,7 @@ import ComposableArchitecture
     /// `SettingsCoordinator.swift` has no handler for `.accountHWWalletSelection(.nextTapped)`, so
     /// `AccountsSelectionView` is a dead end when reached from Settings; `.unlockTapped` (and
     /// therefore `.accountImported`/`.accountImportSucceeded`) is never reachable from that step.
-    /// (The SAME is true of `AddKeystoneHWWalletCoordFlow`'s own `.accountHWWalletSelection(.accountImportSucceeded)`
+    /// (The SAME is true of `ConnectHWWalletCoordFlow`'s own `.accountHWWalletSelection(.accountImportSucceeded)`
     /// arm above it in `RootCoordinator.swift` -- its `.nextTapped` only ever pushes forward to
     /// `.keystoneDeviceReady`, never fires unlock directly from that step either.) Live coverage of
     /// the Keystone-connect parity fix is `keystoneAutoSelectImmediatelyRefreshesTransactionsAndBalance`
@@ -454,12 +464,19 @@ import ComposableArchitecture
         // See the sibling test's comment: `getAccountsBalances` is ALSO called independently by
         // SmartBanner's own priority evaluation, so wait for the update to actually land too.
         await waitForRootState(store) { $0.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue }
+        // MOB-2020: see the sibling test's comment -- the transaction and balance chains are
+        // independent effects off the same switch, so wait on `.loadingFinished`'s own effect
+        // (isInvalidated clearing) explicitly rather than inferring it from the balance wait.
+        await waitForRootState(store) {
+            !$0.homeState.transactionListState.isInvalidated
+                && !$0.transactionsCoordFlowState.transactionsManagerState.isInvalidated
+        }
 
         #expect(requestedAccounts.value.contains(keystoneAccount.id))
         #expect(balanceRequests.value > 0)
         #expect(store.state.homeState.walletBalancesState.shieldedBalance == keystoneBalance.shieldedSpendableValue)
-        #expect(store.state.homeState.transactionListState.isInvalidated)
-        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+        #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
         #expect(store.state.path == nil)
     }
 
@@ -490,16 +507,23 @@ import ComposableArchitecture
 
     // MARK: - (e) An unchanged fetch result must still clear the loading state
 
-    /// `.fetchedTransactions` (`RootTransactions.swift`) only writes `state.transactions` -- and
-    /// that write is the ONLY thing whose downstream `transactionsUpdated` clears `isInvalidated` on
-    /// either list -- when the freshly fetched payload differs from what's already there (`if
-    /// state.transactions != identifiedArray`). Switching between two accounts that BOTH have no
-    /// transactions is exactly the case where the fetch's result (`[]`) equals what's already
-    /// sitting in `state.transactions` (also `[]`, left over from account A): nothing gets written,
-    /// so without a completion signal on that unchanged branch too, both lists are stuck showing
+    /// `.fetchedTransactions` (`RootTransactions.swift`) only writes `state.transactions` when the
+    /// freshly fetched payload differs from what's already there (`if state.transactions !=
+    /// identifiedArray`). Switching between two accounts that BOTH have no transactions is exactly
+    /// the case where the fetch's result (`[]`) equals what's already sitting in
+    /// `state.transactions` (also `[]`, left over from account A): nothing gets written, so without
+    /// an explicit completion signal on that unchanged branch too, both lists are stuck showing
     /// their loading placeholder forever. This is the real Keystone-connect path: connecting a
     /// Keystone whose wallet also happens to have no transactions yet, right after
     /// `accountSwitchedEffect` has already flipped both flags to `true`.
+    ///
+    /// MOB-2020: that explicit completion signal is `.loadingFinished` (`isInvalidated` is no
+    /// longer touched by `.transactionsUpdated` at all -- see `TransactionListStore.swift`/
+    /// `TransactionsManagerStore.swift`), sent from the SAME guarded branch this test already
+    /// exercises (`RootTransactions.swift`, the unchanged-but-completed path) -- so this test is
+    /// also this suite's coverage of Commit A's "cover an empty answer too" requirement: the newly
+    /// selected account has no transactions, `.loadingFinished` still arrives, and the empty-state
+    /// condition (`HomeView.swift`) holds once it does.
     @Test func switchingBetweenTwoEmptyAccountsClearsTheLoadingState() async {
         let accountA = Self.walletAccount(idByte: 74)
         let accountB = Self.walletAccount(idByte: 75)
@@ -524,6 +548,144 @@ import ComposableArchitecture
 
         #expect(!store.state.homeState.transactionListState.isInvalidated)
         #expect(!store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
+    }
+
+    // MARK: - (f) MOB-2020: the switch's own clearing write must not end the loading state
+
+    /// Red-first for MOB-2020. `accountSwitchedEffect` (`RootCoordinator.swift`) invalidates Home's
+    /// list and THEN clears the shared `$transactions` for the account just left. `TransactionList`
+    /// subscribes to `$transactions.publisher` from `.onAppear`, and before this fix its
+    /// `.transactionsUpdated` handler cleared `isInvalidated` on every write, not just a write that
+    /// meant "the selected account's fetch answered" -- so the switch's OWN clearing write ended
+    /// the loading state by itself, well before the newly-selected account's fetch had any chance
+    /// to answer, and Home rendered "Nothing here" for however long that fetch took.
+    ///
+    /// Never names `.loadingFinished` directly -- its effect is observed the same way every other
+    /// action in this file is, through the state it changes -- so this test is the same text before
+    /// and after the fix, and compiles unchanged against the pre-fix code (the point of red-first).
+    @Test func switchsOwnClearingWriteMustNotEndTheLoadingStateBeforeTheNewAccountsFetchAnswers() async {
+        let accountA = Self.walletAccount(idByte: 85)
+        let accountB = Self.walletAccount(idByte: 86)
+        let aRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "a-tx")])
+        let bRows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "b-tx")])
+        let gate = ResumableGate()
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = accountA }
+        initialState.$walletAccounts.withLock { $0 = [accountA, accountB] }
+        initialState.$transactions.withLock { $0 = aRows }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+            // B's fetch is held open on a gate, so the window between the switch's clearing write
+            // and the new account's own answer is wide enough to observe deterministically.
+            $0.sdkSynchronizer.getAllTransactions = { accountUUID in
+                if accountUUID == accountB.id {
+                    await gate.wait()
+                    return bRows
+                }
+                return aRows
+            }
+        }
+
+        // 1. Start the list's subscription, and seed its derived state from A's rows through the
+        // real reducer path, so the switch's clearing write is later provable as a CHANGE.
+        store.send(.home(.transactionList(.onAppear)))
+        store.send(.home(.transactionList(.transactionsUpdated)))
+        #expect(store.state.homeState.transactionListState.transactionListHomePage.map(\.id) == ["a-tx"])
+
+        // 2. Switch the selected account -- synchronously invalidates the list and clears
+        // `$transactions`, then fires a fresh (gated) fetch for B.
+        store.send(.home(.walletAccountTapped(accountB)))
+
+        // 3. `receive` the publisher-driven `.transactionsUpdated` the clearing write causes --
+        // proven by the home-page prefix flipping back to empty, the same signal
+        // `RootTransactionsEmptyFetchTests.swift` uses for an equivalent wait.
+        await waitForRootState(store) { $0.homeState.transactionListState.transactionListHomePage.isEmpty }
+
+        // RED on unmodified code: `.transactionsUpdated` used to clear `isInvalidated`
+        // unconditionally, so by the time the wait above resolves this already reads `false`.
+        #expect(
+            store.state.homeState.transactionListState.isInvalidated,
+            "the switch's own clearing write must not end the loading state before B's fetch answers"
+        )
+
+        // 4. Deliver B's own answer and `receive` `.loadingFinished`'s effect: isInvalidated clears.
+        // Waits on BOTH together -- on unmodified code `isInvalidated` is already `false` (the
+        // bug this test pins), so waiting on it alone would resolve before B's write actually
+        // lands; the transactions equality is what anchors this wait to the fetch's completion.
+        gate.open()
+        await waitForRootState(store) {
+            $0.transactions == bRows && !$0.homeState.transactionListState.isInvalidated
+        }
+
+        #expect(store.state.transactions == bRows, "B's own rows must be what's left once loading ends")
+        #expect(!store.state.homeState.transactionListState.isInvalidated)
+    }
+
+    // MARK: - (g) MOB-2020: See All opens in the loading state Home's list is in
+
+    /// `.home(.seeAllTransactionsTapped)` and `.home(.transactionList(.transactionTapped))`
+    /// (`RootCoordinator.swift`) rebuild the See All state from `.initial`, which starts loading.
+    /// Its own `$transactions` subscription used to end that on its first emission; now only
+    /// Root's `.loadingFinished` does, once per answered fetch -- and on a synced wallet the next
+    /// one is the next sync pass's edge-triggered refresh (MOB-1954). So once the selected
+    /// account's fetch has answered, See All must open loaded, over the rows Home already shows.
+    @Test func seeAllOpensLoadedOnceTheSelectedAccountsFetchHasAnswered() async {
+        let account = Self.walletAccount(idByte: 87)
+        let rows = IdentifiedArrayOf<TransactionState>(uniqueElements: [tx(id: "loaded-tx")])
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$walletAccounts.withLock { $0 = [account] }
+        initialState.$transactions.withLock { $0 = rows }
+        initialState.homeState.transactionListState.isInvalidated = false
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.seeAllTransactionsTapped))
+        #expect(
+            !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "See All must open loaded once the selected account's fetch has answered"
+        )
+
+        store.send(.home(.transactionList(.transactionTapped("loaded-tx"))))
+        #expect(
+            !store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated,
+            "a tapped Home row opens the same flow, so it must open loaded too"
+        )
+    }
+
+    /// The other half: while the selected account's fetch has not answered yet (a switch just
+    /// happened, or the first launch), See All opens on its loading placeholder as Home shows
+    /// its own, never on an empty state nothing has confirmed yet.
+    @Test func seeAllOpensLoadingWhileTheSelectedAccountsFetchHasNotAnswered() async {
+        let account = Self.walletAccount(idByte: 88)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = account }
+        initialState.$walletAccounts.withLock { $0 = [account] }
+        initialState.$transactions.withLock { $0 = [] }
+        initialState.homeState.transactionListState.isInvalidated = true
+        initialState.transactionsCoordFlowState.transactionsManagerState.isInvalidated = false
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.seeAllTransactionsTapped))
+        #expect(store.state.transactionsCoordFlowState.transactionsManagerState.isInvalidated)
     }
 
     // MARK: - No-op guard regression
@@ -562,6 +724,56 @@ import ComposableArchitecture
         #expect(fetchCalls.value == 0)
         #expect(store.state.transactions == existingTransactions)
         #expect(store.state.homeState.transactionListState.isInvalidated == false)
+    }
+
+    // MARK: - Connect HW Wallet flow root
+
+    /// MOB-2020 UI round 2: `.home(.connectHWWalletTapped)` opens `ConnectHWWalletCoordFlow` with
+    /// the vendor chooser as the flow's root screen (an empty flow path) -- replacing the old
+    /// standalone `chooseHWWallet` Root path, which this file's `baseNoOpDependencies` helper
+    /// isn't otherwise exercised by, so the test lives here rather than duplicating that setup in
+    /// ChooseHWWalletTests/ConnectHWWalletCoordFlowTests.swift.
+    @Test func connectHWWalletTappedOpensTheChooserAsTheFlowRoot() async {
+        let initialState = Root.State.initial
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.home(.connectHWWalletTapped))
+
+        #expect(store.state.path == .connectHWWalletCoordFlow)
+        #expect(store.state.connectHWWalletCoordFlowState.path.isEmpty)
+    }
+
+    // MARK: - Account Already Added: go to existing account
+
+    /// MOB-2020: `.connectHWWalletCoordFlow(.goToExistingAccountTapped)` reuses the manual
+    /// switcher's whole `.home(.walletAccountTapped)` arm, including its already-selected guard --
+    /// proven here the same way `walletAccountSwitchInvalidatesBothHomeAndSeeAllTransactionLists`
+    /// proves the manual switch: the account write happens synchronously (inside the reducer
+    /// body, not a `.run` effect), so no wait is needed after `send`.
+    @Test func goToExistingAccountSwitchesToTheAccountAlreadyInTheWallet() async {
+        let selected = Self.walletAccount(idByte: 78)
+        let alreadyAdded = Self.walletAccount(idByte: 79)
+
+        var initialState = Root.State.initial
+        initialState.$selectedWalletAccount.withLock { $0 = selected }
+        initialState.$walletAccounts.withLock { $0 = [selected, alreadyAdded] }
+        initialState.path = Root.State.Path.connectHWWalletCoordFlow
+        initialState.connectHWWalletCoordFlowState.alreadyAddedAccount = alreadyAdded
+
+        let store = Store(initialState: initialState) {
+            Root()
+        } withDependencies: {
+            baseNoOpDependencies(&$0)
+        }
+
+        store.send(.connectHWWalletCoordFlow(.goToExistingAccountTapped))
+
+        #expect(store.state.selectedWalletAccount == alreadyAdded)
     }
 }
 

@@ -21,6 +21,19 @@ struct TransactionList {
     }
 
     enum Action: Equatable {
+        /// Ends the loading state: the only action that clears `isInvalidated`.
+        ///
+        /// MOB-2020: `.transactionsUpdated` used to also clear `isInvalidated` -- but it fires on
+        /// EVERY write to the shared `$transactions`, including the one `accountSwitchedEffect`
+        /// (`RootCoordinator.swift`) makes to CLEAR the array for the account just left, after
+        /// also setting BOTH lists' `isInvalidated` back to true for that same switch. That
+        /// clearing write was ending the loading state before the newly-selected account's own
+        /// fetch had answered, so Home rendered "Nothing here" and See All rendered its empty
+        /// state for however long the fetch took. Root now sends `.loadingFinished` explicitly
+        /// once the selected account's fetch has actually answered (`RootTransactions.swift`) --
+        /// rather than leaving it to each list's own `$transactions` publisher subscription, which
+        /// only exists once `.onAppear` has run (never, on a cold launch that hasn't shown Home yet).
+        case loadingFinished
         case onAppear
         case transactionOnAppear(String)
         case transactionsUpdated
@@ -44,10 +57,14 @@ struct TransactionList {
                 }
                 .cancellable(id: state.CancelId, cancelInFlight: true)
  
+            // Doesn't clear `isInvalidated`; see `Action.loadingFinished`.
             case .transactionsUpdated:
-                state.isInvalidated = false
                 state.transactionListHomePage = IdentifiedArrayOf(uniqueElements: state.transactions.prefix(Constants.homePageTransactionsCount))
                 state.latestTransactionId = state.transactionListHomePage.last?.id ?? ""
+                return .none
+
+            case .loadingFinished:
+                state.isInvalidated = false
                 return .none
 
             case .transactionTapped(let txId):

@@ -75,14 +75,28 @@ import Foundation
         #expect(PrivateUAStash.receivers(for: zcashAccount) == [.sapling, .orchard])
     }
 
+    /// MOB-2020: a Ledger account is a hardware account too (`Vendor.isHWWallet()`), so it gets
+    /// the same orchard-only receiver set as Keystone.
+    @Test func receiversRuleIsOrchardOnlyForALedgerHardwareAccountToo() {
+        let ledgerAccount = account(idByte: 0x06, vendor: .ledger)
+
+        #expect(PrivateUAStash.receivers(for: ledgerAccount) == [.orchard])
+    }
+
     // MARK: - Helpers
 
     private func account(idByte: UInt8, vendor: WalletAccount.Vendor) -> WalletAccount {
-        WalletAccount(
+        let keySource: String?
+        switch vendor {
+        case .keystone: keySource = String(localizable: .accountsKeystone).lowercased()
+        case .ledger: keySource = "ledger"
+        case .zcash: keySource = "zashi"
+        }
+        return WalletAccount(
             Account(
                 id: AccountUUID(id: [UInt8](repeating: idByte, count: 16)),
                 name: "Test",
-                keySource: vendor == .keystone ? String(localizable: .accountsKeystone).lowercased() : "zashi",
+                keySource: keySource,
                 seedFingerprint: [UInt8](repeating: 0x02, count: 32),
                 hdAccountIndex: Zip32AccountIndex(0),
                 ufvk: nil,

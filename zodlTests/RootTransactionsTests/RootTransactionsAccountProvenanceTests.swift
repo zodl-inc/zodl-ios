@@ -110,8 +110,17 @@ import ComposableArchitecture
             #expect(store.state.transactions == aRows, "setup must land A's rows before the switch")
 
             // The real switch action -- reaches `accountSwitchedEffect`, which must clear the shared
-            // array up front, then immediately fires a fresh fetch for B, which the mock above fails.
-            // `finish()` awaits that whole chain, including B's own `.transactionsFetchFailed`.
+            // array up front, then immediately fires a fresh fetch for B, which the mock above fails
+            // UNCONDITIONALLY (every call for B throws, not just the first). `finish()` awaits that
+            // whole chain, including B's own `.transactionsFetchFailed`.
+            //
+            // MOB-2020: `.loadingFinished` only joins that chain once the retry budget is spent
+            // (`RootTransactions.swift`) -- this still resolves inside one `finish()` because this
+            // file's `baseNoOpDependencies` sets `mainQueue = .immediate`, which collapses each
+            // retry's delay to zero, so all five scheduled retries (each failing the same way) run
+            // to completion, recursively, within this one await, ending in the budget-spent send.
+            // `RootTransactionsFailedFetchRetryTests.swift` covers the retry ladder's real timing
+            // (and cancellation) on a controllable scheduler; this test's own job stays what it was.
             await store.send(.home(.walletAccountTapped(accountB))).finish()
 
             #expect(
@@ -229,7 +238,7 @@ import ComposableArchitecture
     /// but reaches the post-switch shape via the REAL switch action instead of a hand-built fixture.
     /// B's own fetch is deliberately held open on a gate for the whole test -- its eventual
     /// resolution (either way) is not what this test is about, and letting it complete would let
-    /// its OWN legitimate `transactionsUpdated` clear the invalidation flags this test checks,
+    /// its OWN legitimate `.loadingFinished` clear the invalidation flags this test checks,
     /// masking whether the STALE failure wrongly did so instead.
     @Test func staleFailureForThePreviousAccountChangesNothingAfterTheSwitch() async {
         // MOB-1862: pinned to a fresh `InMemoryStorage()`, with `Root.State` and the `Store` built

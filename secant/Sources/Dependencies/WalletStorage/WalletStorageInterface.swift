@@ -115,4 +115,12 @@ struct WalletStorageClient {
     /// voter identities), instead of being linkable via a shared hotkey.
     var importVotingHotkey: @Sendable (_ storedSecret: Data, _ accountId: AccountUUID) throws -> Void
     var exportVotingHotkey: @Sendable (_ accountId: AccountUUID) throws -> StoredVotingHotkey
+
+    /// Per-account Ledger device binding (device identity + ZIP 32 account index). A Ledger
+    /// account carries no seed fingerprint or ZIP 32 index of its own -- the SDK requires both
+    /// to be `nil` at import time, since a Ledger never reveals a seed fingerprint -- so this
+    /// binding is the only place either value is recoverable from.
+    var importLedgerBinding: @Sendable (LedgerAccountBinding, AccountUUID) throws -> Void
+    var exportLedgerBinding: @Sendable (AccountUUID) throws -> LedgerAccountBinding
+    var deleteLedgerBinding: @Sendable (AccountUUID) throws -> Void
 }

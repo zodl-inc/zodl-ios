@@ -34,6 +34,9 @@ extension AddressBookClient: DependencyKey {
         case unencryptedFileDelete
         case encryptionVersionNotSupported
         case subdataRange
+        /// The contact's address is, or may contain, a gift card link or key, which carries the
+        /// card's spending key: it is never stored, nor backed up with the address book.
+        case giftCardLink
     }
 
     static let liveValue: AddressBookClient = Self.live()
@@ -45,7 +48,12 @@ extension AddressBookClient: DependencyKey {
             resetAccount: { try impl.resetAccount($0) },
             allLocalContacts: { try impl.allLocalContacts($0) },
             syncContacts: { try impl.syncContacts($0, $1) },
-            storeContact: { try impl.storeContact($0, $1) },
+            storeContact: { account, contact in
+                guard !GiftCardSecretDetector.mayContainGiftCardSecret(contact.address) else {
+                    throw AddressBookClientError.giftCardLink
+                }
+                return try impl.storeContact(account, contact)
+            },
             deleteContact: { try impl.deleteContact($0, $1) }
         )
     }

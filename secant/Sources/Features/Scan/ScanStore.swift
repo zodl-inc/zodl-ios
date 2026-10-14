@@ -31,11 +31,17 @@ struct Scan {
         var forceLibraryToHide = false
         var info = ""
         var instructions: String?
+        /// What a scanned code none of the `checkers` accepts is called, in place of the default
+        /// "not a valid Zcash address" (the gift card scanner names gift cards instead).
+        var invalidCodeInfo: String?
         var isAnythingFound = false
         var isCameraEnabled = true
         var isTorchAvailable = false
         var isTorchOn = false
         var isRPFound = false
+        /// Shows a "Paste link" button (used by the gift card flow, which opens its own paste screen
+        /// on `.pasteTapped`).
+        var isPasteEnabled = false
         var progress: Int?
         var expectedParts = 0
         var reportedParts = 0
@@ -93,7 +99,10 @@ struct Scan {
         case libraryImage(UIImage?)
         case onAppear
         case onDisappear
+        case pasteTapped
         case foundAddress(RedactableString)
+        /// A gift card link (a bearer secret, hence redacted). See `GiftCardScanChecker`.
+        case foundGiftCard(RedactableString)
         case foundString(String)
         case foundRequestZec(ParserResult)
         case foundAccounts(ZcashAccounts)
@@ -231,6 +240,14 @@ struct Scan {
                 state.isAnythingFound = true
                 return .none
 
+            case .foundGiftCard:
+                state.isAnythingFound = true
+                return .none
+
+            case .pasteTapped:
+                // The flow that enabled "Paste link" opens its own paste screen.
+                return .none
+
             case .cancelTapped:
                 return .none
                 
@@ -270,7 +287,7 @@ struct Scan {
             case .scanFailed(let result):
                 switch result {
                 case .invalidQRCode:
-                    state.info = String(localizable: .scanInvalidQR)
+                    state.info = state.invalidCodeInfo ?? String(localizable: .scanInvalidQR)
                 case .noQRCodeFound:
                     state.info = String(localizable: .scanInvalidImage)
                 case .severalQRCodesFound:
@@ -299,6 +316,9 @@ struct Scan {
 
                 if state.checkers.count == 2 && state.checkers[0] == .keystoneScanChecker && state.checkers[1] == .keystonePCZTScanChecker {
                     return .none
+                }
+                if state.invalidCodeInfo != nil {
+                    return .send(.scanFailed(.invalidQRCode))
                 }
                 return .send(.scanFailed(.noQRCodeFound))
 

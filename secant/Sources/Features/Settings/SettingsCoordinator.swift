@@ -43,7 +43,7 @@ extension Settings {
                 
             case .path(.element(id: _, action: .addressBook(.scanButtonTapped))):
                 var scanState = Scan.State.initial
-                scanState.checkers = [.zcashAddressScanChecker, .swapStringScanChecker]
+                scanState.checkers = [.giftCardScanChecker, .zcashAddressScanChecker, .swapStringScanChecker]
                 state.path.append(.scan(scanState))
                 return .none
 
@@ -249,9 +249,11 @@ extension Settings {
 
             #if VOTING_ENABLED
             case .coinholderPollingTapped:
-                guard let account = state.selectedWalletAccount else { return .none }
+                // MOB-2020: a Ledger account has no signing path yet (Phase 3), so it never
+                // presents the voting flow.
+                guard let account = state.selectedWalletAccount, !state.isLedgerAccount else { return .none }
                 var votingState = VotingCoordFlow.State()
-                votingState.isKeystoneUser = state.isKeystoneAccount
+                votingState.isKeystoneUser = state.isHWWalletAccount
                 votingState.walletId = account.id.id.map { String(format: "%02x", $0) }.joined()
                 state.votingCoordFlow = votingState
                 return .none
