@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def evaluate(expression, values, success=True):
+def evaluate(expression, values, success=True, boolean=True):
     """Evaluate only the Actions expression subset used by these gates."""
     expression = expression.removeprefix('${{').removesuffix('}}').strip()
     explicit_status = re.search(r'\b(?:cancelled|success|failure|always)\(', expression)
@@ -18,11 +18,12 @@ def evaluate(expression, values, success=True):
         return False
     expression = expression.replace('&&', ' and ').replace('||', ' or ')
     expression = re.sub(r'!(?!=)', ' not ', expression)
-    expression = re.sub(r'\b(?:github|needs|steps)\.[\w.-]+', lambda match: repr(values[match[0]]), expression)
+    expression = re.sub(r'\b(?:github|needs|steps|matrix)\.[\w.-]+', lambda match: repr(values[match[0]]), expression)
     expression = re.sub(r"(?<!['\w])true(?!['\w])", 'True', expression)
     expression = re.sub(r"(?<!['\w])false(?!['\w])", 'False', expression)
     tree = ast.parse(expression.strip(), mode='eval')
     functions = {'cancelled': lambda: values['cancelled'], 'success': lambda: success,
+                 'always': lambda: True, 'failure': lambda: not success and not values['cancelled'],
                  'startsWith': lambda text, prefix: text.startswith(prefix)}
     allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not,
                ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.Call, ast.Name, ast.Load)
@@ -33,7 +34,8 @@ def evaluate(expression, values, success=True):
             raise ValueError('Unknown expression function')
         if isinstance(node, ast.Call) and (not isinstance(node.func, ast.Name) or node.keywords):
             raise ValueError('Unknown expression call')
-    return bool(eval(compile(tree, '<workflow condition>', 'eval'), {'__builtins__': {}}, functions))
+    result = eval(compile(tree, '<workflow condition>', 'eval'), {'__builtins__': {}}, functions)
+    return bool(result) if boolean else result
 
 
 def context(run_ci='true', validate='success', ffi='success', mode='local', event='pull_request', draft=False, base='main', cancelled=False):
@@ -109,9 +111,6 @@ class RequiredWorkflowTests(unittest.TestCase):
                     self.assertEqual(pin_want, evaluate(jobs['validate_sdk_pin']['if'], values, success=not values['cancelled']))
                     self.assertEqual(ffi_want, evaluate(jobs['build_ffi']['if'], values, success=values['needs.validate_sdk_pin.result'] == 'success' and not values['cancelled']))
                     self.assertEqual(consumer_want, evaluate(consumer['if'], values, success=False))
-                    if name == 'e2e-smoke':
-                        matrix = dict(values, **{'needs.build.result': 'success' if consumer_want else 'skipped'})
-                        self.assertEqual(consumer_want, evaluate(jobs['e2e-ios']['if'], matrix, success=False))
         shellcheck = self.workflows['pull-request']['jobs']['shellcheck']
         self.assertNotIn('if', shellcheck)
         self.assertNotIn('needs', shellcheck)
@@ -123,13 +122,110 @@ class RequiredWorkflowTests(unittest.TestCase):
             self.assertEqual(expected[name], set(workflow['jobs']))
             self.assertTrue(workflow['concurrency']['cancel-in-progress'])
             for job_id, job in workflow['jobs'].items():
-                self.assertEqual('ubuntu-latest' if job_id in ('validate_sdk_pin', 'shellcheck') else 'macos-26', job['runs-on'])
+                runner = evaluate(job['runs-on'], context(), boolean=False) if str(job['runs-on']).startswith('${{') else job['runs-on']
+                self.assertEqual('ubuntu-latest' if job_id in ('validate_sdk_pin', 'shellcheck') else 'macos-26', runner)
                 self.assertEqual('e2e-ios (phase ${{ matrix.phase }})' if job_id == 'e2e-ios' else job_id, job.get('name', job_id))
         matrix = self.workflows['e2e-smoke']['jobs']['e2e-ios']
-        self.assertEqual('build', matrix['needs'])
+        self.assertEqual(['validate_sdk_pin', 'build'], matrix['needs'])
         self.assertEqual([1, 2], matrix['strategy']['matrix']['phase'])
         for result in ('failure', 'cancelled', 'skipped'):
             self.assertFalse(evaluate(matrix['if'], dict(context(), **{'needs.build.result': result}), success=False))
+
+    def test_docs_expand_required_phase_contexts_after_validation(self):
+        matrix = self.workflows['e2e-smoke']['jobs']['e2e-ios']
+        cases = [
+            # A skipped build must still report both phases for validated docs.
+            (context(run_ci='false'), 'skipped', True),
+            (context(run_ci='false', draft=True, base='release/3.18.0'), 'skipped', True),
+            (context(), 'success', True),
+            (context(mode='remote', ffi='skipped'), 'success', True),
+            (context(event='workflow_dispatch'), 'success', True),
+            (context(draft=True, base='release/3.18.0'), 'success', True),
+            (context(draft=True), 'success', False),
+            (context(draft=True, run_ci='false'), 'skipped', False),
+            (context(run_ci='false', validate='failure'), 'skipped', False),
+            (context(run_ci='false', validate='cancelled'), 'skipped', False),
+            (context(run_ci='false', validate='skipped'), 'skipped', False),
+            (context(run_ci='false', cancelled=True), 'skipped', False),
+            (context(cancelled=True), 'success', False),
+            (context(run_ci=''), 'success', False),
+            (context(run_ci='unknown'), 'success', False),
+            (context(), 'failure', False),
+            (context(), 'cancelled', False),
+            (context(), 'skipped', False),
+            (context(validate='failure'), 'success', False),
+        ]
+
+        for values, build, want in cases:
+            values = dict(values, **{'needs.build.result': build})
+            with self.subTest(values=values):
+                scheduled = evaluate(matrix['if'], values, success=False)
+                self.assertEqual(want, scheduled)
+                emitted = [matrix['name'].replace('${{ matrix.phase }}', str(phase))
+                           for phase in matrix['strategy']['matrix']['phase']] if scheduled else []
+                self.assertEqual(['e2e-ios (phase 1)', 'e2e-ios (phase 2)'] if want else [], emitted)
+        self.assertEqual(1, sum(job.get('name', '') == matrix['name']
+                                for job in self.workflows['e2e-smoke']['jobs'].values()))
+
+        self.assertEqual(['validate_sdk_pin', 'build'], matrix['needs'])
+
+    def test_docs_use_ubuntu_and_code_keeps_native_runner(self):
+        runner = self.workflows['e2e-smoke']['jobs']['e2e-ios']['runs-on']
+        self.assertEqual('ubuntu-latest', evaluate(runner, context(run_ci='false'), boolean=False) if runner.startswith('${{') else runner)
+        self.assertEqual('macos-26', evaluate(runner, context(), boolean=False) if runner.startswith('${{') else runner)
+
+    def test_docs_skip_native_steps_even_after_failure_or_cancellation(self):
+        steps = self.workflows['e2e-smoke']['jobs']['e2e-ios']['steps']
+        for step in steps:
+            if step['name'] == 'Report docs-only E2E phase':
+                continue
+            for phase in (1, 2):
+                for success, cancelled in ((True, False), (False, False), (False, True)):
+                    values = dict(context(run_ci='false', cancelled=cancelled), **{
+                        'matrix.phase': phase, 'steps.sdk-db.outputs.exists': 'true'})
+                    with self.subTest(step=step['name'], phase=phase, success=success, cancelled=cancelled):
+                        self.assertFalse(evaluate(step.get('if', 'true'), values, success=success))
+
+    def test_docs_disable_every_e2e_side_effect_and_code_retains_step_status_semantics(self):
+        steps = self.workflows['e2e-smoke']['jobs']['e2e-ios']['steps']
+        reporter = [step for step in steps if step['name'] == 'Report docs-only E2E phase']
+        self.assertEqual(1, len(reporter))
+        self.assertNotIn('uses', reporter[0])
+        self.assertIn('run', reporter[0])
+        self.assertTrue(evaluate(reporter[0]['if'], context(run_ci='false')))
+        self.assertFalse(evaluate(reporter[0]['if'], context()))
+        native = [step for step in steps if step not in reporter]
+        old_conditions = {
+            'Restore Zcash SDK DB cache': '${{ matrix.phase == 2 }}',
+            'Check for a cacheable Zcash SDK DB': '${{ always() && matrix.phase == 2 }}',
+            'Save Zcash SDK DB cache': "${{ always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true' }}",
+            'Upload test results': 'always()',
+        }
+        self.assertEqual([
+            'Select Xcode (pinned, avoiding iOS 26.5 driver bug)',
+            'Pin simulator device to the iOS 26.2 runtime',
+            'Checkout smoke tests',
+            'Download .app bundle',
+            'Boot simulator and install app',
+            'Install Maestro',
+            'Install Foundry + zbar',
+            'Restore Zcash SDK DB cache',
+            'Run smoke tests',
+            'Check for a cacheable Zcash SDK DB',
+            'Save Zcash SDK DB cache',
+            'Upload test results',
+        ], [step['name'] for step in native])
+        for phase in (1, 2):
+            for success, cancelled in ((True, False), (False, False), (False, True)):
+                for exists in ('true', 'false', ''):
+                    values = dict(context(cancelled=cancelled), **{
+                        'matrix.phase': phase, 'steps.sdk-db.outputs.exists': exists})
+                    for step in native:
+                        with self.subTest(step=step['name'], phase=phase, success=success, cancelled=cancelled, exists=exists):
+                            docs = dict(values, **{'needs.validate_sdk_pin.outputs.run_ci': 'false'})
+                            self.assertFalse(evaluate(step.get('if', 'true'), docs, success=success))
+                            self.assertEqual(evaluate(old_conditions.get(step['name'], 'true'), values, success=success),
+                                             evaluate(step.get('if', 'true'), values, success=success))
 
     def test_app_profile_keeps_case_sensitive_template_and_code_boundaries(self):
         path = ROOT / 'Scripts/ci/pr_change_filter.py'

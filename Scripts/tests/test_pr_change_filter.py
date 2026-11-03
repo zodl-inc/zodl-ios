@@ -1,5 +1,7 @@
 """Docs skips require a complete, immutable PR diff, never a best guess."""
 import copy
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import importlib.util
 import json
 import os
@@ -164,9 +166,17 @@ class CLITests(unittest.TestCase):
             env = {"GITHUB_EVENT_NAME": name, "GITHUB_EVENT_PATH": str(event_path),
                    "GITHUB_REPOSITORY": "owner/repo", "GITHUB_API_URL": "https://api.github.com",
                    "GH_TOKEN": "test-secret"}
-            with patch.dict(os.environ, env, clear=True), patch.object(ci, "_api_get", side_effect=api or AssertionError("No API expected")):
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr), patch.dict(os.environ, env, clear=True), patch.object(ci, "_api_get", side_effect=api or AssertionError("No API expected")):
                 result = ci.main(["--profile", "sdk-build", "--github-output", str(output)])
-            return result, output.read_text() if output.exists() else ""
+            written = output.read_text() if output.exists() else ""
+            if result:
+                self.assertEqual("", stdout.getvalue())
+                self.assertEqual("Unable to classify PR changes safely\n", stderr.getvalue())
+            else:
+                self.assertEqual("", stderr.getvalue())
+                self.assertEqual("Complete docs-only PR\n" if written == "run_ci=false\n" else "CI required\n", stdout.getvalue())
+            return result, written
 
     def test_push_and_manual_events_require_ci_without_api(self):
         for name in ("push", "workflow_dispatch"):
@@ -182,6 +192,15 @@ class CLITests(unittest.TestCase):
             result, output = self.invoke("pull_request", api)
             self.assertNotEqual(0, result)
             self.assertNotIn("run_ci=false", output)
+
+    def test_expected_cli_diagnostics_do_not_leak_from_test_invocations(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            self.invoke("pull_request", FakeAPI(before=ci.ClassificationError("sensitive failure")))
+            self.invoke("pull_request", FakeAPI())
+            self.invoke("push")
+        self.assertEqual("", stdout.getvalue())
+        self.assertEqual("", stderr.getvalue())
 
     def test_transport_rejects_redirects_and_foreign_origins(self):
         with patch.dict(os.environ, {"GITHUB_API_URL": "https://api.github.com", "GH_TOKEN": "secret"}, clear=True):

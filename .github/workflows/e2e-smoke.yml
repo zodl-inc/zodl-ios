@@ -339,15 +339,13 @@ jobs:
           if-no-files-found: error
 
   e2e-ios:
-    needs: build
-    # Same draft-PR guard as `build` — keep it explicit on the expensive job.
-    # !cancelled() + the explicit build result replace the implicit success(),
-    # which a transitively skipped build_ffi (remote SDK mode) poisons even
-    # when build itself succeeds — without this the whole matrix silently
-    # skips on every remote-mode PR. Draft PRs still skip (release PRs
-    # excepted): validate_sdk_pin skips them, so build never reaches 'success'.
-    if: ${{ !cancelled() && needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/')) }}
-    runs-on: macos-26
+    needs: [validate_sdk_pin, build]
+    # Expand both required phase contexts for validated docs-only PRs using
+    # cheap Ubuntu reporting. Code keeps its native runner and build gate.
+    # !cancelled() overrides implicit success() when docs skip build or a
+    # remote SDK skips the transitive FFI job. Draft release PRs still run.
+    if: ${{ !cancelled() && needs.validate_sdk_pin.result == 'success' && (needs.validate_sdk_pin.outputs.run_ci == 'false' || (needs.validate_sdk_pin.outputs.run_ci == 'true' && needs.build.result == 'success')) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/')) }}
+    runs-on: ${{ needs.validate_sdk_pin.outputs.run_ci == 'false' && 'ubuntu-latest' || 'macos-26' }}
     # Cold-cache phase 2 runs spend ~25-30 min on the
     # restore-existing-wallet sync alone (chain-tip catchup from the
     # birthday height on the iOS sim — no inter-run cache like the
@@ -370,7 +368,12 @@ jobs:
         phase: [1, 2]
     name: e2e-ios (phase ${{ matrix.phase }})
     steps:
+      - name: Report docs-only E2E phase
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'false' }}
+        run: echo 'Complete docs-only PR; no E2E work required for this phase.'
+
       - name: Select Xcode (pinned, avoiding iOS 26.5 driver bug)
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         run: |
           # Xcode 26.5/26.6 both ship the iOS 26.5 Simulator runtime, which has a
           # confirmed Maestro/XCUITest driver-stability bug (repeated e2e-smoke
@@ -395,6 +398,7 @@ jobs:
           xcodebuild -version
 
       - name: Pin simulator device to the iOS 26.2 runtime
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         run: |
           # `xcode-select` above only pins the BUILD toolchain. CoreSimulator
           # runtimes are registered system-wide across every installed Xcode,
@@ -428,6 +432,7 @@ jobs:
           echo "ZODL_SIM_NAME=$SIM_UDID" >> "$GITHUB_ENV"
 
       - name: Checkout smoke tests
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         uses: actions/checkout@v4
         with:
           repository: zodl-inc/zodl-qa
@@ -435,12 +440,14 @@ jobs:
           token: ${{ secrets.ZODL_QA }}
 
       - name: Download .app bundle
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: zodl-internal-app
           path: app-bundle
 
       - name: Boot simulator and install app
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         run: |
           xcrun simctl boot "$ZODL_SIM_NAME" || true
           xcrun simctl bootstatus "$ZODL_SIM_NAME" -b
@@ -479,6 +486,7 @@ jobs:
               || { echo "App $BUNDLE_ID not installed after simctl install"; exit 1; }
 
       - name: Install Maestro
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         # Pinned, not "latest" — the install script defaults to whatever's
         # newest on the day the job happens to run. 2.7.0 is the version
         # that was current during our last confirmed-green e2e run
@@ -509,6 +517,7 @@ jobs:
       # underlying script. brew installs from its own bottle mirror
       # with no GitHub API hop, which sidesteps the issue entirely.
       - name: Install Foundry + zbar
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         run: brew install foundry zbar
 
       # Warm-cache the iOS SDK DB across CI runs. The wrapper pushes
@@ -536,7 +545,7 @@ jobs:
       # The zodl-qa verifier now also requires unscanned_ranges == 0
       # (was OR-gated, masking this exact failure mode).
       - name: Restore Zcash SDK DB cache
-        if: ${{ matrix.phase == 2 }}
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' && (matrix.phase == 2) }}
         uses: actions/cache/restore@v5
         with:
           path: ~/.zodl-qa/cache
@@ -545,6 +554,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-
 
       - name: Run smoke tests
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' }}
         env:
           # 600s (was 300s). The first XCTest driver init on a cold
           # sim regularly bumps against the lower bound; bumping gives
@@ -593,7 +603,7 @@ jobs:
           ./zodl-qa/scripts/run-smoke-ios.sh
 
       - name: Check for a cacheable Zcash SDK DB
-        if: ${{ always() && matrix.phase == 2 }}
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' && (always() && matrix.phase == 2) }}
         id: sdk-db
         shell: bash
         run: |
@@ -605,7 +615,7 @@ jobs:
           fi
 
       - name: Save Zcash SDK DB cache
-        if: ${{ always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true' }}
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' && (always() && matrix.phase == 2 && steps.sdk-db.outputs.exists == 'true') }}
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
@@ -613,7 +623,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-zodl-qa-ios-sdk-db-v3-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload test results
-        if: always()
+        if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: maestro-ios-results-phase-${{ matrix.phase }}
