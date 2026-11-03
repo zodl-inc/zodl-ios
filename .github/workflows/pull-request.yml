@@ -7,12 +7,6 @@ on:
     # reopened only, so without this the draft-skipped job below would never
     # run until the next push.
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - '.github/ISSUE_TEMPLATE/*'
-      - '.github/pull_request_template.md'
-      - 'LICENSE'
-      - 'README.md'
-      - 'docs/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -33,14 +27,26 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || startsWith(github.base_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
+      run_ci: ${{ steps.changes.outputs.run_ci }}
       mode: ${{ steps.companion.outputs.mode }}
       pin: ${{ steps.companion.outputs.pin }}
       sdk_path: ${{ steps.companion.outputs.sdk_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Classify PR changes
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci/pr_change_filter.py --profile app --github-output "$GITHUB_OUTPUT"
+      - name: Test PR change classification
+        run: python3 -B -m unittest discover -s Scripts/tests -p 'test_pr_change_filter.py'
       - name: Validate SDK pin
+        if: steps.changes.outputs.run_ci == 'true'
         id: companion
         uses: ./.github/actions/setup-sdk-companion
         with:
@@ -54,7 +60,7 @@ jobs:
     # references a local SDK. The product cache is keyed on the FFI input
     # tree at the pin, so re-runs and Swift-only SDK bumps finish in seconds.
     needs: validate_sdk_pin
-    if: ${{ needs.validate_sdk_pin.outputs.mode == 'local' }}
+    if: ${{ needs.validate_sdk_pin.outputs.run_ci == 'true' && needs.validate_sdk_pin.outputs.mode == 'local' }}
     runs-on: macos-26
     # Cold cargo compile of the FFI graph (orchard, tor, ...) runs 20-30 min.
     timeout-minutes: 45
@@ -150,8 +156,9 @@ jobs:
     # except release PRs, which are tested while still draft
     # (matches the e2e/smoke suite guard in e2e-smoke.yml).
     needs: [validate_sdk_pin, build_ffi]
+    # Docs-only changes skip expensive CI after validation reports success.
     # build_ffi is skipped in remote mode; accept success OR skipped. The draft guard lives on validate_sdk_pin and propagates through needs.
-    if: ${{ !cancelled() && needs.validate_sdk_pin.result == 'success' && (needs.build_ffi.result == 'success' || needs.build_ffi.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.validate_sdk_pin.outputs.run_ci == 'true' && needs.validate_sdk_pin.result == 'success' && (needs.build_ffi.result == 'success' || needs.build_ffi.result == 'skipped') }}
     runs-on: macos-26
     # A cold compile plus a retried Swift Testing run did not fit thirty minutes on the shared runner.
     timeout-minutes: 45
