@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Added
+
+- [MOB-1014] Opening a `zcash:///home/receive` link from another app or a web page opens Receive for your selected account, the same as tapping Receive on Home. If Zodl is still starting or waiting for you to unlock it, Receive opens once Home is on screen. A link opened while another screen is open, or before a wallet is set up, is ignored.
+
 ## [3.17.1] - 2026-10-14
 
 ### Changed
