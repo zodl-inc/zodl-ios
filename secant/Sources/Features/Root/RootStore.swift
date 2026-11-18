@@ -281,6 +281,8 @@ struct Root {
         /// The scanner asking for an in-app scan opens as soon as `canOpenGiftCardFlow` turns
         /// true. The link itself is discarded: only a card scanned in the app is redeemed.
         var isGiftCardRescanPending = false
+        /// A Receive link arrived before Home was on screen; Receive opens once it is.
+        var isReceiveDeeplinkPending = false
         var pendingServerCandidate: PendingServerCandidate?
         var phraseDisplayState: RecoveryPhraseDisplay.State
         @Shared(.inMemory(.selectedWalletAccount)) var selectedWalletAccount: WalletAccount? = nil
@@ -397,6 +399,23 @@ struct Root {
                 && !isSensitiveFlowActive
                 && !isServerSetupVisible
                 && bgTask == nil
+        }
+
+        /// Whether a Receive link can open Receive now: Home is on screen with nothing on top of it.
+        var canOpenReceiveDeeplink: Bool {
+            destinationState.destination == .home
+                && splashAppeared
+                && path == nil
+                && !signWithKeystoneCoordFlowBinding
+                && !isLedgerShieldingSheetPresented
+                && !serverSetupViewBinding
+                && alert == nil
+        }
+
+        /// The app is launching, or Home is still behind the splash and authentication.
+        var isWaitingForHome: Bool {
+            destinationState.destination == .welcome
+                || (destinationState.destination == .home && !splashAppeared)
         }
 
         /// True once the synchronizer has told us enough to believe an automatic switch (which
@@ -870,6 +889,11 @@ struct Root {
             .onChange(of: \.canOpenGiftCardFlow) { _, state in
                 guard state.canOpenGiftCardFlow, state.isGiftCardRescanPending else { return .none }
                 return openGiftCardFlow(.rescanRequested, state: &state)
+            }
+            .onChange(of: \.isWaitingForHome) { _, state in
+                guard !state.isWaitingForHome, state.isReceiveDeeplinkPending else { return .none }
+                state.isReceiveDeeplinkPending = false
+                return state.canOpenReceiveDeeplink ? .send(.home(.receiveScreenRequested)) : .none
             }
     }
 
