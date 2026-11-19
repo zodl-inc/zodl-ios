@@ -58,6 +58,7 @@ struct ZatoshiRepresentationView: View {
     let strikethrough: Bool
     let isFee: Bool
     let couldBeHidden: Bool
+    let leastSignificantColor: Color?
 
     @Shared(.appStorage(.sensitiveContent)) var isSensitiveContentHidden = false
     
@@ -70,7 +71,8 @@ struct ZatoshiRepresentationView: View {
         prefixSymbol: ZatoshiStringRepresentation.PrefixSymbol = .none,
         format: ZatoshiStringRepresentation.Format = .abbreviated,
         strikethrough: Bool = false,
-        couldBeHidden: Bool = false
+        couldBeHidden: Bool = false,
+        leastSignificantColor: Color? = nil
     ) {
         if !_XCTIsTesting {
             @Dependency(\.balanceFormatter) var balanceFormatter
@@ -94,6 +96,7 @@ struct ZatoshiRepresentationView: View {
         self.strikethrough = strikethrough
         self.isFee = isFee
         self.couldBeHidden = couldBeHidden
+        self.leastSignificantColor = leastSignificantColor
     }
     
     var body: some View {
@@ -115,6 +118,7 @@ struct ZatoshiRepresentationView: View {
                                : zatoshiStringRepresentation.leastSignificantDigits
                         )
                         .font(.custom(fontName, size: leastSignificantFontSize))
+                        .foregroundColor(leastSignificantColor)
                         .conditionalStrikethrough(strikethrough)
                     } else {
                         Text(couldBeHidden && isSensitiveContentHidden

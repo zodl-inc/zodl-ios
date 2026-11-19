@@ -39,6 +39,10 @@ extension Zatoshi {
         
         return formatter.string(from: balance.decimalValue.roundedZec) ?? ""
     }
+
+    var isBelowThreeDecimalPrecision: Bool {
+        amount > 0 && amount < 100_000
+    }
     
     func atLeastThreeDecimalsZashiFormatted() -> String {
         let formatter = NumberFormatter()
