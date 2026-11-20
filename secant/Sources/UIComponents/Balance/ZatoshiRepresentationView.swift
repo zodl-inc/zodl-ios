@@ -99,6 +99,19 @@ struct ZatoshiRepresentationView: View {
         self.leastSignificantColor = leastSignificantColor
     }
     
+    private var leastSignificantText: Text {
+        let text = Text(couldBeHidden && isSensitiveContentHidden
+                        ? String(localizable: .generalHideBalancesLeast)
+                        : zatoshiStringRepresentation.leastSignificantDigits
+        )
+        .font(.custom(fontName, size: leastSignificantFontSize))
+
+        if let leastSignificantColor {
+            return text.foregroundColor(leastSignificantColor)
+        }
+        return text
+    }
+
     var body: some View {
         WithPerceptionTracking {
             HStack {
@@ -113,12 +126,7 @@ struct ZatoshiRepresentationView: View {
                         )
                         .font(.custom(fontName, size: mostSignificantFontSize))
                         .conditionalStrikethrough(strikethrough)
-                        + Text(couldBeHidden && isSensitiveContentHidden
-                               ? String(localizable: .generalHideBalancesLeast)
-                               : zatoshiStringRepresentation.leastSignificantDigits
-                        )
-                        .font(.custom(fontName, size: leastSignificantFontSize))
-                        .foregroundColor(leastSignificantColor)
+                        + leastSignificantText
                         .conditionalStrikethrough(strikethrough)
                     } else {
                         Text(couldBeHidden && isSensitiveContentHidden
