@@ -131,7 +131,17 @@ struct WalletBalancesView: View {
     }
 
     @ViewBuilder private func balanceNumber() -> some View {
-        if shortened {
+        if shortened && !isSensitiveContentHidden && store.totalBalance.isBelowThreeDecimalPrecision {
+            ZatoshiRepresentationView(
+                balance: store.totalBalance,
+                fontName: FontFamily.Inter.semiBold.name,
+                mostSignificantFontSize: 48,
+                leastSignificantFontSize: 26,
+                format: .expanded,
+                leastSignificantColor: Design.Text.tertiary.color(colorScheme)
+            )
+            .zForegroundColor(Design.Text.primary)
+        } else if shortened {
             ZatoshiText(store.totalBalance, .abbreviated)
                 .zFont(.semiBold, size: 48, style: Design.Text.primary)
         } else {

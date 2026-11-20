@@ -58,6 +58,8 @@ private let enUSZatoshiSamples: [ZatoshiStringRepresentationTests.Sample] = [
     // Dust guarantee: pool-balances sheet must show amounts down to a single zatoshi, so
     // `.expanded` must never drop a digit, even when the least-significant tail is all zeros.
     ZatoshiStringRepresentationTests.Sample(zatoshi: 1, prefix: .none, format: .expanded, most: "0.000", least: "00001"),
+    // Home dust suffix (MOB-1940): 0.00004 ZEC keeps its positional zero, so it cannot read as 0.0004.
+    ZatoshiStringRepresentationTests.Sample(zatoshi: 4_000, prefix: .none, format: .expanded, most: "0.000", least: "04"),
     ZatoshiStringRepresentationTests.Sample(zatoshi: 14_090_955, prefix: .none, format: .expanded, most: "0.140", least: "90955"),
     ZatoshiStringRepresentationTests.Sample(zatoshi: 14_000_000, prefix: .none, format: .expanded, most: "0.140", least: ""),
     // Prefix Plus — Abbreviated

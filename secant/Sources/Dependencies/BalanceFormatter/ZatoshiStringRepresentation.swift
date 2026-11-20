@@ -42,7 +42,7 @@ struct ZatoshiStringRepresentation: Equatable {
         if zatoshi.amount == 0 {
             self.mostSignificantDigits = "\(symbol)\(Zatoshi(0).decimalZashiFormatted())"
             self.leastSignificantDigits = ""
-        } else if zatoshi.amount < 100_000 && format == .abbreviated {
+        } else if zatoshi.isBelowThreeDecimalPrecision && format == .abbreviated {
             // 0 for most significant but non-0 for least ones
             self.mostSignificantDigits = "\(symbol)\(Zatoshi(0).decimalZashiFormatted())..."
             self.leastSignificantDigits = ""
