@@ -255,6 +255,8 @@ jobs:
           # shows up in the log (only the XCTest subset does). Pre-installed on
           # the macos runner image; guard-install just in case it ever isn't.
           command -v xcbeautify >/dev/null 2>&1 || brew install xcbeautify
+          # TestStore changes a process-wide executor hook. Run suites serially
+          # so unrelated test workloads do not starve clock and effect waits.
           xcodebuild test \
             -project secant.xcodeproj \
             -scheme zodl-internal \
@@ -265,6 +267,7 @@ jobs:
             -only-testing:zodlTests \
             -skipPackagePluginValidation \
             -skipMacroValidation \
+            -parallel-testing-enabled NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf \
             CODE_SIGNING_ALLOWED=NO \
