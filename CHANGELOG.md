@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Changed
+
+- [MOB-1940] A Home balance below 0.001 ZEC now shows its remaining digits in a smaller suffix after 0.000, down to a single zatoshi, instead of reading as 0.000.
+
 ## [3.17.1] - 2026-10-14
 
 ### Changed
