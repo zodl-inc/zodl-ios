@@ -41,6 +41,7 @@ extension Root {
     enum DestinationAction {
         case deeplink(URL)
         case deeplinkHome
+        case deeplinkReceive
         case deeplinkSend(Zatoshi, String, String)
         case deeplinkFailed(URL, ZcashError)
         case updateDestination(Root.DestinationState.Destination)
@@ -78,9 +79,25 @@ extension Root {
                     // The deeplink is some zip321, we ignore it and let users know in a warning screen
                     return .send(.destination(.updateDestination(.deeplinkWarning)))
                 }
-                return .none
+                // Universal links (e.g. Flexa's) reach this handler too; only zcash: links are ours.
+                guard Deeplink.isZcashURL(url) else {
+                    return .none
+                }
+                guard let deeplinkAction = try? process(url: url, deeplink: deeplink, derivationTool: derivationTool) else {
+                    return .none
+                }
+                return .send(deeplinkAction)
 
             case .destination(.deeplinkHome):
+                return .none
+
+            case .destination(.deeplinkReceive):
+                if state.canOpenReceiveDeeplink {
+                    return .send(.home(.receiveScreenRequested))
+                }
+                if state.isWaitingForHome {
+                    state.isReceiveDeeplinkPending = true
+                }
                 return .none
 
             case .destination(.deeplinkSend):
@@ -196,13 +213,15 @@ private extension Root {
         url: URL,
         deeplink: DeeplinkClient,
         derivationTool: DerivationToolClient
-    ) async throws -> Root.Action {
+    ) throws -> Root.Action {
         @Dependency(\.zcashSDKEnvironment) var zcashSDKEnvironment
         let deeplink = try deeplink.resolveDeeplinkURL(url, zcashSDKEnvironment.network().networkType, derivationTool)
         
         switch deeplink {
         case .home:
             return .destination(.deeplinkHome)
+        case .receive:
+            return .destination(.deeplinkReceive)
         case let .send(amount, address, memo):
             return .destination(.deeplinkSend(Zatoshi(Int64(amount)), address, memo))
         }

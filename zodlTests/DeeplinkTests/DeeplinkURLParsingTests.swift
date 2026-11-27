@@ -60,6 +60,36 @@ import Foundation
         )
     }
 
+    @Test func resolveDeeplinkReceiveURL() throws {
+        let url = URL(string: "zcash:///home/receive")!
+
+        let result = try Deeplink.resolveDeeplinkURL(
+            url,
+            networkType: .testnet,
+            isValidZcashAddress: { _, _ in false }
+        )
+
+        #expect(
+            result == .receive,
+            "DeeplinkURLParsing tests: `testResolveDeeplinkReceiveURL` result is expected to be .receive but it is \(result)"
+        )
+    }
+
+    @Test func resolveDeeplinkReceiveURLWithExtraPathThrows() {
+        let url = URL(string: "zcash:///home/receive/extra")!
+
+        #expect(
+            throws: (any Error).self,
+            "DeeplinkURLParsing tests: `testResolveDeeplinkReceiveURLWithExtraPathThrows` is expected to throw for an extra path component"
+        ) {
+            try Deeplink.resolveDeeplinkURL(
+                url,
+                networkType: .testnet,
+                isValidZcashAddress: { _, _ in false }
+            )
+        }
+    }
+
     @Test func resolveDeeplinkSendURLWithAllParams() throws {
         let url = URL(string: "zcash:///home/send?address=t1addr&memo=hello&amount=500000")!
 

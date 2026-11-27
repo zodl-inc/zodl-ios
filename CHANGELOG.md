@@ -7,6 +7,10 @@ tooling, CI, tests, and internal refactors are deliberately not listed.
 
 ## [Unreleased]
 
+### Added
+
+- [MOB-1014] Opening a `zcash:///home/receive` link from another app or a web page opens Receive for your selected account, the same as tapping Receive on Home. If Zodl is still starting or waiting for you to unlock it, Receive opens once Home is on screen. A link opened while another screen is open, or before a wallet is set up, is ignored.
+
 ### Changed
 
 - [MOB-1940] A Home balance below 0.001 ZEC now shows its remaining digits in a smaller suffix after 0.000, down to a single zatoshi, instead of reading as 0.000.
