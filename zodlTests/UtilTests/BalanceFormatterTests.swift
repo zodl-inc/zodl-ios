@@ -37,6 +37,17 @@ import Foundation
         #expect(Zatoshi(123_456_789).decimalZashiTaxUSFormatted() == "1.23456789")
     }
 
+    // MARK: - isBelowThreeDecimalPrecision (the Home dust-suffix threshold)
+
+    @Test func isBelowThreeDecimalPrecisionCoversOnlyAmountsThatTruncateToZero() {
+        #expect(!Zatoshi(0).isBelowThreeDecimalPrecision)
+        #expect(Zatoshi(1).isBelowThreeDecimalPrecision)
+        #expect(Zatoshi(4_000).isBelowThreeDecimalPrecision)
+        #expect(Zatoshi(99_999).isBelowThreeDecimalPrecision)
+        #expect(!Zatoshi(100_000).isBelowThreeDecimalPrecision)
+        #expect(!Zatoshi(100_000_000).isBelowThreeDecimalPrecision)
+    }
+
     // MARK: - locale-dependent formatters (assert structure only)
 
     @Test func localeDependentFormattersProduceNonEmptyOutput() {

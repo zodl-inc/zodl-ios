@@ -114,7 +114,10 @@ jobs:
           if ! command -v rustup > /dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
           fi
-          source "$HOME/.cargo/env"
+          # Runner-provided Rust may already be on PATH without rustup's env file.
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
           rustup target add aarch64-apple-ios-sim aarch64-apple-ios
           cd "${{ steps.companion.outputs.sdk_abs_path }}"
           ./Scripts/init-local-ffi.sh --${{ steps.keys.outputs.slice }}
